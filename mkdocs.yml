@@ -1,0 +1,31 @@
+site_name: Workflow Definition Service
+site_description: Design-time control plane for the BPMN-driven Workflow Engine
+site_author: BCBP Solutions
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: readthedocs
+
+markdown_extensions:
+  - admonition
+  - tables
+  - fenced_code
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Setup: setup.md
+    - Configuration: configuration.md
+  - Development:
+    - Architecture: architecture.md
+    - Coding Standards: standards.md
+    - Testing: testing.md
+  - API Reference:
+    - REST API: api.md
+    - gRPC API: grpc.md
+  - Operations:
+    - Database: database.md
