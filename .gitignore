@@ -1,0 +1,88 @@
+# DENY ALL only explicitly whitelisted patterns are tracked
+*
+
+# Allow directory traversal
+!*/
+
+# SOURCE
+!*.go
+!*.proto
+!*.sql
+
+# PROJECT & CONFIG FILES
+!.gitignore
+!.env.example
+!go.mod
+!go.sum
+!Makefile
+!sqlc.yaml
+!buf.yaml
+!buf.gen.yaml
+!.golangci.yml
+!docker-compose.yml
+!mkdocs.yml
+!requirements-docs.txt
+!*.md
+!.gitkeep
+
+# RE-IGNORE: generated output
+# (directories ignored here take precedence over !*.go above)
+/gen/
+/internal/adapter/outbound/postgres/db/
+/internal/core/port/mocks/
+
+# RE-IGNORE: build & tooling
+/bin/
+/.tools/
+
+# RE-IGNORE: coverage reports
+/.coverage/
+
+# RE-IGNORE: MkDocs built site
+/site/
+
+# RE-IGNORE: secrets & local env
+.env
+*.env
+*.local
+
+# SYSTEM FILES
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.AppleDouble
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# IDE & EDITOR
+# JetBrains (GoLand, IntelliJ)
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VSCode
+.vscode/
+
+# Vim / Neovim
+*.swp
+*.swo
+*.swn
+.netrwhist
+tags
+
+# Emacs
+\#*\#
+.\#*

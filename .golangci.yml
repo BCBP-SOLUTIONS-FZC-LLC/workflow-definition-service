@@ -1,0 +1,37 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - exhaustive
+    - wrapcheck
+    - revive
+    - goimports
+    - misspell
+    - unconvert
+    - unparam
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+      - name: var-naming
+      - name: error-return
+      - name: if-return
+  wrapcheck:
+    ignorePackageGlobs:
+      - github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/*
+
+issues:
+  exclude-dirs:
+    - gen
+    - internal/adapter/outbound/postgres/db
+    - internal/core/port/mocks
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - wrapcheck
+        - unparam
