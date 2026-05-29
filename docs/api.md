@@ -42,7 +42,7 @@ rctx := gincommon.RequestContext(c)
 | `POST` | `/api/v1/workflows/:id/archive` | Admin | Archive workflow |
 | `POST` | `/api/v1/workflows/validate` | Any | Stateless BPMN validation |
 | `GET` | `/api/v1/workflows/:id/versions/:version_id/export` | Any | Download raw BPMN XML |
-| `GET` | `/api/v1/workflows/:id/versions/:a/diff/:b` | Any | Structural diff between two versions |
+| `GET` | `/api/v1/workflows/:id/versions/:version_id/diff/:target_version_id` | Any | Structural diff between two versions |
 | `GET` | `/healthz` | Public | Liveness probe |
 | `GET` | `/readyz` | Public | Readiness probe (DB ping) |
 | `GET` | `/metrics` | Public | Prometheus metrics |

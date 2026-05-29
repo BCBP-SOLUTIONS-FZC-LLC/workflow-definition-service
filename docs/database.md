@@ -33,6 +33,20 @@ make migrate-down
 .tools/goose -dir db/migrations postgres "$DATABASE_URL" status
 ```
 
+`DATABASE_URL` is loaded automatically from `.env` by the Makefile — no manual `source .env` needed.
+
+**Dollar-quoted functions:** Goose splits statements on `;` by default. Any migration that contains a `$$`-quoted PL/pgSQL block (triggers, functions) must be wrapped with Goose's statement annotations so the parser does not split inside the body:
+
+```sql
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION my_fn() RETURNS TRIGGER AS $$
+BEGIN
+  ...
+END;
+$$ LANGUAGE plpgsql;
+-- +goose StatementEnd
+```
+
 ## SQL queries
 
 Query definitions in `db/queries/` are compiled to type-safe Go by [sqlc](https://sqlc.dev). Generated output goes to `internal/adapter/outbound/postgres/db/`. Repository adapters in `internal/adapter/outbound/postgres/` hold a `*db.Queries` value and delegate all SQL operations to the generated layer.

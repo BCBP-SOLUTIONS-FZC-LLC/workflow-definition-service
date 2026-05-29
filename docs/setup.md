@@ -77,6 +77,17 @@ make docs-serve          # live-reload at http://localhost:8001
 make docs-build          # build static site to site/
 ```
 
+## Environment variables and Make
+
+The Makefile automatically loads `.env` if the file exists, so variables like `DATABASE_URL` are available to all targets without manually sourcing the file first. Copy the template once and all `make` commands pick it up:
+
+```bash
+cp .env.example .env   # do this once
+make migrate-up        # DATABASE_URL is read automatically
+```
+
+Variables in `.env` override any existing shell environment values for the duration of the make process only.
+
 ## Useful make targets
 
 ```
