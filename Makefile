@@ -1,5 +1,12 @@
 SHELL := /bin/bash
 
+# Auto-load .env if present so make targets pick up DATABASE_URL etc. without
+# requiring `source .env` in the shell first.
+ifneq ($(wildcard .env),)
+  include .env
+  export
+endif
+
 SQLC_VERSION       := latest
 GOOSE_VERSION      := latest
 BUF_VERSION        := latest
