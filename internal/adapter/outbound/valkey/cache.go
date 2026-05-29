@@ -8,10 +8,10 @@ import (
 )
 
 type Cache struct {
-	client *redis.Client
+	client redis.Cmdable
 }
 
-func NewCache(client *redis.Client) *Cache {
+func NewCache(client redis.Cmdable) *Cache {
 	return &Cache{client: client}
 }
 
