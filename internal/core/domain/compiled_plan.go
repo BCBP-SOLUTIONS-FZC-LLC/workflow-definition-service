@@ -18,7 +18,7 @@ type StageDef struct {
 	Type                string   `json:"type"`
 	Activity            string   `json:"activity"`
 	Role                string   `json:"role"`
-	DefaultUserIDs      []string `json:"default_user_ids,omitempty"`
+	DefaultAssignees      []string `json:"default_assignees,omitempty"`
 	AssigneeMode        string   `json:"assignee_mode,omitempty"`
 	RequiresComment     bool     `json:"requires_comment"`
 	SLADuration         *string  `json:"sla_duration,omitempty"`
