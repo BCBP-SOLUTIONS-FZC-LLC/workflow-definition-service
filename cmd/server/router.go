@@ -54,7 +54,7 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, log port.Logger, h *handl
 	wf.POST("/:id/versions/:version_id/clone", h.CloneVersion)
 	wf.POST("/:id/versions/:version_id/promote", h.PromoteVersion)
 	wf.GET("/:id/versions/:version_id/export", h.ExportBPMN)
-	wf.GET("/:id/versions/:a/diff/:b", h.GetVersionDiff)
+	wf.GET("/:id/versions/:version_id/diff/:target_version_id", h.GetVersionDiff)
 
 	return r
 }
