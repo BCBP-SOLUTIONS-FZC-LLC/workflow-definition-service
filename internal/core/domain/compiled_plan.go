@@ -15,13 +15,14 @@ type DepartmentDef struct {
 }
 
 type StageDef struct {
-	Type                string  `json:"type"`
-	Activity            string  `json:"activity"`
-	Role                string  `json:"role"`
-	DefaultUserID       *string `json:"default_user_id,omitempty"`
-	RequiresComment     bool    `json:"requires_comment"`
-	SLADuration         *string `json:"sla_duration,omitempty"`
-	ConditionExpression *string `json:"condition_expression,omitempty"`
+	Type                string   `json:"type"`
+	Activity            string   `json:"activity"`
+	Role                string   `json:"role"`
+	DefaultUserIDs      []string `json:"default_user_ids,omitempty"`
+	AssigneeMode        string   `json:"assignee_mode,omitempty"`
+	RequiresComment     bool     `json:"requires_comment"`
+	SLADuration         *string  `json:"sla_duration,omitempty"`
+	ConditionExpression *string  `json:"condition_expression,omitempty"`
 }
 
 type ExecutionPlan struct {
