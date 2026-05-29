@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,22 +11,32 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/grpccommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 
-	snsstub "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/sqs"
-	sqsstub "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/sns"
+	definitionv1 "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/definition/v1"
+	grpcadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/grpc"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/sqs"
+	snspub "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/sns"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/valkey"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/outbox"
 )
 
 type app struct {
 	cfg         *config.Config
 	log         port.Logger
 	pool        *pgxpool.Pool
+	cache       port.CacheStore
 	httpServer  *http.Server
-	sqsConsumer *snsstub.StubConsumer
+	grpcServer  *grpc.Server
+	sqsConsumer *sqs.StubConsumer
+	outboxRelay *outbox.Relay
 	shutdown    func()
 }
 
@@ -37,21 +48,32 @@ func newApp(cfg *config.Config) (*app, error) {
 
 	tracingShutdown := gincommon.InitTracingFromEnv()
 
-	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("db config: %w", err)
-	}
-	poolCfg.MaxConns = cfg.PGMaxConns
-	poolCfg.MinConns = cfg.PGMinConns
-
-	pool, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
+	pool, err := newDBPool(context.Background(), cfg)
 	if err != nil {
 		tracingShutdown()
-		return nil, fmt.Errorf("db pool: %w", err)
+		return nil, err
 	}
 
-	_ = sqsstub.NewStubPublisher(log)
-	sqsConsumer := snsstub.NewStubConsumer(log)
+	cache, err := newCacheStore(context.Background(), cfg)
+	if err != nil {
+		pool.Close()
+		tracingShutdown()
+		return nil, err
+	}
+
+	publisher := snspub.NewStubPublisher(log)
+	sqsConsumer := sqs.NewStubConsumer(log)
+	relay := outbox.NewRelay(nil, publisher, cfg.OutboxPollInterval, cfg.OutboxBatchSize, log)
+
+	grpcCfg := grpccommon.Config{
+		ServiceName:  cfg.OTELServiceName,
+		BuildVersion: cfg.BuildVersion,
+	}
+	grpcSrv := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(grpccommon.DefaultUnaryInterceptors(grpcCfg)...),
+		grpc.ChainStreamInterceptor(grpccommon.DefaultStreamInterceptors(grpcCfg)...),
+	)
+	definitionv1.RegisterDefinitionServiceServer(grpcSrv, grpcadapter.NewServer(log))
 
 	r := newRouter(cfg, pool, log)
 
@@ -67,10 +89,39 @@ func newApp(cfg *config.Config) (*app, error) {
 		cfg:         cfg,
 		log:         log,
 		pool:        pool,
+		cache:       cache,
 		httpServer:  srv,
+		grpcServer:  grpcSrv,
 		sqsConsumer: sqsConsumer,
+		outboxRelay: relay,
 		shutdown:    tracingShutdown,
 	}, nil
+}
+
+func newDBPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
+	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("db config: %w", err)
+	}
+	poolCfg.MaxConns = cfg.PGMaxConns
+	poolCfg.MinConns = cfg.PGMinConns
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+	if err != nil {
+		return nil, fmt.Errorf("db pool: %w", err)
+	}
+	return pool, nil
+}
+
+func newCacheStore(ctx context.Context, cfg *config.Config) (port.CacheStore, error) {
+	client := redis.NewClient(&redis.Options{
+		Addr:     cfg.ValkeyAddr,
+		Password: cfg.ValkeyPassword,
+	})
+	if err := client.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("valkey ping: %w", err)
+	}
+	return valkey.NewCache(client), nil
 }
 
 func (a *app) run() {
@@ -84,13 +135,29 @@ func (a *app) run() {
 	}()
 
 	go func() {
+		addr := fmt.Sprintf(":%d", a.cfg.GRPCPort)
+		lis, err := net.Listen("tcp", addr)
+		if err != nil {
+			a.log.Fatal("gRPC listen error", map[string]any{"error": err.Error()})
+			return
+		}
+		a.log.Info("gRPC server starting", map[string]any{"addr": addr})
+		if err := a.grpcServer.Serve(lis); err != nil {
+			a.log.Error("gRPC server exited", map[string]any{"error": err.Error()})
+		}
+	}()
+
+	go func() {
 		if err := a.sqsConsumer.Run(ctx); err != nil {
 			a.log.Error("SQS consumer exited", map[string]any{"error": err.Error()})
 		}
 	}()
 
-	// TODO: start gRPC server
-	// TODO: start outbox relay worker
+	go func() {
+		if err := a.outboxRelay.Run(ctx); err != nil {
+			a.log.Error("outbox relay exited", map[string]any{"error": err.Error()})
+		}
+	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -105,6 +172,7 @@ func (a *app) run() {
 	if err := a.httpServer.Shutdown(shutdownCtx); err != nil {
 		a.log.Error("HTTP server shutdown error", map[string]any{"error": err.Error()})
 	}
+	a.grpcServer.GracefulStop()
 
 	a.pool.Close()
 	a.shutdown()
