@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -20,6 +22,8 @@ type Config struct {
 	OTELTracesSamplerRatio   float64
 
 	DatabaseURL string
+	PGMaxConns  int32
+	PGMinConns  int32
 
 	ValkeyAddr     string
 	ValkeyPassword string
@@ -37,6 +41,8 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	_ = godotenv.Load()
+
 	cfg := &Config{
 		AppEnv:       getEnvOrDefault("APP_ENV", "dev"),
 		BuildVersion: getEnvOrDefault("BUILD_VERSION", "dev"),
@@ -50,6 +56,8 @@ func Load() (*Config, error) {
 		OTELTracesSamplerRatio: getEnvFloat64OrDefault("OTEL_TRACES_SAMPLER_RATIO", 1.0),
 
 		DatabaseURL: getEnvOrDefault("DATABASE_URL", ""),
+		PGMaxConns:  int32(getEnvIntOrDefault("PG_MAX_CONNS", 10)),
+		PGMinConns:  int32(getEnvIntOrDefault("PG_MIN_CONNS", 2)),
 
 		ValkeyAddr:     getEnvOrDefault("VALKEY_ADDR", "localhost:6379"),
 		ValkeyPassword: getEnvOrDefault("VALKEY_PASSWORD", ""),
