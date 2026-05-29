@@ -23,7 +23,7 @@ var (
 type BPMNErrorCode string
 
 const (
-	BPMNErrRejectedElement        BPMNErrorCode = "REJECTED_ELEMENT"
+	BPMNErrRejectedElement           BPMNErrorCode = "REJECTED_ELEMENT"
 	BPMNErrMissingNamespace       BPMNErrorCode = "MISSING_NAMESPACE"
 	BPMNErrMissingZeebeProperty   BPMNErrorCode = "MISSING_ZEEBE_PROPERTY"
 	BPMNErrInvalidDeptID          BPMNErrorCode = "INVALID_DEPT_ID"
@@ -42,7 +42,8 @@ const (
 	BPMNErrUnmatchedGateway       BPMNErrorCode = "UNMATCHED_GATEWAY"
 	BPMNErrInvalidSequenceFlowRef BPMNErrorCode = "INVALID_SEQUENCE_FLOW_REF"
 	BPMNErrMultipleProcesses      BPMNErrorCode = "MULTIPLE_PROCESSES"
-	BPMNErrInvalidSLADuration     BPMNErrorCode = "INVALID_SLA_DURATION"
+	BPMNErrInvalidSLADuration        BPMNErrorCode = "INVALID_SLA_DURATION"
+	BPMNErrInvalidZeebeProperty      BPMNErrorCode = "INVALID_ZEEBE_PROPERTY"
 )
 
 type BPMNValidationError struct {
@@ -53,4 +54,14 @@ type BPMNValidationError struct {
 
 func (e *BPMNValidationError) Error() string {
 	return string(e.Code) + ": " + e.Message
+}
+
+// ValidationFailedError is returned when BPMN structural or semantic validation fails.
+// It carries the full list of per-node errors so the handler can render invalid_params.
+type ValidationFailedError struct {
+	Errors []BPMNValidationError
+}
+
+func (e *ValidationFailedError) Error() string {
+	return "BPMN validation failed"
 }
