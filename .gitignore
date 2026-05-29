@@ -25,6 +25,8 @@
 !*.md
 !.gitkeep
 
+!openapi.yaml
+
 # RE-IGNORE: generated output
 # (directories ignored here take precedence over !*.go above)
 /gen/

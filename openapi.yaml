@@ -1,0 +1,1304 @@
+openapi: "3.0.3"
+info:
+  title: Workflow Definition Service
+  version: "1.0.0"
+  description: >
+    Manages workflow template lifecycle: create, draft, publish, archive, clone,
+    promote, validate, export, and diff BPMN-based workflow definitions.
+    All identity and tenant context is injected by the Envoy API Gateway.
+servers:
+  - url: https://api.internal/definition/v1
+# All endpoints require a valid tenant context injected by the Envoy gateway.
+# Mutating endpoints (POST/PUT/DELETE) additionally require x-tenant-roles.
+security:
+  - GatewayTenantContext: []
+components:
+
+  securitySchemes:
+    GatewayTenantContext:
+      type: apiKey
+      in: header
+      name: x-tenant-id
+      description: >
+        Tenant UUID injected by the Envoy ext_authz filter after JWT validation.
+        Must be present on every request. Never supplied directly by the client
+        in production — the gateway rejects any request without a valid JWT and
+        sets this header from the token claims.
+
+    AdminRoles:
+      type: apiKey
+      in: header
+      name: x-tenant-roles
+      description: >
+        Roles claim injected by the gateway. Required for mutating operations.
+        Contains a comma-separated list of roles (e.g. tenant_admin,member).
+        Accepted values for mutation: tenant_admin, tenant_owner.
+        Read-only endpoints (GET) do not require this header.
+
+  parameters:
+    TenantId:
+      name: x-tenant-id
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Tenant UUID injected by Envoy.
+
+    UserId:
+      name: x-user-id
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Authenticated user UUID injected by Envoy.
+
+    TenantRoles:
+      name: x-tenant-roles
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Comma-separated tenant roles injected by Envoy.
+
+    Departments:
+      name: x-departments
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Comma-separated list of department memberships and role levels injected by Envoy.
+
+    Plan:
+      name: x-plan
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Tenant billing plan tier injected by Envoy.
+
+    FeatureFlags:
+      name: x-feature-flags
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Encoded set of effective feature flags injected by Envoy.
+
+    WorkflowId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    VersionId:
+      name: version_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: Optional unique client-generated request key to prevent duplicate operations on network retries.
+
+  schemas:
+
+    VersionStatus:
+      type: string
+      enum: [DRAFT, PUBLISHED, ARCHIVED]
+
+    ChangeType:
+      type: string
+      enum: [STRUCTURAL, METADATA_ONLY]
+
+    Pagination:
+      type: object
+      properties:
+        total_count: { type: integer }
+        page:        { type: integer }
+        limit:       { type: integer }
+      example:
+        total_count: 4
+        page: 1
+        limit: 20
+
+    ValidationError:
+      type: object
+      properties:
+        node_id: { type: string }
+        error:   { type: string }
+      example:
+        node_id: Task_design_prep
+        error: "Missing mandatory Zeebe property 'dept_id'"
+
+    WorkflowSummary:
+      type: object
+      properties:
+        id:                    { type: string, format: uuid }
+        key:                   { type: string }
+        name:                  { type: string }
+        description:           { type: string }
+        active_version_id:     { type: string, format: uuid, nullable: true }
+        active_version_number: { type: integer, nullable: true }
+        has_draft:             { type: boolean }
+        created_at:            { type: string, format: date-time }
+        updated_at:            { type: string, format: date-time }
+      example:
+        id: 7ca648b2-b432-4744-884c-35fd556a310c
+        key: tender-review-123
+        name: Tender Document Review Process
+        description: Standard review process for tender proposal documents
+        active_version_id: 8fa88cde-824c-47bc-836b-665cd42c2222
+        active_version_number: 3
+        has_draft: true
+        created_at: "2026-05-10T08:00:00Z"
+        updated_at: "2026-05-18T12:30:00Z"
+
+    VersionSummary:
+      type: object
+      properties:
+        id:                  { type: string, format: uuid }
+        version_number:      { type: integer, nullable: true }
+        status:              { $ref: '#/components/schemas/VersionStatus' }
+        is_valid:            { type: boolean }
+        created_by_user_id:  { type: string, format: uuid }
+        published_at:        { type: string, format: date-time, nullable: true }
+      example:
+        id: 8fa88cde-824c-47bc-836b-665cd42c2222
+        version_number: 2
+        status: PUBLISHED
+        is_valid: true
+        created_by_user_id: 4da18bde-7244-47ac-986c-665cd42caaaa
+        published_at: "2026-05-14T09:00:00Z"
+
+    StageDef:
+      type: object
+      required: [type, activity, role, default_assignees]
+      properties:
+        type:                { type: string, enum: [prep, review, approve] }
+        activity:            { type: string }
+        role:                { type: string }
+        default_assignees:
+          type: array
+          items: { type: string, format: uuid }
+          minItems: 1
+          description: "One or more default assignee UUIDs. Always an array even for single-assignee nodes."
+        assignee_mode:
+          type: string
+          enum: [any, all]
+          default: any
+          description: "'any' — first to complete advances the workflow; 'all' — every assignee must complete."
+        requires_comment:    { type: boolean, default: false }
+        sla_duration:        { type: string, description: "Optional SLA duration limit (e.g. '24h', '2d')." }
+        condition_expression: { type: string, description: "Optional routing condition expression for exclusive gateway branches." }
+      example:
+        type: prep
+        activity: PrepActivity
+        role: preparator
+        default_assignees: [550e8400-e29b-41d4-a716-446655440000]
+        assignee_mode: any
+        requires_comment: false
+        sla_duration: "24h"
+
+    DepartmentDef:
+      type: object
+      required: [id, label, stages]
+      properties:
+        id:     { type: string }
+        label:  { type: string }
+        stages:
+          type: array
+          items: { $ref: '#/components/schemas/StageDef' }
+      example:
+        id: design
+        label: Design
+        stages:
+          - type: prep
+            activity: PrepActivity
+            role: preparator
+            default_assignees: [550e8400-e29b-41d4-a716-446655440000]
+            assignee_mode: any
+            requires_comment: false
+            sla_duration: "24h"
+          - type: review
+            activity: ReviewActivity
+            role: reviewer
+            default_assignees: [550e8400-e29b-41d4-a716-446655440001, 661f9511-f3ac-52e5-b827-557766551111]
+            assignee_mode: any
+            requires_comment: true
+            sla_duration: "12h"
+          - type: approve
+            activity: ApproveActivity
+            role: approver
+            default_assignees: [550e8400-e29b-41d4-a716-446655440002]
+            assignee_mode: any
+            requires_comment: false
+
+    ExecutionStep:
+      type: object
+      properties:
+        sequential:
+          type: array
+          items: { type: string }
+        parallel:
+          type: array
+          items: { type: string }
+        exclusive:
+          type: array
+          items:
+            oneOf:
+              - type: string
+              - type: object
+                required: [target, condition_expression]
+                properties:
+                  target: { type: string }
+                  condition_expression: { type: string }
+      example:
+        sequential: [design, planning, construction]
+
+    CompiledPlan:
+      type: object
+      required: [name, version, task_queue, departments, execution]
+      properties:
+        name:        { type: string }
+        version:     { type: string }
+        task_queue:  { type: string }
+        departments:
+          type: array
+          items: { $ref: '#/components/schemas/DepartmentDef' }
+        execution:
+          type: object
+          properties:
+            steps:
+              type: array
+              items: { $ref: '#/components/schemas/ExecutionStep' }
+      example:
+        name: Tender Document Review Process
+        version: "2"
+        task_queue: wf-queue-default
+        departments:
+          - id: design
+            label: Design
+            stages:
+              - { type: prep,    activity: PrepActivity,    role: preparator, default_assignees: [550e8400-e29b-41d4-a716-446655440000], assignee_mode: any, requires_comment: false, sla_duration: "24h" }
+              - { type: review,  activity: ReviewActivity,  role: reviewer,   default_assignees: [550e8400-e29b-41d4-a716-446655440001, 661f9511-f3ac-52e5-b827-557766551111], assignee_mode: any, requires_comment: true,  sla_duration: "12h" }
+              - { type: approve, activity: ApproveActivity, role: approver,   default_assignees: [550e8400-e29b-41d4-a716-446655440002], assignee_mode: any, requires_comment: false }
+          - id: planning
+            label: Planning
+            stages:
+              - { type: prep,    activity: PrepActivity,    role: preparator, default_assignees: [550e8400-e29b-41d4-a716-446655440003], assignee_mode: any, requires_comment: false, sla_duration: "48h" }
+              - { type: review,  activity: ReviewActivity,  role: reviewer,   default_assignees: [550e8400-e29b-41d4-a716-446655440004], assignee_mode: any, requires_comment: true }
+              - { type: approve, activity: ApproveActivity, role: approver,   default_assignees: [550e8400-e29b-41d4-a716-446655440005], assignee_mode: all, requires_comment: false }
+        execution:
+          steps:
+            - sequential: [design, planning]
+
+    StepChange:
+      type: object
+      properties:
+        description: { type: string }
+        before:      { $ref: '#/components/schemas/ExecutionStep' }
+        after:       { $ref: '#/components/schemas/ExecutionStep' }
+      example:
+        description: "Step 1 changed from sequential to parallel"
+        before: { sequential: [design, planning] }
+        after:  { parallel:   [design, planning] }
+
+    ProblemDetails:
+      type: object
+      required: [type, title, status, detail, instance, code]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: A URI reference that identifies the problem type.
+        title:
+          type: string
+          description: A short, human-readable summary of the problem type.
+        status:
+          type: integer
+          description: The HTTP status code generated by the origin server for this occurrence of the problem.
+        detail:
+          type: string
+          description: A human-readable explanation specific to this occurrence of the problem.
+        instance:
+          type: string
+          description: A URI reference that identifies the specific occurrence of the problem.
+        code:
+          type: string
+          description: Service-specific error code for programmatic handling.
+        invalid_params:
+          type: array
+          description: Details about specific fields that failed validation.
+          items:
+            type: object
+            required: [name, reason]
+            properties:
+              name:
+                type: string
+              reason:
+                type: string
+              code:
+                type: string
+      example:
+        type: "https://api.workflow.platform/errors/not-found"
+        title: "Resource Not Found"
+        status: 404
+        detail: "Workflow not found or tenant boundary breached."
+        instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222"
+        code: "NOT_FOUND"
+
+    BpmnErrorCode:
+      type: string
+      description: Machine-readable BPMN validation error code.
+      enum:
+        - REJECTED_ELEMENT            # Element not in the parser allowlist (§4.1.4)
+        - MISSING_NAMESPACE           # Required bpmn or zeebe namespace missing
+        - MISSING_ZEEBE_PROPERTY      # Required Zeebe property absent on a userTask
+        - INVALID_DEPT_ID             # dept_id doesn't match any lane name in the process
+        - INVALID_STAGE_TYPE          # stage_type not one of prep / review / approve
+        - ROLE_EMPTY                  # role property is empty or exceeds 64 chars
+        - INVALID_UUID                # one or more values in default_user_ids are not valid UUID v4
+        - TASK_LIMIT_EXCEEDED         # userTask count > 64
+        - LANE_LIMIT_EXCEEDED         # lane count > 16
+        - MULTIPLE_START_EVENTS       # More than one startEvent in the process
+        - MULTIPLE_END_EVENTS         # More than one endEvent in the process
+        - NO_START_EVENT              # Process has no startEvent
+        - NO_END_EVENT                # Process has no endEvent
+        - DANGLING_NODE               # Node has no incoming or outgoing sequence flow
+        - UNREACHABLE_NODE            # Node not reachable from startEvent via DFS
+        - CYCLE_DETECTED              # Tarjan SCC found a strongly connected component
+        - UNMATCHED_GATEWAY           # Split gateway has no reachable matching join gateway
+        - INVALID_SEQUENCE_FLOW_REF   # sequenceFlow references unknown sourceRef or targetRef
+        - MULTIPLE_PROCESSES          # More than one <bpmn:process> in definitions
+        - INVALID_SLA_DURATION        # sla_duration property is provided but is in an invalid format
+        - TASK_ASSIGNEE_LIMIT_EXCEEDED # default_user_ids contains more than 10 UUIDs
+        - INVALID_ZEEBE_PROPERTY      # assignee_mode value is not 'any' or 'all'
+
+    BpmnValidationFailure:
+      type: object
+      description: Returned on 422 for any BPMN semantic or structural rejection.
+      properties:
+        valid:
+          type: boolean
+          example: false
+        errors:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [code, message]
+            properties:
+              code:    { $ref: '#/components/schemas/BpmnErrorCode' }
+              node_id:
+                type: string
+                nullable: true
+                description: BPMN element ID that caused the error, if applicable.
+                example: Task_design_prep
+              message:
+                type: string
+                description: Human-readable description of the failure.
+                example: "Missing mandatory Zeebe property 'dept_id'"
+      example:
+        valid: false
+        errors:
+          - code: MISSING_ZEEBE_PROPERTY
+            node_id: Task_design_prep
+            message: "Missing mandatory Zeebe property 'dept_id'"
+          - code: UNMATCHED_GATEWAY
+            node_id: Gateway_Split
+            message: "Parallel split gateway has no reachable matching join gateway"
+
+    StructuralDivergenceError:
+      type: object
+      properties:
+        code:             { type: string, example: STRUCTURAL_DIVERGENCE }
+        message:          { type: string }
+        suggested_action: { type: string, example: CREATE_NEW_WORKFLOW }
+      example:
+        code: STRUCTURAL_DIVERGENCE
+        message: "Topological elements have diverged. Publishing may break active instances."
+        suggested_action: CREATE_NEW_WORKFLOW
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid gateway identity headers.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/unauthorized"
+            title: "Unauthorized Access"
+            status: 401
+            detail: "x-tenant-id header is missing or could not be resolved to a valid tenant."
+            instance: "/workflows"
+            code: "UNAUTHORIZED"
+
+    Forbidden:
+      description: Caller lacks the required role or plan limits were exceeded.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/forbidden"
+            title: "Forbidden Operation"
+            status: 403
+            detail: "This operation requires x-tenant-roles: tenant_admin or tenant_owner."
+            instance: "/workflows"
+            code: "FORBIDDEN"
+
+    NotFound:
+      description: Resource not found or tenant boundary breached (security through obscurity).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/not-found"
+            title: "Resource Not Found"
+            status: 404
+            detail: "Workflow not found or belongs to a different tenant."
+            instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222"
+            code: "NOT_FOUND"
+
+    Conflict:
+      description: State conflict — see error body for detail.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/conflict"
+            title: "State Conflict"
+            status: 409
+            detail: "An active draft already exists for this workflow. Publish or discard it before initializing a new one."
+            instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/draft"
+            code: "DRAFT_ALREADY_EXISTS"
+
+    UnprocessableEntity:
+      description: Semantically invalid BPMN — see errors array for per-node details.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/validation-failed"
+            title: "BPMN Validation Failed"
+            status: 422
+            detail: "BPMN semantic or structural validation failed."
+            instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/versions/11abcc22/publish"
+            code: "BPMN_VALIDATION_FAILED"
+            invalid_params:
+              - name: Task_design_prep
+                reason: "Missing mandatory Zeebe property 'dept_id'"
+                code: MISSING_ZEEBE_PROPERTY
+              - name: Gateway_parallel_split
+                reason: "Parallel split gateway has no reachable matching join gateway"
+                code: UNMATCHED_GATEWAY
+
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/internal-error"
+            title: "Internal Server Error"
+            status: 500
+            detail: "An unexpected error occurred. Please retry or contact support if the issue persists."
+            instance: "/workflows"
+            code: "INTERNAL_ERROR"
+
+paths:
+
+  # 3.1 / 3.2
+  /workflows:
+    get:
+      operationId: listWorkflows
+      summary: List tenant workflows
+      tags: [Workflows]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: search
+          schema: { type: string }
+          description: Fuzzy search on business_key or name.
+        - in: query
+          name: key
+          schema: { type: string }
+          description: Exact business key match (business_key = key).
+        - in: query
+          name: is_valid
+          schema: { type: boolean }
+          description: Filter by validation status of the active version.
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, archived]
+          description: Filter active (active_version_id IS NOT NULL) or archived (active_version_id IS NULL) workflows.
+        - in: query
+          name: has_draft
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Paginated workflow list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflows:
+                    type: array
+                    items: { $ref: '#/components/schemas/WorkflowSummary' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+    post:
+      operationId: createWorkflow
+      summary: Create workflow definition (first draft)
+      tags: [Workflows]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, name, xml]
+              properties:
+                key:
+                  type: string
+                  minLength: 2
+                  maxLength: 64
+                  pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+                  description: Unique slug for this workflow within the tenant. Lowercase alphanumeric and hyphens only. Immutable after creation.
+                  example: tender-review
+                name:
+                  type: string
+                  minLength: 2
+                  maxLength: 128
+                  example: Tender Document Review Process
+                description:
+                  type: string
+                  maxLength: 512
+                  example: Standard review process for tender proposal documents
+                xml:
+                  type: string
+                  minLength: 50
+                  maxLength: 5242880
+                  description: Raw BPMN 2.0 XML string. Max 5 MB (5,242,880 chars). Must declare bpmn and zeebe namespaces.
+                  example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
+      responses:
+        "201":
+          description: Workflow and initial draft created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:    { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer, nullable: true }
+                  message:        { type: string }
+        "400":
+          description: Malformed request body — unparseable JSON or missing required field.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  # 3.12 — must come before /workflows/{id} to avoid route shadowing
+  /workflows/validate:
+    post:
+      operationId: validateBpmn
+      summary: Validate BPMN without persisting
+      tags: [Validation]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [xml]
+              properties:
+                xml:
+                  type: string
+                  minLength: 50
+                  maxLength: 5242880
+                  description: Raw BPMN 2.0 XML. Max 5 MB. Must declare bpmn and zeebe namespaces.
+                  example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
+                  
+      responses:
+        "200":
+          description: BPMN validation results (valid status and potential errors list).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BpmnValidationFailure' }
+        "400":
+          description: Malformed XML payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "413":
+          description: Payload exceeds 5 MB limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  # 3.3
+  /workflows/{id}:
+    get:
+      operationId: getWorkflow
+      summary: Get workflow root and version history
+      tags: [Workflows]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - in: query
+          name: versions_limit
+          schema: { type: integer, default: 20, maximum: 100 }
+          description: Max number of versions returned inline in the versions array.
+      responses:
+        "200":
+          description: Workflow detail with version list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:               { type: string, format: uuid }
+                  key:              { type: string }
+                  name:             { type: string }
+                  description:      { type: string }
+                  active_version_id: { type: string, format: uuid, nullable: true }
+                  created_at:       { type: string, format: date-time }
+                  versions:
+                    type: array
+                    items: { $ref: '#/components/schemas/VersionSummary' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  /workflows/{id}/versions:
+    get:
+      operationId: listWorkflowVersions
+      summary: Get paginated version history of a workflow
+      tags: [Versions]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        "200":
+          description: Paginated version list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items: { $ref: '#/components/schemas/VersionSummary' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  # 3.5 / 3.9
+  /workflows/{id}/draft:
+    get:
+      operationId: getDraft
+      summary: Get the active draft version detail for a workflow
+      tags: [Drafts]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+      responses:
+        "200":
+          description: Draft version detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version_id:         { type: string, format: uuid }
+                  workflow_id:        { type: string, format: uuid }
+                  version_number:     { type: integer, nullable: true }
+                  status:             { $ref: '#/components/schemas/VersionStatus' }
+                  is_valid:           { type: boolean }
+                  validation_errors:
+                    type: array
+                    items: { $ref: '#/components/schemas/ValidationError' }
+                    nullable: true
+                  bpmn_xml:           { type: string }
+                  compiled_plan_json: { $ref: '#/components/schemas/CompiledPlan' }
+                  created_by_user_id: { type: string, format: uuid }
+                  created_at:         { type: string, format: date-time }
+                  published_at:       { type: string, format: date-time, nullable: true }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404":
+          description: Draft not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+    post:
+      operationId: initDraft
+      summary: Initialize a new draft from the active published version
+      tags: [Drafts]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        "201":
+          description: Draft created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:    { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer, nullable: true }
+                  message:        { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+    put:
+      operationId: updateDraft
+      summary: Save canvas changes to the active draft
+      tags: [Drafts]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 2
+                  maxLength: 128
+                  example: Updated Tender Review Process
+                description:
+                  type: string
+                  maxLength: 512
+                  example: Updated standard review process
+                xml:
+                  type: string
+                  minLength: 50
+                  maxLength: 5242880
+                  description: Updated BPMN 2.0 XML. Max 5 MB. Must declare bpmn and zeebe namespaces.
+      responses:
+        "200":
+          description: Draft updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:    { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer, nullable: true }
+                  message:        { type: string }
+        "400":
+          description: Malformed request body or unparseable XML.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+    delete:
+      operationId: discardDraft
+      summary: Discard and delete the active draft
+      tags: [Drafts]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        "200":
+          description: Draft discarded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id: { type: string, format: uuid }
+                  message:     { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  # 3.8
+  /workflows/{id}/archive:
+    post:
+      operationId: archiveWorkflow
+      summary: Archive workflow — prevents new execution instances
+      tags: [Workflows]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        "200":
+          description: Workflow archived.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id: { type: string, format: uuid }
+                  status:      { $ref: '#/components/schemas/VersionStatus' }
+                  message:     { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  # 3.4
+  /workflows/{id}/versions/{version_id}:
+    get:
+      operationId: getVersion
+      summary: Get version detail including BPMN XML and compiled DSL
+      tags: [Versions]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        "200":
+          description: Version detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version_id:         { type: string, format: uuid }
+                  workflow_id:        { type: string, format: uuid }
+                  version_number:     { type: integer, nullable: true }
+                  status:             { $ref: '#/components/schemas/VersionStatus' }
+                  is_valid:           { type: boolean }
+                  validation_errors:
+                    type: array
+                    items: { $ref: '#/components/schemas/ValidationError' }
+                    nullable: true
+                  bpmn_xml:           { type: string }
+                  compiled_plan_json: { $ref: '#/components/schemas/CompiledPlan' }
+                  created_by_user_id: { type: string, format: uuid }
+                  created_at:         { type: string, format: date-time }
+                  published_at:       { type: string, format: date-time, nullable: true }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  # 3.7
+  /workflows/{id}/versions/{version_id}/publish:
+    post:
+      operationId: publishVersion
+      summary: Compile and publish the active draft
+      tags: [Versions]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force_publish_structural:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Version published.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:    { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer }
+                  message:        { type: string }
+        "400":
+          description: Malformed request body — unparseable JSON or missing required field.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: Structural divergence detected — see suggested_action.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StructuralDivergenceError' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  # 3.10
+  /workflows/{id}/versions/{version_id}/clone:
+    post:
+      operationId: cloneVersion
+      summary: Clone a published version into a new workflow key
+      tags: [Versions]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_key, new_name]
+              properties:
+                new_key:
+                  type: string
+                  minLength: 2
+                  maxLength: 64
+                  pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+                  description: New unique slug for the cloned workflow. Must not already exist for this tenant.
+                  example: tender-review-copy
+                new_name:
+                  type: string
+                  minLength: 2
+                  maxLength: 128
+                  example: "Tender Document Review Process (Cloned)"
+                new_description:
+                  type: string
+                  maxLength: 512
+                  example: Duplicate copy of standard review process
+      responses:
+        "201":
+          description: New workflow created from clone.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:    { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer, nullable: true }
+                  message:        { type: string }
+        "400": { $ref: '#/components/responses/UnprocessableEntity' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  # 3.11
+  /workflows/{id}/versions/{version_id}/promote:
+    post:
+      operationId: promoteVersion
+      summary: Promote a published version to active (rollback / rollforward)
+      tags: [Versions]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        "200":
+          description: Version promoted to active.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:       { type: string, format: uuid }
+                  active_version_id: { type: string, format: uuid }
+                  version_number:    { type: integer }
+                  message:           { type: string }
+        "400": { $ref: '#/components/responses/UnprocessableEntity' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  # 3.13
+  /workflows/{id}/versions/{version_id}/export:
+    get:
+      operationId: exportBpmn
+      summary: Download raw BPMN XML for a version
+      tags: [Versions]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        "200":
+          description: Raw BPMN XML file.
+          headers:
+            Content-Disposition:
+              schema: { type: string, example: 'attachment; filename="workflow-tender-review-v2.bpmn"' }
+          content:
+            application/xml:
+              schema: { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  # 3.14
+  /workflows/{id}/versions/{a}/diff/{b}:
+    get:
+      operationId: getVersionDiff
+      summary: Structural diff between two versions
+      tags: [Versions]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - name: a
+          in: path
+          required: true
+          description: Base version ID.
+          schema: { type: string, format: uuid }
+        - name: b
+          in: path
+          required: true
+          description: Target version ID.
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Diff result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:       { type: string, format: uuid }
+                  base_version_id:   { type: string, format: uuid }
+                  target_version_id: { type: string, format: uuid }
+                  change_type:       { $ref: '#/components/schemas/ChangeType' }
+                  changes:
+                    type: object
+                    properties:
+                      added_departments:   { type: array, items: { type: string } }
+                      removed_departments: { type: array, items: { type: string } }
+                      step_changes:
+                        type: array
+                        items: { $ref: '#/components/schemas/StepChange' }
+                      metadata_only: { type: boolean }
+        "400": { $ref: '#/components/responses/UnprocessableEntity' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+  # Health Checks
+  /healthz:
+    get:
+      operationId: healthCheck
+      summary: Liveness Probe
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "OK" }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  /readyz:
+    get:
+      operationId: readinessCheck
+      summary: Readiness Probe
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is ready to accept traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "OK" }
+                  database: { type: string, example: "connected" }
+        "503":
+          description: Service is not ready (e.g. database disconnected).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example:
+                type: "https://api.workflow.platform/errors/service-unavailable"
+                title: "Service Unavailable"
+                status: 503
+                detail: "Database connectivity check failed."
+                instance: "/readyz"
+                code: "DATABASE_DISCONNECTED"
+
+tags:
+  - name: Workflows
+    description: Root workflow template management.
+  - name: Drafts
+    description: Draft workspace operations (init, save, discard).
+  - name: Versions
+    description: Version-specific operations (get, publish, clone, promote, export, diff).
+  - name: Validation
+    description: Stateless BPMN validation.
+  - name: Health
+    description: Health and readiness checks.
