@@ -31,8 +31,10 @@ go run ./cmd/server
 The server is ready when you see:
 
 ```
-INFO  HTTP server starting  {"addr": ":8080"}
-INFO  stub: SQS consumer started (no-op — AWS_USE_STUB=true)
+INFO  HTTP server starting         {"addr": ":8080"}
+INFO  gRPC server starting         {"addr": ":9090"}
+INFO  stub: SQS consumer started   (no-op — AWS_USE_STUB=true)
+INFO  stub: outbox relay started   (no-op)
 ```
 
 Verify with:

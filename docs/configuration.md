@@ -32,6 +32,9 @@ Copy `.env.example` to `.env` for local development.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | **Yes** | — | pgx DSN, e.g. `postgres://user:pass@host:5432/db?sslmode=disable` |
+| `PG_MAX_CONNS` | No | `10` | Max open connections in the pgx pool |
+| `PG_MIN_CONNS` | No | `2` | Min idle connections kept alive |
+| `PG_SLOW_QUERY_THRESHOLD_MS` | No | `200` | Queries exceeding this duration (ms) are logged as slow; passed to `platform-pgcommon` on integration |
 
 ## Valkey
 
