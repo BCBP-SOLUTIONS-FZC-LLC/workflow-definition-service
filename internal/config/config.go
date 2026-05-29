@@ -21,9 +21,10 @@ type Config struct {
 	OTELExporterInsecure     bool
 	OTELTracesSamplerRatio   float64
 
-	DatabaseURL string
-	PGMaxConns  int32
-	PGMinConns  int32
+	DatabaseURL            string
+	PGMaxConns             int32
+	PGMinConns             int32
+	PGSlowQueryThresholdMS int
 
 	ValkeyAddr     string
 	ValkeyPassword string
@@ -55,9 +56,10 @@ func Load() (*Config, error) {
 		OTELExporterInsecure:   getEnvBoolOrDefault("OTEL_EXPORTER_OTLP_INSECURE", true),
 		OTELTracesSamplerRatio: getEnvFloat64OrDefault("OTEL_TRACES_SAMPLER_RATIO", 1.0),
 
-		DatabaseURL: getEnvOrDefault("DATABASE_URL", ""),
-		PGMaxConns:  int32(getEnvIntOrDefault("PG_MAX_CONNS", 10)),
-		PGMinConns:  int32(getEnvIntOrDefault("PG_MIN_CONNS", 2)),
+		DatabaseURL:            getEnvOrDefault("DATABASE_URL", ""),
+		PGMaxConns:             int32(getEnvIntOrDefault("PG_MAX_CONNS", 10)),
+		PGMinConns:             int32(getEnvIntOrDefault("PG_MIN_CONNS", 2)),
+		PGSlowQueryThresholdMS: getEnvIntOrDefault("PG_SLOW_QUERY_THRESHOLD_MS", 200),
 
 		ValkeyAddr:     getEnvOrDefault("VALKEY_ADDR", "localhost:6379"),
 		ValkeyPassword: getEnvOrDefault("VALKEY_PASSWORD", ""),
