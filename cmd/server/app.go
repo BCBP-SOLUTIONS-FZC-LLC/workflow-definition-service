@@ -20,11 +20,15 @@ import (
 
 	definitionv1 "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/definition/v1"
 	grpcadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/grpc"
+	httphandler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/sqs"
+	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres"
 	snspub "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/sns"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/valkey"
+	bpmncompiler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/outbox"
 )
 
@@ -63,7 +67,48 @@ func newApp(cfg *config.Config) (*app, error) {
 
 	publisher := snspub.NewStubPublisher(log)
 	sqsConsumer := sqs.NewStubConsumer(log)
-	relay := outbox.NewRelay(nil, publisher, cfg.OutboxPollInterval, cfg.OutboxBatchSize, log)
+
+	outboxRepo := pgadapter.NewOutboxRepo(pool)
+	relay := outbox.NewRelay(outboxRepo, publisher, cfg.OutboxPollInterval, cfg.OutboxBatchSize, log)
+
+	workflowRepo := pgadapter.NewWorkflowRepo(pool)
+	versionRepo := pgadapter.NewWorkflowVersionRepo(pool)
+	assigneeRepo := pgadapter.NewAssigneeRepo(pool)
+	compiler := bpmncompiler.New()
+
+	workflowSvc := service.NewWorkflowService(service.WorkflowDeps{
+		Workflows: workflowRepo,
+		Versions:  versionRepo,
+		Outbox:    outboxRepo,
+		Cache:     cache,
+		Log:       log,
+	})
+	draftSvc := service.NewDraftService(service.DraftDeps{
+		Workflows: workflowRepo,
+		Versions:  versionRepo,
+		Assignees: assigneeRepo,
+		Compiler:  compiler,
+		Log:       log,
+	})
+	versionSvc := service.NewVersionService(service.VersionDeps{
+		Workflows: workflowRepo,
+		Versions:  versionRepo,
+		Assignees: assigneeRepo,
+		Outbox:    outboxRepo,
+		Compiler:  compiler,
+		Log:       log,
+	})
+	validationSvc := service.NewValidationService(service.ValidationDeps{
+		Compiler: compiler,
+		Log:      log,
+	})
+
+	h := httphandler.New(httphandler.Services{
+		Workflows:  workflowSvc,
+		Drafts:     draftSvc,
+		Versions:   versionSvc,
+		Validation: validationSvc,
+	})
 
 	grpcCfg := grpccommon.Config{
 		ServiceName:  cfg.OTELServiceName,
@@ -75,7 +120,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	)
 	definitionv1.RegisterDefinitionServiceServer(grpcSrv, grpcadapter.NewServer(log))
 
-	r := newRouter(cfg, pool, log)
+	r := newRouter(cfg, pool, log, h)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),

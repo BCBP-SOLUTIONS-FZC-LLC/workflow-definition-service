@@ -6,11 +6,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-func newRouter(cfg *config.Config, pool *pgxpool.Pool, log port.Logger) *gin.Engine {
+func newRouter(cfg *config.Config, pool *pgxpool.Pool, log port.Logger, h *handler.Handler) *gin.Engine {
 	if cfg.AppEnv != "dev" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -36,7 +37,24 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, log port.Logger) *gin.Eng
 	for _, mw := range gincommon.ProtectedMiddlewares(mwCfg) {
 		api.Use(mw)
 	}
-	_ = api // TODO: register handlers
+
+	wf := api.Group("/workflows")
+	wf.GET("", h.ListWorkflows)
+	wf.POST("", h.CreateWorkflow)
+	wf.POST("/validate", h.ValidateBPMN)
+	wf.GET("/:id", h.GetWorkflow)
+	wf.GET("/:id/versions", h.ListVersions)
+	wf.GET("/:id/draft", h.GetDraft)
+	wf.POST("/:id/draft", h.InitDraft)
+	wf.PUT("/:id/draft", h.UpdateDraft)
+	wf.DELETE("/:id/draft", h.DiscardDraft)
+	wf.POST("/:id/archive", h.ArchiveWorkflow)
+	wf.GET("/:id/versions/:version_id", h.GetVersion)
+	wf.POST("/:id/versions/:version_id/publish", h.PublishVersion)
+	wf.POST("/:id/versions/:version_id/clone", h.CloneVersion)
+	wf.POST("/:id/versions/:version_id/promote", h.PromoteVersion)
+	wf.GET("/:id/versions/:version_id/export", h.ExportBPMN)
+	wf.GET("/:id/versions/:a/diff/:b", h.GetVersionDiff)
 
 	return r
 }
