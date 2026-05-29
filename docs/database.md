@@ -59,7 +59,7 @@ make generate-sqlc     # sqlc only — use after editing db/queries/*.sql
 ## Key constraints
 
 | Table | Constraint | Enforces |
-|---|---|---|
+| --- | --- | --- |
 | `workflow` | `UNIQUE (tenant_id, business_key)` | No duplicate keys per tenant |
 | `workflow_version` | `idx_wv_single_draft` (partial unique) | At most one DRAFT per workflow |
 | `workflow_version` | `uq_workflow_version_published` | Unique version numbers per workflow |

@@ -5,7 +5,7 @@ The **Workflow Definition Service** is the design-time control plane for the BPM
 ## What it does
 
 | Responsibility | Detail |
-|---|---|
+| --- | --- |
 | **BPMN ingestion** | Accepts BPMN 2.0 XML uploads from the frontend canvas modeler |
 | **Validation** | Runs structural, semantic, and topological (DAG/cycle) checks |
 | **Compilation** | Converts validated BPMN graphs into immutable JSON DSL execution plans |
@@ -25,7 +25,7 @@ The **Workflow Definition Service** is the design-time control plane for the BPM
 ## Tech stack
 
 | Component | Technology |
-|---|---|
+| --- | --- |
 | Language | Go 1.26 |
 | HTTP framework | Gin + `platform-gincommon` |
 | Database | PostgreSQL 16 (pgx/v5, sqlc, Goose migrations) |

@@ -15,17 +15,17 @@ rpc GetCompiledWorkflow(GetCompiledWorkflowRequest)
     returns (GetCompiledWorkflowResponse);
 ```
 
-**Request**
+> **Request**
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `tenant_id` | `string` | Tenant UUID — mandatory; sets RLS session GUC before any DB access |
 | `workflow_version_id` | `string` | UUID of the version record to fetch |
 
-**Response**
+> **Response**
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `workflow_id` | `string` | Parent workflow UUID |
 | `version_id` | `string` | Requested version UUID |
 | `version_number` | `int32` | Published version number |
@@ -33,10 +33,10 @@ rpc GetCompiledWorkflow(GetCompiledWorkflowRequest)
 | `is_valid` | `bool` | `false` if any default assignee has become ineligible |
 | `compiled_plan_json` | `string` | Pre-compiled ExecutionPlan DSL as a JSON string |
 
-**gRPC status codes**
+> **gRPC status codes**
 
 | Code | Meaning |
-|---|---|
+| --- | --- |
 | `OK` (0) | Success |
 | `INVALID_ARGUMENT` (3) | Missing or malformed `tenant_id` / `workflow_version_id` |
 | `NOT_FOUND` (5) | Version not found or RLS filtered it out |

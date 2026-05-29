@@ -4,7 +4,7 @@
 
 The service enforces strict dependency direction — nothing in `core/` imports from `adapter/`.
 
-```
+```sh
 cmd/server/main.go          ← bootstrap + DI wire-up only
 │
 ├── internal/core/
@@ -38,7 +38,7 @@ Import rules (enforced by `go-arch-lint`):
 
 ## HTTP middleware chain
 
-```
+```sh
 Incoming request
   → PanicRecovery          (gincommon) — JSON 500 on panic
   → RequestID              (gincommon) — reads/generates x-request-id
@@ -64,7 +64,7 @@ Incoming request
 
 ## gRPC interceptor chain
 
-```
+```sh
 Incoming gRPC call
   → grpccommon.DefaultUnaryInterceptors   ← Prometheus grpc_server_* metrics, tracing
   → grpccommon.DefaultStreamInterceptors  ← same for streaming RPCs
@@ -75,7 +75,7 @@ Incoming gRPC call
 
 Business mutations and their associated domain events are written in the same PostgreSQL transaction. A background `OutboxRelay` worker polls `status = 'PENDING'` rows, dispatches to SNS, and marks them `SENT`. If the relay crashes between SNS dispatch and DB update, the event UUID is reused for downstream deduplication.
 
-```
+```sh
 Handler
   └─ tx.ExecContext: UPDATE workflow_version SET status='PUBLISHED' ...
   └─ tx.ExecContext: INSERT INTO outbox (id, ..., status='PENDING') ...
@@ -90,7 +90,7 @@ OutboxRelay (every 500ms)
 ## Valkey usage
 
 | Purpose | Key pattern | TTL |
-|---|---|---|
+| --- | --- | --- |
 | Compiled plan cache | `plan:{tenant_id}:{version_id}` | 5 min |
 | Idempotency key | `idempotency:{tenant_id}:{key}` | 24 h |
 | Draft edit lock | `draft_lock:{tenant_id}:{workflow_id}` | 30 s (refreshed) |

@@ -40,11 +40,11 @@ func TestPublishVersion(t *testing.T) {
 ## Unit test coverage
 
 We target 90%+ unit test coverage for all implemented components. This includes:
+
 - **Configuration** (`internal/config`): Tests environment variable parsing, default fallbacks, and validation constraints (e.g. validating missing `DATABASE_URL`).
 - **Valkey Cache** (`internal/adapter/outbound/valkey`): Unit tested using a mockable `redis.Cmdable` interface to mock standard Redis operations (`Get`, `Set`, `Del`, `SetNX`) without requiring a live Redis/Valkey instance.
 
 All stub components (routes returning `501 Not Implemented`, and empty repository/service stubs) are skipped for coverage checks until their actual implementations are added.
-
 
 ## Integration tests
 

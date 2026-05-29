@@ -7,7 +7,7 @@ Full OpenAPI schema: [`.design/definition_openapi.yaml`](../.design/definition_o
 All requests through the Envoy gateway carry these headers (injected post-JWT verification):
 
 | Header | Required | Description |
-|---|---|---|
+| --- | --- | --- |
 | `x-tenant-id` | Yes | Tenant UUID — enforces RLS isolation |
 | `x-user-id` | Yes | Executing user UUID |
 | `x-tenant-roles` | Yes | Comma-separated roles, e.g. `tenant_admin,member` |
@@ -26,7 +26,7 @@ rctx := gincommon.RequestContext(c)
 ## Endpoint registry
 
 | Method | Path | Auth | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `GET` | `/api/v1/workflows` | Any | List tenant workflows |
 | `POST` | `/api/v1/workflows` | Admin | Create workflow + initial draft |
 | `GET` | `/api/v1/workflows/:id` | Any | Workflow detail + version list |
@@ -81,7 +81,7 @@ Validation errors include an `invalid_params` array:
 ## Error codes
 
 | Code | HTTP | Trigger |
-|---|---|---|
+| --- | --- | --- |
 | `NOT_FOUND` | 404 | Workflow or version not found, or RLS boundary breached |
 | `DRAFT_NOT_FOUND` | 404 | No active draft exists for the workflow |
 | `NO_ACTIVE_VERSION` | 404 | Workflow has no published active version |

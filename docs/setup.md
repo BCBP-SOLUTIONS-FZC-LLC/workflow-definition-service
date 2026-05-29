@@ -3,7 +3,7 @@
 ## Prerequisites
 
 | Tool | Min version | Install |
-|---|---|---|
+| --- | --- | --- |
 | Go | 1.26 | [go.dev/dl](https://go.dev/dl/) |
 | Docker + Compose | 24+ | [docs.docker.com](https://docs.docker.com/get-docker/) |
 | Python | 3.9+ | Required for MkDocs only |
@@ -30,7 +30,7 @@ go run ./cmd/server
 
 The server is ready when you see:
 
-```
+```sh
 INFO  HTTP server starting         {"addr": ":8080"}
 INFO  gRPC server starting         {"addr": ":9090"}
 INFO  stub: SQS consumer started (no-op — AWS_USE_STUB=true)
@@ -90,6 +90,6 @@ Variables in `.env` override any existing shell environment values for the durat
 
 ## Useful make targets
 
-```
+```sh
 make help
 ```
