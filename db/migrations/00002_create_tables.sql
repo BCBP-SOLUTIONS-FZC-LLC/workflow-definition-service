@@ -68,6 +68,7 @@ CREATE TABLE processed_event (
     processed_at TIMESTAMP DEFAULT now()
 );
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -75,6 +76,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 CREATE TRIGGER update_workflow_updated_at
     BEFORE UPDATE ON workflow
