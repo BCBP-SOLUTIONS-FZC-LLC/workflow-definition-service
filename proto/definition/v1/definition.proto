@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package workflow.definition.v1;
 
-option go_package = "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/v1;definitionv1";
+option go_package = "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/definition/v1;definitionv1";
 
 service DefinitionService {
   rpc GetCompiledWorkflow(GetCompiledWorkflowRequest) returns (GetCompiledWorkflowResponse);

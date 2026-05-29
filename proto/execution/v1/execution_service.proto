@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package workflow.execution.v1;
 
-option go_package = "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/v1;executionv1";
+option go_package = "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/execution/v1;executionv1";
 
 service ExecutionService {
   rpc CheckActiveInstances(CheckActiveInstancesRequest) returns (CheckActiveInstancesResponse);

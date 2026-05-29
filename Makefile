@@ -54,7 +54,7 @@ generate: generate-proto generate-sqlc
 generate-proto:
 	@echo "→ buf generate"
 	$(BUF) generate
-	@echo "proto stubs written to gen/proto/v1/"
+	@echo "proto stubs written to gen/proto/{definition,execution}/v1/"
 
 generate-sqlc:
 	@echo "→ sqlc generate"
