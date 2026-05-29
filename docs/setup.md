@@ -33,8 +33,8 @@ The server is ready when you see:
 ```
 INFO  HTTP server starting         {"addr": ":8080"}
 INFO  gRPC server starting         {"addr": ":9090"}
-INFO  stub: SQS consumer started   (no-op — AWS_USE_STUB=true)
-INFO  stub: outbox relay started   (no-op)
+INFO  stub: SQS consumer started (no-op — AWS_USE_STUB=true)
+INFO  stub: outbox relay started (no-op)
 ```
 
 Verify with:
@@ -47,7 +47,7 @@ curl http://localhost:8080/metrics   # → Prometheus text
 
 ## AWS stubs
 
-By default `AWS_USE_STUB=true` in `.env.example`. This activates no-op stub adapters for SNS (publisher) and SQS (consumer) so the service boots without any AWS credentials. Set `AWS_USE_STUB=false` and provide real `SNS_TOPIC_ARN` / `SQS_QUEUE_URL` when connecting to actual AWS.
+By default `AWS_USE_STUB=true` in `.env.example`. This activates no-op stub adapters for SNS (publisher) and SQS (consumer) so the service boots without any AWS credentials.
 
 ## Code generation
 

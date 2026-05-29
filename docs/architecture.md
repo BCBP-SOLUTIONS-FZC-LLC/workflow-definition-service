@@ -19,7 +19,8 @@ cmd/server/main.go          ← bootstrap + DI wire-up only
 │   │   └── sqs/            ← membership revocation consumer
 │   └── outbound/
 │       ├── postgres/       ← sqlc-generated DB layer + repo adapter impls
-│       └── sns/            ← SNS EventPublisher impl (+ stub)
+│       ├── sns/            ← SNS stub publisher
+│       └── valkey/         ← Valkey/Redis CacheStore impl
 │
 ├── internal/bpmn_compiler/ ← stateless XML parser, validator, DSL compiler
 ├── internal/outbox/        ← background relay worker
@@ -57,16 +58,16 @@ Incoming request
   → handler
 ```
 
-### Logger adapter
+### Logger
 
-`platform-gincommon` requires a `port.Logger` interface with `map[string]interface{}` fields. Application code uses `*zap.Logger` for typed field calls (`zap.String(...)`, `zap.Error(...)`). A thin `portLogger` adapter in `cmd/server/main.go` wraps one `*zap.Logger` and satisfies both contracts — a single logger instance is shared across middleware and application code.
+`platform-gincommon/pkg/logger` exposes `NewLogger(env)` which returns a value that directly satisfies `port.Logger`. `app.go` calls `logger.NewLogger(cfg.AppEnv)` and passes the result into both `gincommon.Config{Logger: log}` and the service/handler constructors — no adapter wrapper is needed.
 
 ## gRPC interceptor chain
 
 ```
 Incoming gRPC call
-  → grpccommon.DefaultUnaryInterceptors   ← Prometheus grpc_server_* metrics
-  → [custom auth interceptor]             ← validates tenant_id in request payload
+  → grpccommon.DefaultUnaryInterceptors   ← Prometheus grpc_server_* metrics, tracing
+  → grpccommon.DefaultStreamInterceptors  ← same for streaming RPCs
   → DefinitionServiceServer.GetCompiledWorkflow
 ```
 

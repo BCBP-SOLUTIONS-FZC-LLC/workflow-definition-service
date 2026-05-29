@@ -45,14 +45,10 @@ rpc GetCompiledWorkflow(GetCompiledWorkflowRequest)
 
 ---
 
-## Outbound: `CheckActiveInstances`
+## Code generation
 
-Proto: [`proto/execution/v1/execution_service.proto`](../proto/execution/v1/execution_service.proto) — client stub only.
+Proto stubs are generated via `make generate` (runs `buf generate`). Output goes to `gen/proto/` which is **gitignored** — regenerate locally before building:
 
-Called once per `POST /workflows/:id/archive` to guard against archiving a workflow that has running instances.
-
-**Request**: `tenant_id`, `workflow_id`
-
-**Response**: `has_active (bool)`, `count (int32)`
-
-If the Execution Service is unreachable, the archive is rejected with `503 UPSTREAM_UNAVAILABLE`.
+```bash
+make generate
+```

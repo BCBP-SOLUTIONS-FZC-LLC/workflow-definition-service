@@ -1,6 +1,6 @@
 # REST API Reference
 
-Full OpenAPI schema: [`design/LLD/definition_openapi.yaml`](../../../repos/design/LLD/definition_openapi.yaml)
+Full OpenAPI schema: [`.design/definition_openapi.yaml`](../.design/definition_openapi.yaml)
 
 ## Global headers
 
@@ -27,22 +27,22 @@ rctx := gincommon.RequestContext(c)
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/workflows` | Any | List tenant workflows |
-| `POST` | `/workflows` | Admin | Create workflow + initial draft |
-| `GET` | `/workflows/:id` | Any | Workflow detail + version list |
-| `GET` | `/workflows/:id/versions` | Any | Paginated version history |
-| `GET` | `/workflows/:id/versions/:vid` | Any | Version detail (XML + compiled plan) |
-| `GET` | `/workflows/:id/draft` | Any | Active draft detail |
-| `POST` | `/workflows/:id/draft` | Admin | Init draft from active version |
-| `PUT` | `/workflows/:id/draft` | Admin | Update draft XML/name/description |
-| `DELETE` | `/workflows/:id/draft` | Admin | Discard draft |
-| `POST` | `/workflows/:id/versions/:vid/publish` | Admin | Compile & publish draft |
-| `POST` | `/workflows/:id/versions/:vid/clone` | Admin | Clone to new workflow key |
-| `POST` | `/workflows/:id/versions/:vid/promote` | Admin | Rollback/rollforward active pointer |
-| `POST` | `/workflows/:id/archive` | Admin | Archive workflow |
-| `POST` | `/workflows/validate` | Any | Stateless BPMN validation |
-| `GET` | `/workflows/:id/versions/:vid/export` | Any | Download raw BPMN XML |
-| `GET` | `/workflows/:id/versions/:a/diff/:b` | Any | Structural diff between two versions |
+| `GET` | `/api/v1/workflows` | Any | List tenant workflows |
+| `POST` | `/api/v1/workflows` | Admin | Create workflow + initial draft |
+| `GET` | `/api/v1/workflows/:id` | Any | Workflow detail + version list |
+| `GET` | `/api/v1/workflows/:id/versions` | Any | Paginated version history |
+| `GET` | `/api/v1/workflows/:id/versions/:version_id` | Any | Version detail (XML + compiled plan) |
+| `GET` | `/api/v1/workflows/:id/draft` | Any | Active draft detail |
+| `POST` | `/api/v1/workflows/:id/draft` | Admin | Init draft from active version |
+| `PUT` | `/api/v1/workflows/:id/draft` | Admin | Update draft XML/name/description |
+| `DELETE` | `/api/v1/workflows/:id/draft` | Admin | Discard draft |
+| `POST` | `/api/v1/workflows/:id/versions/:version_id/publish` | Admin | Compile & publish draft |
+| `POST` | `/api/v1/workflows/:id/versions/:version_id/clone` | Admin | Clone to new workflow key |
+| `POST` | `/api/v1/workflows/:id/versions/:version_id/promote` | Admin | Rollback/rollforward active pointer |
+| `POST` | `/api/v1/workflows/:id/archive` | Admin | Archive workflow |
+| `POST` | `/api/v1/workflows/validate` | Any | Stateless BPMN validation |
+| `GET` | `/api/v1/workflows/:id/versions/:version_id/export` | Any | Download raw BPMN XML |
+| `GET` | `/api/v1/workflows/:id/versions/:a/diff/:b` | Any | Structural diff between two versions |
 | `GET` | `/healthz` | Public | Liveness probe |
 | `GET` | `/readyz` | Public | Readiness probe (DB ping) |
 | `GET` | `/metrics` | Public | Prometheus metrics |
@@ -62,13 +62,40 @@ rctx := gincommon.RequestContext(c)
 }
 ```
 
-Validation errors include an `errors` array:
+Validation errors include an `invalid_params` array:
 
 ```json
 {
-  "code": "INVALID_BPMN_STRUCTURE",
-  "errors": [
-    { "code": "CYCLE_DETECTED", "node_id": "Task_1", "message": "Cycle detected at task node" }
+  "type": "https://api.workflow.platform/errors/validation-failed",
+  "title": "BPMN Validation Failed",
+  "status": 422,
+  "detail": "BPMN semantic or structural validation failed.",
+  "instance": "/api/v1/workflows/abc/versions/xyz/publish",
+  "code": "BPMN_VALIDATION_FAILED",
+  "invalid_params": [
+    { "name": "Task_1", "reason": "Cycle detected at task node", "code": "CYCLE_DETECTED" }
   ]
 }
 ```
+
+## Error codes
+
+| Code | HTTP | Trigger |
+|---|---|---|
+| `NOT_FOUND` | 404 | Workflow or version not found, or RLS boundary breached |
+| `DRAFT_NOT_FOUND` | 404 | No active draft exists for the workflow |
+| `NO_ACTIVE_VERSION` | 404 | Workflow has no published active version |
+| `UNAUTHORIZED` | 401 | Missing or invalid `x-user-id` / `x-tenant-id` headers |
+| `FORBIDDEN` | 403 | Caller lacks `tenant_admin` or `tenant_owner` role |
+| `DRAFT_ALREADY_EXISTS` | 409 | A draft already exists; publish or discard it first |
+| `DUPLICATE_BUSINESS_KEY` | 409 | Business key already in use within the tenant |
+| `DRAFT_CONCURRENCY` | 409 | Optimistic lock violation on draft save |
+| `INVALID_VERSION_STATUS` | 409 | Operation not valid for the version's current status |
+| `ACTIVE_INSTANCES_EXIST` | 409 | Cannot archive while running instances exist |
+| `STRUCTURAL_DIVERGENCE` | 409 | Topology changed vs. active version; use `force_publish_structural` to override |
+| `IDEMPOTENCY_KEY_REPLAY` | 409 | Same idempotency key submitted with a different payload |
+| `PLAN_QUOTA_EXCEEDED` | 422 | Tenant has reached the maximum number of workflow templates for their plan |
+| `ASSIGNEE_INELIGIBLE` | 422 | A default assignee no longer has the required department/role membership |
+| `BPMN_VALIDATION_FAILED` | 422 | BPMN structural or semantic validation failed; see `invalid_params` |
+| `UPSTREAM_UNAVAILABLE` | 503 | Execution Service or Org & Membership service unreachable |
+| `INTERNAL_ERROR` | 500 | Unexpected server error |

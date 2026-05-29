@@ -16,17 +16,20 @@ See the platform-wide [`coding_style_rules.md`](coding_style_rules.md) for the f
 
 ## Logging
 
-Use `go.uber.org/zap` with typed field calls:
+All service and handler code uses the `port.Logger` interface with `map[string]any` fields:
 
 ```go
 // Correct
-zapLog.Error("publish failed", zap.Error(err), zap.String("tenant_id", tenantID.String()))
+log.Error("publish failed", map[string]any{
+    "error":     err.Error(),
+    "tenant_id": tenantID.String(),
+})
 
 // Wrong — never format into the message string
-zapLog.Error(fmt.Sprintf("publish failed for tenant %s: %v", tenantID, err))
+log.Error(fmt.Sprintf("publish failed for tenant %s: %v", tenantID, err), nil)
 ```
 
-For gincommon middleware, pass the `portLogger` adapter (defined in `cmd/server/main.go`). Do not use `port.Logger` directly in service or handler code.
+`app.go` constructs the logger via `logger.NewLogger(cfg.AppEnv)` and passes the same `port.Logger` value into `gincommon.Config{Logger: log}` and all service/handler constructors.
 
 ## Error handling
 
@@ -45,5 +48,6 @@ For gincommon middleware, pass the `portLogger` adapter (defined in `cmd/server/
 
 - `core/` packages have zero dependencies on `adapter/` or external frameworks
 - All external I/O (DB, cache, HTTP, gRPC) crosses through a `port` interface
-- Constructors accept interfaces, not concrete types
-- `main.go` is the only file that wires concrete adapters to interfaces
+- Service and handler constructors accept interfaces, not concrete types
+- Repository adapter constructors (`NewWorkflowRepo`, etc.) accept `*pgxpool.Pool` — the sqlc/pgx pattern is an intentional exception to the interface rule at the DB adapter layer
+- `app.go` is the only file that wires concrete adapters to interfaces

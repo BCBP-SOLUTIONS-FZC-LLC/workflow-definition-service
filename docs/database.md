@@ -35,10 +35,11 @@ make migrate-down
 
 ## SQL queries
 
-Query definitions in `db/queries/` are compiled to type-safe Go by [sqlc](https://sqlc.dev). Generated output goes to `internal/adapter/outbound/postgres/db/` (gitignored).
+Query definitions in `db/queries/` are compiled to type-safe Go by [sqlc](https://sqlc.dev). Generated output goes to `internal/adapter/outbound/postgres/db/`. Repository adapters in `internal/adapter/outbound/postgres/` hold a `*db.Queries` value and delegate all SQL operations to the generated layer.
 
 ```bash
-make generate   # regenerates sqlc output after editing .sql files
+make generate          # runs buf generate (proto) AND sqlc generate (queries)
+make generate-sqlc     # sqlc only — use after editing db/queries/*.sql
 ```
 
 ## Key constraints
