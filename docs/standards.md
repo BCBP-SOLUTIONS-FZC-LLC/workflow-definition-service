@@ -49,5 +49,5 @@ log.Error(fmt.Sprintf("publish failed for tenant %s: %v", tenantID, err), nil)
 - `core/` packages have zero dependencies on `adapter/` or external frameworks
 - All external I/O (DB, cache, HTTP, gRPC) crosses through a `port` interface
 - Service and handler constructors accept interfaces, not concrete types
-- Repository adapter constructors (`NewWorkflowRepo`, etc.) accept `*pgxpool.Pool` — the sqlc/pgx pattern is an intentional exception to the interface rule at the DB adapter layer
+- Repository adapter constructors (`NewWorkflowRepo`, etc.) accept `*pgcommon.Pool` — the sqlc/pgcommon pattern is an intentional exception to the interface rule at the DB adapter layer
 - `app.go` is the only file that wires concrete adapters to interfaces
