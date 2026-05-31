@@ -5,9 +5,9 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
@@ -15,11 +15,11 @@ import (
 var _ port.AssigneeRepository = (*AssigneeRepo)(nil)
 
 type AssigneeRepo struct {
-	q *db.Queries
+	pool *pgcommon.Pool
 }
 
-func NewAssigneeRepo(pool *pgxpool.Pool) *AssigneeRepo {
-	return &AssigneeRepo{q: db.New(pool)}
+func NewAssigneeRepo(pool *pgcommon.Pool) *AssigneeRepo {
+	return &AssigneeRepo{pool: pool}
 }
 
 func (r *AssigneeRepo) BulkInsert(_ context.Context, _, _ uuid.UUID, _ []*domain.NodeAssignee) error {

@@ -5,9 +5,9 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
@@ -15,11 +15,11 @@ import (
 var _ port.WorkflowVersionRepository = (*WorkflowVersionRepo)(nil)
 
 type WorkflowVersionRepo struct {
-	q *db.Queries
+	pool *pgcommon.Pool
 }
 
-func NewWorkflowVersionRepo(pool *pgxpool.Pool) *WorkflowVersionRepo {
-	return &WorkflowVersionRepo{q: db.New(pool)}
+func NewWorkflowVersionRepo(pool *pgcommon.Pool) *WorkflowVersionRepo {
+	return &WorkflowVersionRepo{pool: pool}
 }
 
 func (r *WorkflowVersionRepo) Create(_ context.Context, _ *domain.WorkflowVersion) error {

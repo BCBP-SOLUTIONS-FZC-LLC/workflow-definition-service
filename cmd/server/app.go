@@ -10,13 +10,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/grpccommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
 
 	definitionv1 "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/definition/v1"
 	grpcadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/grpc"
@@ -35,7 +35,7 @@ import (
 type app struct {
 	cfg         *config.Config
 	log         port.Logger
-	pool        *pgxpool.Pool
+	pool        *pgcommon.Pool
 	cache       port.CacheStore
 	httpServer  *http.Server
 	grpcServer  *grpc.Server
@@ -143,15 +143,14 @@ func newApp(cfg *config.Config) (*app, error) {
 	}, nil
 }
 
-func newDBPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
-	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("db config: %w", err)
-	}
-	poolCfg.MaxConns = cfg.PGMaxConns
-	poolCfg.MinConns = cfg.PGMinConns
-
-	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+func newDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) {
+	pool, err := pgcommon.NewPool(ctx, pgcommon.Config{
+		DSN:                cfg.DatabaseURL,
+		MaxConns:           cfg.PGMaxConns,
+		MinConns:           cfg.PGMinConns,
+		SlowQueryThreshold: time.Duration(cfg.PGSlowQueryThresholdMS) * time.Millisecond,
+		GUCProvider:        pgcommon.GUCSetFromContext,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("db pool: %w", err)
 	}

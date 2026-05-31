@@ -2,16 +2,17 @@ package main
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-func newRouter(cfg *config.Config, pool *pgxpool.Pool, log port.Logger, h *handler.Handler) *gin.Engine {
+func newRouter(cfg *config.Config, pool *pgcommon.Pool, log port.Logger, h *handler.Handler) *gin.Engine {
 	if cfg.AppEnv != "dev" {
 		gin.SetMode(gin.ReleaseMode)
 	}

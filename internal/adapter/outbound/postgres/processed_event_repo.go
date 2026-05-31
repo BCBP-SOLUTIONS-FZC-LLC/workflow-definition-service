@@ -5,20 +5,20 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
 var _ port.ProcessedEventRepository = (*ProcessedEventRepo)(nil)
 
 type ProcessedEventRepo struct {
-	q *db.Queries
+	pool *pgcommon.Pool
 }
 
-func NewProcessedEventRepo(pool *pgxpool.Pool) *ProcessedEventRepo {
-	return &ProcessedEventRepo{q: db.New(pool)}
+func NewProcessedEventRepo(pool *pgcommon.Pool) *ProcessedEventRepo {
+	return &ProcessedEventRepo{pool: pool}
 }
 
 func (r *ProcessedEventRepo) RecordIfNew(_ context.Context, _, _ uuid.UUID, _ string) (bool, error) {

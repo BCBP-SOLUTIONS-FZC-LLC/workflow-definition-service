@@ -5,9 +5,9 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
@@ -15,11 +15,11 @@ import (
 var _ port.OutboxRepository = (*OutboxRepo)(nil)
 
 type OutboxRepo struct {
-	q *db.Queries
+	pool *pgcommon.Pool
 }
 
-func NewOutboxRepo(pool *pgxpool.Pool) *OutboxRepo {
-	return &OutboxRepo{q: db.New(pool)}
+func NewOutboxRepo(pool *pgcommon.Pool) *OutboxRepo {
+	return &OutboxRepo{pool: pool}
 }
 
 func (r *OutboxRepo) Enqueue(_ context.Context, _ *domain.OutboxEvent) error {
