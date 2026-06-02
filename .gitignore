@@ -32,6 +32,7 @@
 /gen/
 /internal/adapter/outbound/postgres/db/
 /internal/core/port/mocks/
+vendor/
 
 # RE-IGNORE: build & tooling
 /bin/
