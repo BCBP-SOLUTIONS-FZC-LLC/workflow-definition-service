@@ -48,19 +48,6 @@ CREATE TABLE workflow_node_assignee (
     created_at          TIMESTAMP DEFAULT now()
 );
 
-CREATE TABLE outbox (
-    id            UUID PRIMARY KEY,
-    tenant_id     UUID NOT NULL,
-    topic         TEXT NOT NULL,
-    payload_json  JSONB NOT NULL,
-    status        TEXT DEFAULT 'PENDING',
-    error_message TEXT,
-    retry_count   INT DEFAULT 0,
-    retry_after   TIMESTAMP,
-    created_at    TIMESTAMP DEFAULT now(),
-    processed_at  TIMESTAMP
-);
-
 CREATE TABLE processed_event (
     id           UUID PRIMARY KEY,
     tenant_id    UUID NOT NULL,
@@ -92,7 +79,6 @@ DROP TRIGGER IF EXISTS update_workflow_version_updated_at ON workflow_version;
 DROP TRIGGER IF EXISTS update_workflow_updated_at ON workflow;
 DROP FUNCTION IF EXISTS update_updated_at_column();
 DROP TABLE IF EXISTS processed_event;
-DROP TABLE IF EXISTS outbox;
 DROP TABLE IF EXISTS workflow_node_assignee;
 ALTER TABLE workflow DROP CONSTRAINT IF EXISTS fk_active_version;
 DROP TABLE IF EXISTS workflow_version;
