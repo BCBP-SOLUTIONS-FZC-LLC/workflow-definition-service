@@ -13,7 +13,8 @@ Multi-tenancy is enforced via **Row-Level Security (RLS)**. Every query is autom
 | `workflow` | Root template entity — business key, name, active version pointer |
 | `workflow_version` | Versioned snapshot — BPMN XML, compiled DSL, status lifecycle |
 | `workflow_node_assignee` | Denormalised reverse index: user → versions that reference them as default assignees |
-| `outbox` | Transactional event queue for SNS delivery (PENDING → SENT / FAILED) |
+| `outbox_events` | Transactional event queue for SNS delivery (published_at = NULL → NOW()) |
+| `outbox_dead_letters` | Failed events that exhausted max attempts |
 | `processed_event` | SQS consumer idempotency registry (deduplication by event UUID) |
 
 See full DDL in [`db/migrations/`](../db/migrations/).

@@ -16,14 +16,14 @@ cmd/server/main.go          ← bootstrap + DI wire-up only
 │   ├── inbound/
 │   │   ├── http/           ← Gin handlers, authz, service-specific middleware
 │   │   ├── grpc/           ← GetCompiledWorkflow server impl
-│   │   └── sqs/            ← membership revocation consumer
+│   │   └── sqs/            ← membership revocation consumer (platform-events SQS consumer)
 │   └── outbound/
-│       ├── postgres/       ← sqlc-generated DB layer + repo adapter impls
-│       ├── sns/            ← SNS stub publisher
+│       ├── postgres/       ← sqlc-generated DB layer + repo adapter impls (outbox Enqueue wrapper)
+│       ├── sns/            ← SNS publisher utilizing platform-events
 │       └── valkey/         ← Valkey/Redis CacheStore impl
 │
 ├── internal/bpmn_compiler/ ← stateless XML parser, validator, DSL compiler
-├── internal/outbox/        ← background relay worker
+├── internal/outbox/        ← outbox runner wrapper using platform-events runner
 └── internal/config/        ← env var loading → typed Config struct
 ```
 
@@ -73,18 +73,18 @@ Incoming gRPC call
 
 ## Outbox pattern
 
-Business mutations and their associated domain events are written in the same PostgreSQL transaction. A background `OutboxRelay` worker polls `status = 'PENDING'` rows, dispatches to SNS, and marks them `SENT`. If the relay crashes between SNS dispatch and DB update, the event UUID is reused for downstream deduplication.
+Business mutations and their associated domain events are written in the same PostgreSQL transaction. The service enqueues events using `outbox.Enqueue` inside the database transaction. A background `outbox.Runner` worker (from `platform-events`) polls the `outbox_events` table where `published_at IS NULL` and `scheduled_at <= NOW()`, dispatches to SNS, and marks them published.
 
 ```sh
 Handler
   └─ tx.ExecContext: UPDATE workflow_version SET status='PUBLISHED' ...
-  └─ tx.ExecContext: INSERT INTO outbox (id, ..., status='PENDING') ...
+  └─ outbox.Enqueue: INSERT INTO outbox_events (id, ..., published_at=NULL) ...
   └─ tx.Commit()
 
-OutboxRelay (every 500ms)
-  └─ SELECT ... FROM outbox WHERE status='PENDING' LIMIT 50 FOR UPDATE SKIP LOCKED
+outbox.Runner
+  └─ SELECT ... FROM outbox_events WHERE published_at IS NULL AND scheduled_at <= NOW() FOR UPDATE SKIP LOCKED
   └─ SNS.Publish(payload)
-  └─ UPDATE outbox SET status='SENT', processed_at=NOW()
+  └─ UPDATE outbox_events SET published_at=NOW()
 ```
 
 ## Valkey usage
