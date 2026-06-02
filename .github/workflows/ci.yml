@@ -25,18 +25,28 @@ jobs:
           echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
           chmod 600 ~/.git-credentials
       - uses: bufbuild/buf-setup-action@v1
-      - name: Install sqlc
-        run: GOBIN=$PWD/.tools go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
-      - name: Generate proto and sqlc
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install sqlc and mockgen
+        run: |
+          GOBIN=$PWD/.tools go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+          GOBIN=$PWD/.tools go install go.uber.org/mock/mockgen@latest
+      - name: Generate proto, sqlc, and mocks
         run: |
           buf generate
           .tools/sqlc generate
+          mkdir -p internal/core/port/mocks
+          .tools/mockgen -source=internal/core/port/repository.go -destination=internal/core/port/mocks/repository_mock.go -package=mocks
+          .tools/mockgen -source=internal/core/port/publisher.go  -destination=internal/core/port/mocks/publisher_mock.go  -package=mocks
+          .tools/mockgen -source=internal/core/port/cache.go      -destination=internal/core/port/mocks/cache_mock.go      -package=mocks
+          .tools/mockgen -source=internal/core/port/services.go   -destination=internal/core/port/mocks/services_mock.go   -package=mocks
       - uses: actions/upload-artifact@v4
         with:
           name: generated
           path: |
             gen/
             internal/adapter/outbound/postgres/db/
+            internal/core/port/mocks/
 
   Build:
     runs-on: ubuntu-latest
