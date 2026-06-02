@@ -24,7 +24,7 @@
 !requirements-docs.txt
 !*.md
 !.gitkeep
-!.github/workflows/*.yml
+!.github/workflows/ci.yml
 !openapi.yaml
 
 # RE-IGNORE: generated output

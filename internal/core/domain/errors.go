@@ -3,27 +3,27 @@ package domain
 import "errors"
 
 var (
-	ErrNotFound              = errors.New("resource not found")
-	ErrForbidden             = errors.New("forbidden")
-	ErrUnauthorized          = errors.New("unauthorized")
-	ErrDraftAlreadyExists    = errors.New("draft already exists")
-	ErrNoDraftExists         = errors.New("no active draft exists")
-	ErrNoActiveVersion       = errors.New("no active version")
-	ErrDuplicateBusinessKey  = errors.New("workflow business key already exists")
-	ErrDraftConcurrency      = errors.New("draft concurrency violation")
-	ErrInvalidVersionStatus  = errors.New("invalid version status for this operation")
-	ErrActiveInstancesExist  = errors.New("active workflow instances exist")
-	ErrStructuralDivergence  = errors.New("structural divergence detected")
-	ErrPlanQuotaExceeded     = errors.New("plan quota exceeded")
-	ErrAssigneeIneligible    = errors.New("assignee ineligible")
-	ErrUpstreamUnavailable   = errors.New("upstream service unavailable")
-	ErrIdempotencyKeyReplay  = errors.New("idempotency key replay with different payload")
+	ErrNotFound             = errors.New("resource not found")
+	ErrForbidden            = errors.New("forbidden")
+	ErrUnauthorized         = errors.New("unauthorized")
+	ErrDraftAlreadyExists   = errors.New("draft already exists")
+	ErrNoDraftExists        = errors.New("no active draft exists")
+	ErrNoActiveVersion      = errors.New("no active version")
+	ErrDuplicateBusinessKey = errors.New("workflow business key already exists")
+	ErrDraftConcurrency     = errors.New("draft concurrency violation")
+	ErrInvalidVersionStatus = errors.New("invalid version status for this operation")
+	ErrActiveInstancesExist = errors.New("active workflow instances exist")
+	ErrStructuralDivergence = errors.New("structural divergence detected")
+	ErrPlanQuotaExceeded    = errors.New("plan quota exceeded")
+	ErrAssigneeIneligible   = errors.New("assignee ineligible")
+	ErrUpstreamUnavailable  = errors.New("upstream service unavailable")
+	ErrIdempotencyKeyReplay = errors.New("idempotency key replay with different payload")
 )
 
 type BPMNErrorCode string
 
 const (
-	BPMNErrRejectedElement           BPMNErrorCode = "REJECTED_ELEMENT"
+	BPMNErrRejectedElement        BPMNErrorCode = "REJECTED_ELEMENT"
 	BPMNErrMissingNamespace       BPMNErrorCode = "MISSING_NAMESPACE"
 	BPMNErrMissingZeebeProperty   BPMNErrorCode = "MISSING_ZEEBE_PROPERTY"
 	BPMNErrInvalidDeptID          BPMNErrorCode = "INVALID_DEPT_ID"
@@ -42,8 +42,8 @@ const (
 	BPMNErrUnmatchedGateway       BPMNErrorCode = "UNMATCHED_GATEWAY"
 	BPMNErrInvalidSequenceFlowRef BPMNErrorCode = "INVALID_SEQUENCE_FLOW_REF"
 	BPMNErrMultipleProcesses      BPMNErrorCode = "MULTIPLE_PROCESSES"
-	BPMNErrInvalidSLADuration        BPMNErrorCode = "INVALID_SLA_DURATION"
-	BPMNErrInvalidZeebeProperty      BPMNErrorCode = "INVALID_ZEEBE_PROPERTY"
+	BPMNErrInvalidSLADuration     BPMNErrorCode = "INVALID_SLA_DURATION"
+	BPMNErrInvalidZeebeProperty   BPMNErrorCode = "INVALID_ZEEBE_PROPERTY"
 )
 
 type BPMNValidationError struct {

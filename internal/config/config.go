@@ -16,10 +16,10 @@ type Config struct {
 	GRPCPort int
 
 	// OTel — consumed by platform-gincommon.InitTracingFromEnv()
-	OTELServiceName          string
-	OTELExporterEndpoint     string
-	OTELExporterInsecure     bool
-	OTELTracesSamplerRatio   float64
+	OTELServiceName        string
+	OTELExporterEndpoint   string
+	OTELExporterInsecure   bool
+	OTELTracesSamplerRatio float64
 
 	DatabaseURL            string
 	PGMaxConns             int32
@@ -29,18 +29,18 @@ type Config struct {
 	ValkeyAddr     string
 	ValkeyPassword string
 
-	AWSUseStub   bool
-	AWSRegion    string
-	SNSTopicARN  string
-	SQSQueueURL  string
+	AWSUseStub     bool
+	AWSRegion      string
+	SNSTopicARN    string
+	SQSQueueURL    string
 	AWSEndpointURL string
 	SQSConcurrency int
 
 	OutboxPollInterval time.Duration
 	OutboxBatchSize    int
 
-	OrgMembershipBaseURL   string
-	ExecutionServiceAddr   string
+	OrgMembershipBaseURL string
+	ExecutionServiceAddr string
 }
 
 func Load() (*Config, error) {
@@ -101,7 +101,6 @@ func (c *Config) validate() error {
 	}
 	return nil
 }
-
 
 func getEnvOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {

@@ -27,20 +27,20 @@ type Workflow struct {
 }
 
 type WorkflowVersion struct {
-	ID                  uuid.UUID
-	WorkflowID          uuid.UUID
-	TenantID            uuid.UUID
-	Status              VersionStatus
-	BPMNXML             string
-	CompiledPlanJSON    *string
-	ArtifactHash        string
-	VersionNumber       *int32
-	PublishedAt         *time.Time
-	CreatedByUserID     uuid.UUID
-	IsValid             bool
+	ID                   uuid.UUID
+	WorkflowID           uuid.UUID
+	TenantID             uuid.UUID
+	Status               VersionStatus
+	BPMNXML              string
+	CompiledPlanJSON     *string
+	ArtifactHash         string
+	VersionNumber        *int32
+	PublishedAt          *time.Time
+	CreatedByUserID      uuid.UUID
+	IsValid              bool
 	ValidationErrorsJSON *string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type NodeAssignee struct {

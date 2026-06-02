@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,7 +26,7 @@ func NewOutboxRepo(pool *pgcommon.Pool) *OutboxRepo {
 }
 
 func (r *OutboxRepo) Enqueue(ctx context.Context, event *domain.OutboxEvent) error {
-	return r.pool.WithConn(ctx, func(ctx context.Context, conn *pgxpool.Conn) error {
+	err := r.pool.WithConn(ctx, func(ctx context.Context, conn *pgxpool.Conn) error {
 		queries := db.New(conn)
 		return queries.EnqueueEvent(ctx, db.EnqueueEventParams{
 			ID:        event.ID,
@@ -35,6 +36,10 @@ func (r *OutboxRepo) Enqueue(ctx context.Context, event *domain.OutboxEvent) err
 			TraceID:   "",
 		})
 	})
+	if err != nil {
+		return fmt.Errorf("outbox enqueue: %w", err)
+	}
+	return nil
 }
 
 func (r *OutboxRepo) FetchPending(_ context.Context, _ int) ([]*domain.OutboxEvent, error) {
