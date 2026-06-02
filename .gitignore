@@ -37,7 +37,7 @@ vendor/
 # RE-IGNORE: build & tooling
 /bin/
 /.tools/
-
+.go/
 # RE-IGNORE: coverage reports
 /.coverage/
 
