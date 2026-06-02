@@ -33,6 +33,8 @@ type Config struct {
 	AWSRegion    string
 	SNSTopicARN  string
 	SQSQueueURL  string
+	AWSEndpointURL string
+	SQSConcurrency int
 
 	OutboxPollInterval time.Duration
 	OutboxBatchSize    int
@@ -64,10 +66,12 @@ func Load() (*Config, error) {
 		ValkeyAddr:     getEnvOrDefault("VALKEY_ADDR", "localhost:6379"),
 		ValkeyPassword: getEnvOrDefault("VALKEY_PASSWORD", ""),
 
-		AWSUseStub:  getEnvBoolOrDefault("AWS_USE_STUB", true),
-		AWSRegion:   getEnvOrDefault("AWS_REGION", "us-east-1"),
-		SNSTopicARN: getEnvOrDefault("SNS_TOPIC_ARN", ""),
-		SQSQueueURL: getEnvOrDefault("SQS_QUEUE_URL", ""),
+		AWSUseStub:     getEnvBoolOrDefault("AWS_USE_STUB", true),
+		AWSRegion:      getEnvOrDefault("AWS_REGION", "us-east-1"),
+		SNSTopicARN:    getEnvOrDefault("SNS_TOPIC_ARN", ""),
+		SQSQueueURL:    getEnvOrDefault("SQS_QUEUE_URL", ""),
+		AWSEndpointURL: getEnvOrDefault("AWS_ENDPOINT_URL", ""),
+		SQSConcurrency: getEnvIntOrDefault("SQS_CONCURRENCY", 1),
 
 		OutboxPollInterval: getEnvDurationOrDefault("OUTBOX_POLL_INTERVAL", 500*time.Millisecond),
 		OutboxBatchSize:    getEnvIntOrDefault("OUTBOX_BATCH_SIZE", 50),
