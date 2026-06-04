@@ -110,4 +110,3 @@ docs/                    ← MkDocs pages
 ## Environment variables
 
 See [`.env.example`](.env.example) or the [Configuration docs](docs/configuration.md) for the full reference.
-
