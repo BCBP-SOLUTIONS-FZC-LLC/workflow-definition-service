@@ -49,8 +49,10 @@ Copy `.env.example` to `.env` for local development.
 | --- | --- | --- | --- |
 | `AWS_USE_STUB` | No | `true` | `true` activates no-op stub adapters (no AWS credentials needed) |
 | `AWS_REGION` | No | `us-east-1` | AWS region |
+| `AWS_ENDPOINT_URL` | No | *(empty)* | Custom endpoint URL (e.g. `http://localhost:4566` for LocalStack) |
 | `SNS_TOPIC_ARN` | When `AWS_USE_STUB=false` | — | SNS topic for `wf.template.events` |
 | `SQS_QUEUE_URL` | When `AWS_USE_STUB=false` | — | SQS queue URL for `membership-wf-q` |
+| `SQS_CONCURRENCY` | No | `1` | Concurrency limit for SQS consumer workers |
 
 ## Outbox relay
 

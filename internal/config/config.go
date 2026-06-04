@@ -16,10 +16,10 @@ type Config struct {
 	GRPCPort int
 
 	// OTel — consumed by platform-gincommon.InitTracingFromEnv()
-	OTELServiceName          string
-	OTELExporterEndpoint     string
-	OTELExporterInsecure     bool
-	OTELTracesSamplerRatio   float64
+	OTELServiceName        string
+	OTELExporterEndpoint   string
+	OTELExporterInsecure   bool
+	OTELTracesSamplerRatio float64
 
 	DatabaseURL            string
 	PGMaxConns             int32
@@ -29,16 +29,18 @@ type Config struct {
 	ValkeyAddr     string
 	ValkeyPassword string
 
-	AWSUseStub   bool
-	AWSRegion    string
-	SNSTopicARN  string
-	SQSQueueURL  string
+	AWSUseStub     bool
+	AWSRegion      string
+	SNSTopicARN    string
+	SQSQueueURL    string
+	AWSEndpointURL string
+	SQSConcurrency int
 
 	OutboxPollInterval time.Duration
 	OutboxBatchSize    int
 
-	OrgMembershipBaseURL   string
-	ExecutionServiceAddr   string
+	OrgMembershipBaseURL string
+	ExecutionServiceAddr string
 }
 
 func Load() (*Config, error) {
@@ -64,10 +66,12 @@ func Load() (*Config, error) {
 		ValkeyAddr:     getEnvOrDefault("VALKEY_ADDR", "localhost:6379"),
 		ValkeyPassword: getEnvOrDefault("VALKEY_PASSWORD", ""),
 
-		AWSUseStub:  getEnvBoolOrDefault("AWS_USE_STUB", true),
-		AWSRegion:   getEnvOrDefault("AWS_REGION", "us-east-1"),
-		SNSTopicARN: getEnvOrDefault("SNS_TOPIC_ARN", ""),
-		SQSQueueURL: getEnvOrDefault("SQS_QUEUE_URL", ""),
+		AWSUseStub:     getEnvBoolOrDefault("AWS_USE_STUB", true),
+		AWSRegion:      getEnvOrDefault("AWS_REGION", "us-east-1"),
+		SNSTopicARN:    getEnvOrDefault("SNS_TOPIC_ARN", ""),
+		SQSQueueURL:    getEnvOrDefault("SQS_QUEUE_URL", ""),
+		AWSEndpointURL: getEnvOrDefault("AWS_ENDPOINT_URL", ""),
+		SQSConcurrency: getEnvIntOrDefault("SQS_CONCURRENCY", 1),
 
 		OutboxPollInterval: getEnvDurationOrDefault("OUTBOX_POLL_INTERVAL", 500*time.Millisecond),
 		OutboxBatchSize:    getEnvIntOrDefault("OUTBOX_BATCH_SIZE", 50),
@@ -97,7 +101,6 @@ func (c *Config) validate() error {
 	}
 	return nil
 }
-
 
 func getEnvOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {

@@ -34,7 +34,7 @@ func decodeProblem(t *testing.T, body []byte) ProblemDetails {
 	return p
 }
 
-func TestErrResponse_StatusAndCode(t *testing.T) { 
+func TestErrResponse_StatusAndCode(t *testing.T) {
 	tests := []struct {
 		name       string
 		err        error
@@ -42,23 +42,23 @@ func TestErrResponse_StatusAndCode(t *testing.T) {
 		wantCode   ErrCode
 	}{
 		// 404
-		{"ErrNotFound",       domain.ErrNotFound,       http.StatusNotFound, CodeNotFound},
-		{"pgx.ErrNoRows",     pgx.ErrNoRows,             http.StatusNotFound, CodeNotFound},
-		{"ErrNoDraftExists",  domain.ErrNoDraftExists,   http.StatusNotFound, CodeDraftNotFound},
+		{"ErrNotFound", domain.ErrNotFound, http.StatusNotFound, CodeNotFound},
+		{"pgx.ErrNoRows", pgx.ErrNoRows, http.StatusNotFound, CodeNotFound},
+		{"ErrNoDraftExists", domain.ErrNoDraftExists, http.StatusNotFound, CodeDraftNotFound},
 		{"ErrNoActiveVersion", domain.ErrNoActiveVersion, http.StatusNotFound, CodeNoActiveVersion},
 		// 401 / 403
 		{"ErrUnauthorized", domain.ErrUnauthorized, http.StatusUnauthorized, CodeUnauthorized},
-		{"ErrForbidden",    domain.ErrForbidden,    http.StatusForbidden,    CodeForbidden},
+		{"ErrForbidden", domain.ErrForbidden, http.StatusForbidden, CodeForbidden},
 		// 409
-		{"ErrDraftAlreadyExists",   domain.ErrDraftAlreadyExists,   http.StatusConflict, CodeDraftAlreadyExists},
+		{"ErrDraftAlreadyExists", domain.ErrDraftAlreadyExists, http.StatusConflict, CodeDraftAlreadyExists},
 		{"ErrDuplicateBusinessKey", domain.ErrDuplicateBusinessKey, http.StatusConflict, CodeDuplicateKey},
-		{"ErrDraftConcurrency",     domain.ErrDraftConcurrency,     http.StatusConflict, CodeDraftConcurrency},
+		{"ErrDraftConcurrency", domain.ErrDraftConcurrency, http.StatusConflict, CodeDraftConcurrency},
 		{"ErrInvalidVersionStatus", domain.ErrInvalidVersionStatus, http.StatusConflict, CodeInvalidStatus},
 		{"ErrActiveInstancesExist", domain.ErrActiveInstancesExist, http.StatusConflict, CodeActiveInstances},
 		{"ErrStructuralDivergence", domain.ErrStructuralDivergence, http.StatusConflict, CodeStructuralDiv},
 		{"ErrIdempotencyKeyReplay", domain.ErrIdempotencyKeyReplay, http.StatusConflict, CodeIdempotencyReplay},
 		// 422
-		{"ErrPlanQuotaExceeded",  domain.ErrPlanQuotaExceeded,  http.StatusUnprocessableEntity, CodePlanQuota},
+		{"ErrPlanQuotaExceeded", domain.ErrPlanQuotaExceeded, http.StatusUnprocessableEntity, CodePlanQuota},
 		{"ErrAssigneeIneligible", domain.ErrAssigneeIneligible, http.StatusUnprocessableEntity, CodeAssigneeIneligible},
 		// 503
 		{"ErrUpstreamUnavailable", domain.ErrUpstreamUnavailable, http.StatusServiceUnavailable, CodeUpstream},

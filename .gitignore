@@ -24,19 +24,23 @@
 !requirements-docs.txt
 !*.md
 !.gitkeep
-
+!.github/workflows/ci.yml
 !openapi.yaml
+
+# RE-IGNORE: local platform library copies (fetched as Go modules via GOPRIVATE)
+platform-libs/
 
 # RE-IGNORE: generated output
 # (directories ignored here take precedence over !*.go above)
 /gen/
 /internal/adapter/outbound/postgres/db/
 /internal/core/port/mocks/
+vendor/
 
 # RE-IGNORE: build & tooling
 /bin/
 /.tools/
-
+.go/
 # RE-IGNORE: coverage reports
 /.coverage/
 

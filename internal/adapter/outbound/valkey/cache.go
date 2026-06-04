@@ -2,6 +2,7 @@ package valkey
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -16,17 +17,31 @@ func NewCache(client redis.Cmdable) *Cache {
 }
 
 func (c *Cache) Get(ctx context.Context, key string) (string, error) {
-	return c.client.Get(ctx, key).Result()
+	val, err := c.client.Get(ctx, key).Result()
+	if err != nil {
+		return "", fmt.Errorf("valkey get: %w", err)
+	}
+	return val, nil
 }
 
 func (c *Cache) Set(ctx context.Context, key string, value string, ttl time.Duration) error {
-	return c.client.Set(ctx, key, value, ttl).Err()
+	if err := c.client.Set(ctx, key, value, ttl).Err(); err != nil {
+		return fmt.Errorf("valkey set: %w", err)
+	}
+	return nil
 }
 
 func (c *Cache) Del(ctx context.Context, keys ...string) error {
-	return c.client.Del(ctx, keys...).Err()
+	if err := c.client.Del(ctx, keys...).Err(); err != nil {
+		return fmt.Errorf("valkey del: %w", err)
+	}
+	return nil
 }
 
 func (c *Cache) SetNX(ctx context.Context, key string, value string, ttl time.Duration) (bool, error) {
-	return c.client.SetNX(ctx, key, value, ttl).Result()
+	val, err := c.client.SetNX(ctx, key, value, ttl).Result()
+	if err != nil {
+		return false, fmt.Errorf("valkey setnx: %w", err)
+	}
+	return val, nil
 }

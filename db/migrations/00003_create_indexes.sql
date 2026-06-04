@@ -13,18 +13,11 @@ CREATE UNIQUE INDEX uq_workflow_version_published ON workflow_version(workflow_i
 CREATE INDEX idx_wnas_user_tenant ON workflow_node_assignee(user_id, tenant_id);
 CREATE INDEX idx_wnas_version ON workflow_node_assignee(workflow_version_id);
 
-CREATE INDEX idx_outbox_pending ON outbox(status, created_at) WHERE status = 'PENDING';
-CREATE INDEX idx_outbox_tenant_pending ON outbox(tenant_id, status) WHERE status IN ('PENDING', 'FAILED');
-CREATE INDEX idx_outbox_processed_at ON outbox(processed_at) WHERE processed_at IS NOT NULL;
-
 CREATE INDEX idx_processed_event_processed_at ON processed_event(processed_at);
 
 -- +goose Down
 
 DROP INDEX IF EXISTS idx_processed_event_processed_at;
-DROP INDEX IF EXISTS idx_outbox_processed_at;
-DROP INDEX IF EXISTS idx_outbox_tenant_pending;
-DROP INDEX IF EXISTS idx_outbox_pending;
 DROP INDEX IF EXISTS idx_wnas_version;
 DROP INDEX IF EXISTS idx_wnas_user_tenant;
 DROP INDEX IF EXISTS uq_workflow_version_published;

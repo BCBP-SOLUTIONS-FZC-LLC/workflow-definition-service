@@ -35,7 +35,7 @@ COVER_THRESHOLD    := 70
         migrate-up migrate-down \
         build test test-integration \
         cover cover-html cover-check \
-        lint \
+        lint lint-fix \
         docs-serve docs-build \
         docker-up docker-down \
         clean help
@@ -137,6 +137,10 @@ cover-check: cover
 ## lint: Run golangci-lint
 lint:
 	$(GOLANGCI) run ./...
+
+## lint-fix: Run golangci-lint with auto-fix
+lint-fix:
+	$(GOLANGCI) run --fix ./...
 
 
 ## docs-serve: Serve MkDocs locally at http://localhost:8001  (requires: brew install mkdocs)

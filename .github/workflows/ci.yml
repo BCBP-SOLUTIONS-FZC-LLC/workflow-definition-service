@@ -1,0 +1,187 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        id: cache-tools
+        with:
+          path: .tools
+          key: ${{ runner.os }}-go-tools-sqlc-v1.31.1-mockgen-v0.6.0
+      - name: Install sqlc and mockgen
+        if: steps.cache-tools.outputs.cache-hit != 'true'
+        run: |
+          GOBIN=$PWD/.tools go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+          GOBIN=$PWD/.tools go install go.uber.org/mock/mockgen@v0.6.0
+      - name: Generate proto, sqlc, and mocks
+        run: |
+          buf generate
+          .tools/sqlc generate
+          mkdir -p internal/core/port/mocks
+          .tools/mockgen -source=internal/core/port/repository.go -destination=internal/core/port/mocks/repository_mock.go -package=mocks
+          .tools/mockgen -source=internal/core/port/publisher.go  -destination=internal/core/port/mocks/publisher_mock.go  -package=mocks
+          .tools/mockgen -source=internal/core/port/cache.go      -destination=internal/core/port/mocks/cache_mock.go      -package=mocks
+          .tools/mockgen -source=internal/core/port/services.go   -destination=internal/core/port/mocks/services_mock.go   -package=mocks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generated
+          path: |
+            gen/
+            internal/adapter/outbound/postgres/db/
+            internal/core/port/mocks/
+
+  Build:
+    runs-on: ubuntu-latest
+    needs: [generate]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated
+      - run: go build -o /dev/null ./cmd/server
+
+  vet:
+    runs-on: ubuntu-latest
+    needs: [generate]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated
+      - run: go vet ./...
+
+  Test:
+    runs-on: ubuntu-latest
+    needs: [generate]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated
+      - run: |
+          mkdir -p .coverage
+          go test -race -count=1 -coverprofile=.coverage/coverage.out -covermode=atomic ./...
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: .coverage/coverage.out
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: [Test]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: .coverage
+      - run: go tool cover -func=.coverage/coverage.out | tail -1
+
+  Iint:
+    runs-on: ubuntu-latest
+    needs: [generate]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated
+      - run: go build -tags=integration -o /dev/null ./cmd/server
+
+  lint:
+    runs-on: ubuntu-latest
+    needs: [generate]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+          args: --timeout=5m

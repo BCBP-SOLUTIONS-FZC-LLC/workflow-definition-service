@@ -23,5 +23,5 @@ func (s *Server) GetCompiledWorkflow(
 	_ context.Context,
 	_ *definitionv1.GetCompiledWorkflowRequest,
 ) (*definitionv1.GetCompiledWorkflowResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "not yet implemented")
+	return nil, status.Error(codes.Unimplemented, "not yet implemented") //nolint:wrapcheck
 }
