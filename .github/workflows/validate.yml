@@ -107,7 +107,7 @@ jobs:
         run: |
           mkdir -p .coverage
           go test -race -count=1 \
-            -coverpkg=$(go list ./internal/... ./cmd/... | tr '\n' ',' | sed 's/,$//') \
+            -coverpkg=$(go list ./internal/... ./cmd/... | grep -v -E "/db|/mocks" | tr '\n' ',' | sed 's/,$//') \
             -coverprofile=.coverage/coverage.out -covermode=atomic \
             ./internal/... ./test/unit/...
           go tool cover -func=.coverage/coverage.out | tail -1
