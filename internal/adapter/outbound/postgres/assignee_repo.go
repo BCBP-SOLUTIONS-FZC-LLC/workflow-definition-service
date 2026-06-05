@@ -52,7 +52,7 @@ func (r *AssigneeRepo) BulkInsert(
 			}
 		})
 		if closeErr := br.Close(); closeErr != nil {
-			errs = append(errs, closeErr)
+			errs = append(errs, mapErr(closeErr))
 		}
 		return errors.Join(errs...)
 	})
