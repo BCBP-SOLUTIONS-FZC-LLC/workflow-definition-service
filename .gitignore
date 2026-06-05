@@ -8,6 +8,8 @@
 !*.go
 !*.proto
 !*.sql
+!mermaid-init.js
+!CLAUDE.md
 
 # PROJECT & CONFIG FILES
 !.gitignore
@@ -25,6 +27,13 @@
 !*.md
 !.gitkeep
 !.github/workflows/ci.yml
+!.github/workflows/validate.yml
+!.github/workflows/release.yml
+!.github/CODEOWNERS
+!.github/dependabot.yml
+!.github/pull_request_template.md
+!.github/ISSUE_TEMPLATE/
+!Dockerfile
 !openapi.yaml
 
 # RE-IGNORE: local platform library copies (fetched as Go modules via GOPRIVATE)

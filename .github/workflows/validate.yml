@@ -1,0 +1,120 @@
+name: Validate
+
+# Reusable validation workflow — called by ci.yml and release.yml.
+# Runs: generate artifact download → mod verify → fmt → tidy drift →
+#       vet → lint → govulncheck → unit tests
+
+"on":
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to check out (leave empty to use the caller ref)'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC
+  GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        id: cache-tools
+        with:
+          path: .tools
+          key: ${{ runner.os }}-go-tools-sqlc-v1.31.1-mockgen-v0.6.0
+
+      - name: Install sqlc and mockgen
+        if: steps.cache-tools.outputs.cache-hit != 'true'
+        run: |
+          GOBIN=$PWD/.tools go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+          GOBIN=$PWD/.tools go install go.uber.org/mock/mockgen@v0.6.0
+
+      - name: Generate proto, sqlc, and mocks
+        run: |
+          buf generate
+          .tools/sqlc generate
+          mkdir -p internal/core/port/mocks
+          .tools/mockgen -source=internal/core/port/repository.go -destination=internal/core/port/mocks/repository_mock.go -package=mocks
+          .tools/mockgen -source=internal/core/port/publisher.go  -destination=internal/core/port/mocks/publisher_mock.go  -package=mocks
+          .tools/mockgen -source=internal/core/port/cache.go      -destination=internal/core/port/mocks/cache_mock.go      -package=mocks
+          .tools/mockgen -source=internal/core/port/services.go   -destination=internal/core/port/mocks/services_mock.go   -package=mocks
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Format check
+        run: |
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "gofmt violations:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Tidy check
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+          args: --timeout=5m
+
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./internal/... ./cmd/...
+
+      - name: Unit Tests & Coverage
+        run: |
+          mkdir -p .coverage
+          go test -race -count=1 \
+            -coverpkg=$(go list ./internal/... ./cmd/... | tr '\n' ',' | sed 's/,$//') \
+            -coverprofile=.coverage/coverage.out -covermode=atomic \
+            ./internal/... ./test/unit/...
+          go tool cover -func=.coverage/coverage.out | tail -1
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-unit
+          path: .coverage/coverage.out
+          if-no-files-found: ignore
