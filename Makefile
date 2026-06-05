@@ -7,11 +7,15 @@ ifneq ($(wildcard .env),)
   export
 endif
 
-SQLC_VERSION       := latest
-GOOSE_VERSION      := latest
-BUF_VERSION        := latest
-MOCKGEN_VERSION    := latest
-GOLANGCI_VERSION   := latest
+SQLC_VERSION       := v1.31.1
+GOOSE_VERSION      := v3.24.3
+BUF_VERSION        := v1.50.0
+MOCKGEN_VERSION    := v0.6.0
+GOLANGCI_VERSION   := v2.12.2
+
+# Docker images pulled by integration tests via testcontainers-go.
+# Run `make tools-integration` once to warm the local Docker image cache.
+TESTCONTAINERS_POSTGRES_IMAGE := postgres:16-alpine
 
 TOOLS_DIR          := .tools
 BIN_DIR            := bin
@@ -29,12 +33,12 @@ LDFLAGS            := -X main.version=$(BUILD_VERSION)
 
 COVER_PROFILE      := $(COVERAGE_DIR)/coverage.out
 COVER_HTML         := $(COVERAGE_DIR)/coverage.html
-COVER_THRESHOLD    := 70
+COVER_THRESHOLD    := 95
 
-.PHONY: all tools generate generate-proto generate-sqlc mock \
+.PHONY: all tools tools-integration generate generate-proto generate-sqlc mock \
         migrate-up migrate-down \
         build test test-integration \
-        cover cover-html cover-check \
+        cover cover-func cover-html cover-check \
         lint lint-fix \
         docs-serve docs-build \
         docker-up docker-down \
@@ -53,6 +57,11 @@ tools:
 	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
 		| sh -s -- -b $(PWD)/$(TOOLS_DIR) $(GOLANGCI_VERSION)
 	@echo "✓ tools installed to $(TOOLS_DIR)/"
+
+## tools-integration: Pre-pull Docker images used by integration tests (testcontainers-go)
+tools-integration:
+	docker pull $(TESTCONTAINERS_POSTGRES_IMAGE)
+	@echo "✓ Docker images ready for integration tests"
 
 
 ## generate: Run buf (proto → gen/) and sqlc (queries → postgres/db/)
@@ -103,19 +112,44 @@ build:
 	@echo "✓ binary: $(BIN_DIR)/server"
 
 
-## test: Run unit tests with race detector
+## test: Run unit tests with race detector and coverage (internal + test/unit)
 test:
-	go test -race -count=1 ./...
+	@mkdir -p $(COVERAGE_DIR)
+	go test -race -count=1 \
+	    -coverpkg=$$(go list ./internal/... ./cmd/... | tr '\n' ',' | sed 's/,$$//') \
+	    -coverprofile=$(COVER_PROFILE) -covermode=atomic \
+	    ./internal/... ./test/unit/...
+	@go tool cover -func=$(COVER_PROFILE) | tail -1
 
-## test-integration: Run integration tests (requires running infra)
+## test-integration: Run integration tests — spins up containers via testcontainers-go (no make docker-up needed)
 test-integration:
-	go test -race -count=1 -tags=integration ./...
+	@mkdir -p $(COVERAGE_DIR)
+	TESTCONTAINERS_RYUK_DISABLED=true \
+	go test -race -count=1 \
+	    -coverpkg=$$(go list ./internal/... | tr '\n' ',' | sed 's/,$$//') \
+	    -coverprofile=$(COVERAGE_DIR)/coverage-integration.out \
+	    -covermode=atomic \
+	    ./test/integration/...
+	@go tool cover -func=$(COVERAGE_DIR)/coverage-integration.out | tail -1
 
-## cover: Run tests and print per-package coverage summary
+## cover: Run unit tests and print per-package coverage summary
 cover:
 	@mkdir -p $(COVERAGE_DIR)
-	go test -race -count=1 -coverprofile=$(COVER_PROFILE) -covermode=atomic ./...
+	go test -race -count=1 \
+	    -coverpkg=$$(go list ./internal/... ./cmd/... | tr '\n' ',' | sed 's/,$$//') \
+	    -coverprofile=$(COVER_PROFILE) -covermode=atomic \
+	    ./internal/... ./test/unit/...
 	@go tool cover -func=$(COVER_PROFILE) | tail -1
+
+## cover-func: Print per-function coverage summary to stdout (CI-friendly)
+cover-func:
+	@mkdir -p $(COVERAGE_DIR)
+	go test -race -count=1 \
+	    -coverpkg=$$(go list ./internal/... ./cmd/... | tr '\n' ',' | sed 's/,$$//') \
+	    -coverprofile=$(COVER_PROFILE) -covermode=atomic \
+	    ./internal/... ./test/unit/...
+	@go tool cover -func=$(COVER_PROFILE)
+	@cp $(COVER_PROFILE) coverage.out
 
 ## cover-html: Open an HTML coverage report in the browser
 cover-html: cover
