@@ -1,6 +1,6 @@
 module github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service
 
-go 1.26.3
+go 1.26.4
 
 // Direct dependencies
 require (

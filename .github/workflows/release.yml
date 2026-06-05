@@ -23,16 +23,26 @@ jobs:
     runs-on: ubuntu-latest
     needs: validate
     steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+
       - uses: actions/download-artifact@v4
         with:
           name: coverage-unit
           path: .coverage
         continue-on-error: true   # artifact may not exist if validate skipped test
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: 'stable'
-          cache: false
 
       - name: Enforce coverage threshold (≥ 95%)
         run: |

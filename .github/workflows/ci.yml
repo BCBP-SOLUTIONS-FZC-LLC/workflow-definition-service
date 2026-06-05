@@ -209,6 +209,12 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+
       - uses: actions/download-artifact@v4
         with:
           name: coverage-unit

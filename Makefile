@@ -176,6 +176,11 @@ lint:
 lint-fix:
 	$(GOLANGCI) run --fix ./...
 
+## vuln: Run govulncheck vulnerability scan
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./internal/... ./cmd/...
+
+
 
 ## docs-serve: Serve MkDocs locally at http://localhost:8001  (requires: brew install mkdocs)
 docs-serve:
