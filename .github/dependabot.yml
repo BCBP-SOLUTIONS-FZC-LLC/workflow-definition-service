@@ -1,0 +1,53 @@
+version: 2
+
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 5
+    # Platform-libs update immediately when new versions are tagged.
+    # All other Go dependencies: prefer versions that have been available
+    # for at least 2 weeks to avoid pulling in recently-introduced bugs.
+    # Dependabot does not support time-based ignore rules natively; this
+    # is enforced via review policy (see CONTRIBUTING.md §Dependency Updates).
+    ignore:
+      # Never auto-update platform-libs via dependabot, as those are managed
+      # through explicit go get + team review:
+      - dependency-name: "github.com/BCBP-SOLUTIONS-FZC-LLC/*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # Group all non-platform patch+minor updates into a single weekly PR
+      # so the review queue doesn't get flooded.
+      go-patch-minor:
+        patterns: ["*"]
+        exclude-patterns: ["github.com/BCBP-SOLUTIONS-FZC-LLC/*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - "dependencies"
+      - "go"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 5
+    groups:
+      actions-all:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
