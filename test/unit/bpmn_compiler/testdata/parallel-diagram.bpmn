@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  parallel-diagram.bpmn — parallel gateway workflow (split/join) with an exclusive
+  gateway decision block after the join, demonstrating all three gateway patterns.
+
+  Topology (read from sequenceFlows — these are authoritative):
+
+    StartEvent_1
+      └─► Task_design_prep          (design)
+            └─► Gateway_ParallelSplit        [parallel split]
+                  ├─► Task_procurement_prep  (procurement)
+                  │     └─► Gateway_ParallelJoin
+                  └─► Task_planning_prep     (planning)
+                        └─► Gateway_ParallelJoin
+                                └─► Gateway_ExclusiveSplit   [exclusive split]
+                                      ├─► Task_construction_prep   (construction)  condition: $.approved == true
+                                      └─► Task_qa_prep             (qa)            condition: $.approved == false
+                                            both ──► Gateway_ExclusiveJoin
+                                                          └─► Task_commissioning_prep  (commissioning)
+                                                                └─► EndEvent_1
+
+  Expected compiled execution plan:
+    steps: [
+      { sequential: ["design"] },
+      { parallel:   ["procurement", "planning"] },
+      { exclusive:  [
+          { target: "construction", condition_expression: "$.approved == true" },
+          { target: "qa",           condition_expression: "$.approved == false" }
+        ]
+      },
+      { sequential: ["commissioning"] }
+    ]
+
+  Lane name normalisation rule (§4.1.3):
+    dept_id must equal strings.ToLower(strings.TrimSpace(lane.Name))
+
+  Test UUIDs (stable across all example files):
+    alice   = 550e8400-e29b-41d4-a716-446655440000  (preparer)
+    bob     = 661f9511-f3ac-52e5-b827-557766551111  (reviewer-1)
+    charlie = 772a0622-04bd-63f6-c938-668877662222  (reviewer-2)
+    diana   = 883b1733-15ce-74a7-da49-779988773333  (approver)
+-->
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Definitions_Para"
+  targetNamespace="http://bpmn.io/schema/bpmn">
+
+  <bpmn:process id="Process_Parallel" name="Parallel Procurement and Planning" isExecutable="true">
+
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_design" name="Design">
+        <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_design_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_ParallelSplit</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_procurement" name="Procurement">
+        <bpmn:flowNodeRef>Task_procurement_prep</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_planning" name="Planning">
+        <bpmn:flowNodeRef>Task_planning_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_ParallelJoin</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_ExclusiveSplit</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_construction" name="Construction">
+        <bpmn:flowNodeRef>Task_construction_prep</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_qa" name="QA">
+        <bpmn:flowNodeRef>Task_qa_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_ExclusiveJoin</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_commissioning" name="Commissioning">
+        <bpmn:flowNodeRef>Task_commissioning_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+
+    <bpmn:startEvent id="StartEvent_1" name="Start"/>
+
+    <bpmn:userTask id="Task_design_prep" name="Design Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id"          value="design"/>
+          <zeebe:property name="stage_type"       value="prep"/>
+          <zeebe:property name="role"             value="preparer"/>
+          <zeebe:property name="default_user_ids" value="550e8400-e29b-41d4-a716-446655440000"/>
+          <zeebe:property name="requires_comment" value="false"/>
+          <zeebe:property name="sla_duration"     value="48h"/>
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <!-- Parallel split: procurement and planning run concurrently -->
+    <bpmn:parallelGateway id="Gateway_ParallelSplit" name="Split"/>
+
+    <bpmn:userTask id="Task_procurement_prep" name="Procurement Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id"          value="procurement"/>
+          <zeebe:property name="stage_type"       value="prep"/>
+          <zeebe:property name="role"             value="preparer"/>
+          <zeebe:property name="default_user_ids" value="550e8400-e29b-41d4-a716-446655440000"/>
+          <zeebe:property name="requires_comment" value="false"/>
+          <zeebe:property name="sla_duration"     value="48h"/>
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_planning_prep" name="Planning Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id"          value="planning"/>
+          <zeebe:property name="stage_type"       value="prep"/>
+          <zeebe:property name="role"             value="preparer"/>
+          <zeebe:property name="default_user_ids" value="661f9511-f3ac-52e5-b827-557766551111"/>
+          <zeebe:property name="requires_comment" value="false"/>
+          <zeebe:property name="sla_duration"     value="48h"/>
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <!-- Parallel join: both branches must complete before proceeding -->
+    <bpmn:parallelGateway id="Gateway_ParallelJoin" name="Join"/>
+
+    <!-- Exclusive split: route to construction OR qa based on approval outcome -->
+    <bpmn:exclusiveGateway id="Gateway_ExclusiveSplit" name="Approval Route"/>
+
+    <bpmn:userTask id="Task_construction_prep" name="Construction Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id"          value="construction"/>
+          <zeebe:property name="stage_type"       value="prep"/>
+          <zeebe:property name="role"             value="preparer"/>
+          <zeebe:property name="default_user_ids" value="550e8400-e29b-41d4-a716-446655440000"/>
+          <zeebe:property name="requires_comment" value="false"/>
+          <zeebe:property name="sla_duration"     value="72h"/>
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_qa_prep" name="QA Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id"          value="qa"/>
+          <zeebe:property name="stage_type"       value="prep"/>
+          <zeebe:property name="role"             value="preparer"/>
+          <zeebe:property name="default_user_ids" value="772a0622-04bd-63f6-c938-668877662222"/>
+          <zeebe:property name="requires_comment" value="true"/>
+          <zeebe:property name="sla_duration"     value="24h"/>
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <!-- Exclusive join: either branch merges here -->
+    <bpmn:exclusiveGateway id="Gateway_ExclusiveJoin" name="Merge"/>
+
+    <bpmn:userTask id="Task_commissioning_prep" name="Commissioning Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id"          value="commissioning"/>
+          <zeebe:property name="stage_type"       value="prep"/>
+          <zeebe:property name="role"             value="preparer"/>
+          <zeebe:property name="default_user_ids" value="883b1733-15ce-74a7-da49-779988773333"/>
+          <zeebe:property name="requires_comment" value="false"/>
+          <zeebe:property name="sla_duration"     value="24h"/>
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:endEvent id="EndEvent_1" name="End"/>
+
+         <!-- SEQUENCE FLOWS — authoritative source of execution order. -->
+
+    <!-- Sequential run into the parallel split -->
+    <bpmn:sequenceFlow id="Flow_start_design"           sourceRef="StartEvent_1"           targetRef="Task_design_prep"/>
+    <bpmn:sequenceFlow id="Flow_design_split"           sourceRef="Task_design_prep"        targetRef="Gateway_ParallelSplit"/>
+
+    <bpmn:sequenceFlow id="Flow_split_procurement"      sourceRef="Gateway_ParallelSplit"   targetRef="Task_procurement_prep"/>
+    <bpmn:sequenceFlow id="Flow_procurement_join"       sourceRef="Task_procurement_prep"   targetRef="Gateway_ParallelJoin"/>
+
+    <bpmn:sequenceFlow id="Flow_split_planning"         sourceRef="Gateway_ParallelSplit"   targetRef="Task_planning_prep"/>
+    <bpmn:sequenceFlow id="Flow_planning_join"          sourceRef="Task_planning_prep"      targetRef="Gateway_ParallelJoin"/>
+
+    <!-- Out of parallel join into exclusive split -->
+    <bpmn:sequenceFlow id="Flow_join_exclusive"         sourceRef="Gateway_ParallelJoin"    targetRef="Gateway_ExclusiveSplit"/>
+
+    <!-- Exclusive branch A: approved → construction
+         condition_expression is a Zeebe property on the sequence flow itself -->
+    <bpmn:sequenceFlow id="Flow_exclusive_construction" sourceRef="Gateway_ExclusiveSplit"  targetRef="Task_construction_prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="condition_expression" value="$.approved == true"/>
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_construction_merge"     sourceRef="Task_construction_prep"  targetRef="Gateway_ExclusiveJoin"/>
+
+    <bpmn:sequenceFlow id="Flow_exclusive_qa"           sourceRef="Gateway_ExclusiveSplit"  targetRef="Task_qa_prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="condition_expression" value="$.approved == false"/>
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_qa_merge"               sourceRef="Task_qa_prep"            targetRef="Gateway_ExclusiveJoin"/>
+
+    <!-- Out of exclusive join into commissioning -->
+    <bpmn:sequenceFlow id="Flow_merge_commissioning"    sourceRef="Gateway_ExclusiveJoin"   targetRef="Task_commissioning_prep"/>
+    <bpmn:sequenceFlow id="Flow_commissioning_end"      sourceRef="Task_commissioning_prep" targetRef="EndEvent_1"/>
+
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_Parallel">
+      <bpmndi:BPMNShape id="Lane_design_di"        bpmnElement="Lane_design"        isHorizontal="true"><dc:Bounds x="30" y="80"  width="1300" height="160"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_procurement_di"   bpmnElement="Lane_procurement"   isHorizontal="true"><dc:Bounds x="30" y="240" width="1300" height="160"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_planning_di"      bpmnElement="Lane_planning"      isHorizontal="true"><dc:Bounds x="30" y="400" width="1300" height="160"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_construction_di"  bpmnElement="Lane_construction"  isHorizontal="true"><dc:Bounds x="30" y="560" width="1300" height="160"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_qa_di"            bpmnElement="Lane_qa"            isHorizontal="true"><dc:Bounds x="30" y="720" width="1300" height="160"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_commissioning_di" bpmnElement="Lane_commissioning" isHorizontal="true"><dc:Bounds x="30" y="880" width="1300" height="160"/></bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="StartEvent_1_di"              bpmnElement="StartEvent_1">            <dc:Bounds x="102" y="142" width="36"  height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_design_prep_di"          bpmnElement="Task_design_prep">        <dc:Bounds x="220" y="125" width="140" height="70"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ParallelSplit_di"     bpmnElement="Gateway_ParallelSplit">   <dc:Bounds x="425" y="135" width="50"  height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_procurement_prep_di"     bpmnElement="Task_procurement_prep">   <dc:Bounds x="550" y="285" width="140" height="70"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_planning_prep_di"        bpmnElement="Task_planning_prep">      <dc:Bounds x="550" y="445" width="140" height="70"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ParallelJoin_di"      bpmnElement="Gateway_ParallelJoin">    <dc:Bounds x="750" y="455" width="50"  height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ExclusiveSplit_di"    bpmnElement="Gateway_ExclusiveSplit">  <dc:Bounds x="870" y="455" width="50"  height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_construction_prep_di"    bpmnElement="Task_construction_prep">  <dc:Bounds x="980" y="605" width="140" height="70"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_qa_prep_di"              bpmnElement="Task_qa_prep">            <dc:Bounds x="980" y="765" width="140" height="70"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ExclusiveJoin_di"     bpmnElement="Gateway_ExclusiveJoin">   <dc:Bounds x="1180" y="775" width="50"  height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_commissioning_prep_di"   bpmnElement="Task_commissioning_prep"> <dc:Bounds x="980" y="925" width="140" height="70"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_1_di"                bpmnElement="EndEvent_1">              <dc:Bounds x="1192" y="942" width="36"  height="36"/></bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</bpmn:definitions>

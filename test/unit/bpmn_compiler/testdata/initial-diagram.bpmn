@@ -1,0 +1,1042 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  initial-diagram.bpmn — fully sequential, 9-department, 3-stage-per-department workflow.
+
+  This file is the authoritative LLD-compliant example for:
+    - Pure sequential execution (no gateways)
+    - All required zeebe properties: dept_id, stage_type, role, default_user_ids
+    - Optional properties: assignee_mode, requires_comment, sla_duration
+
+  Lane name normalisation rule (§4.1.3):
+    dept_id must equal strings.ToLower(strings.TrimSpace(lane.Name))
+    e.g. lane name="Design"  →  dept_id="design"  ✓
+
+  Test UUIDs (stable across all example files):
+    alice   = 550e8400-e29b-41d4-a716-446655440000  (preparer)
+    bob     = 661f9511-f3ac-52e5-b827-557766551111  (reviewer-1)
+    charlie = 772a0622-04bd-63f6-c938-668877662222  (reviewer-2)
+    diana   = 883b1733-15ce-74a7-da49-779988773333  (approver)
+
+  Expected compiled execution plan:
+    steps: [ { sequential: ["design","contracts","procurement","planning",
+                             "logistics","hse","construction","qa","commissioning"] } ]
+-->
+<bpmn:definitions
+    xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+    id="Definitions_1"
+    targetNamespace="http://bpmn.io/schema/bpmn"
+    exporter="Workflow Engine"
+    exporterVersion="1.0"
+>
+
+  <bpmn:process
+        id="Process_FullWorkflow"
+        name="Engineering Package Review"
+        isExecutable="true"
+    >
+
+    <bpmn:laneSet id="LaneSet_1">
+      <!-- Lane name must equal dept_id when lowercased + trimmed -->
+      <bpmn:lane id="Lane_design" name="Design">
+        <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_design_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_design_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_design_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_contracts" name="Contracts">
+        <bpmn:flowNodeRef>Task_contracts_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_contracts_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_contracts_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_procurement" name="Procurement">
+        <bpmn:flowNodeRef>Task_procurement_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_procurement_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_procurement_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_planning" name="Planning">
+        <bpmn:flowNodeRef>Task_planning_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_planning_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_planning_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_logistics" name="Logistics">
+        <bpmn:flowNodeRef>Task_logistics_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_logistics_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_logistics_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_hse" name="HSE">
+        <bpmn:flowNodeRef>Task_hse_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_hse_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_hse_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_construction" name="Construction">
+        <bpmn:flowNodeRef>Task_construction_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_construction_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_construction_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_qa" name="QA">
+        <bpmn:flowNodeRef>Task_qa_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_qa_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_qa_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_commissioning" name="Commissioning">
+        <bpmn:flowNodeRef>Task_commissioning_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_commissioning_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_commissioning_approve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+
+    <bpmn:startEvent id="StartEvent_1" name="Start" />
+
+         <!-- DESIGN  (sequential: prep → review → approve) -->
+    <bpmn:userTask id="Task_design_prep" name="Design Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="design" />
+          <zeebe:property name="stage_type" value="prep" />
+          <zeebe:property name="role" value="preparer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="550e8400-e29b-41d4-a716-446655440000"
+                    />
+          <zeebe:property name="requires_comment" value="false" />
+          <zeebe:property name="sla_duration" value="48h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_design_review" name="Design Review">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="design" />
+          <zeebe:property name="stage_type" value="review" />
+          <zeebe:property name="role" value="reviewer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="661f9511-f3ac-52e5-b827-557766551111,772a0622-04bd-63f6-c938-668877662222"
+                    />
+          <zeebe:property name="assignee_mode" value="any" />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_design_approve" name="Design Approve">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="design" />
+          <zeebe:property name="stage_type" value="approve" />
+          <zeebe:property name="role" value="approver" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="883b1733-15ce-74a7-da49-779988773333"
+                    />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_contracts_prep" name="Contracts Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="contracts" />
+          <zeebe:property name="stage_type" value="prep" />
+          <zeebe:property name="role" value="preparer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="550e8400-e29b-41d4-a716-446655440000"
+                    />
+          <zeebe:property name="requires_comment" value="false" />
+          <zeebe:property name="sla_duration" value="48h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_contracts_review" name="Contracts Review">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="contracts" />
+          <zeebe:property name="stage_type" value="review" />
+          <zeebe:property name="role" value="reviewer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="661f9511-f3ac-52e5-b827-557766551111,772a0622-04bd-63f6-c938-668877662222"
+                    />
+          <zeebe:property name="assignee_mode" value="any" />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_contracts_approve" name="Contracts Approve">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="contracts" />
+          <zeebe:property name="stage_type" value="approve" />
+          <zeebe:property name="role" value="approver" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="883b1733-15ce-74a7-da49-779988773333"
+                    />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_procurement_prep" name="Procurement Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="procurement" />
+          <zeebe:property name="stage_type" value="prep" />
+          <zeebe:property name="role" value="preparer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="550e8400-e29b-41d4-a716-446655440000"
+                    />
+          <zeebe:property name="requires_comment" value="false" />
+          <zeebe:property name="sla_duration" value="48h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_procurement_review" name="Procurement Review">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="procurement" />
+          <zeebe:property name="stage_type" value="review" />
+          <zeebe:property name="role" value="reviewer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="661f9511-f3ac-52e5-b827-557766551111,772a0622-04bd-63f6-c938-668877662222"
+                    />
+          <zeebe:property name="assignee_mode" value="any" />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_procurement_approve" name="Procurement Approve">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="procurement" />
+          <zeebe:property name="stage_type" value="approve" />
+          <zeebe:property name="role" value="approver" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="883b1733-15ce-74a7-da49-779988773333"
+                    />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_planning_prep" name="Planning Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="planning" />
+          <zeebe:property name="stage_type" value="prep" />
+          <zeebe:property name="role" value="preparer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="550e8400-e29b-41d4-a716-446655440000"
+                    />
+          <zeebe:property name="requires_comment" value="false" />
+          <zeebe:property name="sla_duration" value="48h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_planning_review" name="Planning Review">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="planning" />
+          <zeebe:property name="stage_type" value="review" />
+          <zeebe:property name="role" value="reviewer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="661f9511-f3ac-52e5-b827-557766551111,772a0622-04bd-63f6-c938-668877662222"
+                    />
+          <zeebe:property name="assignee_mode" value="any" />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_planning_approve" name="Planning Approve">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="planning" />
+          <zeebe:property name="stage_type" value="approve" />
+          <zeebe:property name="role" value="approver" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="883b1733-15ce-74a7-da49-779988773333"
+                    />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_logistics_prep" name="Logistics Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="logistics" />
+          <zeebe:property name="stage_type" value="prep" />
+          <zeebe:property name="role" value="preparer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="550e8400-e29b-41d4-a716-446655440000"
+                    />
+          <zeebe:property name="requires_comment" value="false" />
+          <zeebe:property name="sla_duration" value="48h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_logistics_review" name="Logistics Review">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="logistics" />
+          <zeebe:property name="stage_type" value="review" />
+          <zeebe:property name="role" value="reviewer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="661f9511-f3ac-52e5-b827-557766551111,772a0622-04bd-63f6-c938-668877662222"
+                    />
+          <zeebe:property name="assignee_mode" value="any" />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_logistics_approve" name="Logistics Approve">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="logistics" />
+          <zeebe:property name="stage_type" value="approve" />
+          <zeebe:property name="role" value="approver" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="883b1733-15ce-74a7-da49-779988773333"
+                    />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_hse_prep" name="HSE Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="hse" />
+          <zeebe:property name="stage_type" value="prep" />
+          <zeebe:property name="role" value="preparer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="550e8400-e29b-41d4-a716-446655440000"
+                    />
+          <zeebe:property name="requires_comment" value="false" />
+          <zeebe:property name="sla_duration" value="48h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_hse_review" name="HSE Review">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="hse" />
+          <zeebe:property name="stage_type" value="review" />
+          <zeebe:property name="role" value="reviewer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="661f9511-f3ac-52e5-b827-557766551111,772a0622-04bd-63f6-c938-668877662222"
+                    />
+          <zeebe:property name="assignee_mode" value="any" />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_hse_approve" name="HSE Approve">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="hse" />
+          <zeebe:property name="stage_type" value="approve" />
+          <zeebe:property name="role" value="approver" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="883b1733-15ce-74a7-da49-779988773333"
+                    />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_construction_prep" name="Construction Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="construction" />
+          <zeebe:property name="stage_type" value="prep" />
+          <zeebe:property name="role" value="preparer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="550e8400-e29b-41d4-a716-446655440000"
+                    />
+          <zeebe:property name="requires_comment" value="false" />
+          <zeebe:property name="sla_duration" value="48h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_construction_review" name="Construction Review">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="construction" />
+          <zeebe:property name="stage_type" value="review" />
+          <zeebe:property name="role" value="reviewer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="661f9511-f3ac-52e5-b827-557766551111,772a0622-04bd-63f6-c938-668877662222"
+                    />
+          <zeebe:property name="assignee_mode" value="any" />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_construction_approve" name="Construction Approve">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="construction" />
+          <zeebe:property name="stage_type" value="approve" />
+          <zeebe:property name="role" value="approver" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="883b1733-15ce-74a7-da49-779988773333"
+                    />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_qa_prep" name="QA Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="qa" />
+          <zeebe:property name="stage_type" value="prep" />
+          <zeebe:property name="role" value="preparer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="550e8400-e29b-41d4-a716-446655440000"
+                    />
+          <zeebe:property name="requires_comment" value="false" />
+          <zeebe:property name="sla_duration" value="48h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_qa_review" name="QA Review">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="qa" />
+          <zeebe:property name="stage_type" value="review" />
+          <zeebe:property name="role" value="reviewer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="661f9511-f3ac-52e5-b827-557766551111,772a0622-04bd-63f6-c938-668877662222"
+                    />
+          <zeebe:property name="assignee_mode" value="any" />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_qa_approve" name="QA Approve">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="qa" />
+          <zeebe:property name="stage_type" value="approve" />
+          <zeebe:property name="role" value="approver" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="883b1733-15ce-74a7-da49-779988773333"
+                    />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_commissioning_prep" name="Commissioning Prep">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="commissioning" />
+          <zeebe:property name="stage_type" value="prep" />
+          <zeebe:property name="role" value="preparer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="550e8400-e29b-41d4-a716-446655440000"
+                    />
+          <zeebe:property name="requires_comment" value="false" />
+          <zeebe:property name="sla_duration" value="48h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_commissioning_review" name="Commissioning Review">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="commissioning" />
+          <zeebe:property name="stage_type" value="review" />
+          <zeebe:property name="role" value="reviewer" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="661f9511-f3ac-52e5-b827-557766551111,772a0622-04bd-63f6-c938-668877662222"
+                    />
+          <zeebe:property name="assignee_mode" value="any" />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_commissioning_approve" name="Commissioning Approve">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="commissioning" />
+          <zeebe:property name="stage_type" value="approve" />
+          <zeebe:property name="role" value="approver" />
+          <zeebe:property
+                        name="default_user_ids"
+                        value="883b1733-15ce-74a7-da49-779988773333"
+                    />
+          <zeebe:property name="requires_comment" value="true" />
+          <zeebe:property name="sla_duration" value="24h" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+
+    <bpmn:endEvent id="EndEvent_1" name="Complete" />
+
+         <!-- SEQUENCE FLOWS — authoritative source of execution order. -->
+
+    <bpmn:sequenceFlow
+            id="Flow_start_design_prep"
+            sourceRef="StartEvent_1"
+            targetRef="Task_design_prep"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_design_prep_review"
+            sourceRef="Task_design_prep"
+            targetRef="Task_design_review"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_design_review_approve"
+            sourceRef="Task_design_review"
+            targetRef="Task_design_approve"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_design_contracts"
+            sourceRef="Task_design_approve"
+            targetRef="Task_contracts_prep"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_contracts_prep_review"
+            sourceRef="Task_contracts_prep"
+            targetRef="Task_contracts_review"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_contracts_review_approve"
+            sourceRef="Task_contracts_review"
+            targetRef="Task_contracts_approve"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_contracts_procurement"
+            sourceRef="Task_contracts_approve"
+            targetRef="Task_procurement_prep"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_procurement_prep_review"
+            sourceRef="Task_procurement_prep"
+            targetRef="Task_procurement_review"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_procurement_review_approve"
+            sourceRef="Task_procurement_review"
+            targetRef="Task_procurement_approve"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_procurement_planning"
+            sourceRef="Task_procurement_approve"
+            targetRef="Task_planning_prep"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_planning_prep_review"
+            sourceRef="Task_planning_prep"
+            targetRef="Task_planning_review"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_planning_review_approve"
+            sourceRef="Task_planning_review"
+            targetRef="Task_planning_approve"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_planning_logistics"
+            sourceRef="Task_planning_approve"
+            targetRef="Task_logistics_prep"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_logistics_prep_review"
+            sourceRef="Task_logistics_prep"
+            targetRef="Task_logistics_review"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_logistics_review_approve"
+            sourceRef="Task_logistics_review"
+            targetRef="Task_logistics_approve"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_logistics_hse"
+            sourceRef="Task_logistics_approve"
+            targetRef="Task_hse_prep"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_hse_prep_review"
+            sourceRef="Task_hse_prep"
+            targetRef="Task_hse_review"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_hse_review_approve"
+            sourceRef="Task_hse_review"
+            targetRef="Task_hse_approve"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_hse_construction"
+            sourceRef="Task_hse_approve"
+            targetRef="Task_construction_prep"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_construction_prep_review"
+            sourceRef="Task_construction_prep"
+            targetRef="Task_construction_review"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_construction_review_approve"
+            sourceRef="Task_construction_review"
+            targetRef="Task_construction_approve"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_construction_qa"
+            sourceRef="Task_construction_approve"
+            targetRef="Task_qa_prep"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_qa_prep_review"
+            sourceRef="Task_qa_prep"
+            targetRef="Task_qa_review"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_qa_review_approve"
+            sourceRef="Task_qa_review"
+            targetRef="Task_qa_approve"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_qa_commissioning"
+            sourceRef="Task_qa_approve"
+            targetRef="Task_commissioning_prep"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_commissioning_prep_review"
+            sourceRef="Task_commissioning_prep"
+            targetRef="Task_commissioning_review"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_commissioning_review_approve"
+            sourceRef="Task_commissioning_review"
+            targetRef="Task_commissioning_approve"
+        />
+    <bpmn:sequenceFlow
+            id="Flow_commissioning_end"
+            sourceRef="Task_commissioning_approve"
+            targetRef="EndEvent_1"
+        />
+
+  </bpmn:process>
+
+       <!-- DIAGRAM INTERCHANGE — visual layout only, not used by compiler. -->
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_FullWorkflow">
+      <bpmndi:BPMNShape
+                id="Lane_design_di"
+                bpmnElement="Lane_design"
+                isHorizontal="true"
+            ><dc:Bounds
+                    x="30"
+                    y="80"
+                    width="1100"
+                    height="160"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Lane_contracts_di"
+                bpmnElement="Lane_contracts"
+                isHorizontal="true"
+            ><dc:Bounds
+                    x="30"
+                    y="240"
+                    width="1100"
+                    height="160"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Lane_procurement_di"
+                bpmnElement="Lane_procurement"
+                isHorizontal="true"
+            ><dc:Bounds
+                    x="30"
+                    y="400"
+                    width="1100"
+                    height="160"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Lane_planning_di"
+                bpmnElement="Lane_planning"
+                isHorizontal="true"
+            ><dc:Bounds
+                    x="30"
+                    y="560"
+                    width="1100"
+                    height="160"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Lane_logistics_di"
+                bpmnElement="Lane_logistics"
+                isHorizontal="true"
+            ><dc:Bounds
+                    x="30"
+                    y="720"
+                    width="1100"
+                    height="160"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Lane_hse_di"
+                bpmnElement="Lane_hse"
+                isHorizontal="true"
+            ><dc:Bounds
+                    x="30"
+                    y="880"
+                    width="1100"
+                    height="160"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Lane_construction_di"
+                bpmnElement="Lane_construction"
+                isHorizontal="true"
+            ><dc:Bounds
+                    x="30"
+                    y="1040"
+                    width="1100"
+                    height="160"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Lane_qa_di"
+                bpmnElement="Lane_qa"
+                isHorizontal="true"
+            ><dc:Bounds
+                    x="30"
+                    y="1200"
+                    width="1100"
+                    height="160"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Lane_commissioning_di"
+                bpmnElement="Lane_commissioning"
+                isHorizontal="true"
+            ><dc:Bounds
+                    x="30"
+                    y="1360"
+                    width="1100"
+                    height="160"
+                /></bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape
+                id="StartEvent_1_di"
+                bpmnElement="StartEvent_1"
+            >             <dc:Bounds
+                    x="102"
+                    y="142"
+                    width="36"
+                    height="36"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_design_prep_di"
+                bpmnElement="Task_design_prep"
+            >         <dc:Bounds
+                    x="220"
+                    y="125"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_design_review_di"
+                bpmnElement="Task_design_review"
+            >       <dc:Bounds
+                    x="420"
+                    y="125"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_design_approve_di"
+                bpmnElement="Task_design_approve"
+            >      <dc:Bounds
+                    x="620"
+                    y="125"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_contracts_prep_di"
+                bpmnElement="Task_contracts_prep"
+            >      <dc:Bounds
+                    x="220"
+                    y="285"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_contracts_review_di"
+                bpmnElement="Task_contracts_review"
+            >    <dc:Bounds
+                    x="420"
+                    y="285"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_contracts_approve_di"
+                bpmnElement="Task_contracts_approve"
+            >   <dc:Bounds
+                    x="620"
+                    y="285"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_procurement_prep_di"
+                bpmnElement="Task_procurement_prep"
+            >    <dc:Bounds
+                    x="220"
+                    y="445"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_procurement_review_di"
+                bpmnElement="Task_procurement_review"
+            >  <dc:Bounds
+                    x="420"
+                    y="445"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_procurement_approve_di"
+                bpmnElement="Task_procurement_approve"
+            > <dc:Bounds
+                    x="620"
+                    y="445"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_planning_prep_di"
+                bpmnElement="Task_planning_prep"
+            >       <dc:Bounds
+                    x="220"
+                    y="605"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_planning_review_di"
+                bpmnElement="Task_planning_review"
+            >     <dc:Bounds
+                    x="420"
+                    y="605"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_planning_approve_di"
+                bpmnElement="Task_planning_approve"
+            >    <dc:Bounds
+                    x="620"
+                    y="605"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_logistics_prep_di"
+                bpmnElement="Task_logistics_prep"
+            >      <dc:Bounds
+                    x="220"
+                    y="765"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_logistics_review_di"
+                bpmnElement="Task_logistics_review"
+            >    <dc:Bounds
+                    x="420"
+                    y="765"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_logistics_approve_di"
+                bpmnElement="Task_logistics_approve"
+            >   <dc:Bounds
+                    x="620"
+                    y="765"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_hse_prep_di"
+                bpmnElement="Task_hse_prep"
+            >            <dc:Bounds
+                    x="220"
+                    y="925"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_hse_review_di"
+                bpmnElement="Task_hse_review"
+            >          <dc:Bounds
+                    x="420"
+                    y="925"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_hse_approve_di"
+                bpmnElement="Task_hse_approve"
+            >         <dc:Bounds
+                    x="620"
+                    y="925"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_construction_prep_di"
+                bpmnElement="Task_construction_prep"
+            >   <dc:Bounds
+                    x="220"
+                    y="1085"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_construction_review_di"
+                bpmnElement="Task_construction_review"
+            > <dc:Bounds
+                    x="420"
+                    y="1085"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_construction_approve_di"
+                bpmnElement="Task_construction_approve"
+            ><dc:Bounds
+                    x="620"
+                    y="1085"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_qa_prep_di"
+                bpmnElement="Task_qa_prep"
+            >             <dc:Bounds
+                    x="220"
+                    y="1245"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_qa_review_di"
+                bpmnElement="Task_qa_review"
+            >           <dc:Bounds
+                    x="420"
+                    y="1245"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_qa_approve_di"
+                bpmnElement="Task_qa_approve"
+            >          <dc:Bounds
+                    x="620"
+                    y="1245"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_commissioning_prep_di"
+                bpmnElement="Task_commissioning_prep"
+            >  <dc:Bounds
+                    x="220"
+                    y="1405"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_commissioning_review_di"
+                bpmnElement="Task_commissioning_review"
+            ><dc:Bounds
+                    x="420"
+                    y="1405"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="Task_commissioning_approve_di"
+                bpmnElement="Task_commissioning_approve"
+            ><dc:Bounds
+                    x="620"
+                    y="1405"
+                    width="140"
+                    height="70"
+                /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape
+                id="EndEvent_1_di"
+                bpmnElement="EndEvent_1"
+            >               <dc:Bounds
+                    x="820"
+                    y="1422"
+                    width="36"
+                    height="36"
+                /></bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</bpmn:definitions>
