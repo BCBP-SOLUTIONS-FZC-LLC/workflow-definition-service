@@ -254,12 +254,17 @@ jobs:
       - name: Integration Tests & Coverage
         run: |
           mkdir -p .coverage
-          go test -race -count=1 \
-            -coverpkg=$(go list ./internal/... | tr '\n' ',' | sed 's/,$//') \
-            -coverprofile=.coverage/coverage-integration.out \
-            -covermode=atomic \
-            ./test/integration/...
-          go tool cover -func=.coverage/coverage-integration.out | tail -1
+          if [ -d "./test/integration" ]; then
+            go test -race -count=1 \
+              -coverpkg=$(go list ./internal/... | tr '\n' ',' | sed 's/,$//') \
+              -coverprofile=.coverage/coverage-integration.out \
+              -covermode=atomic \
+              ./test/integration/...
+            go tool cover -func=.coverage/coverage-integration.out | tail -1
+          else
+            echo "No integration tests found, skipping"
+            echo "mode: atomic" > .coverage/coverage-integration.out
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
