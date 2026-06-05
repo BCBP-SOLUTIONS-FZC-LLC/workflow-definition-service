@@ -68,11 +68,11 @@ Mutations that require the record to be in a specific status (e.g. `PublishVersi
 ```sql
 -- name: PublishVersion :execresult
 UPDATE workflow_version
-SET status = 'PUBLISHED', version_number = @version_number, published_at = NOW()
-WHERE tenant_id = @tenant_id AND id = @id;
+SET status = 'PUBLISHED', version_number = $3, ...
+WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT';
 ```
 
-The SQL does **not** filter on `status`. Go-side logic checks `RowsAffected()` and, on 0, does a secondary `GetWorkflowVersionByID` to distinguish "record missing" from "record in wrong status". See [Repository error semantics](architecture.md#repository-error-semantics).
+The SQL filters on `status`. On `RowsAffected() == 0` — which means either the record doesn't exist or it exists in the wrong status — Go calls `statusOrNotFound` to do a secondary `GetWorkflowVersionByID` and distinguish the two cases. See [Repository error semantics](architecture.md#repository-error-semantics).
 
 ### Dynamic list queries (raw pgx)
 

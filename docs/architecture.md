@@ -269,10 +269,10 @@ Do not collapse these into `ErrNotFound`. The service layer maps each to a disti
 
 ### `statusOrNotFound` probe
 
-Status-guarded SQL mutations (`PublishVersion`, `ArchiveVersion`, `UpdateDraft`, `DeleteDraft`) do **not** filter on `status` in SQL. Instead, they rely on Go logic after checking `RowsAffected()`:
+Status-guarded SQL mutations (`PublishVersion`, `ArchiveVersion`, `UpdateDraft`, `DeleteDraft`) filter on `status` in their WHERE clause (e.g. `WHERE tenant_id=$1 AND id=$2 AND status='DRAFT'`). On `RowsAffected() == 0` — which means either the record is absent or it exists in the wrong status — Go calls `statusOrNotFound` to do a secondary `GetWorkflowVersionByID` and disambiguate:
 
 ```text
-RowsAffected() > 0  →  success
+RowsAffected() > 0  →  success (single query)
 RowsAffected() == 0 →  secondary read: GetWorkflowVersionByID
                          absent  →  ErrNotFound
                          present →  wrongStatusErr (ErrVersionNotDraft etc.)
