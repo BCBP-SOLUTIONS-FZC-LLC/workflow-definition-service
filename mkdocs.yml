@@ -15,6 +15,10 @@ markdown_extensions:
   - toc:
       permalink: true
 
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+  - js/mermaid-init.js
+
 nav:
   - Home: index.md
   - Getting Started:
@@ -23,9 +27,14 @@ nav:
   - Development:
     - Architecture: architecture.md
     - Coding Standards: standards.md
+    - Style Guide: coding_style_rules.md
     - Testing: testing.md
   - API Reference:
     - REST API: api.md
     - gRPC API: grpc.md
   - Operations:
     - Database: database.md
+  - Platform Libraries:
+    - Events (SNS/SQS/Outbox): platform-events.md
+    - Database Pool (pgcommon): platform-pgcommon.md
+    - HTTP & gRPC (gincommon): platform-gincommon.md

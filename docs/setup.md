@@ -9,22 +9,56 @@
 | Python | 3.9+ | Required for MkDocs only |
 | Make | Any | Pre-installed on macOS/Linux |
 
+## Private Module Access
+
+This service consumes private Go modules hosted in the `github.com/BCBP-SOLUTIONS-FZC-LLC/*` organization (such as `platform-events`, `platform-pgcommon`, and `platform-gincommon`).
+
+To fetch these modules, configure Go to bypass the public proxy and checksum database:
+
+```bash
+go env -w GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*
+```
+
+### GitHub Authentication
+
+You must configure Git to authenticate against GitHub when fetching private modules:
+
+**SSH key (recommended for local dev):**
+
+```bash
+git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
+```
+
+**Personal Access Token (for CI/CD or HTTPS):**
+Add a classic or fine-grained GitHub PAT with read repository permissions:
+
+```bash
+git config --global credential.helper store
+echo "https://x-access-token:<your-github-token>@github.com" > ~/.git-credentials
+chmod 600 ~/.git-credentials
+```
+
+---
+
 ## First-time setup
 
 ```bash
-# 1. Install dev tooling (sqlc, goose, buf, mockgen, golangci-lint)
+# 1. Configure Go private module path
+go env -w GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*
+
+# 2. Install dev tooling (sqlc, goose, buf, mockgen, golangci-lint)
 make tools
 
-# 2. Copy env template and fill in local values
+# 3. Copy env template and fill in local values
 cp .env.example .env
 
-# 3. Start local infra (PostgreSQL 16 + Valkey 8)
+# 4. Start local infra (PostgreSQL 16 + Valkey 8)
 make docker-up
 
-# 4. Run database migrations
+# 5. Run database migrations
 make migrate-up
 
-# 5. Start the server
+# 6. Start the server
 go run ./cmd/server
 ```
 
@@ -62,11 +96,23 @@ Generated files are gitignored — never commit them.
 
 ## Running tests
 
+The service uses unit tests and integration tests. Integration tests spin up database/infrastructure dependencies dynamically using `testcontainers-go`, meaning a local running Docker daemon is required.
+
 ```bash
-make test                # unit tests with race detector
-make test-integration    # integration tests (requires running infra)
-make cover               # unit tests + coverage summary
-make cover-html          # opens HTML coverage report in browser
+# 1. Pre-pull Docker images for testcontainers (one-time command to warm cache)
+make tools-integration
+
+# 2. Run unit tests with race detector and coverage
+make test
+
+# 3. Run integration tests (spins up Docker containers via testcontainers-go automatically)
+make test-integration
+
+# 4. Print unit test coverage summary
+make cover
+
+# 5. Open HTML coverage report in browser
+make cover-html
 ```
 
 ## Docs

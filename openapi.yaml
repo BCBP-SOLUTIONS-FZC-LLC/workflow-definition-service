@@ -170,7 +170,12 @@ components:
         id:                  { type: string, format: uuid }
         version_number:      { type: integer, nullable: true }
         status:              { $ref: '#/components/schemas/VersionStatus' }
-        is_valid:            { type: boolean }
+        is_valid:
+          type: boolean
+          description: >-
+            Whether all default assignees in this version are still valid members
+            of their required departments. Set to false by a DepartmentMembershipRevoked
+            event; does not reflect BPMN structural validity.
         created_by_user_id:  { type: string, format: uuid }
         published_at:        { type: string, format: date-time, nullable: true }
       example:
@@ -540,7 +545,7 @@ paths:
         - in: query
           name: search
           schema: { type: string }
-          description: Fuzzy search on business_key or name.
+          description: Fuzzy search on name.
         - in: query
           name: key
           schema: { type: string }
@@ -548,7 +553,13 @@ paths:
         - in: query
           name: is_valid
           schema: { type: boolean }
-          description: Filter by validation status of the active version.
+          description: >
+            Filter on `workflow_version.is_valid` of the active version
+            (`workflow.active_version_id → workflow_version.id`).
+            `is_valid` is set to `false` when a `DepartmentMembershipRevoked` event invalidates
+            an assignee in a published version, preventing new workflow instances until
+            reassignment. Workflows with no active version (`active_version_id IS NULL`)
+            are excluded when this filter is set because there is no active version to evaluate.
         - in: query
           name: status
           schema:
@@ -558,6 +569,7 @@ paths:
         - in: query
           name: has_draft
           schema: { type: boolean }
+          description: Filter workflows that have (true) or do not have (false) an unpublished DRAFT version.
       responses:
         "200":
           description: Paginated workflow list.
