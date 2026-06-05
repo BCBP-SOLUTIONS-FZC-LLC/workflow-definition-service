@@ -122,7 +122,7 @@ func TestWorkflowVersionRepo_DeleteDraft(t *testing.T) {
 	}
 }
 
-func TestWorkflowVersionRepo_DeleteDraft_WrongStatus(t *testing.T) {
+func TestWorkflowVersionRepo_DeleteDraft_NotFound(t *testing.T) {
 	pool := newTestPool(t)
 	vRepo := postgres.NewWorkflowVersionRepo(pool)
 	ctx := context.Background()
@@ -133,7 +133,7 @@ func TestWorkflowVersionRepo_DeleteDraft_WrongStatus(t *testing.T) {
 	}
 }
 
-func TestWorkflowVersionRepo_Archive_WrongStatus(t *testing.T) {
+func TestWorkflowVersionRepo_Archive_NotFound(t *testing.T) {
 	pool := newTestPool(t)
 	vRepo := postgres.NewWorkflowVersionRepo(pool)
 	ctx := context.Background()
@@ -196,6 +196,57 @@ func TestWorkflowVersionRepo_DeleteDraft_ExistsPublished_ReturnsVersionNotDraft(
 	err := vRepo.DeleteDraft(ctx, tenantID, v.ID)
 	if err != domain.ErrVersionNotDraft {
 		t.Errorf("DeleteDraft(PUBLISHED) = %v, want ErrVersionNotDraft", err)
+	}
+}
+
+func TestWorkflowVersionRepo_Publish(t *testing.T) {
+	pool := newTestPool(t)
+	wfRepo := postgres.NewWorkflowRepo(pool)
+	vRepo := postgres.NewWorkflowVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	wf := &domain.Workflow{
+		ID: uuid.New(), TenantID: tenantID,
+		CreatedByUserID: uuid.New(), BusinessKey: "wv-pub", Name: "X",
+	}
+	if err := wfRepo.Create(ctx, wf); err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	v := newDraftVersion(wf.ID, tenantID)
+	if err := vRepo.Create(ctx, v); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, `{"steps":[]}`, "abc123"); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	got, err := vRepo.GetByID(ctx, tenantID, v.ID)
+	if err != nil {
+		t.Fatalf("GetByID after publish: %v", err)
+	}
+	if got.Status != domain.VersionStatusPublished {
+		t.Errorf("Status = %v, want PUBLISHED", got.Status)
+	}
+	n := int32(1)
+	if got.VersionNumber == nil || *got.VersionNumber != n {
+		t.Errorf("VersionNumber = %v, want 1", got.VersionNumber)
+	}
+	if got.PublishedAt == nil {
+		t.Error("PublishedAt should not be nil after Publish")
+	}
+}
+
+func TestWorkflowVersionRepo_Publish_NotDraft(t *testing.T) {
+	pool := newTestPool(t)
+	vRepo := postgres.NewWorkflowVersionRepo(pool)
+	ctx := context.Background()
+
+	// Non-existent version → ErrNotFound.
+	err := vRepo.Publish(ctx, uuid.New(), uuid.New(), 1, `{}`, "")
+	if err != domain.ErrNotFound {
+		t.Errorf("Publish non-existent = %v, want ErrNotFound", err)
 	}
 }
 

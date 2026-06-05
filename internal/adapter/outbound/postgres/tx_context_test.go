@@ -3,9 +3,14 @@ package postgres
 import (
 	"context"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
-func TestTxContext(t *testing.T) {
+// stubTx satisfies the pgx.Tx interface without a real DB connection.
+type stubTx struct{ pgx.Tx }
+
+func TestTxContext_NotFound(t *testing.T) {
 	tests := []struct {
 		name   string
 		ctx    context.Context
@@ -30,5 +35,17 @@ func TestTxContext(t *testing.T) {
 				t.Errorf("txFromContext ok = %v, want %v", ok, tt.wantOk)
 			}
 		})
+	}
+}
+
+func TestTxContext_RoundTrip(t *testing.T) {
+	var tx pgx.Tx = &stubTx{}
+	ctx := withTx(context.Background(), tx)
+	got, ok := txFromContext(ctx)
+	if !ok {
+		t.Fatal("txFromContext: ok = false, want true")
+	}
+	if got != tx {
+		t.Errorf("txFromContext returned a different value than stored by withTx")
 	}
 }
