@@ -98,6 +98,14 @@ func (c *Config) validate() error {
 		if c.SQSQueueURL == "" {
 			return fmt.Errorf("SQS_QUEUE_URL is required when AWS_USE_STUB=false")
 		}
+		if c.AppEnv != "dev" {
+			if c.OrgMembershipBaseURL == "" {
+				return fmt.Errorf("ORG_MEMBERSHIP_BASE_URL is required in non-dev environments when AWS_USE_STUB=false")
+			}
+			if c.ExecutionServiceAddr == "" {
+				return fmt.Errorf("EXECUTION_SERVICE_ADDR is required in non-dev environments when AWS_USE_STUB=false")
+			}
+		}
 	}
 	return nil
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-func newRouter(cfg *config.Config, pool *pgcommon.Pool, log port.Logger, h *handler.Handler) *gin.Engine {
+func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, log port.Logger, h *handler.Handler) *gin.Engine {
 	if cfg.AppEnv != "dev" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -31,7 +31,7 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, log port.Logger, h *hand
 	}
 
 	r.GET("/healthz", healthzHandler)
-	r.GET("/readyz", readyzHandler(pool))
+	r.GET("/readyz", readyzHandler(pool, cache))
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	api := r.Group("/api/v1")

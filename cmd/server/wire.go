@@ -126,7 +126,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	)
 	definitionv1.RegisterDefinitionServiceServer(grpcSrv, grpcadapter.NewServer(log))
 
-	r := newRouter(cfg, pool, log, h)
+	r := newRouter(cfg, pool, cache, log, h)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
