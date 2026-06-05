@@ -2,7 +2,7 @@ package bpmn_compiler
 
 import (
 	"context"
-	"errors"
+	"fmt"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
@@ -16,14 +16,67 @@ func New() *Compiler {
 	return &Compiler{}
 }
 
-func (c *Compiler) Compile(_ context.Context, _ string) (*domain.CompiledPlan, error) {
-	return nil, errors.New("not implemented")
+func (c *Compiler) Validate(_ context.Context, bpmnXML string) ([]domain.BPMNValidationError, error) {
+	defs, err := parse(bpmnXML)
+	if err != nil {
+		return nil, fmt.Errorf("bpmn validate: %w", err)
+	}
+	if len(defs.Processes) > 1 {
+		return []domain.BPMNValidationError{{
+			Code:    domain.BPMNErrMultipleProcesses,
+			Message: fmt.Sprintf("definitions contains %d processes; only one is allowed", len(defs.Processes)),
+		}}, nil
+	}
+	if len(defs.Processes) == 0 {
+		return []domain.BPMNValidationError{{
+			Code:    domain.BPMNErrNoStartEvent,
+			Message: "definitions contains no process element",
+		}}, nil
+	}
+	proc := &defs.Processes[0]
+	g := buildGraph(proc)
+	return validate(proc, g), nil
 }
 
-func (c *Compiler) Validate(_ context.Context, _ string) ([]domain.BPMNValidationError, error) {
-	return nil, errors.New("not implemented")
+// TaskQueue in the returned plan defaults to the shared queue. The service layer
+// overrides it for enterprise-plan tenants before persisting.
+func (c *Compiler) Compile(_ context.Context, bpmnXML string) (*domain.CompiledPlan, error) {
+	defs, err := parse(bpmnXML)
+	if err != nil {
+		return nil, fmt.Errorf("bpmn compile: %w", err)
+	}
+	if len(defs.Processes) != 1 {
+		return nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
+			Code:    domain.BPMNErrMultipleProcesses,
+			Message: fmt.Sprintf("expected exactly one process, got %d", len(defs.Processes)),
+		}}}
+	}
+	proc := &defs.Processes[0]
+	g := buildGraph(proc)
+
+	if errs := validate(proc, g); len(errs) > 0 {
+		return nil, &domain.ValidationFailedError{Errors: errs}
+	}
+
+	plan, err := compile(proc, g)
+	if err != nil {
+		return nil, fmt.Errorf("bpmn compile: %w", err)
+	}
+	return plan, nil
 }
 
-func (c *Compiler) Hash(_ string) (string, error) {
-	return "", errors.New("not implemented")
+// Zeebe property ordering within each element does not affect the hash.
+func (c *Compiler) Hash(bpmnXML string) (string, error) {
+	defs, err := parse(bpmnXML)
+	if err != nil {
+		return "", fmt.Errorf("bpmn hash: %w", err)
+	}
+	if len(defs.Processes) == 0 {
+		return "", fmt.Errorf("bpmn hash: no process element found")
+	}
+	h, err := canonicalHash(&defs.Processes[0])
+	if err != nil {
+		return "", fmt.Errorf("bpmn hash: %w", err)
+	}
+	return h, nil
 }
