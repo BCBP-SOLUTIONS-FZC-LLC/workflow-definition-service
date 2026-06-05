@@ -1,6 +1,7 @@
 package bpmn_compiler
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -9,11 +10,11 @@ import (
 
 const maxTokens = 50_000
 
-func parse(xmlData string) (*bpmnDefinitions, error) {
+func parse(ctx context.Context, xmlData string) (*bpmnDefinitions, error) {
 	if err := securityScan(xmlData); err != nil {
 		return nil, err
 	}
-	if err := countTokens(xmlData); err != nil {
+	if err := countTokens(ctx, xmlData); err != nil {
 		return nil, err
 	}
 	defs, err := unmarshal(xmlData)
@@ -46,10 +47,13 @@ func securityScan(xmlData string) error {
 
 // Second line of defence against entity expansion attacks that omit explicit
 // declarations but rely on deeply nested or repeated constructs.
-func countTokens(xmlData string) error {
+func countTokens(ctx context.Context, xmlData string) error {
 	dec := xml.NewDecoder(strings.NewReader(xmlData))
 	dec.Strict = true
 	for n := 0; ; n++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("XML token scan: %w", err)
+		}
 		if n > maxTokens {
 			return fmt.Errorf("XML token limit exceeded (max %d)", maxTokens)
 		}

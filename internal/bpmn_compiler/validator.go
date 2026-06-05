@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	maxUserTasks = 64
-	maxLanes     = 16
-	maxCondExpr  = 255
-	maxRoleLen   = 64
+	maxUserTasks        = 64
+	maxLanes            = 16
+	maxCondExpr         = 255
+	maxRoleLen          = 64
+	maxDefaultAssignees = 10
 )
 
 func validate(proc *bpmnProcess, g *graph) []domain.BPMNValidationError {
@@ -177,71 +178,101 @@ func buildLaneNameSet(proc *bpmnProcess) map[string]struct{} {
 }
 
 func validateTaskProps(t bpmnUserTask, laneNames map[string]struct{}) []domain.BPMNValidationError {
-	var errs []domain.BPMNValidationError
 	props := propsMap(t.ExtensionElements)
+	var errs []domain.BPMNValidationError
+	errs = append(errs, validateTaskDeptID(t, props, laneNames)...)
+	errs = append(errs, validateTaskStageType(t, props)...)
+	errs = append(errs, validateTaskRole(t, props)...)
+	errs = append(errs, validateTaskDefaultUserIDs(t, props)...)
+	errs = append(errs, validateTaskOptionalProps(t, props)...)
+	return errs
+}
 
+func validateTaskDeptID(t bpmnUserTask, props map[string]string, laneNames map[string]struct{}) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
 	deptID, ok := props["dept_id"]
 	if !ok || deptID == "" {
-		errs = appendErr(errs, domain.BPMNErrMissingZeebeProperty, t.ID,
+		return appendErr(errs, domain.BPMNErrMissingZeebeProperty, t.ID,
 			"missing required zeebe property: dept_id")
-	} else if _, valid := laneNames[deptID]; !valid {
+	}
+	if _, valid := laneNames[deptID]; !valid {
 		errs = appendErr(errs, domain.BPMNErrInvalidDeptID, t.ID,
 			fmt.Sprintf("dept_id %q does not match any lane name (normalized)", deptID))
 	}
+	return errs
+}
 
+func validateTaskStageType(t bpmnUserTask, props map[string]string) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
 	stageType, ok := props["stage_type"]
 	if !ok || stageType == "" {
-		errs = appendErr(errs, domain.BPMNErrMissingZeebeProperty, t.ID,
+		return appendErr(errs, domain.BPMNErrMissingZeebeProperty, t.ID,
 			"missing required zeebe property: stage_type")
-	} else if _, valid := validStageTypes[stageType]; !valid {
+	}
+	if _, valid := validStageTypes[stageType]; !valid {
 		errs = appendErr(errs, domain.BPMNErrInvalidStageType, t.ID,
 			fmt.Sprintf("invalid stage_type %q: must be prep, review, or approve", stageType))
 	}
+	return errs
+}
 
+func validateTaskRole(t bpmnUserTask, props map[string]string) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
 	role := props["role"]
 	if role == "" {
-		errs = appendErr(errs, domain.BPMNErrMissingZeebeProperty, t.ID,
+		return appendErr(errs, domain.BPMNErrMissingZeebeProperty, t.ID,
 			"missing required zeebe property: role")
-	} else if len(role) > maxRoleLen {
+	}
+	if len(role) > maxRoleLen {
 		errs = appendErr(errs, domain.BPMNErrRoleEmpty, t.ID,
 			fmt.Sprintf("role exceeds %d character limit", maxRoleLen))
 	}
+	return errs
+}
 
+func validateTaskDefaultUserIDs(t bpmnUserTask, props map[string]string) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
 	rawIDs, ok := props["default_user_ids"]
 	if !ok || rawIDs == "" {
-		errs = appendErr(errs, domain.BPMNErrMissingZeebeProperty, t.ID,
+		return appendErr(errs, domain.BPMNErrMissingZeebeProperty, t.ID,
 			"missing required zeebe property: default_user_ids")
-	} else {
-		for _, rawID := range strings.Split(rawIDs, ",") {
-			rawID = strings.TrimSpace(rawID)
-			if _, err := uuid.Parse(rawID); err != nil {
-				errs = appendErr(errs, domain.BPMNErrInvalidUUID, t.ID,
-					fmt.Sprintf("default_user_ids contains invalid UUID: %q", rawID))
-			}
+	}
+	parts := strings.Split(rawIDs, ",")
+	for _, rawID := range parts {
+		rawID = strings.TrimSpace(rawID)
+		if _, err := uuid.Parse(rawID); err != nil {
+			errs = appendErr(errs, domain.BPMNErrInvalidUUID, t.ID,
+				fmt.Sprintf("default_user_ids contains invalid UUID: %q", rawID))
 		}
 	}
+	if len(parts) > maxDefaultAssignees {
+		errs = appendErr(errs, domain.BPMNErrTaskAssigneeLimitExceeded, t.ID,
+			fmt.Sprintf("default_user_ids contains %d entries; maximum is %d",
+				len(parts), maxDefaultAssignees))
+	}
+	return errs
+}
 
+func validateTaskOptionalProps(t bpmnUserTask, props map[string]string) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
 	if mode, ok := props["assignee_mode"]; ok {
 		if _, valid := validAssigneeModes[mode]; !valid {
 			errs = appendErr(errs, domain.BPMNErrInvalidZeebeProperty, t.ID,
 				fmt.Sprintf("invalid assignee_mode %q: must be any or all", mode))
 		}
 	}
-
 	if rc, ok := props["requires_comment"]; ok {
 		if _, err := strconv.ParseBool(rc); err != nil {
 			errs = appendErr(errs, domain.BPMNErrInvalidZeebeProperty, t.ID,
 				fmt.Sprintf("invalid requires_comment %q: must be true or false", rc))
 		}
 	}
-
 	if sla, ok := props["sla_duration"]; ok {
 		if !isValidSLADuration(sla) {
 			errs = appendErr(errs, domain.BPMNErrInvalidSLADuration, t.ID,
 				fmt.Sprintf("invalid sla_duration %q: use Go duration (24h, 90m) or day suffix (2d)", sla))
 		}
 	}
-
 	return errs
 }
 

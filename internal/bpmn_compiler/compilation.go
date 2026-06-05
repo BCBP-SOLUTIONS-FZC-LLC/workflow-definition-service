@@ -82,6 +82,8 @@ func (s *compileState) traverseNode(nodeID string) error {
 		return s.handleGateway(nodeID, true)
 	case NodeTypeEndEvent:
 		s.flushSeqBuf()
+	case NodeTypeStartEvent:
+		// Start events are not processed; their successors are traversed from compile().
 	}
 	return nil
 }

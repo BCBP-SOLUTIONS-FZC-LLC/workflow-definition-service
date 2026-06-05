@@ -367,7 +367,7 @@ components:
         - MISSING_ZEEBE_PROPERTY      # Required Zeebe property absent on a userTask
         - INVALID_DEPT_ID             # dept_id doesn't match any lane name in the process
         - INVALID_STAGE_TYPE          # stage_type not one of prep / review / approve
-        - ROLE_EMPTY                  # role property is empty or exceeds 64 chars
+        - ROLE_EMPTY                  # role property exceeds the 64-character limit (absent/empty role emits MISSING_ZEEBE_PROPERTY)
         - INVALID_UUID                # one or more values in default_user_ids are not valid UUID v4
         - TASK_LIMIT_EXCEEDED         # userTask count > 64
         - LANE_LIMIT_EXCEEDED         # lane count > 16
