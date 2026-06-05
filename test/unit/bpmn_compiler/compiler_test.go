@@ -65,7 +65,6 @@ func validTask(id, deptID, stageType string) string {
     </bpmn:userTask>`
 }
 
-
 func TestValidate_ReferenceFiles(t *testing.T) {
 	c := bpmn_compiler.New()
 	tests := []struct {
@@ -91,7 +90,6 @@ func TestValidate_ReferenceFiles(t *testing.T) {
 		})
 	}
 }
-
 
 func TestValidate_StructuralRules(t *testing.T) {
 	c := bpmn_compiler.New()
@@ -182,7 +180,6 @@ func TestValidate_StructuralRules(t *testing.T) {
 		})
 	}
 }
-
 
 func TestValidate_ZeebePropertyRules(t *testing.T) {
 	c := bpmn_compiler.New()
@@ -284,7 +281,6 @@ func TestValidate_ZeebePropertyRules(t *testing.T) {
 	}
 }
 
-
 func TestValidate_ParseErrors(t *testing.T) {
 	c := bpmn_compiler.New()
 
@@ -322,7 +318,6 @@ func TestValidate_ParseErrors(t *testing.T) {
 		})
 	}
 }
-
 
 func TestCompile_InitialDiagram(t *testing.T) {
 	bpmn := mustReadBPMN(t, "initial-diagram.bpmn")
@@ -436,7 +431,6 @@ func TestCompile_ParallelDiagram(t *testing.T) {
 	}
 }
 
-
 func TestCompile_StageDefFields(t *testing.T) {
 	bpmn := mustReadBPMN(t, "initial-diagram.bpmn")
 	plan, err := bpmn_compiler.New().Compile(context.Background(), bpmn)
@@ -468,7 +462,6 @@ func TestCompile_StageDefFields(t *testing.T) {
 		t.Errorf("prep.SLADuration = %v, want \"48h\"", prep.SLADuration)
 	}
 }
-
 
 func TestHash_Deterministic(t *testing.T) {
 	c := bpmn_compiler.New()
@@ -536,7 +529,6 @@ func TestHash_PropertyOrderDoesNotAffectHash(t *testing.T) {
 		t.Errorf("property order should not affect hash: %q != %q", h1, h2)
 	}
 }
-
 
 const noProcessBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions
@@ -649,6 +641,71 @@ func TestValidate_CountTokensError(t *testing.T) {
 	}
 }
 
+func TestValidate_ZeroProcesses_ErrorCode(t *testing.T) {
+	errs, err := bpmn_compiler.New().Validate(context.Background(), noProcessBPMN)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if !hasCode(errs, domain.BPMNErrMultipleProcesses) {
+		t.Errorf("0-process definitions should emit MULTIPLE_PROCESSES; got %v", errCodes(errs))
+	}
+}
+
+const multiProcessBPMN = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="D1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="P1" name="One" isExecutable="true"/>
+  <bpmn:process id="P2" name="Two" isExecutable="true"/>
+</bpmn:definitions>`
+
+func TestHash_MultipleProcesses(t *testing.T) {
+	_, err := bpmn_compiler.New().Hash(multiProcessBPMN)
+	if err == nil {
+		t.Error("Hash() should return error when definitions has multiple processes")
+	}
+}
+
+func TestValidate_AssigneeLimitExceeded(t *testing.T) {
+	// Build a task with 11 UUIDs in default_user_ids (limit is 10).
+	ids := make([]string, 11)
+	for i := range ids {
+		ids[i] = aliceUUID
+	}
+	taskXML := `<bpmn:userTask id="Task_1" name="T">
+      <bpmn:extensionElements><zeebe:properties>
+        <zeebe:property name="dept_id"          value="design"/>
+        <zeebe:property name="stage_type"       value="prep"/>
+        <zeebe:property name="role"             value="preparer"/>
+        <zeebe:property name="default_user_ids" value="` + strings.Join(ids, ",") + `"/>
+      </zeebe:properties></bpmn:extensionElements></bpmn:userTask>`
+	bpmnXML := minimalBPMN(
+		`<bpmn:startEvent id="StartEvent_1" name="Start"/>` +
+			taskXML +
+			`<bpmn:endEvent id="EndEvent_1" name="End"/>
+      <bpmn:sequenceFlow id="F1" sourceRef="StartEvent_1" targetRef="Task_1"/>
+      <bpmn:sequenceFlow id="F2" sourceRef="Task_1"       targetRef="EndEvent_1"/>`,
+	)
+
+	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if !hasCode(errs, domain.BPMNErrTaskAssigneeLimitExceeded) {
+		t.Errorf("expected TASK_ASSIGNEE_LIMIT_EXCEEDED; got %v", errCodes(errs))
+	}
+}
+
+func TestCompile_ParseError_WrapsPrefix(t *testing.T) {
+	_, err := bpmn_compiler.New().Compile(context.Background(), `<?xml version="1.0"?><unclosed>`)
+	if err == nil {
+		t.Fatal("Compile() should return error for malformed XML")
+	}
+	if !strings.Contains(err.Error(), "bpmn compile:") {
+		t.Errorf("expected error to contain 'bpmn compile:' prefix; got: %v", err)
+	}
+}
 
 func isValidationFailedError(err error, target **domain.ValidationFailedError) bool {
 	if err == nil {

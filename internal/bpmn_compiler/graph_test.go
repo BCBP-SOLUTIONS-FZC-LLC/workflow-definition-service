@@ -498,6 +498,107 @@ func TestTraverseExclusiveBranches_NilTask(t *testing.T) {
 	}
 }
 
+func TestFlushSeqBuf_Empty(t *testing.T) {
+	state := newCompileState(&bpmnProcess{}, &graph{}, nil, nil)
+	// Flushing an empty buffer should not add a step.
+	state.flushSeqBuf()
+	if len(state.steps) != 0 {
+		t.Errorf("expected 0 steps after flushing empty buffer, got %d", len(state.steps))
+	}
+}
+
+func TestEnsureDept_Idempotent(t *testing.T) {
+	state := newCompileState(&bpmnProcess{}, &graph{}, nil, nil)
+	state.ensureDept("design", "Design")
+	state.ensureDept("design", "Design")
+	if len(state.depts) != 1 {
+		t.Errorf("ensureDept called twice should produce 1 dept, got %d", len(state.depts))
+	}
+}
+
+func TestAddToSeqBuf_Dedup(t *testing.T) {
+	state := newCompileState(&bpmnProcess{}, &graph{}, nil, nil)
+	state.addToSeqBuf("design")
+	state.addToSeqBuf("design")
+	if len(state.seqBuf) != 1 {
+		t.Errorf("addToSeqBuf with duplicate should produce len=1, got %d", len(state.seqBuf))
+	}
+}
+
+func TestTraverseNode_AlreadyVisited(t *testing.T) {
+	g := &graph{nodeType: map[string]FlowNodeType{}}
+	state := newCompileState(&bpmnProcess{}, g, nil, nil)
+	state.visited["T1"] = true
+	err := state.traverseNode("T1")
+	if err != nil {
+		t.Errorf("traverseNode() on already-visited node should return nil, got %v", err)
+	}
+}
+
+func TestTraverseBranches_DeadEndBeforeJoin(t *testing.T) {
+	proc := &bpmnProcess{}
+	g := &graph{
+		outgoing: map[string][]string{
+			"split": {"A"},
+			"A":     {},
+		},
+		nodeType: map[string]FlowNodeType{
+			"A": NodeTypeEndEvent,
+		},
+	}
+	state := newCompileState(proc, g, map[string]bpmnLane{}, nil)
+	depts, err := state.traverseBranches("split", "join")
+	if err != nil {
+		t.Errorf("traverseBranches() with dead-end branch should not error, got %v", err)
+	}
+	if len(depts) != 0 {
+		t.Errorf("expected empty depts for dead-end branch, got %v", depts)
+	}
+}
+
+func TestTraverseExclusiveBranches_DeadEndBeforeJoin(t *testing.T) {
+	proc := &bpmnProcess{}
+	g := &graph{
+		outgoing: map[string][]string{
+			"split": {"A"},
+			"A":     {},
+		},
+		nodeType: map[string]FlowNodeType{
+			"A": NodeTypeEndEvent,
+		},
+	}
+	state := newCompileState(proc, g, map[string]bpmnLane{}, map[[2]string]string{})
+	branches, err := state.traverseExclusiveBranches("split", "join")
+	if err != nil {
+		t.Errorf("traverseExclusiveBranches() with dead-end branch should not error, got %v", err)
+	}
+	if len(branches) != 1 {
+		t.Errorf("expected 1 branch entry, got %d", len(branches))
+	}
+}
+
+func TestHandleGateway_SplitNoJoin_Error(t *testing.T) {
+	g := &graph{
+		outgoing: map[string][]string{
+			"split": {"A", "B"},
+			"A":     {},
+			"B":     {},
+		},
+		incoming: map[string][]string{
+			"A": {"split"},
+			"B": {"split"},
+		},
+		nodeType: map[string]FlowNodeType{
+			"split": NodeTypeParallelGateway,
+		},
+	}
+	state := newCompileState(&bpmnProcess{}, g, map[string]bpmnLane{}, map[[2]string]string{})
+	err := state.handleGateway("split", false)
+	if err == nil {
+		t.Error("handleGateway() should return error when split has no matching join")
+	}
+}
+
 func taskWithProps(props map[string]string) *bpmnUserTask {
 	items := make([]zeebeProperty, 0, len(props))
 	for k, v := range props {
