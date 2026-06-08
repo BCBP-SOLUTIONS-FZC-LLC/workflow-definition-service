@@ -97,3 +97,26 @@ func TestMembershipClient_CheckEligibility_RequestError(t *testing.T) {
 		t.Fatal("expected error when server is closed")
 	}
 }
+
+func TestMembershipClient_CheckEligibility_URLEncodesParams(t *testing.T) {
+	var gotDept, gotLevel string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotDept = r.URL.Query().Get("department")
+		gotLevel = r.URL.Query().Get("level")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	client := httpadapter.NewMembershipClient(srv.URL)
+	_, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), "dept&special=1", "role=admin&x=y")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotDept != "dept&special=1" {
+		t.Errorf("expected department to be URL-decoded to 'dept&special=1', got %q", gotDept)
+	}
+	if gotLevel != "role=admin&x=y" {
+		t.Errorf("expected level to be URL-decoded to 'role=admin&x=y', got %q", gotLevel)
+	}
+}

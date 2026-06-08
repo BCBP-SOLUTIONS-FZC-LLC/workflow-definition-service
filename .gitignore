@@ -35,6 +35,8 @@
 !.github/ISSUE_TEMPLATE/
 !Dockerfile
 !openapi.yaml
+!localstack-init.sh
+!smoke-test.sh
 
 # RE-IGNORE: local platform library copies (fetched as Go modules via GOPRIVATE)
 platform-libs/

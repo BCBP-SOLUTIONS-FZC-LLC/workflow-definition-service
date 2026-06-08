@@ -190,10 +190,12 @@ jobs:
       - name: Unit Tests & Coverage
         run: |
           mkdir -p .coverage
+          EXCLUDE='/postgres/db$\|/postgres$\|/mocks$'
           go test -race -count=1 \
-            -coverpkg=$(go list ./internal/... ./cmd/... | tr '\n' ',' | sed 's/,$//') \
+            -coverpkg=$(go list ./internal/... ./cmd/... | grep -v "$EXCLUDE" | tr '\n' ',' | sed 's/,$//') \
             -coverprofile=.coverage/coverage.out -covermode=atomic \
             ./internal/... ./test/unit/...
+          grep -v '/postgres/db/\|/postgres/\|/mocks/' .coverage/coverage.out > .coverage/coverage.out.filtered && mv .coverage/coverage.out.filtered .coverage/coverage.out
 
       - uses: actions/upload-artifact@v4
         with:
@@ -216,12 +218,12 @@ jobs:
 
       - run: go tool cover -func=.coverage/coverage.out | tail -1
 
-      # Threshold: 70% for feat/http-handlers (handler layer added; raise to 90+ after feat/grpc-sqs).
-      - name: Enforce coverage threshold (≥ 70%)
+      # Threshold: 95% (postgres adapter and generated packages excluded from denominator; covered by Iint job).
+      - name: Enforce coverage threshold (≥ 95%)
         run: |
           pct=$(go tool cover -func=.coverage/coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${pct}%"
-          awk -v p="$pct" 'BEGIN { if (p+0 < 70) { print "FAIL: " p "% is below the 70% threshold"; exit 1 } else { print "PASS: " p "%" } }'
+          awk -v p="$pct" 'BEGIN { if (p+0 < 95) { print "FAIL: " p "% is below the 95% threshold"; exit 1 } else { print "PASS: " p "%" } }'
 
   Iint:
     runs-on: ubuntu-latest

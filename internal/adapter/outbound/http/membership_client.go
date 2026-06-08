@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,11 +34,10 @@ func (c *MembershipClient) CheckEligibility(
 	tenantID, userID uuid.UUID,
 	departmentID, role string,
 ) (bool, error) {
-	url := fmt.Sprintf(
-		"%s/tenants/%s/users/%s/eligibility?department=%s&level=%s",
-		c.baseURL, tenantID, userID, departmentID, role,
-	)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	params := url.Values{"department": {departmentID}, "level": {role}}
+	rawURL := fmt.Sprintf("%s/tenants/%s/users/%s/eligibility?%s",
+		c.baseURL, tenantID, userID, params.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, nil)
 	if err != nil {
 		return false, fmt.Errorf("build eligibility request: %w", err)
 	}

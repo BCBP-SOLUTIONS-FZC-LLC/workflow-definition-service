@@ -39,7 +39,7 @@ COVER_HTML         := $(COVERAGE_DIR)/coverage.html
 #   contain /package/file.go:... rather than ending at the package name).
 COVER_EXCLUDE_PKG  := /postgres/db$$\|/postgres$$\|/mocks$$
 COVER_EXCLUDE_FILE := /postgres/db/\|/postgres/\|/mocks/
-COVER_THRESHOLD    := 95  # raised after feat/grpc-sqs; generated packages excluded from gate
+COVER_THRESHOLD    := 95  # baseline as of feat/grpc-sqs (97.3%); postgres adapter + generated pkgs excluded
 
 .PHONY: all tools tools-integration generate generate-proto generate-sqlc mock \
         migrate-up migrate-down \

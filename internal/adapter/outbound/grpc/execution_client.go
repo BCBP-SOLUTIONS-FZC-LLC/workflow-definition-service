@@ -21,6 +21,7 @@ type ExecutionClient struct {
 }
 
 func NewExecutionClient(addr string) (*ExecutionClient, error) {
+	// Insecure credentials are intentional: intra-cluster traffic only; mTLS is terminated at the service mesh.
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("dial execution service: %w", err)
