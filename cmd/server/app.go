@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -21,20 +22,37 @@ import (
 )
 
 type app struct {
-	cfg         *config.Config
-	log         port.Logger
-	pool        *pgcommon.Pool
-	cache       port.CacheStore
-	httpServer  *http.Server
-	grpcServer  *grpc.Server
-	sqsConsumer events.Consumer
-	outboxRelay *outbox.Runner
-	shutdown    func()
+	cfg            *config.Config
+	log            port.Logger
+	pool           *pgcommon.Pool
+	cache          port.CacheStore
+	httpServer     *http.Server
+	grpcServer     *grpc.Server
+	sqsConsumer    events.Consumer
+	outboxRelay    *outbox.Runner
+	shutdown       func()
+	executionClose io.Closer // nil when execution service is not configured
 }
 
 func (a *app) run() {
 	ctx, cancel := context.WithCancel(context.Background())
+	a.startServers(ctx)
 
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+
+	a.log.Info("shutting down", map[string]any{"signal": sig.String()})
+	cancel()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+	a.stopServers(shutdownCtx)
+
+	a.log.Info("server stopped", nil)
+}
+
+func (a *app) startServers(ctx context.Context) {
 	go func() {
 		a.log.Info("HTTP server starting", map[string]any{"addr": a.httpServer.Addr})
 		if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -66,18 +84,10 @@ func (a *app) run() {
 			a.log.Error("outbox relay exited", map[string]any{"error": err.Error()})
 		}
 	}()
+}
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
-
-	a.log.Info("shutting down", map[string]any{"signal": sig.String()})
-	cancel()
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
-
-	if err := a.httpServer.Shutdown(shutdownCtx); err != nil {
+func (a *app) stopServers(ctx context.Context) {
+	if err := a.httpServer.Shutdown(ctx); err != nil {
 		a.log.Error("HTTP server shutdown error", map[string]any{"error": err.Error()})
 	}
 	a.grpcServer.GracefulStop()
@@ -85,13 +95,15 @@ func (a *app) run() {
 	if err := a.sqsConsumer.Stop(); err != nil {
 		a.log.Error("SQS consumer stop error", map[string]any{"error": err.Error()})
 	}
-
 	if err := a.outboxRelay.Stop(); err != nil {
 		a.log.Error("outbox relay stop error", map[string]any{"error": err.Error()})
 	}
 
 	a.pool.Close()
+	if a.executionClose != nil {
+		if err := a.executionClose.Close(); err != nil {
+			a.log.Error("execution client close error", map[string]any{"error": err.Error()})
+		}
+	}
 	a.shutdown()
-
-	a.log.Info("server stopped", nil)
 }

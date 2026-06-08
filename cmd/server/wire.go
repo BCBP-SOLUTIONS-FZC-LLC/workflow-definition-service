@@ -18,6 +18,8 @@ import (
 	definitionv1 "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/definition/v1"
 	grpcadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/grpc"
 	httphandler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
+	outboundgrpc "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/grpc"
+	outboundhttp "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/http"
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres"
 	bpmncompiler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
@@ -53,6 +55,21 @@ func newApp(cfg *config.Config) (*app, error) {
 		return nil, err
 	}
 
+	var membershipSvc *outboundhttp.MembershipClient
+	var executionSvc *outboundgrpc.ExecutionClient
+
+	if cfg.OrgMembershipBaseURL != "" {
+		membershipSvc = outboundhttp.NewMembershipClient(cfg.OrgMembershipBaseURL)
+	}
+	if cfg.ExecutionServiceAddr != "" {
+		executionSvc, err = outboundgrpc.NewExecutionClient(cfg.ExecutionServiceAddr)
+		if err != nil {
+			pool.Close()
+			tracingShutdown()
+			return nil, fmt.Errorf("execution client: %w", err)
+		}
+	}
+
 	sqsHandler := func(ctx context.Context, env events.Envelope[json.RawMessage]) error {
 		log.Info("sqs handler: received event", map[string]any{
 			"event_id":   env.ID,
@@ -76,6 +93,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		BatchSize:    cfg.OutboxBatchSize,
 	})
 
+	transactor := pgadapter.NewTransactor(pool)
 	workflowRepo := pgadapter.NewWorkflowRepo(pool)
 	versionRepo := pgadapter.NewWorkflowVersionRepo(pool)
 	assigneeRepo := pgadapter.NewAssigneeRepo(pool)
@@ -83,13 +101,16 @@ func newApp(cfg *config.Config) (*app, error) {
 	compiler := bpmncompiler.New()
 
 	workflowSvc := service.NewWorkflowService(service.WorkflowDeps{
-		Workflows: workflowRepo,
-		Versions:  versionRepo,
-		Outbox:    outboxRepo,
-		Cache:     cache,
-		Log:       log,
+		Transactor: transactor,
+		Workflows:  workflowRepo,
+		Versions:   versionRepo,
+		Outbox:     outboxRepo,
+		Cache:      cache,
+		Execution:  executionSvc,
+		Log:        log,
 	})
 	draftSvc := service.NewDraftService(service.DraftDeps{
+		Cache:     cache,
 		Workflows: workflowRepo,
 		Versions:  versionRepo,
 		Assignees: assigneeRepo,
@@ -97,12 +118,15 @@ func newApp(cfg *config.Config) (*app, error) {
 		Log:       log,
 	})
 	versionSvc := service.NewVersionService(service.VersionDeps{
-		Workflows: workflowRepo,
-		Versions:  versionRepo,
-		Assignees: assigneeRepo,
-		Outbox:    outboxRepo,
-		Compiler:  compiler,
-		Log:       log,
+		Transactor: transactor,
+		Workflows:  workflowRepo,
+		Versions:   versionRepo,
+		Assignees:  assigneeRepo,
+		Outbox:     outboxRepo,
+		Membership: membershipSvc,
+		Execution:  executionSvc,
+		Compiler:   compiler,
+		Log:        log,
 	})
 	validationSvc := service.NewValidationService(service.ValidationDeps{
 		Compiler: compiler,
@@ -137,14 +161,15 @@ func newApp(cfg *config.Config) (*app, error) {
 	}
 
 	return &app{
-		cfg:         cfg,
-		log:         log,
-		pool:        pool,
-		cache:       cache,
-		httpServer:  srv,
-		grpcServer:  grpcSrv,
-		sqsConsumer: sqsConsumer,
-		outboxRelay: relay,
-		shutdown:    tracingShutdown,
+		cfg:            cfg,
+		log:            log,
+		pool:           pool,
+		cache:          cache,
+		httpServer:     srv,
+		grpcServer:     grpcSrv,
+		sqsConsumer:    sqsConsumer,
+		outboxRelay:    relay,
+		shutdown:       tracingShutdown,
+		executionClose: executionSvc,
 	}, nil
 }
