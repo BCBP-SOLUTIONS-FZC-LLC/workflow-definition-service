@@ -144,6 +144,18 @@ Integration tests require Docker. Pre-pull the image once: `make tools-integrati
 
 7. **Fine-grained version-status sentinels** - `internal/core/domain/errors.go` defines `ErrVersionNotDraft`, `ErrVersionNotPublished`, and `ErrVersionAlreadyPublished`. These are sub-layer sentinels returned by repo adapters; the service layer translates them to HTTP error catalog codes. Do not collapse them into `ErrNotFound`.
 
+8. **Handler response DTOs** - Handlers define local response structs (`workflowResp`, `versionResp`, `draftResp`, etc.) with snake_case JSON tags in each handler file. Domain structs are not serialised directly — always map through the DTO helpers (`toWorkflowResp`, `toVersionResp`, `toDraftResp`, `toVersionSummary`).
+
+9. **Handler RequestContext in tests** - `gincommon.RequestContext(c)` does a type assertion to an internal gincommon domain type. Tests cannot construct that type directly. Handler tests must use `gincommon.ProtectedMiddlewares` with injected `x-tenant-id` / `x-user-id` headers, or create a test router that runs the real context middleware. See `test/unit/handler/` for the established pattern.
+
+10. **`mustCtx` writes 500, not 401** - Missing RequestContext means `ProtectedMiddlewares` was not applied to the route (a server misconfiguration), not an auth failure from the caller. A 401 would be misleading here.
+
+11. **Handler service interfaces** - `Handler` depends on unexported interfaces (`workflowSvc`, `draftSvc`, `versionSvc`, `validationSvc`) defined in `handler.go`. `handler.Services` accepts any concrete type satisfying those interfaces (Go structural typing). Production wire-up passes `*service.*Service` directly; tests provide hand-rolled fakes from `test/unit/handler/testhelper_test.go`. This avoids mockgen for the handler layer.
+
+12. **`CodeBadRequest` for bind errors** - JSON bind failures (missing required fields, wrong type) return HTTP 400 with `code: "BAD_REQUEST"`. Do not use `CodeInternal` for client-induced bind errors. The `problemTypes` map includes `http.StatusBadRequest` → `errBase + "bad-request"`.
+
+13. **Fine-grained version-status sentinels in `errResponse`** - `ErrVersionNotDraft`, `ErrVersionNotPublished`, and `ErrVersionAlreadyPublished` are all mapped to 409/`CodeInvalidStatus`. They can bubble up directly from the service layer (e.g. `Promote` returns `ErrVersionNotPublished` when the version is not yet published).
+
 ---
 
 ## CI/CD
@@ -158,4 +170,4 @@ Branch protection required checks: `generate`, `Build`, `vet`, `Test`, `coverage
 
 The `Iint` job runs real integration tests (testcontainers) in CI - Docker is available on `ubuntu-latest`.
 
-The `coverage` job enforces a unit-test-only threshold (currently 15% for `feat/repo-layer`; raise to 95% after `feat/service-logic`). The integration coverage profile is uploaded as a separate artifact but is not merged into the gate.
+The `coverage` job enforces a unit-test-only threshold (currently 70% for `feat/http-handlers`; raise to 90%+ after `feat/grpc-sqs`). The integration coverage profile is uploaded as a separate artifact but is not merged into the gate.
