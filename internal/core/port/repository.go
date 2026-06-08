@@ -16,6 +16,7 @@ type WorkflowRepository interface {
 	GetByBusinessKey(ctx context.Context, tenantID uuid.UUID, businessKey string) (*domain.Workflow, error)
 	List(ctx context.Context, tenantID uuid.UUID, filter WorkflowFilter) ([]*domain.Workflow, int64, error)
 	UpdateActiveVersion(ctx context.Context, tenantID, workflowID uuid.UUID, versionID *uuid.UUID) error
+	UpdateMetadata(ctx context.Context, tenantID, workflowID uuid.UUID, name, description string) error
 	CountByTenant(ctx context.Context, tenantID uuid.UUID) (int64, error)
 }
 

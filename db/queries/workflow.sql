@@ -27,3 +27,8 @@ SELECT COUNT(*) FROM workflow WHERE tenant_id = $1;
 UPDATE workflow
 SET active_version_id = $3, updated_at = now()
 WHERE tenant_id = $1 AND id = $2;
+
+-- name: UpdateWorkflowMetadata :execresult
+UPDATE workflow
+SET name = $3, description = $4, updated_at = now()
+WHERE tenant_id = $1 AND id = $2;
