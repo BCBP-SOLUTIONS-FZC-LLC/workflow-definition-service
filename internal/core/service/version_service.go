@@ -14,40 +14,43 @@ import (
 const errGetVersion = "get version: %w"
 
 type VersionDeps struct {
-	Transactor port.Transactor
-	Workflows  port.WorkflowRepository
-	Versions   port.WorkflowVersionRepository
-	Assignees  port.AssigneeRepository
-	Outbox     port.OutboxRepository
-	Membership port.MembershipService
-	Execution  port.ExecutionService
-	Compiler   port.PlanCompiler
-	Log        port.Logger
+	Transactor      port.Transactor
+	Workflows       port.WorkflowRepository
+	Versions        port.WorkflowVersionRepository
+	Assignees       port.AssigneeRepository
+	Outbox          port.OutboxRepository
+	ProcessedEvents port.ProcessedEventRepository
+	Membership      port.MembershipService
+	Execution       port.ExecutionService
+	Compiler        port.PlanCompiler
+	Log             port.Logger
 }
 
 type VersionService struct {
-	transactor port.Transactor
-	workflows  port.WorkflowRepository
-	versions   port.WorkflowVersionRepository
-	assignees  port.AssigneeRepository
-	outbox     port.OutboxRepository
-	membership port.MembershipService
-	execution  port.ExecutionService
-	compiler   port.PlanCompiler
-	log        port.Logger
+	transactor      port.Transactor
+	workflows       port.WorkflowRepository
+	versions        port.WorkflowVersionRepository
+	assignees       port.AssigneeRepository
+	outbox          port.OutboxRepository
+	processedEvents port.ProcessedEventRepository
+	membership      port.MembershipService
+	execution       port.ExecutionService
+	compiler        port.PlanCompiler
+	log             port.Logger
 }
 
 func NewVersionService(d VersionDeps) *VersionService {
 	return &VersionService{
-		transactor: d.Transactor,
-		workflows:  d.Workflows,
-		versions:   d.Versions,
-		assignees:  d.Assignees,
-		outbox:     d.Outbox,
-		membership: d.Membership,
-		execution:  d.Execution,
-		compiler:   d.Compiler,
-		log:        d.Log,
+		transactor:      d.Transactor,
+		workflows:       d.Workflows,
+		versions:        d.Versions,
+		assignees:       d.Assignees,
+		outbox:          d.Outbox,
+		processedEvents: d.ProcessedEvents,
+		membership:      d.Membership,
+		execution:       d.Execution,
+		compiler:        d.Compiler,
+		log:             d.Log,
 	}
 }
 
@@ -155,11 +158,26 @@ func (s *VersionService) Clone(
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
+	env, err := buildEnvelope(domain.EventTypeTemplateCloned, tenantID.String(), domain.TemplateClonedPayload{
+		SourceWorkflowID: workflowID.String(),
+		SourceVersionID:  versionID.String(),
+		NewWorkflowID:    newWF.ID.String(),
+		NewWorkflowKey:   req.NewKey,
+		NewWorkflowName:  req.NewName,
+		ClonedByUserID:   userID.String(),
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("build clone event: %w", err)
+	}
+
 	if err := s.transactor.RunInTx(ctx, func(ctx context.Context) error {
 		if err := s.workflows.Create(ctx, newWF); err != nil {
 			return err
 		}
-		return s.versions.Create(ctx, newVersion)
+		if err := s.versions.Create(ctx, newVersion); err != nil {
+			return err
+		}
+		return s.outbox.Enqueue(ctx, env)
 	}); err != nil {
 		return nil, nil, fmt.Errorf("clone version: %w", err)
 	}
