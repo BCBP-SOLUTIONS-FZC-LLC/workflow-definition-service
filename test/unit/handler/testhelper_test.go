@@ -28,7 +28,6 @@ var (
 	testVerID2   = uuid.MustParse("55555555-5555-5555-5555-555555555555")
 )
 
-
 type fakeWorkflowSvc struct {
 	list    func(context.Context, uuid.UUID, port.WorkflowFilter) ([]*domain.Workflow, int64, error)
 	create  func(context.Context, uuid.UUID, uuid.UUID, string, string, string, string) (*domain.Workflow, *domain.WorkflowVersion, error)
@@ -61,7 +60,6 @@ func (f *fakeWorkflowSvc) Archive(ctx context.Context, tenantID, userID, id uuid
 	return nil
 }
 
-
 type fakeDraftSvc struct {
 	get     func(context.Context, uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error)
 	init    func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error)
@@ -93,7 +91,6 @@ func (f *fakeDraftSvc) Discard(ctx context.Context, tenantID, workflowID uuid.UU
 	}
 	return nil
 }
-
 
 type fakeVersionSvc struct {
 	list    func(context.Context, uuid.UUID, uuid.UUID, int, int) ([]*domain.WorkflowVersion, int64, error)
@@ -148,7 +145,6 @@ func (f *fakeVersionSvc) Diff(ctx context.Context, tenantID, workflowID, baseVer
 	return nil, nil
 }
 
-
 type fakeValidationSvc struct {
 	validate func(context.Context, string) (bool, []domain.BPMNValidationError, error)
 }
@@ -159,7 +155,6 @@ func (f *fakeValidationSvc) Validate(ctx context.Context, bpmnXML string) (bool,
 	}
 	return true, nil, nil
 }
-
 
 func registerRoutes(r *gin.Engine, h *handler.Handler) {
 	wf := r.Group("/api/v1/workflows")
@@ -229,7 +224,6 @@ func do(router *gin.Engine, r *http.Request) *httptest.ResponseRecorder {
 	router.ServeHTTP(w, r)
 	return w
 }
-
 
 func newWorkflow() *domain.Workflow {
 	now := time.Now()
