@@ -33,7 +33,7 @@ LDFLAGS            := -X main.version=$(BUILD_VERSION)
 
 COVER_PROFILE      := $(COVERAGE_DIR)/coverage.out
 COVER_HTML         := $(COVERAGE_DIR)/coverage.html
-COVER_THRESHOLD    := 14  # unit-only; integration tests cover postgres adapter separately. TODO: raise to 95 after feat/service-logic
+COVER_THRESHOLD    := 50  # service layer unit tests. TODO: raise to 80+ after feat/http-handlers and feat/grpc-sqs
 
 .PHONY: all tools tools-integration generate generate-proto generate-sqlc mock \
         migrate-up migrate-down \
@@ -92,6 +92,9 @@ mock:
 	           -package=mocks
 	$(MOCKGEN) -source=internal/core/port/services.go \
 	           -destination=internal/core/port/mocks/services_mock.go \
+	           -package=mocks
+	$(MOCKGEN) -source=internal/core/port/transactor.go \
+	           -destination=internal/core/port/mocks/transactor_mock.go \
 	           -package=mocks
 	@echo "✓ mocks written to internal/core/port/mocks/"
 

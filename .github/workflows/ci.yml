@@ -58,10 +58,11 @@ jobs:
           buf generate
           .tools/sqlc generate
           mkdir -p internal/core/port/mocks
-          .tools/mockgen -source=internal/core/port/repository.go -destination=internal/core/port/mocks/repository_mock.go -package=mocks
-          .tools/mockgen -source=internal/core/port/publisher.go  -destination=internal/core/port/mocks/publisher_mock.go  -package=mocks
-          .tools/mockgen -source=internal/core/port/cache.go      -destination=internal/core/port/mocks/cache_mock.go      -package=mocks
-          .tools/mockgen -source=internal/core/port/services.go   -destination=internal/core/port/mocks/services_mock.go   -package=mocks
+          .tools/mockgen -source=internal/core/port/repository.go  -destination=internal/core/port/mocks/repository_mock.go  -package=mocks
+          .tools/mockgen -source=internal/core/port/publisher.go   -destination=internal/core/port/mocks/publisher_mock.go   -package=mocks
+          .tools/mockgen -source=internal/core/port/cache.go       -destination=internal/core/port/mocks/cache_mock.go       -package=mocks
+          .tools/mockgen -source=internal/core/port/services.go    -destination=internal/core/port/mocks/services_mock.go    -package=mocks
+          .tools/mockgen -source=internal/core/port/transactor.go  -destination=internal/core/port/mocks/transactor_mock.go  -package=mocks
 
       - uses: actions/upload-artifact@v4
         with:
@@ -212,13 +213,13 @@ jobs:
 
       - run: go tool cover -func=.coverage/coverage.out | tail -1
 
-      # Threshold: 14% for feat/repo-layer (unit tests only; postgres adapter covered by Iint job).
-      # TODO: raise to 95 after feat/service-logic (service layer unit tests land).
-      - name: Enforce coverage threshold (≥ 14%)
+      # Threshold: 50% for feat/service-logic (service layer unit tests; handler/grpc/sqs covered in later PRs).
+      # TODO: raise to 80+ after feat/http-handlers and feat/grpc-sqs land.
+      - name: Enforce coverage threshold (≥ 50%)
         run: |
           pct=$(go tool cover -func=.coverage/coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${pct}%"
-          awk -v p="$pct" 'BEGIN { if (p+0 < 14) { print "FAIL: " p "% is below the 14% threshold"; exit 1 } else { print "PASS: " p "%" } }'
+          awk -v p="$pct" 'BEGIN { if (p+0 < 50) { print "FAIL: " p "% is below the 50% threshold"; exit 1 } else { print "PASS: " p "%" } }'
 
   Iint:
     runs-on: ubuntu-latest
