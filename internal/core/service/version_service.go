@@ -2,7 +2,8 @@ package service
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
+	"fmt"
 
 	"github.com/google/uuid"
 
@@ -10,7 +11,10 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
+const errGetVersion = "get version: %w"
+
 type VersionDeps struct {
+	Transactor port.Transactor
 	Workflows  port.WorkflowRepository
 	Versions   port.WorkflowVersionRepository
 	Assignees  port.AssigneeRepository
@@ -22,6 +26,7 @@ type VersionDeps struct {
 }
 
 type VersionService struct {
+	transactor port.Transactor
 	workflows  port.WorkflowRepository
 	versions   port.WorkflowVersionRepository
 	assignees  port.AssigneeRepository
@@ -34,6 +39,7 @@ type VersionService struct {
 
 func NewVersionService(d VersionDeps) *VersionService {
 	return &VersionService{
+		transactor: d.Transactor,
 		workflows:  d.Workflows,
 		versions:   d.Versions,
 		assignees:  d.Assignees,
@@ -45,56 +51,216 @@ func NewVersionService(d VersionDeps) *VersionService {
 	}
 }
 
-// DiffResult is the structured output of a two-version structural comparison.
-type DiffResult struct {
-	WorkflowID      uuid.UUID
-	BaseVersionID   uuid.UUID
-	TargetVersionID uuid.UUID
-	ChangeType      string // STRUCTURAL | METADATA_ONLY
-	Changes         DiffChanges
+func (s *VersionService) List(
+	ctx context.Context,
+	tenantID, workflowID uuid.UUID,
+	page, limit int,
+) ([]*domain.WorkflowVersion, int64, error) {
+	versions, count, err := s.versions.ListByWorkflow(ctx, tenantID, workflowID, page, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list versions: %w", err)
+	}
+	return versions, count, nil
 }
 
-type DiffChanges struct {
-	AddedDepartments   []string
-	RemovedDepartments []string
-	StepChanges        []StepChange
-	MetadataOnly       bool
+func (s *VersionService) Get(
+	ctx context.Context,
+	tenantID, workflowID, versionID uuid.UUID,
+) (*domain.WorkflowVersion, error) {
+	v, err := s.versions.GetByID(ctx, tenantID, versionID)
+	if err != nil {
+		return nil, fmt.Errorf(errGetVersion, err)
+	}
+	if v.WorkflowID != workflowID {
+		return nil, domain.ErrNotFound
+	}
+	return v, nil
 }
 
-type StepChange struct {
-	Description string
-	Before      *domain.ExecutionStep
-	After       *domain.ExecutionStep
+func (s *VersionService) Publish(
+	ctx context.Context,
+	tenantID, userID, workflowID, versionID uuid.UUID,
+	skipEligibilityCheck bool,
+) (*domain.WorkflowVersion, error) {
+	draft, compiledJSON, artifactHash, versionNumber, assignees, err :=
+		s.publishPreFlight(ctx, tenantID, workflowID, versionID, skipEligibilityCheck)
+	if err != nil {
+		return nil, err
+	}
+
+	env, err := buildEnvelope(domain.EventTypeTemplatePublished, tenantID.String(), domain.TemplatePublishedPayload{
+		WorkflowID:       workflowID.String(),
+		VersionID:        versionID.String(),
+		VersionNumber:    versionNumber,
+		PublishedBy:      userID.String(),
+		CompiledPlanJSON: compiledJSON,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build publish event: %w", err)
+	}
+
+	txIn := publishTxInput{
+		tenantID:      tenantID,
+		workflowID:    workflowID,
+		versionID:     versionID,
+		versionNumber: versionNumber,
+		compiledJSON:  compiledJSON,
+		artifactHash:  artifactHash,
+		assignees:     assignees,
+		env:           env,
+	}
+	if err := s.transactor.RunInTx(ctx, func(ctx context.Context) error {
+		return s.runPublishTx(ctx, txIn)
+	}); err != nil {
+		return nil, fmt.Errorf("publish version: %w", err)
+	}
+
+	draft.Status = domain.VersionStatusPublished
+	draft.VersionNumber = &versionNumber
+	draft.CompiledPlanJSON = &compiledJSON
+	draft.ArtifactHash = artifactHash
+	return draft, nil
 }
 
-func (s *VersionService) List(_ context.Context, _, _ uuid.UUID, _, _ int) ([]*domain.WorkflowVersion, int64, error) {
-	return nil, 0, errors.New("not implemented")
+func (s *VersionService) Clone(
+	ctx context.Context,
+	tenantID, userID, workflowID, versionID uuid.UUID,
+	req CloneReq,
+) (*domain.Workflow, *domain.WorkflowVersion, error) {
+	source, err := s.versions.GetByID(ctx, tenantID, versionID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get source version: %w", err)
+	}
+	if source.WorkflowID != workflowID {
+		return nil, nil, domain.ErrNotFound
+	}
+	if source.Status == domain.VersionStatusDraft {
+		return nil, nil, domain.ErrVersionNotPublished
+	}
+
+	newWF := &domain.Workflow{
+		ID:              uuid.New(),
+		TenantID:        tenantID,
+		CreatedByUserID: userID,
+		BusinessKey:     req.NewKey,
+		Name:            req.NewName,
+		Description:     req.NewDescription,
+	}
+	newVersion := &domain.WorkflowVersion{
+		ID:              uuid.New(),
+		WorkflowID:      newWF.ID,
+		TenantID:        tenantID,
+		Status:          domain.VersionStatusDraft,
+		BPMNXML:         source.BPMNXML,
+		CreatedByUserID: userID,
+		IsValid:         true,
+	}
+	if err := s.transactor.RunInTx(ctx, func(ctx context.Context) error {
+		if err := s.workflows.Create(ctx, newWF); err != nil {
+			return err
+		}
+		return s.versions.Create(ctx, newVersion)
+	}); err != nil {
+		return nil, nil, fmt.Errorf("clone version: %w", err)
+	}
+	return newWF, newVersion, nil
 }
 
-func (s *VersionService) Get(_ context.Context, _, _, _ uuid.UUID) (*domain.WorkflowVersion, error) {
-	return nil, errors.New("not implemented")
+func (s *VersionService) Promote(
+	ctx context.Context,
+	tenantID, userID, workflowID, versionID uuid.UUID,
+) error {
+	v, err := s.versions.GetByID(ctx, tenantID, versionID)
+	if err != nil {
+		return fmt.Errorf(errGetVersion, err)
+	}
+	if v.WorkflowID != workflowID {
+		return domain.ErrNotFound
+	}
+	if v.Status != domain.VersionStatusPublished {
+		return domain.ErrVersionNotPublished
+	}
+	if err := s.workflows.UpdateActiveVersion(ctx, tenantID, workflowID, &versionID); err != nil {
+		return fmt.Errorf("promote version: %w", err)
+	}
+	return nil
 }
 
-// Publish validates, compiles, and transitions the draft to PUBLISHED inside a serializable transaction.
-func (s *VersionService) Publish(_ context.Context, _, _, _, _ uuid.UUID, _ bool) (*domain.WorkflowVersion, error) {
-	return nil, errors.New("not implemented")
+func (s *VersionService) Export(
+	ctx context.Context,
+	tenantID, workflowID, versionID uuid.UUID,
+) (bpmnXML string, filename string, err error) {
+	v, err := s.versions.GetByID(ctx, tenantID, versionID)
+	if err != nil {
+		return "", "", fmt.Errorf(errGetVersion, err)
+	}
+	if v.WorkflowID != workflowID {
+		return "", "", domain.ErrNotFound
+	}
+	wf, err := s.workflows.GetByID(ctx, tenantID, workflowID)
+	if err != nil {
+		return "", "", fmt.Errorf("get workflow: %w", err)
+	}
+	return v.BPMNXML, fmt.Sprintf("%s-v%s.bpmn", wf.BusinessKey, versionLabel(v)), nil
 }
 
-// Clone copies a PUBLISHED or ARCHIVED version into a new workflow under newKey.
-func (s *VersionService) Clone(_ context.Context, _, _, _, _ uuid.UUID, _, _, _ string) (*domain.Workflow, *domain.WorkflowVersion, error) {
-	return nil, nil, errors.New("not implemented")
+func (s *VersionService) Diff(
+	ctx context.Context,
+	tenantID, workflowID, baseVersionID, targetVersionID uuid.UUID,
+) (*DiffResult, error) {
+	base, err := s.versions.GetByID(ctx, tenantID, baseVersionID)
+	if err != nil {
+		return nil, fmt.Errorf("get base version: %w", err)
+	}
+	target, err := s.versions.GetByID(ctx, tenantID, targetVersionID)
+	if err != nil {
+		return nil, fmt.Errorf("get target version: %w", err)
+	}
+	if base.WorkflowID != workflowID || target.WorkflowID != workflowID {
+		return nil, domain.ErrNotFound
+	}
+
+	basePlan, err := s.resolvePlan(ctx, base)
+	if err != nil {
+		return nil, fmt.Errorf("resolve base plan: %w", err)
+	}
+	targetPlan, err := s.resolvePlan(ctx, target)
+	if err != nil {
+		return nil, fmt.Errorf("resolve target plan: %w", err)
+	}
+
+	changes := computeDiff(basePlan, targetPlan)
+	changeType := "STRUCTURAL"
+	if changes.MetadataOnly {
+		changeType = "METADATA_ONLY"
+	}
+	return &DiffResult{
+		WorkflowID:      workflowID,
+		BaseVersionID:   baseVersionID,
+		TargetVersionID: targetVersionID,
+		ChangeType:      changeType,
+		Changes:         changes,
+	}, nil
 }
 
-// Promote sets a PUBLISHED version as the workflow's active version (rollback / rollforward).
-func (s *VersionService) Promote(_ context.Context, _, _, _, _ uuid.UUID) error {
-	return errors.New("not implemented")
+// resolvePlan returns the compiled plan for a version, using the stored
+// compiled_plan_json when available to avoid redundant recompilation.
+func (s *VersionService) resolvePlan(
+	ctx context.Context,
+	v *domain.WorkflowVersion,
+) (*domain.CompiledPlan, error) {
+	if v.CompiledPlanJSON != nil && *v.CompiledPlanJSON != "" {
+		var plan domain.CompiledPlan
+		if err := json.Unmarshal([]byte(*v.CompiledPlanJSON), &plan); err == nil {
+			return &plan, nil
+		}
+	}
+	return s.compiler.Compile(ctx, v.BPMNXML)
 }
 
-// Export returns the raw BPMN XML and a suggested download filename for the version.
-func (s *VersionService) Export(_ context.Context, _, _, _ uuid.UUID) (bpmnXML string, filename string, err error) {
-	return "", "", errors.New("not implemented")
-}
-
-func (s *VersionService) Diff(_ context.Context, _, _, _, _ uuid.UUID) (*DiffResult, error) {
-	return nil, errors.New("not implemented")
+func versionLabel(v *domain.WorkflowVersion) string {
+	if v.VersionNumber != nil {
+		return fmt.Sprintf("%d", *v.VersionNumber)
+	}
+	return "draft"
 }
