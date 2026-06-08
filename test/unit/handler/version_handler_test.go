@@ -78,6 +78,17 @@ func TestGetVersion_InvalidVersionUUID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestGetVersion_ServiceError(t *testing.T) {
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
+		get: func(_ context.Context, _, _, _ uuid.UUID) (*domain.WorkflowVersion, error) {
+			return nil, domain.ErrNotFound
+		},
+	}, &fakeValidationSvc{})
+	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String()
+	w := do(newRouter(h), req(http.MethodGet, path, nil))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
 func TestPublishVersion_OK_NoBody(t *testing.T) {
 	ver := newPublishedVersion()
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{

@@ -325,8 +325,9 @@ func TestVersionService_Clone_OK(t *testing.T) {
 	tx := mocks.NewMockTransactor(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	outbox := mocks.NewMockOutboxRepository(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
-		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo, Outbox: outbox,
 	})
 
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
@@ -338,6 +339,7 @@ func TestVersionService_Clone_OK(t *testing.T) {
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
 	newWF, newV, err := svc.Clone(context.Background(), tenantID, userID, wfID, vID,
 		service.CloneReq{NewKey: "new-key", NewName: "New", NewDescription: "Copy"})
@@ -346,6 +348,31 @@ func TestVersionService_Clone_OK(t *testing.T) {
 	}
 	if newV.BPMNXML != "<bpmn/>" {
 		t.Errorf("expected BPMN copied from source")
+	}
+}
+
+func TestVersionService_Clone_OutboxEnqueueError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tx := mocks.NewMockTransactor(ctrl)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	outbox := mocks.NewMockOutboxRepository(ctrl)
+	svc := service.NewVersionService(service.VersionDeps{
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo, Outbox: outbox,
+	})
+
+	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
+		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusPublished, BPMNXML: "<bpmn/>"}, nil)
+	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
+	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(errors.New("outbox error"))
+
+	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, service.CloneReq{NewKey: "copy"})
+	if err == nil {
+		t.Fatal("expected error from outbox.Enqueue")
 	}
 }
 
