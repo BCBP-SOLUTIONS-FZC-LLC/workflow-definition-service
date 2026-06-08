@@ -1,6 +1,6 @@
 # REST API Reference
 
-Full OpenAPI schema: [`.design/definition_openapi.yaml`](../.design/definition_openapi.yaml)
+Full OpenAPI schema: [`openapi.yaml`](../openapi.yaml)
 
 ## Global headers
 

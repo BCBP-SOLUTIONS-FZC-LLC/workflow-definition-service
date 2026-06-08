@@ -23,7 +23,7 @@ OFFSET $3;
 -- name: CountWorkflowsByTenant :one
 SELECT COUNT(*) FROM workflow WHERE tenant_id = $1;
 
--- name: UpdateActiveVersion :exec
+-- name: UpdateActiveVersion :execresult
 UPDATE workflow
 SET active_version_id = $3, updated_at = now()
 WHERE tenant_id = $1 AND id = $2;

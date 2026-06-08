@@ -4,17 +4,19 @@
 
 ```bash
 make test                # unit tests + race detector
-make test-integration    # integration tests (requires postgres + valkey running)
+make test-integration    # integration tests (requires running Docker daemon)
 make cover               # unit tests + per-package coverage summary
 make cover-html          # generates and opens HTML report
-make cover-check         # fails CI if total coverage < 70%
+make cover-check         # fails CI if total coverage < threshold (currently 15%; see Makefile)
 ```
 
 Coverage reports are written to `.coverage/` (gitignored).
 
 ## Unit test conventions
 
-Tests live in `*_test.go` files adjacent to the source. Always table-driven:
+### Table-driven tests
+
+All unit tests must be table-driven, even single-case scenarios:
 
 ```go
 func TestPublishVersion(t *testing.T) {
@@ -37,9 +39,45 @@ func TestPublishVersion(t *testing.T) {
 }
 ```
 
+**Exception — panic tests:** A test that verifies a `panic` must not be looped. The `defer/recover` runs once per function; iterating would skip recovery for all cases after the first panic. Keep panic assertions as separate, non-looped functions:
+
+```go
+func TestMustUUID_InvalidPanics(t *testing.T) {
+    defer func() {
+        if r := recover(); r == nil {
+            t.Error("expected panic, got none")
+        }
+    }()
+    mustUUID(pgtype.UUID{}) // panics — recover fires, test passes
+}
+```
+
+### White-box vs black-box placement
+
+| Test type | Package declaration | Location | When to use |
+| --- | --- | --- | --- |
+| White-box | `package foo` | `internal/…/foo_test.go` | Needs unexported identifiers (private functions, unexported types, `txContextKey{}`, etc.) |
+| Black-box | `package foo_test` | `test/unit/foo/` | Tests only the exported API; no access to internals needed |
+
+Tests in `internal/` that use `package foo` (same package as the source) **cannot** be moved to `test/unit/` — Go's visibility rules would break the build. Do not move them.
+
+Placeholder files in `test/unit/` for packages that already have white-box tests in `internal/` should call `t.Skip(...)` and explain the location:
+
+```go
+// Real tests are white-box and live in internal/adapter/outbound/postgres/mapping_test.go
+func TestMapping(t *testing.T) { t.Skip("covered by white-box tests in internal/") }
+```
+
 ## Unit test coverage
 
-We target 90%+ unit test coverage for all implemented components. This includes:
+The CI `coverage` job enforces a minimum threshold against the **unit test profile only** (from `make test`). The threshold is raised per PR as each layer is implemented:
+
+| PR                   | Threshold | Rationale                                                                       |
+|----------------------|-----------|---------------------------------------------------------------------------------|
+| `feat/repo-layer`    | 15%       | postgres adapter covered by integration tests; service/handler stubs untested   |
+| `feat/service-logic` | 95%       | service layer unit tests (mocks) land here                                      |
+
+We target 95%+ unit test coverage for all fully implemented components. This includes:
 
 - **Configuration** (`internal/config`): Tests environment variable parsing, default fallbacks, and validation constraints (e.g. validating missing `DATABASE_URL`).
 - **Valkey Cache** (`internal/adapter/outbound/valkey`): Unit tested using a mockable `redis.Cmdable` interface to mock standard Redis operations (`Get`, `Set`, `Del`, `SetNX`) without requiring a live Redis/Valkey instance.
@@ -48,14 +86,29 @@ All stub components (routes returning `501 Not Implemented`, and empty repositor
 
 ## Integration tests
 
-Tagged with `//go:build integration` so they are excluded from `make test`. They require live PostgreSQL and Valkey (start with `make docker-up`).
+Integration tests live in `test/integration/` and use **testcontainers-go** to spin up a real PostgreSQL container automatically — no `make docker-up` needed. Pre-pull the image once to speed up local runs:
+
+```bash
+make tools-integration   # docker pull postgres:16-alpine (one-time)
+make test-integration    # spins containers up/down automatically
+```
+
+Integration tests are separated by directory (not build tags). The `make test` target runs only `./internal/... ./test/unit/...`; `make test-integration` runs `./test/integration/...`. There is no `//go:build integration` tag — the separation is structural.
+
+The integration coverage profile is written to `.coverage/coverage-integration.out`.
+
+An example integration test:
 
 ```go
-//go:build integration
-
 package postgres_test
 
-func TestWorkflowRepository_Create(t *testing.T) { ... }
+import "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/fixtures"
+
+func TestWorkflowRepo_CreateAndGet(t *testing.T) {
+    pool := fixtures.NewTestPool(t)   // spins up Postgres container
+    repo := postgres.NewWorkflowRepo(pool)
+    // ...
+}
 ```
 
 ## Mock generation

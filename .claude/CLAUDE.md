@@ -140,6 +140,10 @@ Integration tests require Docker. Pre-pull the image once: `make tools-integrati
 
 5. **`is_valid` semantics** - `workflow_version.is_valid` reflects assignee validity (not BPMN structural validity). It is set to `false` by the `DepartmentMembershipRevoked` SQS consumer when an assignee leaves a required department role.
 
+6. **`statusOrNotFound` probe** - Status-guarded mutations (e.g. `Publish` requires DRAFT) filter on `status` in SQL (`WHERE ... AND status = 'DRAFT'`). On `RowsAffected() == 0` — which means either the record doesn't exist OR it exists in the wrong status — they call `statusOrNotFound(ctx, dbtx, tenantID, versionID, wrongStatusErr)`, which does a secondary `GetWorkflowVersionByID`: absent → `ErrNotFound`; present (wrong status) → `wrongStatusErr` (e.g. `ErrVersionNotDraft`). Happy path is always single-query.
+
+7. **Fine-grained version-status sentinels** - `internal/core/domain/errors.go` defines `ErrVersionNotDraft`, `ErrVersionNotPublished`, and `ErrVersionAlreadyPublished`. These are sub-layer sentinels returned by repo adapters; the service layer translates them to HTTP error catalog codes. Do not collapse them into `ErrNotFound`.
+
 ---
 
 ## CI/CD
@@ -153,3 +157,5 @@ Integration tests require Docker. Pre-pull the image once: `make tools-integrati
 Branch protection required checks: `generate`, `Build`, `vet`, `Test`, `coverage`, `Iint`, `lint`.
 
 The `Iint` job runs real integration tests (testcontainers) in CI - Docker is available on `ubuntu-latest`.
+
+The `coverage` job enforces a unit-test-only threshold (currently 15% for `feat/repo-layer`; raise to 95% after `feat/service-logic`). The integration coverage profile is uploaded as a separate artifact but is not merged into the gate.

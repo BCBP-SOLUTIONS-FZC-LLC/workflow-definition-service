@@ -33,7 +33,7 @@ OFFSET $4;
 -- name: CountVersionsByWorkflow :one
 SELECT COUNT(*) FROM workflow_version WHERE tenant_id = $1 AND workflow_id = $2;
 
--- name: UpdateDraftVersion :exec
+-- name: UpdateDraftVersion :execresult
 UPDATE workflow_version
 SET bpmn_xml               = $3,
     compiled_plan_json      = $4,
@@ -43,7 +43,7 @@ SET bpmn_xml               = $3,
     updated_at              = now()
 WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT';
 
--- name: PublishVersion :exec
+-- name: PublishVersion :execresult
 UPDATE workflow_version
 SET status          = 'PUBLISHED',
     version_number  = $3,
@@ -53,16 +53,16 @@ SET status          = 'PUBLISHED',
     updated_at      = now()
 WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT';
 
--- name: ArchiveVersion :exec
+-- name: ArchiveVersion :execresult
 UPDATE workflow_version
 SET status = 'ARCHIVED', updated_at = now()
 WHERE tenant_id = $1 AND id = $2 AND status = 'PUBLISHED';
 
--- name: DeleteDraftVersion :exec
+-- name: DeleteDraftVersion :execresult
 DELETE FROM workflow_version
 WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT';
 
--- name: SetVersionInvalid :exec
+-- name: SetVersionInvalid :execresult
 UPDATE workflow_version
 SET is_valid               = false,
     validation_errors_json  = $3,
