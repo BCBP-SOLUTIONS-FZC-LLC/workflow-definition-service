@@ -10,13 +10,13 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// ErrCode is the machine-readable service error code included in every ProblemDetails body.
 type ErrCode string
 
 const (
 	CodeNotFound           ErrCode = "NOT_FOUND"
 	CodeUnauthorized       ErrCode = "UNAUTHORIZED"
 	CodeForbidden          ErrCode = "FORBIDDEN"
+	CodeBadRequest         ErrCode = "BAD_REQUEST"
 	CodeDraftAlreadyExists ErrCode = "DRAFT_ALREADY_EXISTS"
 	CodeDraftNotFound      ErrCode = "DRAFT_NOT_FOUND"
 	CodeNoActiveVersion    ErrCode = "NO_ACTIVE_VERSION"
@@ -33,7 +33,6 @@ const (
 	CodeInternal           ErrCode = "INTERNAL_ERROR"
 )
 
-// InvalidParam describes a single field-level validation failure, used in the invalid_params array.
 type InvalidParam struct {
 	Name   string  `json:"name"`
 	Reason string  `json:"reason"`
@@ -54,6 +53,7 @@ type ProblemDetails struct {
 const errBase = "https://api.workflow.platform/errors/"
 
 var problemTypes = map[int]string{
+	http.StatusBadRequest:          errBase + "bad-request",
 	http.StatusUnauthorized:        errBase + "unauthorized",
 	http.StatusForbidden:           errBase + "forbidden",
 	http.StatusNotFound:            errBase + "not-found",
@@ -68,6 +68,7 @@ var codeTitles = map[ErrCode]string{
 	CodeNotFound:           "Resource Not Found",
 	CodeUnauthorized:       "Unauthorized",
 	CodeForbidden:          "Forbidden",
+	CodeBadRequest:         "Bad Request",
 	CodeDraftAlreadyExists: "Draft Already Exists",
 	CodeDraftNotFound:      "Draft Not Found",
 	CodeNoActiveVersion:    "No Active Version",
@@ -120,7 +121,10 @@ func errResponse(c *gin.Context, err error) {
 		writeProblem(c, http.StatusConflict, CodeDuplicateKey, err.Error(), nil)
 	case errors.Is(err, domain.ErrDraftConcurrency):
 		writeProblem(c, http.StatusConflict, CodeDraftConcurrency, err.Error(), nil)
-	case errors.Is(err, domain.ErrInvalidVersionStatus):
+	case errors.Is(err, domain.ErrInvalidVersionStatus),
+		errors.Is(err, domain.ErrVersionNotDraft),
+		errors.Is(err, domain.ErrVersionNotPublished),
+		errors.Is(err, domain.ErrVersionAlreadyPublished):
 		writeProblem(c, http.StatusConflict, CodeInvalidStatus, err.Error(), nil)
 	case errors.Is(err, domain.ErrActiveInstancesExist):
 		writeProblem(c, http.StatusConflict, CodeActiveInstances, err.Error(), nil)
