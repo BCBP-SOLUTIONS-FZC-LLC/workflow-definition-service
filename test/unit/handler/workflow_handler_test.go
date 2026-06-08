@@ -28,9 +28,10 @@ func TestListWorkflows_OK(t *testing.T) {
 
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
-	assert.Equal(t, float64(1), body["total"])
-	assert.Equal(t, float64(1), body["page"])
-	assert.Equal(t, float64(20), body["limit"])
+	pagination := body["pagination"].(map[string]any)
+	assert.Equal(t, float64(1), pagination["total_count"])
+	assert.Equal(t, float64(1), pagination["page"])
+	assert.Equal(t, float64(20), pagination["limit"])
 	workflows := body["workflows"].([]any)
 	assert.Len(t, workflows, 1)
 }
@@ -44,7 +45,7 @@ func TestListWorkflows_Filters(t *testing.T) {
 		},
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	r := req(http.MethodGet, "/api/v1/workflows?search=foo&business_key=wf-1&is_valid=true&has_draft=false&archived=true&page=2&limit=5", nil)
+	r := req(http.MethodGet, "/api/v1/workflows?search=foo&key=wf-1&is_valid=true&has_draft=false&status=archived&page=2&limit=5", nil)
 	w := do(newRouter(h), r)
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -71,8 +72,9 @@ func TestListWorkflows_PaginateBounds(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
-	assert.Equal(t, float64(1), body["page"])
-	assert.Equal(t, float64(20), body["limit"])
+	pagination := body["pagination"].(map[string]any)
+	assert.Equal(t, float64(1), pagination["page"])
+	assert.Equal(t, float64(20), pagination["limit"])
 }
 
 func TestListWorkflows_PaginateLimitZero(t *testing.T) {
@@ -82,7 +84,8 @@ func TestListWorkflows_PaginateLimitZero(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
-	assert.Equal(t, float64(20), body["limit"])
+	pagination := body["pagination"].(map[string]any)
+	assert.Equal(t, float64(20), pagination["limit"])
 }
 
 func TestListWorkflows_ServiceError(t *testing.T) {
@@ -129,17 +132,18 @@ func TestCreateWorkflow_OK(t *testing.T) {
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
 	body := map[string]any{
-		"business_key": "wf-1",
-		"name":         "My Workflow",
-		"bpmn_xml":     "<definitions/>",
+		"key":      "wf-1",
+		"name":     "My Workflow",
+		"bpmn_xml": "<definitions/>",
 	}
 	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
 	assert.Equal(t, http.StatusCreated, w.Code)
 
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotNil(t, resp["workflow"])
-	assert.NotNil(t, resp["version"])
+	assert.NotNil(t, resp["workflow_id"])
+	assert.NotNil(t, resp["version_id"])
+	assert.NotNil(t, resp["status"])
 }
 
 func TestCreateWorkflow_BindError(t *testing.T) {
@@ -159,7 +163,7 @@ func TestCreateWorkflow_DuplicateKey(t *testing.T) {
 		},
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	body := map[string]any{"business_key": "x", "name": "y", "bpmn_xml": "<x/>"}
+	body := map[string]any{"key": "x", "name": "y", "bpmn_xml": "<x/>"}
 	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
@@ -171,7 +175,7 @@ func TestCreateWorkflow_PlanQuota(t *testing.T) {
 		},
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	body := map[string]any{"business_key": "x", "name": "y", "bpmn_xml": "<x/>"}
+	body := map[string]any{"key": "x", "name": "y", "bpmn_xml": "<x/>"}
 	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 }
@@ -183,7 +187,7 @@ func TestCreateWorkflow_IdempotencyReplay(t *testing.T) {
 		},
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	body := map[string]any{"business_key": "x", "name": "y", "bpmn_xml": "<x/>"}
+	body := map[string]any{"key": "x", "name": "y", "bpmn_xml": "<x/>"}
 	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
@@ -195,7 +199,7 @@ func TestCreateWorkflow_InternalError(t *testing.T) {
 		},
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	body := map[string]any{"business_key": "x", "name": "y", "bpmn_xml": "<x/>"}
+	body := map[string]any{"key": "x", "name": "y", "bpmn_xml": "<x/>"}
 	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
@@ -215,7 +219,8 @@ func TestGetWorkflow_OK(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotNil(t, resp["workflow"])
+	assert.NotNil(t, resp["id"])
+	assert.NotNil(t, resp["key"])
 	versions := resp["versions"].([]any)
 	assert.Len(t, versions, 1)
 }
@@ -254,7 +259,7 @@ func TestArchiveWorkflow_OK(t *testing.T) {
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
 	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/archive", nil))
-	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestArchiveWorkflow_InvalidUUID(t *testing.T) {

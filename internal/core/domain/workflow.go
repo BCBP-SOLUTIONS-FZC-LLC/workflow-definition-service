@@ -15,15 +15,17 @@ const (
 )
 
 type Workflow struct {
-	ID              uuid.UUID
-	TenantID        uuid.UUID
-	CreatedByUserID uuid.UUID
-	BusinessKey     string
-	Name            string
-	Description     string
-	ActiveVersionID *uuid.UUID
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                  uuid.UUID
+	TenantID            uuid.UUID
+	CreatedByUserID     uuid.UUID
+	BusinessKey         string
+	Name                string
+	Description         string
+	ActiveVersionID     *uuid.UUID
+	ActiveVersionNumber *int32
+	HasDraft            bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type WorkflowVersion struct {

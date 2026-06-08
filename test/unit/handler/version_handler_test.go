@@ -63,7 +63,8 @@ func TestGetVersion_OK(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotNil(t, resp["version"])
+	assert.NotNil(t, resp["id"])
+	assert.NotNil(t, resp["workflow_id"])
 }
 
 func TestGetVersion_InvalidWorkflowUUID(t *testing.T) {
@@ -113,7 +114,7 @@ func TestPublishVersion_OK_WithSkip(t *testing.T) {
 	}, &fakeValidationSvc{})
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/publish"
-	w := do(newRouter(h), req(http.MethodPost, path, map[string]any{"skip_eligibility_check": true}))
+	w := do(newRouter(h), req(http.MethodPost, path, map[string]any{"force_publish_structural": true}))
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -204,8 +205,9 @@ func TestCloneVersion_OK(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotNil(t, resp["workflow"])
-	assert.NotNil(t, resp["version"])
+	assert.NotNil(t, resp["workflow_id"])
+	assert.NotNil(t, resp["version_id"])
+	assert.NotNil(t, resp["status"])
 }
 
 func TestCloneVersion_BindError(t *testing.T) {
@@ -234,12 +236,14 @@ func TestCloneVersion_VersionNotPublished(t *testing.T) {
 
 func TestPromoteVersion_OK(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
-		promote: func(_ context.Context, _, _, _, _ uuid.UUID) error { return nil },
+		promote: func(_ context.Context, _, _, _, _ uuid.UUID) (*domain.WorkflowVersion, error) {
+			return &domain.WorkflowVersion{}, nil
+		},
 	}, &fakeValidationSvc{})
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/promote"
 	w := do(newRouter(h), req(http.MethodPost, path, nil))
-	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestPromoteVersion_InvalidWorkflowUUID(t *testing.T) {
@@ -256,8 +260,8 @@ func TestPromoteVersion_InvalidVersionUUID(t *testing.T) {
 
 func TestPromoteVersion_VersionNotPublished(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
-		promote: func(_ context.Context, _, _, _, _ uuid.UUID) error {
-			return domain.ErrVersionNotPublished
+		promote: func(_ context.Context, _, _, _, _ uuid.UUID) (*domain.WorkflowVersion, error) {
+			return nil, domain.ErrVersionNotPublished
 		},
 	}, &fakeValidationSvc{})
 

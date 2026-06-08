@@ -156,14 +156,11 @@ func listWorkflows(
 	tenantID uuid.UUID,
 	f port.WorkflowFilter,
 ) ([]*domain.Workflow, int64, error) {
-	needsActiveJoin := f.IsValid != nil
-	needsDraftJoin := f.HasDraft != nil
-
 	// args holds all query parameters in order. argN() reads the current $N
 	// placeholder for the last-appended value; nextArg(v) appends v and
 	// returns its $N. Never build a placeholder manually — always use these
 	// two helpers to keep args and $N numbering in sync.
-	args := []interface{}{tenantID}
+	args := []any{tenantID}
 	argN := func() string {
 		n := fmt.Sprintf("$%d", len(args))
 		return n
@@ -177,14 +174,13 @@ func listWorkflows(
 	var where strings.Builder
 	fmt.Fprintf(&where, "WHERE w.tenant_id = %s\n", argN())
 
-	if needsActiveJoin {
-		joins.WriteString("LEFT JOIN workflow_version wv_active ON wv_active.id = w.active_version_id\n")
-	}
-	if needsDraftJoin {
-		joins.WriteString(
-			"LEFT JOIN workflow_version wv_draft ON wv_draft.workflow_id = w.id AND wv_draft.status = 'DRAFT'\n",
-		)
-	}
+	// Always join for active version number (needed for response field).
+	joins.WriteString("LEFT JOIN workflow_version wv_active ON wv_active.id = w.active_version_id\n")
+	// Always join for has_draft (needed for response field and optional filter).
+	joins.WriteString(
+		"LEFT JOIN workflow_version wv_draft ON wv_draft.workflow_id = w.id AND wv_draft.tenant_id = w.tenant_id AND wv_draft.status = 'DRAFT'\n",
+	)
+
 	if f.Search != nil {
 		p := nextArg("%" + *f.Search + "%")
 		fmt.Fprintf(&where, "  AND w.name ILIKE %s\n", p)
@@ -232,7 +228,8 @@ func listWorkflows(
 
 	dataSQL := fmt.Sprintf(
 		`SELECT w.id, w.tenant_id, w.created_by_user_id, w.business_key,
-		        w.name, w.description, w.active_version_id, w.created_at, w.updated_at
+		        w.name, w.description, w.active_version_id, w.created_at, w.updated_at,
+		        wv_active.version_number, (wv_draft.id IS NOT NULL) AS has_draft
 		 FROM workflow w
 		 %s%sORDER BY w.created_at DESC
 		 LIMIT %s OFFSET %s`,
@@ -249,13 +246,19 @@ func listWorkflows(
 	var results []*domain.Workflow
 	for rows.Next() {
 		var row db.Workflow
+		var activeVersionNumber *int32
+		var hasDraft bool
 		if err := rows.Scan(
 			&row.ID, &row.TenantID, &row.CreatedByUserID, &row.BusinessKey,
 			&row.Name, &row.Description, &row.ActiveVersionID, &row.CreatedAt, &row.UpdatedAt,
+			&activeVersionNumber, &hasDraft,
 		); err != nil {
 			return nil, 0, fmt.Errorf("list workflows scan: %w", err)
 		}
-		results = append(results, workflowFromDB(row))
+		wf := workflowFromDB(row)
+		wf.ActiveVersionNumber = activeVersionNumber
+		wf.HasDraft = hasDraft
+		results = append(results, wf)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("list workflows rows: %w", err)
