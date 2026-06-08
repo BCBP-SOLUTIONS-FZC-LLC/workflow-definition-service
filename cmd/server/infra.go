@@ -31,15 +31,15 @@ func newDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) 
 	return pool, nil
 }
 
-func newCacheStore(ctx context.Context, cfg *config.Config) (port.CacheStore, error) {
+func newCacheStore(ctx context.Context, cfg *config.Config) (port.CacheStore, *redis.Client, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr:     cfg.ValkeyAddr,
 		Password: cfg.ValkeyPassword,
 	})
 	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("valkey ping: %w", err)
+		return nil, nil, fmt.Errorf("valkey ping: %w", err)
 	}
-	return valkey.NewCache(client), nil
+	return valkey.NewCache(client), client, nil
 }
 
 func newPublisher(cfg *config.Config, log port.Logger) (events.Publisher, error) {

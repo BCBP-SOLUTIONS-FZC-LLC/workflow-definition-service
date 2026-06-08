@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/outbox"
@@ -40,7 +41,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		return nil, err
 	}
 
-	cache, err := newCacheStore(context.Background(), cfg)
+	cache, redisClient, err := newCacheStore(context.Background(), cfg)
 	if err != nil {
 		pool.Close()
 		tracingShutdown()
@@ -143,6 +144,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		grpc.ChainStreamInterceptor(grpccommon.DefaultStreamInterceptors(grpcCfg)...),
 	)
 	definitionv1.RegisterDefinitionServiceServer(grpcSrv, grpcadapter.NewServer(log, versionRepo))
+	reflection.Register(grpcSrv)
 
 	r := newRouter(cfg, pool, cache, log, h)
 
@@ -164,6 +166,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		sqsConsumer:    sqsConsumer,
 		outboxRelay:    relay,
 		shutdown:       tracingShutdown,
+		cacheClose:     redisClient,
 		executionClose: executionSvc,
 	}, nil
 }

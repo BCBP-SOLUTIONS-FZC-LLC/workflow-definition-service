@@ -31,6 +31,7 @@ type app struct {
 	sqsConsumer    events.Consumer
 	outboxRelay    *outbox.Runner
 	shutdown       func()
+	cacheClose     io.Closer
 	executionClose io.Closer // nil when execution service is not configured
 }
 
@@ -100,6 +101,9 @@ func (a *app) stopServers(ctx context.Context) {
 	}
 
 	a.pool.Close()
+	if err := a.cacheClose.Close(); err != nil {
+		a.log.Error("valkey close error", map[string]any{"error": err.Error()})
+	}
 	if a.executionClose != nil {
 		if err := a.executionClose.Close(); err != nil {
 			a.log.Error("execution client close error", map[string]any{"error": err.Error()})
