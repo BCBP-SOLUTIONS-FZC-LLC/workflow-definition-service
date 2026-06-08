@@ -9,7 +9,8 @@
 #   make migrate-up
 #   go run ./cmd/stub/execution &              # gRPC stub :9091, ctrl :9092
 #   go run ./cmd/stub/membership &             # HTTP stub :8081
-#   AWS_USE_STUB=false go run ./cmd/server &   # definition service :8080/:9090
+#   ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_ADDR=localhost:9091 \
+#     AWS_USE_STUB=false go run ./cmd/server & # definition service :8080/:9090
 #
 # Optional tools (checks are skipped if missing):
 #   grpcurl  (brew install grpcurl)
