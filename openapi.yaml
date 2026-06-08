@@ -394,7 +394,7 @@ components:
       type: object
       description: Returned on 422 for any BPMN semantic or structural rejection.
       properties:
-        valid:
+        is_valid:
           type: boolean
           example: false
         errors:
@@ -415,7 +415,7 @@ components:
                 description: Human-readable description of the failure.
                 example: "Missing mandatory Zeebe property 'dept_id'"
       example:
-        valid: false
+        is_valid: false
         errors:
           - code: MISSING_ZEEBE_PROPERTY
             node_id: Task_design_prep
@@ -624,7 +624,7 @@ paths:
                   type: string
                   maxLength: 512
                   example: Standard review process for tender proposal documents
-                xml:
+                bpmn_xml:
                   type: string
                   minLength: 50
                   maxLength: 5242880
@@ -673,9 +673,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [xml]
+              required: [bpmn_xml]
               properties:
-                xml:
+                bpmn_xml:
                   type: string
                   minLength: 50
                   maxLength: 5242880
@@ -806,6 +806,7 @@ paths:
                     items: { $ref: '#/components/schemas/ValidationError' }
                     nullable: true
                   bpmn_xml:           { type: string }
+                  artifact_hash:      { type: string, nullable: true, description: "SHA-256 of the BPMN XML at publish time. Absent on DRAFT versions." }
                   compiled_plan_json: { $ref: '#/components/schemas/CompiledPlan' }
                   created_by_user_id: { type: string, format: uuid }
                   created_at:         { type: string, format: date-time }
@@ -885,11 +886,16 @@ paths:
                   type: string
                   maxLength: 512
                   example: Updated standard review process
-                xml:
+                bpmn_xml:
                   type: string
                   minLength: 50
                   maxLength: 5242880
                   description: Updated BPMN 2.0 XML. Max 5 MB. Must declare bpmn and zeebe namespaces.
+                last_updated_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: Client-supplied timestamp for optimistic concurrency. Rejected if the draft has been modified since this timestamp.
       responses:
         "200":
           description: Draft updated.
@@ -932,15 +938,8 @@ paths:
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
-        "200":
-          description: Draft discarded.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  workflow_id: { type: string, format: uuid }
-                  message:     { type: string }
+        "204":
+          description: Draft discarded. No response body.
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
@@ -1014,6 +1013,7 @@ paths:
                     items: { $ref: '#/components/schemas/ValidationError' }
                     nullable: true
                   bpmn_xml:           { type: string }
+                  artifact_hash:      { type: string, nullable: true, description: "SHA-256 of the BPMN XML at publish time. Absent on DRAFT versions." }
                   compiled_plan_json: { $ref: '#/components/schemas/CompiledPlan' }
                   created_by_user_id: { type: string, format: uuid }
                   created_at:         { type: string, format: date-time }
