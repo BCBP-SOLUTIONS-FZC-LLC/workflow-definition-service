@@ -97,6 +97,28 @@ func (r *WorkflowRepo) UpdateActiveVersion(
 	})
 }
 
+func (r *WorkflowRepo) UpdateMetadata(
+	ctx context.Context,
+	tenantID, workflowID uuid.UUID,
+	name, description string,
+) error {
+	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		tag, err := db.New(dbtx).UpdateWorkflowMetadata(ctx, db.UpdateWorkflowMetadataParams{
+			TenantID:    tenantID,
+			ID:          workflowID,
+			Name:        name,
+			Description: toNullableText(description),
+		})
+		if err != nil {
+			return mapErr(err)
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		return nil
+	})
+}
+
 func (r *WorkflowRepo) CountByTenant(ctx context.Context, tenantID uuid.UUID) (int64, error) {
 	var count int64
 	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
