@@ -35,7 +35,7 @@ type versionSvc interface {
 	Get(ctx context.Context, tenantID, workflowID, versionID uuid.UUID) (*domain.WorkflowVersion, error)
 	Publish(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID, skipEligibilityCheck bool) (*domain.WorkflowVersion, error)
 	Clone(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID, req service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error)
-	Promote(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID) error
+	Promote(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID) (*domain.WorkflowVersion, error)
 	Export(ctx context.Context, tenantID, workflowID, versionID uuid.UUID) (string, string, error)
 	Diff(ctx context.Context, tenantID, workflowID, baseVersionID, targetVersionID uuid.UUID) (*service.DiffResult, error)
 }

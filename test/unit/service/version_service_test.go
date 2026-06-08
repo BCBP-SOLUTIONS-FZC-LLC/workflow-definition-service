@@ -432,7 +432,7 @@ func TestVersionService_Promote_OK(t *testing.T) {
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
-	if err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err != nil {
+	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -446,7 +446,7 @@ func TestVersionService_Promote_NotPublished(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft}, nil)
 
-	err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID)
+	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID)
 	if !errors.Is(err, domain.ErrVersionNotPublished) {
 		t.Fatalf("expected ErrVersionNotPublished, got %v", err)
 	}
@@ -461,7 +461,7 @@ func TestVersionService_Promote_WorkflowMismatch(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: uuid.New(), Status: domain.VersionStatusPublished}, nil)
 
-	err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID)
+	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -474,7 +474,7 @@ func TestVersionService_Promote_GetVersionError(t *testing.T) {
 
 	vRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrNotFound)
 
-	if err := svc.Promote(context.Background(), uuid.New(), uuid.New(), uuid.New(), uuid.New()); err == nil {
+	if _, err := svc.Promote(context.Background(), uuid.New(), uuid.New(), uuid.New(), uuid.New()); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -490,7 +490,7 @@ func TestVersionService_Promote_UpdateError(t *testing.T) {
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(errors.New("db error"))
 
-	if err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err == nil {
+	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err == nil {
 		t.Fatal("expected error")
 	}
 }

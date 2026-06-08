@@ -12,7 +12,7 @@ import (
 )
 
 type publishVersionReq struct {
-	SkipEligibilityCheck bool `json:"skip_eligibility_check"`
+	ForcePublishStructural bool `json:"force_publish_structural"`
 }
 
 type cloneVersionReq struct {
@@ -26,9 +26,11 @@ type versionResp struct {
 	WorkflowID       uuid.UUID            `json:"workflow_id"`
 	Status           domain.VersionStatus `json:"status"`
 	VersionNumber    *int32               `json:"version_number,omitempty"`
+	BPMNXML          string               `json:"bpmn_xml"`
 	ArtifactHash     string               `json:"artifact_hash,omitempty"`
 	IsValid          bool                 `json:"is_valid"`
 	CompiledPlanJSON *string              `json:"compiled_plan_json,omitempty"`
+	CreatedByUserID  uuid.UUID            `json:"created_by_user_id"`
 	PublishedAt      *time.Time           `json:"published_at,omitempty"`
 	CreatedAt        time.Time            `json:"created_at"`
 	UpdatedAt        time.Time            `json:"updated_at"`
@@ -40,9 +42,11 @@ func toVersionResp(v *domain.WorkflowVersion) versionResp {
 		WorkflowID:       v.WorkflowID,
 		Status:           v.Status,
 		VersionNumber:    v.VersionNumber,
+		BPMNXML:          v.BPMNXML,
 		ArtifactHash:     v.ArtifactHash,
 		IsValid:          v.IsValid,
 		CompiledPlanJSON: v.CompiledPlanJSON,
+		CreatedByUserID:  v.CreatedByUserID,
 		PublishedAt:      v.PublishedAt,
 		CreatedAt:        v.CreatedAt,
 		UpdatedAt:        v.UpdatedAt,
@@ -102,7 +106,8 @@ func (h *Handler) GetVersion(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"version": toVersionResp(v)})
+	vr := toVersionResp(v)
+	c.JSON(http.StatusOK, vr)
 }
 
 func (h *Handler) PublishVersion(c *gin.Context) {
@@ -124,13 +129,14 @@ func (h *Handler) PublishVersion(c *gin.Context) {
 	var req publishVersionReq
 	_ = c.ShouldBindJSON(&req) // body is optional; default skip_eligibility_check=false
 
-	v, err := h.versions.Publish(c.Request.Context(), tenantID, userID, workflowID, versionID, req.SkipEligibilityCheck)
+	v, err := h.versions.Publish(c.Request.Context(), tenantID, userID, workflowID, versionID, req.ForcePublishStructural)
 	if err != nil {
 		errResponse(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"version": toVersionResp(v)})
+	vr := toVersionResp(v)
+	c.JSON(http.StatusOK, vr)
 }
 
 func (h *Handler) CloneVersion(c *gin.Context) {
@@ -166,8 +172,10 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"workflow": toWorkflowResp(wf),
-		"version":  toVersionResp(version),
+		"workflow_id":    wf.ID,
+		"version_id":     version.ID,
+		"status":         version.Status,
+		"version_number": version.VersionNumber,
 	})
 }
 
@@ -187,12 +195,18 @@ func (h *Handler) PromoteVersion(c *gin.Context) {
 		return
 	}
 
-	if err := h.versions.Promote(c.Request.Context(), tenantID, userID, workflowID, versionID); err != nil {
+	promoted, err := h.versions.Promote(c.Request.Context(), tenantID, userID, workflowID, versionID)
+	if err != nil {
 		errResponse(c, err)
 		return
 	}
 
-	c.Status(http.StatusNoContent)
+	c.JSON(http.StatusOK, gin.H{
+		"workflow_id":       workflowID,
+		"active_version_id": versionID,
+		"version_number":    promoted.VersionNumber,
+		"message":           "Version promoted to active",
+	})
 }
 
 func (h *Handler) ExportBPMN(c *gin.Context) {

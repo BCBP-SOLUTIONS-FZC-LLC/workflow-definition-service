@@ -187,21 +187,21 @@ func (s *VersionService) Clone(
 func (s *VersionService) Promote(
 	ctx context.Context,
 	tenantID, userID, workflowID, versionID uuid.UUID,
-) error {
+) (*domain.WorkflowVersion, error) {
 	v, err := s.versions.GetByID(ctx, tenantID, versionID)
 	if err != nil {
-		return fmt.Errorf(errGetVersion, err)
+		return nil, fmt.Errorf(errGetVersion, err)
 	}
 	if v.WorkflowID != workflowID {
-		return domain.ErrNotFound
+		return nil, domain.ErrNotFound
 	}
 	if v.Status != domain.VersionStatusPublished {
-		return domain.ErrVersionNotPublished
+		return nil, domain.ErrVersionNotPublished
 	}
 	if err := s.workflows.UpdateActiveVersion(ctx, tenantID, workflowID, &versionID); err != nil {
-		return fmt.Errorf("promote version: %w", err)
+		return nil, fmt.Errorf("promote version: %w", err)
 	}
-	return nil
+	return v, nil
 }
 
 func (s *VersionService) Export(
