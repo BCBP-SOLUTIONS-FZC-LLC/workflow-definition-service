@@ -156,6 +156,20 @@ Integration tests require Docker. Pre-pull the image once: `make tools-integrati
 
 13. **Fine-grained version-status sentinels in `errResponse`** - `ErrVersionNotDraft`, `ErrVersionNotPublished`, and `ErrVersionAlreadyPublished` are all mapped to 409/`CodeInvalidStatus`. They can bubble up directly from the service layer (e.g. `Promote` returns `ErrVersionNotPublished` when the version is not yet published).
 
+14. **gRPC `GetCompiledWorkflow` injects RLS GUC manually** - The Execution Service passes `tenant_id` in the request payload (not gRPC metadata). The handler must call `pgcommon.WithGUCSet(ctx, pgdomain.GUCSet{TenantID: req.TenantId})` before any repo call. This is distinct from the SQS path where `platform-events` auto-injects the GUC from the envelope's `tenant_id` field — no manual injection needed in SQS handlers.
+
+15. **SQS adapter lives in `internal/adapter/inbound/sqs/`** - The `DepartmentMembershipRevoked` dispatcher is at `internal/adapter/inbound/sqs/handler.go` (not in `cmd/server/`). `cmd/server/sqs.go` is a one-liner that wires the adapter. This keeps the dispatch logic testable (see `test/unit/sqshandler/`) and consistent with the gRPC adapter location. The adapter defines a local `membershipRevoker` interface to avoid depending on the concrete `*service.VersionService`.
+
+16. **`TemplateEligibilityInvalidatedPayload` schema** - Matches LLD §7.2.3 exactly: `workflow_id`, `version_id`, `version_number` (int32, 0 for DRAFT), `revoked_user_id`, `affected_nodes` ([]string of node keys), `reason` (constant `"DepartmentMembershipRevoked"`). The old fields `affected_user_id` and `affected_department` were removed — they diverged from the LLD and are not present in the canonical SNS event consumed by downstream services.
+
+17. **SQS handler tests use hand-rolled fakes** - `test/unit/sqshandler/handler_test.go` defines `fakeMembershipRevoker` (satisfies the `membershipRevoker` interface) and `fakeLogger`. This is consistent with the handler layer pattern — no mockgen for adapter-layer dispatch code. Service tests (`test/unit/service/membership_event_test.go`) use gomock since they test multi-dependency orchestration.
+
+18. **`invalidateVersion` silently skips on GetByID error** - A version being absent (concurrently deleted or archived out of band) during membership revocation is not a failure. The handler logs the error and returns nil rather than aborting the entire event. This ensures one missing version does not block invalidation of other affected versions in the same event.
+
+19. **Unit test coverage excludes postgres adapter and generated packages** - `internal/adapter/outbound/postgres/` (repo adapters that require a real DB), `internal/adapter/outbound/postgres/db/` (generated sqlc), and `internal/core/port/mocks/` (generated GoMock stubs) are excluded from the unit test coverage denominator. These are covered by the integration test job (`Iint`). The unit test gate is 95% against the remaining business logic. See `COVER_EXCLUDE_PKG` and `COVER_EXCLUDE_FILE` in the Makefile.
+
+20. **Outbound client tests** - `test/unit/executionclient/` tests `ExecutionClient` using a real local gRPC server (`net.Listen("tcp", "127.0.0.1:0")`) — bufconn is not vendored. `test/unit/membershipclient/` tests `MembershipClient` using `httptest.NewServer`. Both follow the hand-rolled fake pattern consistent with other test/unit packages.
+
 ---
 
 ## CI/CD
@@ -170,4 +184,4 @@ Branch protection required checks: `generate`, `Build`, `vet`, `Test`, `coverage
 
 The `Iint` job runs real integration tests (testcontainers) in CI - Docker is available on `ubuntu-latest`.
 
-The `coverage` job enforces a unit-test-only threshold (currently 70% for `feat/http-handlers`; raise to 90%+ after `feat/grpc-sqs`). The integration coverage profile is uploaded as a separate artifact but is not merged into the gate.
+The `coverage` job enforces a unit-test-only threshold (95% as of `feat/grpc-sqs`). Generated packages (`postgres/db`, `mocks`) and the postgres repo adapter (`postgres/`) are excluded from the gate denominator — they are integration-tested by the `Iint` job. The integration coverage profile is uploaded as a separate artifact but is not merged into the gate.

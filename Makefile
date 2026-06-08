@@ -33,7 +33,13 @@ LDFLAGS            := -X main.version=$(BUILD_VERSION)
 
 COVER_PROFILE      := $(COVERAGE_DIR)/coverage.out
 COVER_HTML         := $(COVERAGE_DIR)/coverage.html
-COVER_THRESHOLD    := 70  # http-handlers added; raise to 90+ after feat/grpc-sqs
+# Exclude generated packages (sqlc db/, mockgen mocks/) from the coverage denominator.
+# COVER_EXCLUDE_PKG: end-anchored, used to filter `go list` package paths.
+# COVER_EXCLUDE_FILE: path-prefix form, used to filter coverage profile lines (which
+#   contain /package/file.go:... rather than ending at the package name).
+COVER_EXCLUDE_PKG  := /postgres/db$$\|/postgres$$\|/mocks$$
+COVER_EXCLUDE_FILE := /postgres/db/\|/postgres/\|/mocks/
+COVER_THRESHOLD    := 95  # raised after feat/grpc-sqs; generated packages excluded from gate
 
 .PHONY: all tools tools-integration generate generate-proto generate-sqlc mock \
         migrate-up migrate-down \
@@ -119,9 +125,10 @@ build:
 test:
 	@mkdir -p $(COVERAGE_DIR)
 	go test -race -count=1 \
-	    -coverpkg=$$(go list ./internal/... ./cmd/... | tr '\n' ',' | sed 's/,$$//') \
+	    -coverpkg=$$(go list ./internal/... ./cmd/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
 	    -coverprofile=$(COVER_PROFILE) -covermode=atomic \
 	    ./internal/... ./test/unit/...
+	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVER_PROFILE) > $(COVER_PROFILE).filtered && mv $(COVER_PROFILE).filtered $(COVER_PROFILE)
 	@go tool cover -func=$(COVER_PROFILE) | tail -1
 
 ## test-integration: Run integration tests — spins up containers via testcontainers-go (no make docker-up needed)
@@ -129,28 +136,31 @@ test-integration:
 	@mkdir -p $(COVERAGE_DIR)
 	TESTCONTAINERS_RYUK_DISABLED=true \
 	go test -race -count=1 \
-	    -coverpkg=$$(go list ./internal/... | tr '\n' ',' | sed 's/,$$//') \
+	    -coverpkg=$$(go list ./internal/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
 	    -coverprofile=$(COVERAGE_DIR)/coverage-integration.out \
 	    -covermode=atomic \
 	    ./test/integration/...
+	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/coverage-integration.out > $(COVERAGE_DIR)/coverage-integration.out.filtered && mv $(COVERAGE_DIR)/coverage-integration.out.filtered $(COVERAGE_DIR)/coverage-integration.out
 	@go tool cover -func=$(COVERAGE_DIR)/coverage-integration.out | tail -1
 
 ## cover: Run unit tests and print per-package coverage summary
 cover:
 	@mkdir -p $(COVERAGE_DIR)
 	go test -race -count=1 \
-	    -coverpkg=$$(go list ./internal/... ./cmd/... | tr '\n' ',' | sed 's/,$$//') \
+	    -coverpkg=$$(go list ./internal/... ./cmd/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
 	    -coverprofile=$(COVER_PROFILE) -covermode=atomic \
 	    ./internal/... ./test/unit/...
+	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVER_PROFILE) > $(COVER_PROFILE).filtered && mv $(COVER_PROFILE).filtered $(COVER_PROFILE)
 	@go tool cover -func=$(COVER_PROFILE) | tail -1
 
 ## cover-func: Print per-function coverage summary to stdout (CI-friendly)
 cover-func:
 	@mkdir -p $(COVERAGE_DIR)
 	go test -race -count=1 \
-	    -coverpkg=$$(go list ./internal/... ./cmd/... | tr '\n' ',' | sed 's/,$$//') \
+	    -coverpkg=$$(go list ./internal/... ./cmd/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
 	    -coverprofile=$(COVER_PROFILE) -covermode=atomic \
 	    ./internal/... ./test/unit/...
+	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVER_PROFILE) > $(COVER_PROFILE).filtered && mv $(COVER_PROFILE).filtered $(COVER_PROFILE)
 	@go tool cover -func=$(COVER_PROFILE)
 	@cp $(COVER_PROFILE) coverage.out
 
