@@ -149,25 +149,25 @@ classDiagram
 The service enforces strict dependency direction — nothing in `core/` imports from `adapter/`.
 
 ```sh
-cmd/server/main.go          ← bootstrap + DI wire-up only
+cmd/server/             ← bootstrap + DI wire-up only (main.go, wire.go, app.go, infra.go, sqs.go)
 │
 ├── internal/core/
-│   ├── domain/             ← entities, enums, sentinel errors, BPMN error codes
+│   ├── domain/             ← entities, enums, sentinel errors, event payloads
 │   ├── port/               ← interface contracts (no implementations)
 │   └── service/            ← business logic (imports domain + port only)
 │
 ├── internal/adapter/
 │   ├── inbound/
 │   │   ├── http/           ← Gin handlers, authz, service-specific middleware
-│   │   ├── grpc/           ← GetCompiledWorkflow server impl
-│   │   └── sqs/            ← membership revocation consumer (platform-events SQS consumer)
+│   │   ├── grpc/           ← GetCompiledWorkflow server impl (reflection registered)
+│   │   └── sqs/            ← DepartmentMembershipRevoked consumer dispatcher
 │   └── outbound/
-│       ├── postgres/       ← sqlc-generated DB layer + repo adapter impls (outbox Enqueue wrapper)
-│       ├── sns/            ← SNS publisher utilizing platform-events
-│       └── valkey/         ← Valkey/Redis CacheStore impl
+│       ├── postgres/       ← sqlc-generated DB layer + repo adapter impls
+│       ├── grpc/           ← ExecutionClient (CheckActiveInstances)
+│       ├── http/           ← MembershipClient (CheckEligibility)
+│       └── valkey/         ← CacheStore impl (compiled plan cache, idempotency, draft lock)
 │
 ├── internal/bpmn_compiler/ ← stateless XML parser, validator, DSL compiler
-├── internal/outbox/        ← outbox runner wrapper using platform-events runner
 └── internal/config/        ← env var loading → typed Config struct
 ```
 
@@ -241,16 +241,114 @@ err := s.transactor.RunInTx(ctx, func(ctx context.Context) error {
 
 Business mutations and their associated domain events are written in the same PostgreSQL transaction. The service enqueues events using `outbox.Enqueue` inside the database transaction. A background `outbox.Runner` worker (from `platform-events`) polls the `outbox_events` table where `published_at IS NULL` and `scheduled_at <= NOW()`, dispatches to SNS, and marks them published.
 
-```sh
-Handler
-  └─ tx.ExecContext: UPDATE workflow_version SET status='PUBLISHED' ...
-  └─ outbox.Enqueue: INSERT INTO outbox_events (id, ..., published_at=NULL) ...
-  └─ tx.Commit()
+### Publish draft — sequence
 
-outbox.Runner
-  └─ SELECT ... FROM outbox_events WHERE published_at IS NULL AND scheduled_at <= NOW() FOR UPDATE SKIP LOCKED
-  └─ SNS.Publish(payload)
-  └─ UPDATE outbox_events SET published_at=NOW()
+```mermaid
+sequenceDiagram
+    participant C as HTTP Client
+    participant H as Handler
+    participant S as VersionService
+    participant MS as MembershipService
+    participant DB as PostgreSQL
+    participant SNS as SNS (via outbox.Runner)
+
+    C->>H: POST /versions/:id/publish
+    H->>S: Publish(ctx, tenantID, userID, versionID)
+    S->>MS: CheckEligibility(each assignee)
+    MS-->>S: eligible=true
+    S->>DB: BEGIN TX
+    S->>DB: UPDATE workflow_version SET status=PUBLISHED
+    S->>DB: INSERT INTO outbox_events (TemplatePublished payload)
+    S->>DB: COMMIT
+    DB-->>S: ok
+    S-->>H: published version
+    H-->>C: 200 OK
+
+    Note over DB,SNS: async — outbox.Runner polls independently
+    DB->>SNS: Publish TemplatePublished event
+    DB->>DB: UPDATE outbox_events SET published_at=NOW()
+```
+
+### Archive workflow — sequence
+
+```mermaid
+sequenceDiagram
+    participant C as HTTP Client
+    participant H as Handler
+    participant S as WorkflowService
+    participant ES as ExecutionService (gRPC)
+    participant DB as PostgreSQL
+    participant SNS as SNS (via outbox.Runner)
+
+    C->>H: POST /workflows/:id/archive
+    H->>S: Archive(ctx, tenantID, userID, workflowID)
+    S->>ES: CheckActiveInstances(tenantID, workflowID)
+    ES-->>S: hasActive=false
+    S->>DB: BEGIN TX
+    S->>DB: UPDATE workflow_version SET status=ARCHIVED
+    S->>DB: UPDATE workflow SET active_version_id=NULL
+    S->>DB: INSERT INTO outbox_events (TemplateArchived payload)
+    S->>DB: COMMIT
+    S-->>H: ok
+    H-->>C: 200 OK
+
+    Note over DB,SNS: async
+    DB->>SNS: Publish TemplateArchived event
+```
+
+### DepartmentMembershipRevoked — sequence
+
+```mermaid
+sequenceDiagram
+    participant SQS as SQS membership-wf-q
+    participant SC as SQS Consumer
+    participant D as sqs.Handler (dispatch)
+    participant S as VersionService
+    participant DB as PostgreSQL
+    participant SNS as SNS (via outbox.Runner)
+
+    SQS->>SC: DepartmentMembershipRevoked envelope
+    SC->>D: dispatch(ctx, envelope)
+    D->>S: HandleMembershipRevoked(eventID, tenantID, userID, deptID)
+    S->>DB: RecordIfNew(eventID) — ON CONFLICT DO NOTHING
+    DB-->>S: isNew=true
+    S->>DB: ListAssigneesByUser(tenantID, userID)
+    DB-->>S: [assignee rows filtered to deptID]
+
+    loop for each affected version
+        S->>DB: GetVersionByID
+        DB-->>S: version (DRAFT or PUBLISHED)
+
+        alt version is DRAFT
+            S->>DB: SetInvalid (no outbox event)
+        else version is PUBLISHED
+            S->>DB: BEGIN TX
+            S->>DB: SetInvalid
+            S->>DB: INSERT INTO outbox_events (TemplateEligibilityInvalidated)
+            S->>DB: COMMIT
+        end
+    end
+
+    SC-->>SQS: message deleted (success)
+
+    Note over DB,SNS: async
+    DB->>SNS: Publish TemplateEligibilityInvalidated (PUBLISHED versions only)
+```
+
+### GetCompiledWorkflow (gRPC) — sequence
+
+```mermaid
+sequenceDiagram
+    participant ES as Execution Service
+    participant G as gRPC Server
+    participant DB as PostgreSQL (RLS)
+
+    ES->>G: GetCompiledWorkflow(tenant_id, workflow_version_id)
+    G->>G: uuid.Parse(tenant_id, workflow_version_id)
+    G->>G: pgcommon.WithGUCSet(ctx, TenantID) — sets RLS GUC
+    G->>DB: GetVersionByID(tenantID, versionID)
+    DB-->>G: WorkflowVersion (RLS-filtered)
+    G-->>ES: GetCompiledWorkflowResponse{compiled_plan_json, status, is_valid, ...}
 ```
 
 ## Repository error semantics

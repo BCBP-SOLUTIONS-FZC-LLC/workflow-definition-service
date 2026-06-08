@@ -83,6 +83,39 @@ curl http://localhost:8080/metrics   # → Prometheus text
 
 By default `AWS_USE_STUB=true` in `.env.example`. This activates no-op stub adapters for SNS (publisher) and SQS (consumer) so the service boots without any AWS credentials.
 
+## LocalStack + full stack (end-to-end)
+
+`make docker-up` includes a LocalStack container that emulates SNS and SQS locally. To run the service against real AWS clients and test the full event pipeline:
+
+```bash
+# 1. Start everything (Postgres + Valkey + LocalStack)
+make docker-up
+make migrate-up
+
+# 2. Start outbound service stubs (gRPC + HTTP)
+go run ./cmd/stub/execution &    # :9091 (gRPC), :9092 (control)
+go run ./cmd/stub/membership &   # :8081 (HTTP + /control toggle)
+
+# 3. Run the server against LocalStack and stubs (AWS_USE_STUB=false)
+ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_ADDR=localhost:9091 \
+  AWS_USE_STUB=false go run ./cmd/server &
+
+# 4. Run the smoke test
+./scripts/smoke-test.sh
+```
+
+The stub binaries expose a runtime control plane to toggle their responses:
+
+```bash
+# Toggle membership eligibility
+curl -X POST http://localhost:8081/control -d '{"eligible":true}'
+curl -X POST http://localhost:8081/control -d '{"eligible":false}'
+
+# Toggle active instances on execution service
+curl -X POST http://localhost:9092/control -d '{"has_active":false}'
+curl -X POST http://localhost:9092/control -d '{"has_active":true}'
+```
+
 ## Code generation
 
 After editing `.proto` files or SQL query files, regenerate:

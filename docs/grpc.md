@@ -6,7 +6,22 @@ Proto source: [`proto/definition/v1/definition.proto`](../proto/definition/v1/de
 
 High-throughput internal gRPC endpoint. Called by the Execution Service and Temporal Workers during runtime workflow instantiation to fetch compiled DSL plans. Bypasses the Envoy REST gateway to eliminate serialisation overhead.
 
-Transport: mTLS enforced by the Envoy sidecar. Plain-text connections are rejected.
+**Transport:** The gRPC server accepts insecure plain-text connections on the intra-cluster network. mTLS is enforced at the Envoy sidecar layer — connections from outside the mesh are rejected there, not at the server. This means `grpcurl -plaintext` works from inside the cluster or locally.
+
+**Reflection:** Server reflection is registered (`reflection.Register`), so `grpcurl` works without passing proto files:</p>
+
+```bash
+# List all services
+grpcurl -plaintext localhost:9090 list
+
+# Describe the service
+grpcurl -plaintext localhost:9090 describe definition.v1.DefinitionService
+
+# Call GetCompiledWorkflow
+grpcurl -plaintext \
+  -d '{"tenant_id":"<uuid>","workflow_version_id":"<uuid>"}' \
+  localhost:9090 definition.v1.DefinitionService/GetCompiledWorkflow
+```
 
 ### `GetCompiledWorkflow`
 
@@ -40,7 +55,6 @@ rpc GetCompiledWorkflow(GetCompiledWorkflowRequest)
 | `OK` (0) | Success |
 | `INVALID_ARGUMENT` (3) | Missing or malformed `tenant_id` / `workflow_version_id` |
 | `NOT_FOUND` (5) | Version not found or RLS filtered it out |
-| `PERMISSION_DENIED` (7) | Tenant validation failed |
 | `INTERNAL` (13) | Unexpected server error |
 
 ---

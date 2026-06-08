@@ -65,22 +65,22 @@ err = pgcommon.RunInTx(ctx, pool, pgx.TxOptions{}, func(ctx context.Context, tx 
 
 ```mermaid
 flowchart TD
-    A([Runner.Start called]) --> P[pollOnce immediate first poll on startup]
-    P --> C["SELECT … FOR UPDATE SKIP LOCKED\nWHERE published_at IS NULL\n  AND scheduled_at ≤ NOW()\nORDER BY id  LIMIT BatchSize"]
-    C -- 0 rows --> B[wait PollInterval tick]
+    A([Runner.Start]) --> P[pollOnce - immediate first poll]
+    P --> C[SELECT FOR UPDATE SKIP LOCKED\nWHERE published_at IS NULL AND scheduled_at <= NOW]
+    C -- 0 rows --> B[wait PollInterval]
     B --> C
-    C -- rows --> L["UPDATE scheduled_at = NOW() + claimLease\nWHERE id = ANY(ids)\n— claim lease, prevents re-claim by other runners —"]
+    C -- rows --> L[UPDATE scheduled_at = NOW + claimLease\nclaim lease to prevent duplicate processing]
     L --> D[for each OutboxRecord]
-    D --> E[json.Unmarshal Payload → Envelope]
-    E -- unmarshal error --> F["MarkFailed attempts++, last_error\nscheduled_at = NOW() releases lease\nif attempts ≥ MaxAttempts → dead-letter"]
+    D --> E[Unmarshal Payload to Envelope]
+    E -- error --> F[MarkFailed: attempts++\nif attempts >= MaxAttempts: dead-letter]
     F --> D
-    E -- ok --> G[Publisher.Publish]
-    G -- success --> H[MarkPublished published_at = NOW()]
+    E -- ok --> G[Publisher.Publish to SNS]
+    G -- success --> H[MarkPublished: published_at = NOW]
     H --> D
-    G -- error --> I["MarkFailed attempts++, last_error\nscheduled_at = NOW() releases lease"]
-    I --> J{attempts ≥ MaxAttempts?}
-    J -- yes --> K[INSERT outbox_dead_letters DELETE outbox_events]
-    J -- no  --> D
+    G -- error --> I[MarkFailed: attempts++\nrelease lease]
+    I --> J{attempts >= MaxAttempts?}
+    J -- yes --> K[INSERT outbox_dead_letters\nDELETE outbox_events]
+    J -- no --> D
     K --> D
     D -- done --> B
 ```
