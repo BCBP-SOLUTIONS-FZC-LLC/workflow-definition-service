@@ -33,7 +33,7 @@ LDFLAGS            := -X main.version=$(BUILD_VERSION)
 
 COVER_PROFILE      := $(COVERAGE_DIR)/coverage.out
 COVER_HTML         := $(COVERAGE_DIR)/coverage.html
-COVER_THRESHOLD    := 50  # service layer unit tests. TODO: raise to 80+ after feat/http-handlers and feat/grpc-sqs
+COVER_THRESHOLD    := 70  # http-handlers added; raise to 90+ after feat/grpc-sqs
 
 .PHONY: all tools tools-integration generate generate-proto generate-sqlc mock \
         migrate-up migrate-down \

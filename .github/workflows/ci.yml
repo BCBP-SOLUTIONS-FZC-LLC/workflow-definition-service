@@ -213,13 +213,12 @@ jobs:
 
       - run: go tool cover -func=.coverage/coverage.out | tail -1
 
-      # Threshold: 50% for feat/service-logic (service layer unit tests; handler/grpc/sqs covered in later PRs).
-      # TODO: raise to 80+ after feat/http-handlers and feat/grpc-sqs land.
-      - name: Enforce coverage threshold (≥ 50%)
+      # Threshold: 70% for feat/http-handlers (handler layer added; raise to 90+ after feat/grpc-sqs).
+      - name: Enforce coverage threshold (≥ 70%)
         run: |
           pct=$(go tool cover -func=.coverage/coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${pct}%"
-          awk -v p="$pct" 'BEGIN { if (p+0 < 50) { print "FAIL: " p "% is below the 50% threshold"; exit 1 } else { print "PASS: " p "%" } }'
+          awk -v p="$pct" 'BEGIN { if (p+0 < 70) { print "FAIL: " p "% is below the 70% threshold"; exit 1 } else { print "PASS: " p "%" } }'
 
   Iint:
     runs-on: ubuntu-latest
