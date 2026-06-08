@@ -13,12 +13,11 @@ import (
 	grpcadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/grpc"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/unit/testkit"
 )
 
 // ensure _ is used to avoid import cycles on port embed
 var _ port.WorkflowVersionRepository = (*fakeVersionRepo)(nil)
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 var (
 	gTenantID  = uuid.MustParse("11111111-1111-1111-1111-111111111111")
@@ -37,18 +36,11 @@ func (f *fakeVersionRepo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (
 
 func newServer(getByID func(context.Context, uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error)) *grpcadapter.Server {
 	return grpcadapter.NewServer(
-		&fakeLogger{},
+		testkit.FakeLogger{},
 		&fakeVersionRepo{getByID: getByID},
 	)
 }
 
-type fakeLogger struct{}
-
-func (f *fakeLogger) Info(msg string, fields map[string]any)  {}
-func (f *fakeLogger) Error(msg string, fields map[string]any) {}
-func (f *fakeLogger) Fatal(msg string, fields map[string]any) {}
-func (f *fakeLogger) Warn(msg string, fields map[string]any)  {}
-func (f *fakeLogger) Debug(msg string, fields map[string]any) {}
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 

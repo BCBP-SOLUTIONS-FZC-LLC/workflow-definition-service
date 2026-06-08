@@ -11,15 +11,8 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port/mocks"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/unit/testkit"
 )
-
-type stubLogger struct{}
-
-func (s *stubLogger) Info(msg string, fields map[string]any)  {}
-func (s *stubLogger) Error(msg string, fields map[string]any) {}
-func (s *stubLogger) Fatal(msg string, fields map[string]any) {}
-func (s *stubLogger) Warn(msg string, fields map[string]any)  {}
-func (s *stubLogger) Debug(msg string, fields map[string]any) {}
 
 func newMembershipSvc(
 	ctrl *gomock.Controller,
@@ -35,7 +28,7 @@ func newMembershipSvc(
 		Assignees:       aRepo,
 		Outbox:          outbox,
 		ProcessedEvents: pe,
-		Log:             &stubLogger{},
+		Log:             testkit.FakeLogger{},
 	})
 }
 
@@ -58,8 +51,6 @@ func assignee(versionID uuid.UUID, nodeKey, deptID string) *domain.NodeAssignee 
 	}
 }
 
-// ── RecordIfNew error ─────────────────────────────────────────────────────────
-
 func TestHandleMembershipRevoked_RecordIfNewError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
@@ -75,8 +66,6 @@ func TestHandleMembershipRevoked_RecordIfNewError(t *testing.T) {
 		t.Fatal("expected error from RecordIfNew, got nil")
 	}
 }
-
-// ── ListByUser error ──────────────────────────────────────────────────────────
 
 func TestHandleMembershipRevoked_ListByUserError(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -94,8 +83,6 @@ func TestHandleMembershipRevoked_ListByUserError(t *testing.T) {
 		t.Fatal("expected error from ListByUser, got nil")
 	}
 }
-
-// ── GetByID error (silently skipped) ─────────────────────────────────────────
 
 func TestHandleMembershipRevoked_VersionGetByIDError(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -117,8 +104,6 @@ func TestHandleMembershipRevoked_VersionGetByIDError(t *testing.T) {
 	}
 }
 
-// ── Already processed ────────────────────────────────────────────────────────
-
 func TestHandleMembershipRevoked_AlreadyProcessed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
@@ -134,8 +119,6 @@ func TestHandleMembershipRevoked_AlreadyProcessed(t *testing.T) {
 		t.Fatalf("expected nil, got %v", err)
 	}
 }
-
-// ── No assignees in revoked department ──────────────────────────────────────
 
 func TestHandleMembershipRevoked_NoMatchingAssignees(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -155,8 +138,6 @@ func TestHandleMembershipRevoked_NoMatchingAssignees(t *testing.T) {
 		t.Fatalf("expected nil, got %v", err)
 	}
 }
-
-// ── DRAFT version invalidated (no outbox event) ──────────────────────────────
 
 func TestHandleMembershipRevoked_DraftVersion(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -182,8 +163,6 @@ func TestHandleMembershipRevoked_DraftVersion(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
-
-// ── PUBLISHED version invalidated + outbox event ─────────────────────────────
 
 func TestHandleMembershipRevoked_PublishedVersion(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -213,7 +192,6 @@ func TestHandleMembershipRevoked_PublishedVersion(t *testing.T) {
 	}
 }
 
-// ── Multiple assignees on same version — SetInvalid called once ──────────────
 
 func TestHandleMembershipRevoked_DeduplicatesVersion(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -244,8 +222,6 @@ func TestHandleMembershipRevoked_DeduplicatesVersion(t *testing.T) {
 	}
 }
 
-// ── ARCHIVED version skipped ─────────────────────────────────────────────────
-
 func TestHandleMembershipRevoked_ArchivedVersionSkipped(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
@@ -271,8 +247,6 @@ func TestHandleMembershipRevoked_ArchivedVersionSkipped(t *testing.T) {
 	}
 }
 
-// ── SetInvalid error propagated ───────────────────────────────────────────────
-
 func TestHandleMembershipRevoked_SetInvalidError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
@@ -297,8 +271,6 @@ func TestHandleMembershipRevoked_SetInvalidError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
-
-// ── Outbox error propagated (PUBLISHED version) ───────────────────────────────
 
 func TestHandleMembershipRevoked_OutboxError(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -327,8 +299,6 @@ func TestHandleMembershipRevoked_OutboxError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
-
-// ── PUBLISHED version with explicit version_number ────────────────────────────
 
 func TestHandleMembershipRevoked_PublishedVersionNumber(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -360,8 +330,6 @@ func TestHandleMembershipRevoked_PublishedVersionNumber(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
-
-// ── Multiple versions (one DRAFT, one PUBLISHED) ──────────────────────────────
 
 func TestHandleMembershipRevoked_MultipleVersions(t *testing.T) {
 	ctrl := gomock.NewController(t)

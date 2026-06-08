@@ -11,20 +11,8 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
 
 	sqsadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/sqs"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/unit/testkit"
 )
-
-// ── fakes ────────────────────────────────────────────────────────────────────
-
-type fakeLogger struct{}
-
-func (f *fakeLogger) Info(msg string, fields map[string]any)  {}
-func (f *fakeLogger) Error(msg string, fields map[string]any) {}
-func (f *fakeLogger) Fatal(msg string, fields map[string]any) {}
-func (f *fakeLogger) Warn(msg string, fields map[string]any)  {}
-func (f *fakeLogger) Debug(msg string, fields map[string]any) {}
-
-var _ port.Logger = (*fakeLogger)(nil)
 
 type fakeMembershipRevoker struct {
 	called bool
@@ -49,8 +37,6 @@ func (f *fakeMembershipRevoker) HandleMembershipRevoked(
 	return f.err
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
 var (
 	hEventID  = uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	hTenantID = uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -69,10 +55,8 @@ func newEnvelope(eventType, eventID, tenantID string, payload any) events.Envelo
 }
 
 func newHandler(revoker *fakeMembershipRevoker) func(context.Context, events.Envelope[json.RawMessage]) error {
-	return sqsadapter.NewHandler(&fakeLogger{}, revoker)
+	return sqsadapter.NewHandler(testkit.FakeLogger{}, revoker)
 }
-
-// ── tests ─────────────────────────────────────────────────────────────────────
 
 func TestDispatch_UnhandledEventType(t *testing.T) {
 	revoker := &fakeMembershipRevoker{}
@@ -90,7 +74,7 @@ func TestDispatch_UnhandledEventType(t *testing.T) {
 
 func TestDispatch_MalformedPayload(t *testing.T) {
 	revoker := &fakeMembershipRevoker{}
-	h := sqsadapter.NewHandler(&fakeLogger{}, revoker)
+	h := sqsadapter.NewHandler(testkit.FakeLogger{}, revoker)
 
 	env := events.Envelope[json.RawMessage]{
 		ID:       hEventID.String(),
@@ -214,8 +198,6 @@ func TestDispatch_ServiceError(t *testing.T) {
 		t.Fatal("expected error propagation from service, got nil")
 	}
 }
-
-// ── test helpers ──────────────────────────────────────────────────────────────
 
 func mustMarshal(v any) json.RawMessage {
 	b, err := json.Marshal(v)
