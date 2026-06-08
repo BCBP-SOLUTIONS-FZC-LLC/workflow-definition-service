@@ -34,6 +34,7 @@ linters:
       - gen/
       - internal/adapter/outbound/postgres/db/
       - internal/core/port/mocks/
+      - test/integration/
     rules:
       - path: _test\.go
         linters:
