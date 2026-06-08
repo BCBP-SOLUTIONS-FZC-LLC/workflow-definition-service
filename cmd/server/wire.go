@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -70,21 +69,6 @@ func newApp(cfg *config.Config) (*app, error) {
 		}
 	}
 
-	sqsHandler := func(ctx context.Context, env events.Envelope[json.RawMessage]) error {
-		log.Info("sqs handler: received event", map[string]any{
-			"event_id":   env.ID,
-			"event_type": env.Type,
-		})
-		return nil
-	}
-
-	sqsConsumer, err := newConsumer(cfg, log, sqsHandler)
-	if err != nil {
-		pool.Close()
-		tracingShutdown()
-		return nil, err
-	}
-
 	relay := outbox.NewRunner(outbox.Config{
 		Pool:         pool,
 		Publisher:    publisher,
@@ -98,6 +82,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	versionRepo := pgadapter.NewWorkflowVersionRepo(pool)
 	assigneeRepo := pgadapter.NewAssigneeRepo(pool)
 	outboxRepo := pgadapter.NewOutboxRepo(pool)
+	processedEventRepo := pgadapter.NewProcessedEventRepo(pool)
 	compiler := bpmncompiler.New()
 
 	workflowSvc := service.NewWorkflowService(service.WorkflowDeps{
@@ -118,16 +103,25 @@ func newApp(cfg *config.Config) (*app, error) {
 		Log:       log,
 	})
 	versionSvc := service.NewVersionService(service.VersionDeps{
-		Transactor: transactor,
-		Workflows:  workflowRepo,
-		Versions:   versionRepo,
-		Assignees:  assigneeRepo,
-		Outbox:     outboxRepo,
-		Membership: membershipSvc,
-		Execution:  executionSvc,
-		Compiler:   compiler,
-		Log:        log,
+		Transactor:      transactor,
+		Workflows:       workflowRepo,
+		Versions:        versionRepo,
+		Assignees:       assigneeRepo,
+		Outbox:          outboxRepo,
+		ProcessedEvents: processedEventRepo,
+		Membership:      membershipSvc,
+		Execution:       executionSvc,
+		Compiler:        compiler,
+		Log:             log,
 	})
+
+	sqsHandler := newSQSHandler(log, versionSvc)
+	sqsConsumer, err := newConsumer(cfg, log, sqsHandler)
+	if err != nil {
+		pool.Close()
+		tracingShutdown()
+		return nil, err
+	}
 	validationSvc := service.NewValidationService(service.ValidationDeps{
 		Compiler: compiler,
 		Log:      log,
@@ -148,7 +142,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		grpc.ChainUnaryInterceptor(grpccommon.DefaultUnaryInterceptors(grpcCfg)...),
 		grpc.ChainStreamInterceptor(grpccommon.DefaultStreamInterceptors(grpcCfg)...),
 	)
-	definitionv1.RegisterDefinitionServiceServer(grpcSrv, grpcadapter.NewServer(log))
+	definitionv1.RegisterDefinitionServiceServer(grpcSrv, grpcadapter.NewServer(log, versionRepo))
 
 	r := newRouter(cfg, pool, cache, log, h)
 
