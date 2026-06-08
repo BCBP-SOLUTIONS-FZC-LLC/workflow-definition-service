@@ -21,7 +21,6 @@
 
 set -euo pipefail
 
-# ── config ────────────────────────────────────────────────────────────────────
 HTTP="${HTTP_BASE:-http://localhost:8080}"
 API="${HTTP}/api/v1"
 GRPC="${GRPC_ADDR:-localhost:9090}"
@@ -35,7 +34,6 @@ DB_URL="${DB_URL:-postgres://wfdef:wfdef@localhost:5432/workflow_definition?sslm
 ALICE="550e8400-e29b-41d4-a716-446655440000"  # design preparer
 BOB="661f9511-f3ac-52e5-b827-557766551111"    # design reviewer
 
-# ── colour helpers ────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 PASS=0; FAIL=0
 pass() { echo -e "  ${GREEN}✓${NC} $1"; (( PASS++ )) || true; }
@@ -43,13 +41,11 @@ fail() { echo -e "  ${RED}✗${NC} $1"; (( FAIL++ )) || true; }
 skip() { echo -e "  ${YELLOW}–${NC} $1 (skipped — install: $2)"; }
 section() { echo ""; echo -e "${CYAN}══ $1 ══${NC}"; }
 
-# ── tool checks ───────────────────────────────────────────────────────────────
 HAS_GRPCURL=false; HAS_PSQL=false; HAS_AWS=false
 command -v grpcurl &>/dev/null && HAS_GRPCURL=true
 command -v psql    &>/dev/null && HAS_PSQL=true
 command -v aws     &>/dev/null && HAS_AWS=true
 
-# ── wait helpers ──────────────────────────────────────────────────────────────
 wait_http() {
   local url="$1" label="$2" tries=0
   until curl -sf "$url" &>/dev/null; do
@@ -69,7 +65,6 @@ wait_grpc() {
   done
 }
 
-# ── stub control helpers ──────────────────────────────────────────────────────
 membership_eligible() {
   curl -sf -X POST "${MEMBERSHIP_CTRL}/control" \
     -H "Content-Type: application/json" \
@@ -91,7 +86,6 @@ execution_has_active() {
     -d '{"has_active":true}' > /dev/null
 }
 
-# ── curl helpers ──────────────────────────────────────────────────────────────
 TENANT_ID="${TENANT_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 USER_ID="${USER_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 
@@ -113,7 +107,6 @@ jq_field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(d$(echo 
 first_id()  { python3 -c "import json,sys; d=json.load(sys.stdin); print(d['items'][0]['id'] if d.get('items') else d['id'])" 2>/dev/null <<< "$1"; }
 get_id()    { python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])" 2>/dev/null <<< "$1"; }
 
-# ── minimal 1-department BPMN fixture ─────────────────────────────────────────
 # Uses the canonical Zeebe properties; alice is preparer, bob is reviewer.
 BPMN_VALID='<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -166,15 +159,10 @@ BPMN_INVALID='<?xml version="1.0" encoding="UTF-8"?>
 BPMN_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<< "$BPMN_VALID")
 BPMN_INVALID_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<< "$BPMN_INVALID")
 
-# ═══════════════════════════════════════════════════════════════════════════════
-echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║   definition-service  smoke test             ║"
-echo "╚══════════════════════════════════════════════╝"
+
 echo "  tenant_id = ${TENANT_ID}"
 echo "  user_id   = ${USER_ID}"
 
-# ── 0. readiness ──────────────────────────────────────────────────────────────
 section "0 · Readiness"
 echo "  Waiting for services..."
 wait_http "${HTTP}/healthz"                       "HTTP server"
@@ -186,7 +174,6 @@ pass "All services ready"
 membership_eligible
 execution_no_active
 
-# ── 1. health endpoints ───────────────────────────────────────────────────────
 section "1 · Health endpoints"
 STATUS=$(api_status GET "${HTTP}/healthz")
 [ "$STATUS" = "200" ] && pass "GET /healthz → 200" || fail "GET /healthz → $STATUS"
@@ -197,7 +184,6 @@ STATUS=$(api_status GET "${HTTP}/readyz")
 STATUS=$(api_status GET "${HTTP}/metrics")
 [ "$STATUS" = "200" ] && pass "GET /metrics → 200" || fail "GET /metrics → $STATUS"
 
-# ── 2. workflow CRUD ──────────────────────────────────────────────────────────
 section "2 · Workflow CRUD"
 
 WF_RESP=$(api_post "${API}/workflows" \
@@ -220,7 +206,6 @@ STATUS=$(api_status PATCH "${API}/workflows/${WF_ID}" '{"name":"smoke-test-updat
 STATUS=$(api_status GET "${API}/workflows/00000000-0000-0000-0000-000000000001")
 [ "$STATUS" = "404" ] && pass "GET /workflows/<nonexistent> → 404" || fail "GET /workflows/<nonexistent> → $STATUS (want 404)"
 
-# ── 3. BPMN validation ────────────────────────────────────────────────────────
 section "3 · BPMN validation"
 
 VAL_RESP=$(api_post "${API}/workflows/validate" "{\"bpmn_xml\":${BPMN_JSON}}")
@@ -235,7 +220,6 @@ VALID_BAD=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('is
   && pass "POST /validate (invalid BPMN) → is_valid=false with errors" \
   || fail "POST /validate (invalid BPMN) → is_valid=${VALID_BAD} (want false)"
 
-# ── 4. draft lifecycle ────────────────────────────────────────────────────────
 section "4 · Draft lifecycle"
 
 DRAFT_RESP=$(api_post "${API}/workflows/${WF_ID}/draft" \
@@ -256,7 +240,6 @@ STATUS=$(api_status POST "${API}/workflows/${WF_ID}/draft" \
   "{\"bpmn_xml\":${BPMN_JSON}}")
 [ "$STATUS" = "409" ] && pass "POST /draft (duplicate) → 409" || fail "POST /draft duplicate → $STATUS (want 409)"
 
-# ── 5. publish — ineligible user ─────────────────────────────────────────────
 section "5 · Publish"
 
 membership_ineligible
@@ -271,13 +254,11 @@ STATUS=$(api_status POST "${API}/workflows/${WF_ID}/versions/${V1_ID}/publish")
   && pass "POST /publish (eligible) → 200" \
   || fail "POST /publish eligible → $STATUS (want 200)"
 
-# Publish again → 409 already published
 STATUS=$(api_status POST "${API}/workflows/${WF_ID}/versions/${V1_ID}/publish")
 [ "$STATUS" = "409" ] \
   && pass "POST /publish (already published) → 409" \
   || fail "POST /publish duplicate → $STATUS (want 409)"
 
-# ── 6. version read operations ───────────────────────────────────────────────
 section "6 · Version read"
 
 STATUS=$(api_status GET "${API}/workflows/${WF_ID}/versions/${V1_ID}")
@@ -295,7 +276,6 @@ EXPORT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   "${API}/workflows/${WF_ID}/versions/${V1_ID}/export")
 [ "$EXPORT_STATUS" = "200" ] && pass "GET /versions/:id/export → 200" || fail "GET /versions/:id/export → $EXPORT_STATUS"
 
-# ── 7. promote version ────────────────────────────────────────────────────────
 section "7 · Promote"
 
 STATUS=$(api_status POST "${API}/workflows/${WF_ID}/versions/${V1_ID}/promote")
@@ -313,7 +293,6 @@ STATUS=$(api_status POST "${API}/workflows/${WF_ID}/versions/${V_DRAFT_ID}/promo
   && pass "POST /versions/:id/promote (draft) → 409" \
   || fail "POST /versions/:id/promote draft → $STATUS (want 409)"
 
-# ── 8. clone version ─────────────────────────────────────────────────────────
 section "8 · Clone"
 
 # Discard the current draft first so clone can complete
@@ -331,7 +310,6 @@ CLONE_V_ID=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d['versi
   && pass "POST /clone → 201, new_workflow_id=${CLONE_WF_ID}" \
   || fail "no workflow id in clone response: $CLONE_RESP"
 
-# ── 9. version diff ───────────────────────────────────────────────────────────
 section "9 · Version diff"
 
 # Publish the cloned draft so we have two PUBLISHED versions to diff
@@ -350,7 +328,6 @@ DIFF_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   && pass "GET /versions/:id/diff/:target → 200 (self-diff)" \
   || fail "GET /versions/:id/diff/:target → $DIFF_STATUS"
 
-# ── 10. gRPC GetCompiledWorkflow ──────────────────────────────────────────────
 section "10 · gRPC GetCompiledWorkflow"
 
 if [ "$HAS_GRPCURL" = true ]; then
@@ -406,7 +383,6 @@ else
   skip "gRPC tests" "brew install grpcurl"
 fi
 
-# ── 11. SQS — DepartmentMembershipRevoked ────────────────────────────────────
 section "11 · SQS — DepartmentMembershipRevoked"
 
 if [ "$HAS_AWS" = true ]; then
@@ -459,7 +435,6 @@ JSON
     skip "DB assertions" "brew install postgresql"
   fi
 
-  # --- PUBLISHED version: should emit outbox event
   WF3_RESP=$(api_post "${API}/workflows" \
     '{"name":"sqs-pub-test","description":"sqs published invalidation","business_key":"sqs-pub-wf"}')
   WF3_ID=$(get_id "$WF3_RESP")
@@ -514,7 +489,6 @@ JSON
       || fail "processed_events count=${PROC_COUNT} (want 1)"
   fi
 
-  # --- Idempotency: re-send same event
   aws --endpoint-url "${SQS_ENDPOINT}" --region us-east-1 sqs send-message \
     --queue-url "${SQS_QUEUE}" \
     --message-body "$REVOKE_MSG2" --output text > /dev/null
@@ -539,7 +513,6 @@ else
   skip "SQS tests" "brew install awscli"
 fi
 
-# ── 12. archive workflow — with/without active instances ──────────────────────
 section "12 · Archive workflow"
 
 # Create a fresh workflow with a published version to archive
@@ -570,7 +543,6 @@ STATUS=$(api_status POST "${API}/workflows/${WF_ARC_ID}/archive")
   && pass "POST /archive (already archived) → 409" \
   || fail "POST /archive already-archived → $STATUS (want 409)"
 
-# ── 13. no-auth → 401 ────────────────────────────────────────────────────────
 section "13 · Auth boundary"
 
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${API}/workflows")
@@ -578,7 +550,6 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${API}/workflows")
   && pass "GET /workflows without auth headers → 401" \
   || fail "GET /workflows without auth → $STATUS (want 401)"
 
-# ── summary ───────────────────────────────────────────────────────────────────
 section "Summary"
 TOTAL=$(( PASS + FAIL ))
 echo ""
