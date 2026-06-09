@@ -8,6 +8,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
+	httpmiddleware "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/middleware"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
@@ -38,6 +39,8 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 	for _, mw := range gincommon.ProtectedMiddlewares(mwCfg) {
 		api.Use(mw)
 	}
+	api.Use(httpmiddleware.InjectGUCSet())
+	api.Use(httpmiddleware.LimitRequestBody())
 
 	idem := func(fn gin.HandlerFunc) gin.HandlerFunc {
 		return handler.WithIdempotency(cache, fn)

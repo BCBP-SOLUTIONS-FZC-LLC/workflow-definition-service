@@ -60,7 +60,7 @@ func (s *WorkflowService) List(
 func (s *WorkflowService) Create(
 	ctx context.Context,
 	tenantID, userID uuid.UUID,
-	businessKey, name, description, bpmnXML string,
+	businessKey, name, description, bpmnXML, planTier string,
 ) (*domain.Workflow, *domain.WorkflowVersion, error) {
 	if s.compiler != nil {
 		errs, err := s.compiler.Validate(ctx, bpmnXML)
@@ -70,6 +70,10 @@ func (s *WorkflowService) Create(
 		if len(errs) > 0 {
 			return nil, nil, &domain.ValidationFailedError{Errors: errs}
 		}
+	}
+
+	if err := s.enforceWorkflowQuota(ctx, tenantID, planTier); err != nil {
+		return nil, nil, err
 	}
 
 	wf := &domain.Workflow{
@@ -124,6 +128,21 @@ func (s *WorkflowService) Get(
 		return nil, nil, fmt.Errorf("list versions: %w", err)
 	}
 	return wf, versions, nil
+}
+
+func (s *WorkflowService) enforceWorkflowQuota(ctx context.Context, tenantID uuid.UUID, planTier string) error {
+	limit := workflowQuotaLimit(planTier)
+	if limit <= 0 {
+		return nil
+	}
+	count, err := s.workflows.CountByTenant(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("count workflows: %w", err)
+	}
+	if count >= limit {
+		return domain.ErrPlanQuotaExceeded
+	}
+	return nil
 }
 
 func (s *WorkflowService) Archive(ctx context.Context, tenantID, userID, id uuid.UUID) error {

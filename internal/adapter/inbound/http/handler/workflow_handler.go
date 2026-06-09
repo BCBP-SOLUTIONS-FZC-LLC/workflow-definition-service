@@ -130,7 +130,7 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 	wf, version, err := h.workflows.Create(
 		c.Request.Context(),
 		tenantID, userID,
-		req.Key, req.Name, req.Description, req.BPMNXML,
+		req.Key, req.Name, req.Description, req.BPMNXML, c.GetHeader("x-plan"),
 	)
 	if err != nil {
 		errResponse(c, err)

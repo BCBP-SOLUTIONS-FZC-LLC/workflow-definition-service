@@ -12,31 +12,34 @@ import (
 )
 
 type DraftDeps struct {
-	Cache     port.CacheStore
-	Workflows port.WorkflowRepository
-	Versions  port.WorkflowVersionRepository
-	Assignees port.AssigneeRepository
-	Compiler  port.PlanCompiler
-	Log       port.Logger
+	Transactor port.Transactor
+	Cache      port.CacheStore
+	Workflows  port.WorkflowRepository
+	Versions   port.WorkflowVersionRepository
+	Assignees  port.AssigneeRepository
+	Compiler   port.PlanCompiler
+	Log        port.Logger
 }
 
 type DraftService struct {
-	cache     port.CacheStore
-	workflows port.WorkflowRepository
-	versions  port.WorkflowVersionRepository
-	assignees port.AssigneeRepository
-	compiler  port.PlanCompiler
-	log       port.Logger
+	transactor port.Transactor
+	cache      port.CacheStore
+	workflows  port.WorkflowRepository
+	versions   port.WorkflowVersionRepository
+	assignees  port.AssigneeRepository
+	compiler   port.PlanCompiler
+	log        port.Logger
 }
 
 func NewDraftService(d DraftDeps) *DraftService {
 	return &DraftService{
-		cache:     d.Cache,
-		workflows: d.Workflows,
-		versions:  d.Versions,
-		assignees: d.Assignees,
-		compiler:  d.Compiler,
-		log:       logOrNoop(d.Log),
+		transactor: d.Transactor,
+		cache:      d.Cache,
+		workflows:  d.Workflows,
+		versions:   d.Versions,
+		assignees:  d.Assignees,
+		compiler:   d.Compiler,
+		log:        logOrNoop(d.Log),
 	}
 }
 
@@ -123,12 +126,6 @@ func (s *DraftService) Update(
 		return nil, domain.ErrDraftConcurrency
 	}
 
-	if req.Name != nil || req.Description != nil {
-		if err := s.updateWorkflowMeta(ctx, tenantID, workflowID, req); err != nil {
-			return nil, err
-		}
-	}
-
 	if req.BPMNXML != nil {
 		draft.BPMNXML = *req.BPMNXML
 		// Clear stale compilation artefacts so the next publish recompiles.
@@ -138,8 +135,8 @@ func (s *DraftService) Update(
 	}
 	draft.UpdatedAt = time.Now()
 
-	if err := s.versions.UpdateDraft(ctx, draft); err != nil {
-		return nil, fmt.Errorf("update draft: %w", err)
+	if err := s.runUpdateTx(ctx, tenantID, workflowID, draft, req); err != nil {
+		return nil, err
 	}
 	s.log.Info("draft updated", map[string]any{
 		"tenant_id":   tenantID.String(),
@@ -148,6 +145,34 @@ func (s *DraftService) Update(
 		"version_id":  draft.ID.String(),
 	})
 	return draft, nil
+}
+
+func (s *DraftService) runUpdateTx(
+	ctx context.Context,
+	tenantID, workflowID uuid.UUID,
+	draft *domain.WorkflowVersion,
+	req UpdateDraftReq,
+) error {
+	updateMeta := req.Name != nil || req.Description != nil
+
+	doUpdate := func(ctx context.Context) error {
+		if updateMeta {
+			if err := s.updateWorkflowMeta(ctx, tenantID, workflowID, req); err != nil {
+				return err
+			}
+		}
+		if err := s.versions.UpdateDraft(ctx, draft); err != nil {
+			return fmt.Errorf("update draft: %w", err)
+		}
+		return nil
+	}
+
+	// Wrap in a transaction only when both tables are written.
+	// Fail-open when Transactor is not configured (dev/test).
+	if updateMeta && s.transactor != nil {
+		return s.transactor.RunInTx(ctx, doUpdate)
+	}
+	return doUpdate(ctx)
 }
 
 func (s *DraftService) updateWorkflowMeta(

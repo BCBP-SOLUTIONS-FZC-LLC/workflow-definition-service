@@ -97,12 +97,13 @@ func newApp(cfg *config.Config) (*app, error) {
 		Log:        log,
 	})
 	draftSvc := service.NewDraftService(service.DraftDeps{
-		Cache:     cache,
-		Workflows: workflowRepo,
-		Versions:  versionRepo,
-		Assignees: assigneeRepo,
-		Compiler:  compiler,
-		Log:       log,
+		Transactor: transactor,
+		Cache:      cache,
+		Workflows:  workflowRepo,
+		Versions:   versionRepo,
+		Assignees:  assigneeRepo,
+		Compiler:   compiler,
+		Log:        log,
 	})
 	versionSvc := service.NewVersionService(service.VersionDeps{
 		Transactor:      transactor,

@@ -180,3 +180,37 @@ func TestWithIdempotency_ErrorResponse_NotCached(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.False(t, setCalled, "error responses must not be cached")
 }
+
+func TestWithIdempotency_HashMismatch_Returns409(t *testing.T) {
+	// Cached entry has a body_hash that doesn't match the incoming request body.
+	type cachedResp struct {
+		Status   int    `json:"status"`
+		Body     []byte `json:"body"`
+		BodyHash string `json:"body_hash,omitempty"`
+	}
+	cachedBody := []byte(`{"cached":true}`)
+	cached, _ := json.Marshal(cachedResp{
+		Status:   http.StatusCreated,
+		Body:     cachedBody,
+		BodyHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	})
+
+	cache := &fakeCache{
+		get: func(_ context.Context, _ string) (string, error) { return string(cached), nil },
+	}
+
+	called := 0
+	h := func(c *gin.Context) {
+		called++
+		c.JSON(http.StatusCreated, gin.H{"fresh": true})
+	}
+	r := newIdempotencyRouter(cache, h)
+
+	// Different body → hash will differ from stored "aaaa..." hash.
+	httpReq := req(http.MethodPost, "/idempotency-test", map[string]string{"different": "payload"})
+	httpReq.Header.Set("Idempotency-Key", "conflict-key")
+	w := do(r, httpReq)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, 0, called, "handler must not be called on hash mismatch")
+}

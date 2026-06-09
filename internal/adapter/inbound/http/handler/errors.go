@@ -30,6 +30,7 @@ const (
 	CodeUpstream           ErrCode = "UPSTREAM_UNAVAILABLE"
 	CodeIdempotencyReplay  ErrCode = "IDEMPOTENCY_KEY_REPLAY"
 	CodeBPMNValidation     ErrCode = "BPMN_VALIDATION_FAILED"
+	CodePayloadTooLarge    ErrCode = "PAYLOAD_TOO_LARGE"
 	CodeInternal           ErrCode = "INTERNAL_ERROR"
 )
 
@@ -53,15 +54,16 @@ type ProblemDetails struct {
 const errBase = "https://api.workflow.platform/errors/"
 
 var problemTypes = map[int]string{
-	http.StatusBadRequest:          errBase + "bad-request",
-	http.StatusUnauthorized:        errBase + "unauthorized",
-	http.StatusForbidden:           errBase + "forbidden",
-	http.StatusNotFound:            errBase + "not-found",
-	http.StatusConflict:            errBase + "conflict",
-	http.StatusUnprocessableEntity: errBase + "validation-failed",
-	http.StatusInternalServerError: errBase + "internal-error",
-	http.StatusServiceUnavailable:  errBase + "service-unavailable",
-	http.StatusNotImplemented:      errBase + "not-implemented",
+	http.StatusBadRequest:            errBase + "bad-request",
+	http.StatusUnauthorized:          errBase + "unauthorized",
+	http.StatusForbidden:             errBase + "forbidden",
+	http.StatusNotFound:              errBase + "not-found",
+	http.StatusConflict:              errBase + "conflict",
+	http.StatusUnprocessableEntity:   errBase + "validation-failed",
+	http.StatusRequestEntityTooLarge: errBase + "payload-too-large",
+	http.StatusInternalServerError:   errBase + "internal-error",
+	http.StatusServiceUnavailable:    errBase + "service-unavailable",
+	http.StatusNotImplemented:        errBase + "not-implemented",
 }
 
 var codeTitles = map[ErrCode]string{
@@ -82,6 +84,7 @@ var codeTitles = map[ErrCode]string{
 	CodeUpstream:           "Upstream Service Unavailable",
 	CodeIdempotencyReplay:  "Idempotency Key Replay",
 	CodeBPMNValidation:     "BPMN Validation Failed",
+	CodePayloadTooLarge:    "Payload Too Large",
 	CodeInternal:           "Internal Server Error",
 }
 
@@ -104,7 +107,12 @@ func writeProblem(c *gin.Context, status int, code ErrCode, detail string, param
 // errResponse maps a domain or infrastructure error to an RFC-9457 HTTP response.
 func errResponse(c *gin.Context, err error) {
 	var valErr *domain.ValidationFailedError
+	var maxBytesErr *http.MaxBytesError
 	switch {
+	case errors.As(err, &maxBytesErr):
+		writeProblem(c, http.StatusRequestEntityTooLarge, CodePayloadTooLarge,
+			"request body exceeds the 5 MB limit", nil)
+		return
 	case errors.Is(err, domain.ErrNotFound), errors.Is(err, pgx.ErrNoRows):
 		writeProblem(c, http.StatusNotFound, CodeNotFound, err.Error(), nil)
 	case errors.Is(err, domain.ErrNoDraftExists):

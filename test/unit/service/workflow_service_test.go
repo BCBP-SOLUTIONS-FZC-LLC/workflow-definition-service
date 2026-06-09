@@ -60,10 +60,11 @@ func TestWorkflowService_Create_OK(t *testing.T) {
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(0), nil)
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
-	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>")
+	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>", "")
 	if err != nil || wf == nil || v == nil {
 		t.Fatalf("unexpected: %v %v %v", wf, v, err)
 	}
@@ -80,9 +81,10 @@ func TestWorkflowService_Create_WorkflowCreateError(t *testing.T) {
 		Transactor: tx, Workflows: wfRepo,
 	})
 
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(0), nil)
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(domain.ErrDuplicateBusinessKey)
 
-	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>")
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "")
 	if !errors.Is(err, domain.ErrDuplicateBusinessKey) {
 		t.Fatalf("expected ErrDuplicateBusinessKey, got %v", err)
 	}
@@ -97,10 +99,11 @@ func TestWorkflowService_Create_VersionCreateError(t *testing.T) {
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(0), nil)
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(errors.New("version error"))
 
-	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>")
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -117,10 +120,11 @@ func TestWorkflowService_Create_WithCompiler_ValidationOK(t *testing.T) {
 	})
 
 	compiler.EXPECT().Validate(gomock.Any(), "<bpmn/>").Return(nil, nil)
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(0), nil)
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
-	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>")
+	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>", "")
 	if err != nil || wf == nil || v == nil {
 		t.Fatalf("unexpected: err=%v wf=%v v=%v", err, wf, v)
 	}
@@ -134,7 +138,7 @@ func TestWorkflowService_Create_WithCompiler_ValidationErrors(t *testing.T) {
 	compiler.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(
 		[]domain.BPMNValidationError{{Code: "MISSING_START"}}, nil)
 
-	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bad/>")
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bad/>", "")
 	var vfe *domain.ValidationFailedError
 	if !errors.As(err, &vfe) {
 		t.Fatalf("expected ValidationFailedError, got %v", err)
@@ -148,9 +152,54 @@ func TestWorkflowService_Create_WithCompiler_ValidateError(t *testing.T) {
 
 	compiler.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil, errors.New("compiler error"))
 
-	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>")
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>", "")
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestWorkflowService_Create_QuotaExceeded(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{Workflows: wfRepo})
+
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(5), nil)
+
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "starter")
+	if !errors.Is(err, domain.ErrPlanQuotaExceeded) {
+		t.Fatalf("expected ErrPlanQuotaExceeded, got %v", err)
+	}
+}
+
+func TestWorkflowService_Create_CountByTenantError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{Workflows: wfRepo})
+
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(0), errors.New("db error"))
+
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "starter")
+	if err == nil {
+		t.Fatal("expected error from CountByTenant")
+	}
+}
+
+func TestWorkflowService_Create_EnterpriseNoQuota(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tx := txPassthrough(ctrl)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
+	})
+
+	// Enterprise plan → no CountByTenant call (unlimited).
+	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "enterprise")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
