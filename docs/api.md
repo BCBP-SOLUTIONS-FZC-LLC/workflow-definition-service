@@ -94,7 +94,8 @@ Validation errors include an `invalid_params` array:
 | `ACTIVE_INSTANCES_EXIST` | 409 | Cannot archive while running instances exist |
 | `STRUCTURAL_DIVERGENCE` | 409 | Topology changed vs. active version; use `force_publish_structural` to override |
 | `IDEMPOTENCY_KEY_REPLAY` | 409 | Same idempotency key submitted with a different payload |
-| `PLAN_QUOTA_EXCEEDED` | 422 | Tenant has reached the maximum number of workflow templates for their plan |
+| `PAYLOAD_TOO_LARGE` | 413 | Request body exceeds the 5 MB limit |
+| `PLAN_QUOTA_EXCEEDED` | 403 | Tenant has reached the maximum number of workflow templates for their plan |
 | `ASSIGNEE_INELIGIBLE` | 422 | A default assignee no longer has the required department/role membership |
 | `BPMN_VALIDATION_FAILED` | 422 | BPMN structural or semantic validation failed; see `invalid_params` |
 | `UPSTREAM_UNAVAILABLE` | 503 | Execution Service or Org & Membership service unreachable |

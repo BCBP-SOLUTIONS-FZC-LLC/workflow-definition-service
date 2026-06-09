@@ -650,7 +650,11 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
-        "409": { $ref: '#/components/responses/Conflict' }
+        "409":
+          description: Business key already exists for this tenant, or idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "500": { $ref: '#/components/responses/InternalError' }
 
@@ -693,6 +697,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
         "413":
           description: Payload exceeds 5 MB limit.
           content:
@@ -817,6 +822,13 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example:
+                type: "https://api.workflow.platform/errors/not-found"
+                title: "Draft Not Found"
+                status: 404
+                detail: "No active draft exists for this workflow."
+                instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/draft"
+                code: "DRAFT_NOT_FOUND"
         "500": { $ref: '#/components/responses/InternalError' }
 
     post:
@@ -851,7 +863,11 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
-        "409": { $ref: '#/components/responses/Conflict' }
+        "409":
+          description: Draft already exists or idempotency key reused with different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
 
     put:
@@ -917,8 +933,22 @@ paths:
 
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
-        "404": { $ref: '#/components/responses/NotFound' }
-        "409": { $ref: '#/components/responses/Conflict' }
+        "404":
+          description: Workflow or draft version not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example:
+                type: https://api.internal/definition/v1/errors/not-found
+                title: Not Found
+                status: 404
+                detail: "no draft found for this workflow"
+                code: DRAFT_NOT_FOUND
+        "409":
+          description: Optimistic concurrency conflict or idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
 
     delete:
@@ -942,7 +972,22 @@ paths:
           description: Draft discarded. No response body.
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
-        "404": { $ref: '#/components/responses/NotFound' }
+        "404":
+          description: Workflow or draft version not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example:
+                type: https://api.internal/definition/v1/errors/not-found
+                title: Not Found
+                status: 404
+                detail: "no draft found for this workflow"
+                code: DRAFT_NOT_FOUND
+        "409":
+          description: Idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.8
@@ -977,8 +1022,17 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
-        "409": { $ref: '#/components/responses/Conflict' }
+        "409":
+          description: Workflow already archived or idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503":
+          description: Upstream service unavailable (Execution Service could not be notified).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   # 3.4
   /workflows/{id}/versions/{version_id}:
@@ -1073,12 +1127,17 @@ paths:
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
         "409":
-          description: Structural divergence detected — see suggested_action.
+          description: Structural divergence detected (see suggested_action), or idempotency key reused with a different payload.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/StructuralDivergenceError' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503":
+          description: Upstream service unavailable (Execution Service could not be notified).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   # 3.10
   /workflows/{id}/versions/{version_id}/clone:
@@ -1140,7 +1199,11 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
-        "409": { $ref: '#/components/responses/Conflict' }
+        "409":
+          description: Business key conflict (cloned key already exists) or idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.11
@@ -1178,7 +1241,11 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
-        "409": { $ref: '#/components/responses/Conflict' }
+        "409":
+          description: Version is not in PUBLISHED status, or idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.13
@@ -1210,7 +1277,7 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.14
-  /workflows/{id}/versions/{a}/diff/{b}:
+  /workflows/{id}/versions/{version_id}/diff/{target_version_id}:
     get:
       operationId: getVersionDiff
       summary: Structural diff between two versions
@@ -1223,12 +1290,12 @@ paths:
         - $ref: '#/components/parameters/Plan'
         - $ref: '#/components/parameters/FeatureFlags'
         - $ref: '#/components/parameters/WorkflowId'
-        - name: a
+        - name: version_id
           in: path
           required: true
           description: Base version ID.
           schema: { type: string, format: uuid }
-        - name: b
+        - name: target_version_id
           in: path
           required: true
           description: Target version ID.

@@ -195,12 +195,17 @@ Incoming request
 
   → RequireAuth            (gincommon) — validates x-user-id, x-tenant-id
   → ContextMiddleware      (gincommon) — builds RequestContext{TenantID, UserID, Roles, TraceID}
+  → InjectGUCSet           (service)   — copies RequestContext into pgcommon GUC context key
+                                          so pool.GUCProvider can set app.tenant_id on every DB conn
+  → LimitRequestBody       (service)   — wraps c.Request.Body with http.MaxBytesReader(5 MB)
 
   → GET endpoints          ← read-only, no further authz
 
   → RequirePermission("write","workflow",authz)   ← POST/PUT/DELETE
   → handler
 ```
+
+**Why `InjectGUCSet` is needed:** `gincommon.ContextMiddleware` stores `RequestContext` in the Gin context (`c.Set`) rather than the Go request context (`c.Request.Context()`). `pgcommon.GUCSetFromContext` reads only the Go context, so without this bridge the HTTP path never sets `app.tenant_id` and PostgreSQL RLS filters against a null GUC — a multi-tenant isolation failure. The gRPC path is exempt because `grpc/server.go` calls `pgcommon.WithGUCSet` manually.
 
 ### Logger
 
@@ -350,6 +355,8 @@ sequenceDiagram
     DB-->>G: WorkflowVersion (RLS-filtered)
     G-->>ES: GetCompiledWorkflowResponse{compiled_plan_json, status, is_valid, ...}
 ```
+
+On the **HTTP path**, `InjectGUCSet` middleware performs the equivalent step: it reads the `RequestContext` built by `gincommon.ContextMiddleware` and calls `pgcommon.WithGUCSet(ctx, ...)` on the Go request context so the pool's `GUCProvider` injects `app.tenant_id = '<tenantID>'` on every acquired connection.
 
 ## Repository error semantics
 
