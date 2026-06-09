@@ -67,5 +67,14 @@ func (h *Handler) handleMembershipRevoked(ctx context.Context, env events.Envelo
 		return fmt.Errorf("parse user_id: %w", err)
 	}
 
-	return h.version.HandleMembershipRevoked(ctx, eventID, tenantID, userID, p.DepartmentID)
+	if err := h.version.HandleMembershipRevoked(ctx, eventID, tenantID, userID, p.DepartmentID); err != nil {
+		return err
+	}
+	h.log.Info("sqs: DepartmentMembershipRevoked processed", map[string]any{
+		"event_id":      env.ID,
+		"tenant_id":     env.TenantID,
+		"user_id":       p.UserID,
+		"department_id": p.DepartmentID,
+	})
+	return nil
 }

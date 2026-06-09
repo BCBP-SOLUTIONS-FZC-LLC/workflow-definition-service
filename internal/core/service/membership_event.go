@@ -49,6 +49,13 @@ func (s *VersionService) HandleMembershipRevoked(
 			return err
 		}
 	}
+	s.log.Info("membership revoked handled", map[string]any{
+		"event_id":          eventID.String(),
+		"tenant_id":         tenantID.String(),
+		"user_id":           userID.String(),
+		"department_id":     departmentID,
+		"versions_affected": len(nodesByVersion),
+	})
 	return nil
 }
 
@@ -85,6 +92,7 @@ func (s *VersionService) invalidateVersion(
 				return fmt.Errorf("set invalid: %w", err)
 			}
 			env, err := buildEnvelope(
+				ctx,
 				domain.EventTypeTemplateEligibilityInvalidated,
 				tenantID.String(),
 				domain.TemplateEligibilityInvalidatedPayload{

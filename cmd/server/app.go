@@ -103,12 +103,17 @@ func (a *app) startServers(ctx context.Context) {
 	}()
 
 	go func() {
+		a.log.Info("SQS consumer starting", map[string]any{"concurrency": a.cfg.SQSConcurrency})
 		if err := a.sqsConsumer.Start(ctx); err != nil {
 			a.log.Error("SQS consumer exited", map[string]any{"error": err.Error()})
 		}
 	}()
 
 	go func() {
+		a.log.Info("outbox relay starting", map[string]any{
+			"poll_interval": a.cfg.OutboxPollInterval.String(),
+			"batch_size":    a.cfg.OutboxBatchSize,
+		})
 		if err := a.outboxRelay.Start(ctx); err != nil {
 			a.log.Error("outbox relay exited", map[string]any{"error": err.Error()})
 		}

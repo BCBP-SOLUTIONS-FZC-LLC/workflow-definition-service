@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
@@ -14,6 +16,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/grpccommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgmetrics"
 
 	definitionv1 "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/definition/v1"
 	grpcadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/grpc"
@@ -34,6 +37,7 @@ func newApp(cfg *config.Config) (*app, error) {
 
 	tracingShutdown := gincommon.InitTracingFromEnv()
 	events.Init(cfg.OTELServiceName, cfg.BuildVersion)
+	pgmetrics.Init(cfg.OTELServiceName, cfg.BuildVersion)
 
 	pool, err := newDBPool(context.Background(), cfg)
 	if err != nil {
@@ -146,6 +150,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		grpc.ChainStreamInterceptor(grpccommon.DefaultStreamInterceptors(grpcCfg)...),
 	)
 	definitionv1.RegisterDefinitionServiceServer(grpcSrv, grpcadapter.NewServer(log, versionRepo))
+	grpc_health_v1.RegisterHealthServer(grpcSrv, health.NewServer())
 	reflection.Register(grpcSrv)
 
 	r := newRouter(cfg, pool, cache, log, h)
