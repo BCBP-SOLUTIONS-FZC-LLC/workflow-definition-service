@@ -41,9 +41,6 @@ func newServer(getByID func(context.Context, uuid.UUID, uuid.UUID) (*domain.Work
 	)
 }
 
-
-// ── tests ─────────────────────────────────────────────────────────────────────
-
 func TestGetCompiledWorkflow_PublishedVersion(t *testing.T) {
 	versionNumber := int32(3)
 	compiledJSON := `{"name":"test"}`

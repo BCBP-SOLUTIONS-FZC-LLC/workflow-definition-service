@@ -33,8 +33,8 @@ type draftSvc interface {
 type versionSvc interface {
 	List(ctx context.Context, tenantID, workflowID uuid.UUID, page, limit int) ([]*domain.WorkflowVersion, int64, error)
 	Get(ctx context.Context, tenantID, workflowID, versionID uuid.UUID) (*domain.WorkflowVersion, error)
-	Publish(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID, skipEligibilityCheck bool) (*domain.WorkflowVersion, error)
-	Clone(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID, req service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error)
+	Publish(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID, forcePublishStructural bool) (*domain.WorkflowVersion, error)
+	Clone(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID, planTier string, req service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error)
 	Promote(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID) (*domain.WorkflowVersion, error)
 	Export(ctx context.Context, tenantID, workflowID, versionID uuid.UUID) (string, string, error)
 	Diff(ctx context.Context, tenantID, workflowID, baseVersionID, targetVersionID uuid.UUID) (*service.DiffResult, error)
@@ -51,8 +51,6 @@ type Handler struct {
 	validation validationSvc
 }
 
-// Services holds the service dependencies for the HTTP handler layer.
-// Accepts any concrete type that satisfies the corresponding service interface.
 type Services struct {
 	Workflows  workflowSvc
 	Drafts     draftSvc
@@ -69,9 +67,6 @@ func New(s Services) *Handler {
 	}
 }
 
-// mustCtx extracts tenant and user IDs from the gincommon RequestContext.
-// Writes 500 on missing context — absence means ProtectedMiddlewares was not
-// applied, which is server misconfiguration, not an auth failure.
 func mustCtx(c *gin.Context) (tenantID, userID uuid.UUID, ok bool) {
 	rc, exists := gincommon.RequestContext(c)
 	if !exists {

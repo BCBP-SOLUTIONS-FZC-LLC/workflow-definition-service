@@ -177,7 +177,7 @@ func TestCreateWorkflow_PlanQuota(t *testing.T) {
 
 	body := map[string]any{"key": "x", "name": "y", "bpmn_xml": "<x/>"}
 	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
-	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestCreateWorkflow_IdempotencyReplay(t *testing.T) {
@@ -283,7 +283,7 @@ func TestArchiveWorkflow_NoActiveVersion(t *testing.T) {
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
 	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/archive", nil))
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
 func TestArchiveWorkflow_UpstreamUnavailable(t *testing.T) {

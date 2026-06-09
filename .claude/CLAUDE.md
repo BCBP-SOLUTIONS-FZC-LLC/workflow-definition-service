@@ -14,6 +14,7 @@ Key responsibilities: BPMN ingestion, structural/semantic/topological validation
 
 ```bash
 # First-time setup
+export GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*  # required before go get / mod tidy
 make tools                  # install sqlc, goose, buf, mockgen, golangci-lint
 cp .env.example .env
 make docker-up              # start PostgreSQL + Valkey
@@ -28,6 +29,7 @@ go run ./cmd/server         # run locally
 # Testing
 make tools-integration      # docker pull postgres:16-alpine (one-time)
 make test                   # unit tests + race detector (./internal/... ./test/unit/...)
+go test ./test/unit/handler/... -run TestDraftHandler_InitDraft  # run a single test
 make test-integration       # integration tests (testcontainers; no make docker-up needed)
 make cover                  # unit coverage with -coverpkg ./internal/...
 make cover-html             # open HTML report
@@ -66,6 +68,8 @@ test/
 ```
 
 **Import rules:** `core/domain` → stdlib only. `core/port` → domain only. `core/service` → domain + port. `adapter/*` → port + domain. Nothing in `core/` imports from `adapter/`.
+
+`cmd/server/app.go` starts four concurrent long-running goroutines: HTTP (`:8080`), gRPC (`:9090` via `GRPC_PORT`), SQS consumer, and outbox relay. All stop gracefully on OS signal with a 30-second timeout.
 
 ---
 
@@ -168,7 +172,11 @@ Integration tests require Docker. Pre-pull the image once: `make tools-integrati
 
 19. **Unit test coverage excludes postgres adapter and generated packages** - `internal/adapter/outbound/postgres/` (repo adapters that require a real DB), `internal/adapter/outbound/postgres/db/` (generated sqlc), and `internal/core/port/mocks/` (generated GoMock stubs) are excluded from the unit test coverage denominator. These are covered by the integration test job (`Iint`). The unit test gate is 95% against the remaining business logic. See `COVER_EXCLUDE_PKG` and `COVER_EXCLUDE_FILE` in the Makefile.
 
-20. **Outbound client tests** - `test/unit/executionclient/` tests `ExecutionClient` using a real local gRPC server (`net.Listen("tcp", "127.0.0.1:0")`) — bufconn is not vendored. `test/unit/membershipclient/` tests `MembershipClient` using `httptest.NewServer`. Both follow the hand-rolled fake pattern consistent with other test/unit packages.
+20. **HTTP idempotency middleware** — `handler.WithIdempotency(cache, fn)` in `internal/adapter/inbound/http/handler/idempotency.go`. Applied to all mutation endpoints at the router level via an `idem(fn)` wrapper in `cmd/server/router.go`. Cache key is `"idem:" + tenantID + ":" + Idempotency-Key` header value — tenant-scoped to prevent collisions. Only 2xx responses are cached (24 h TTL). Passes through transparently if the header is absent or cache is nil.
+
+21. **SQS event deduplication** — `HandleMembershipRevoked` calls `processedEvents.RecordIfNew(ctx, eventID, tenantID, "iam-membership")` before any processing. This guards against at-least-once SQS redelivery. `AWS_USE_STUB=true` (the default in `.env.example`) wires no-op AWS implementations for local development; set `AWS_USE_STUB=false` with `AWS_ENDPOINT_URL` pointing at LocalStack for integration testing, or leave unset for real AWS.
+
+22. **Outbound client tests** - `test/unit/executionclient/` tests `ExecutionClient` using a real local gRPC server (`net.Listen("tcp", "127.0.0.1:0")`) — bufconn is not vendored. `test/unit/membershipclient/` tests `MembershipClient` using `httptest.NewServer`. Both follow the hand-rolled fake pattern consistent with other test/unit packages.
 
 ---
 

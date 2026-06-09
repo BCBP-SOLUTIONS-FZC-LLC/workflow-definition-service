@@ -22,12 +22,12 @@ type publishTxInput struct {
 	env           events.Envelope[json.RawMessage]
 }
 
-// publishPreFlight compiles the BPMN, checks eligibility, and returns everything
-// needed to execute the publish inside a transaction.
+// publishPreFlight compiles the BPMN, checks structural divergence against the active
+// version, checks assignee eligibility, and returns everything needed for the publish
 func (s *VersionService) publishPreFlight(
 	ctx context.Context,
 	tenantID, workflowID, versionID uuid.UUID,
-	skipEligibilityCheck bool,
+	forcePublishStructural bool,
 ) (*domain.WorkflowVersion, string, string, int32, []*domain.NodeAssignee, error) {
 	draft, err := s.versions.GetByID(ctx, tenantID, versionID)
 	if err != nil {
@@ -49,7 +49,11 @@ func (s *VersionService) publishPreFlight(
 		return nil, "", "", 0, nil, fmt.Errorf("hash bpmn: %w", err)
 	}
 
-	if !skipEligibilityCheck && s.membership != nil {
+	if err := s.checkStructuralDivergence(ctx, tenantID, workflowID, plan, forcePublishStructural); err != nil {
+		return nil, "", "", 0, nil, err
+	}
+
+	if s.membership != nil {
 		if err := s.checkAssigneeEligibility(ctx, tenantID, plan); err != nil {
 			return nil, "", "", 0, nil, err
 		}
@@ -65,6 +69,47 @@ func (s *VersionService) publishPreFlight(
 	}
 
 	return draft, compiledJSON, artifactHash, versionNumber, extractAssignees(tenantID, versionID, plan), nil
+}
+
+// checkStructuralDivergence compares the draft's compiled plan against the currently
+// active version. If structural changes are found and forcePublishStructural is false,
+// it returns ErrStructuralDivergence. Metadata-only changes (assignees, roles, names)
+// are always allowed.
+func (s *VersionService) checkStructuralDivergence(
+	ctx context.Context,
+	tenantID, workflowID uuid.UUID,
+	draftPlan *domain.CompiledPlan,
+	forcePublishStructural bool,
+) error {
+	if s.workflows == nil {
+		return nil
+	}
+	wf, err := s.workflows.GetByID(ctx, tenantID, workflowID)
+	if err != nil {
+		return fmt.Errorf("get workflow for divergence check: %w", err)
+	}
+	if wf.ActiveVersionID == nil {
+		return nil // first publish. no divergence possible
+	}
+
+	active, err := s.versions.GetByID(ctx, tenantID, *wf.ActiveVersionID)
+	if err != nil {
+		return fmt.Errorf("get active version for divergence check: %w", err)
+	}
+
+	if active.CompiledPlanJSON == nil || *active.CompiledPlanJSON == "" {
+		return nil // no stored baseline to compare; allow publish
+	}
+	var activePlan domain.CompiledPlan
+	if err := json.Unmarshal([]byte(*active.CompiledPlanJSON), &activePlan); err != nil {
+		return nil // unreadable baseline; allow publish rather than blocking
+	}
+
+	diff := computeDiff(&activePlan, draftPlan)
+	if !diff.MetadataOnly && !forcePublishStructural {
+		return domain.ErrStructuralDivergence
+	}
+	return nil
 }
 
 func (s *VersionService) runPublishTx(ctx context.Context, in publishTxInput) error {
@@ -109,14 +154,14 @@ func (s *VersionService) checkStageEligibility(
 	for _, assigneeID := range stage.DefaultAssignees {
 		userID, err := uuid.Parse(assigneeID)
 		if err != nil {
-			return fmt.Errorf("%w: invalid assignee UUID %s", domain.ErrAssigneeIneligible, assigneeID)
+			return fmt.Errorf("invalid assignee UUID %s: %w", assigneeID, domain.ErrAssigneeIneligible)
 		}
 		eligible, err := s.membership.CheckEligibility(ctx, tenantID, userID, deptID, stage.Role)
 		if err != nil {
 			return fmt.Errorf("check eligibility: %w", err)
 		}
 		if !eligible {
-			return fmt.Errorf("%w: user %s dept %s role %s", domain.ErrAssigneeIneligible, assigneeID, deptID, stage.Role)
+			return fmt.Errorf("user %s dept %s role %s: %w", assigneeID, deptID, stage.Role, domain.ErrAssigneeIneligible)
 		}
 	}
 	return nil

@@ -192,7 +192,6 @@ func TestHandleMembershipRevoked_PublishedVersion(t *testing.T) {
 	}
 }
 
-
 func TestHandleMembershipRevoked_DeduplicatesVersion(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)

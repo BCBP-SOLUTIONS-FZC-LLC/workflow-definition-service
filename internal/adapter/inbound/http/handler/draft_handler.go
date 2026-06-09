@@ -5,9 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 )
 
@@ -16,30 +14,6 @@ type updateDraftReq struct {
 	Description   *string    `json:"description"`
 	BPMNXML       *string    `json:"bpmn_xml"`
 	LastUpdatedAt *time.Time `json:"last_updated_at"`
-}
-
-type draftResp struct {
-	ID           uuid.UUID            `json:"id"`
-	WorkflowID   uuid.UUID            `json:"workflow_id"`
-	Status       domain.VersionStatus `json:"status"`
-	BPMNXML      string               `json:"bpmn_xml"`
-	IsValid      bool                 `json:"is_valid"`
-	ArtifactHash string               `json:"artifact_hash,omitempty"`
-	CreatedAt    time.Time            `json:"created_at"`
-	UpdatedAt    time.Time            `json:"updated_at"`
-}
-
-func toDraftResp(v *domain.WorkflowVersion) draftResp {
-	return draftResp{
-		ID:           v.ID,
-		WorkflowID:   v.WorkflowID,
-		Status:       v.Status,
-		BPMNXML:      v.BPMNXML,
-		IsValid:      v.IsValid,
-		ArtifactHash: v.ArtifactHash,
-		CreatedAt:    v.CreatedAt,
-		UpdatedAt:    v.UpdatedAt,
-	}
 }
 
 func (h *Handler) GetDraft(c *gin.Context) {
@@ -59,7 +33,7 @@ func (h *Handler) GetDraft(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"draft": toDraftResp(draft)})
+	c.JSON(http.StatusOK, toVersionResp(draft))
 }
 
 func (h *Handler) InitDraft(c *gin.Context) {
@@ -79,7 +53,13 @@ func (h *Handler) InitDraft(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"draft": toDraftResp(draft)})
+	c.JSON(http.StatusCreated, gin.H{
+		"workflow_id":    draft.WorkflowID,
+		"version_id":     draft.ID,
+		"status":         draft.Status,
+		"version_number": draft.VersionNumber,
+		"message":        "Draft initialized",
+	})
 }
 
 func (h *Handler) UpdateDraft(c *gin.Context) {
@@ -110,7 +90,13 @@ func (h *Handler) UpdateDraft(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"draft": toDraftResp(draft)})
+	c.JSON(http.StatusOK, gin.H{
+		"workflow_id":    draft.WorkflowID,
+		"version_id":     draft.ID,
+		"status":         draft.Status,
+		"version_number": draft.VersionNumber,
+		"message":        "Draft updated",
+	})
 }
 
 func (h *Handler) DiscardDraft(c *gin.Context) {

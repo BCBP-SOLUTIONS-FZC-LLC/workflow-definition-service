@@ -36,7 +36,7 @@ func NewDraftService(d DraftDeps) *DraftService {
 		versions:  d.Versions,
 		assignees: d.Assignees,
 		compiler:  d.Compiler,
-		log:       d.Log,
+		log:       logOrNoop(d.Log),
 	}
 }
 
@@ -87,6 +87,12 @@ func (s *DraftService) Init(
 	if err := s.versions.Create(ctx, draft); err != nil {
 		return nil, fmt.Errorf("create draft: %w", err)
 	}
+	s.log.Info("draft initialized", map[string]any{
+		"tenant_id":   tenantID.String(),
+		"user_id":     userID.String(),
+		"workflow_id": workflowID.String(),
+		"version_id":  draft.ID.String(),
+	})
 	return draft, nil
 }
 
@@ -95,7 +101,6 @@ func (s *DraftService) Update(
 	tenantID, userID, workflowID uuid.UUID,
 	req UpdateDraftReq,
 ) (*domain.WorkflowVersion, error) {
-	// Acquire a distributed write lock to prevent concurrent overwrites.
 	// Fail-open when Cache is not configured (dev/test environments).
 	if s.cache != nil {
 		lockKey := fmt.Sprintf("draft-lock:%s", workflowID)
@@ -114,12 +119,10 @@ func (s *DraftService) Update(
 		return nil, fmt.Errorf(errGetDraft, err)
 	}
 
-	// Optimistic concurrency: reject if the client's snapshot is stale.
 	if req.LastUpdatedAt != nil && !draft.UpdatedAt.Equal(*req.LastUpdatedAt) {
 		return nil, domain.ErrDraftConcurrency
 	}
 
-	// Persist workflow-level metadata changes (name / description).
 	if req.Name != nil || req.Description != nil {
 		if err := s.updateWorkflowMeta(ctx, tenantID, workflowID, req); err != nil {
 			return nil, err
@@ -138,7 +141,12 @@ func (s *DraftService) Update(
 	if err := s.versions.UpdateDraft(ctx, draft); err != nil {
 		return nil, fmt.Errorf("update draft: %w", err)
 	}
-	_ = userID // captured for audit logging in a future observability pass
+	s.log.Info("draft updated", map[string]any{
+		"tenant_id":   tenantID.String(),
+		"user_id":     userID.String(),
+		"workflow_id": workflowID.String(),
+		"version_id":  draft.ID.String(),
+	})
 	return draft, nil
 }
 
@@ -173,5 +181,10 @@ func (s *DraftService) Discard(ctx context.Context, tenantID, workflowID uuid.UU
 	if err := s.versions.DeleteDraft(ctx, tenantID, draft.ID); err != nil {
 		return fmt.Errorf("delete draft: %w", err)
 	}
+	s.log.Info("draft discarded", map[string]any{
+		"tenant_id":   tenantID.String(),
+		"workflow_id": workflowID.String(),
+		"version_id":  draft.ID.String(),
+	})
 	return nil
 }

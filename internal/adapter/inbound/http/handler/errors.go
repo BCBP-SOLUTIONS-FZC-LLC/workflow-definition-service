@@ -110,7 +110,7 @@ func errResponse(c *gin.Context, err error) {
 	case errors.Is(err, domain.ErrNoDraftExists):
 		writeProblem(c, http.StatusNotFound, CodeDraftNotFound, err.Error(), nil)
 	case errors.Is(err, domain.ErrNoActiveVersion):
-		writeProblem(c, http.StatusNotFound, CodeNoActiveVersion, err.Error(), nil)
+		writeProblem(c, http.StatusConflict, CodeNoActiveVersion, err.Error(), nil)
 	case errors.Is(err, domain.ErrUnauthorized):
 		writeProblem(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
 	case errors.Is(err, domain.ErrForbidden):
@@ -133,7 +133,7 @@ func errResponse(c *gin.Context, err error) {
 	case errors.Is(err, domain.ErrIdempotencyKeyReplay):
 		writeProblem(c, http.StatusConflict, CodeIdempotencyReplay, err.Error(), nil)
 	case errors.Is(err, domain.ErrPlanQuotaExceeded):
-		writeProblem(c, http.StatusUnprocessableEntity, CodePlanQuota, err.Error(), nil)
+		writeProblem(c, http.StatusForbidden, CodePlanQuota, err.Error(), nil)
 	case errors.Is(err, domain.ErrAssigneeIneligible):
 		writeProblem(c, http.StatusUnprocessableEntity, CodeAssigneeIneligible, err.Error(), nil)
 	case errors.As(err, &valErr):

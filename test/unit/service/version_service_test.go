@@ -32,8 +32,6 @@ func marshalledPlan(t *testing.T, plan *domain.CompiledPlan) *string {
 	return &s
 }
 
-// ── List ─────────────────────────────────────────────────────────────────────
-
 func TestVersionService_List_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
@@ -62,8 +60,6 @@ func TestVersionService_List_Error(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-
-// ── Get ───────────────────────────────────────────────────────────────────────
 
 func TestVersionService_Get_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -108,8 +104,6 @@ func TestVersionService_Get_WorkflowMismatch(t *testing.T) {
 	}
 }
 
-// ── Publish ───────────────────────────────────────────────────────────────────
-
 func TestVersionService_Publish_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tx := mocks.NewMockTransactor(ctrl)
@@ -133,6 +127,7 @@ func TestVersionService_Publish_OK(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
 	compiler.EXPECT().Compile(gomock.Any(), "<bpmn/>").Return(buildPlan(), nil)
 	compiler.EXPECT().Hash("<bpmn/>").Return("abc123", nil)
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 
 	// Transaction
@@ -256,6 +251,7 @@ func TestVersionService_Publish_SkipEligibilityCheck(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
 	compiler.EXPECT().Compile(gomock.Any(), "<bpmn/>").Return(buildPlan(), nil)
 	compiler.EXPECT().Hash("<bpmn/>").Return("h", nil)
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(2), nil)
 	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
@@ -264,7 +260,7 @@ func TestVersionService_Publish_SkipEligibilityCheck(t *testing.T) {
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
-	// skipEligibilityCheck=true — membership.CheckEligibility must NOT be called
+	// forcePublishStructural=true — structural divergence bypassed; eligibility still runs (empty plan, no assignees)
 	got, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, true)
 	if err != nil || got == nil {
 		t.Fatalf("unexpected: %v %v", got, err)
@@ -303,6 +299,7 @@ func TestVersionService_Publish_WithAssignees_BulkInsert(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
 	compiler.EXPECT().Compile(gomock.Any(), "<bpmn/>").Return(plan, nil)
 	compiler.EXPECT().Hash("<bpmn/>").Return("hash", nil)
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
@@ -317,8 +314,6 @@ func TestVersionService_Publish_WithAssignees_BulkInsert(t *testing.T) {
 		t.Fatalf("unexpected: %v %v", got, err)
 	}
 }
-
-// ── Clone ─────────────────────────────────────────────────────────────────────
 
 func TestVersionService_Clone_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -341,7 +336,7 @@ func TestVersionService_Clone_OK(t *testing.T) {
 	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
-	newWF, newV, err := svc.Clone(context.Background(), tenantID, userID, wfID, vID,
+	newWF, newV, err := svc.Clone(context.Background(), tenantID, userID, wfID, vID, "enterprise",
 		service.CloneReq{NewKey: "new-key", NewName: "New", NewDescription: "Copy"})
 	if err != nil || newWF == nil || newV == nil {
 		t.Fatalf("unexpected: %v %v %v", newWF, newV, err)
@@ -370,7 +365,7 @@ func TestVersionService_Clone_OutboxEnqueueError(t *testing.T) {
 	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(errors.New("outbox error"))
 
-	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, service.CloneReq{NewKey: "copy"})
+	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise", service.CloneReq{NewKey: "copy"})
 	if err == nil {
 		t.Fatal("expected error from outbox.Enqueue")
 	}
@@ -385,7 +380,7 @@ func TestVersionService_Clone_SourceIsDraft(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft}, nil)
 
-	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, service.CloneReq{})
+	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise", service.CloneReq{})
 	if !errors.Is(err, domain.ErrVersionNotPublished) {
 		t.Fatalf("expected ErrVersionNotPublished, got %v", err)
 	}
@@ -400,7 +395,7 @@ func TestVersionService_Clone_WorkflowMismatch(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: uuid.New(), Status: domain.VersionStatusPublished}, nil)
 
-	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, service.CloneReq{})
+	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise", service.CloneReq{})
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -413,13 +408,11 @@ func TestVersionService_Clone_GetSourceError(t *testing.T) {
 
 	vRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrNotFound)
 
-	_, _, err := svc.Clone(context.Background(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), service.CloneReq{})
+	_, _, err := svc.Clone(context.Background(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), "enterprise", service.CloneReq{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 }
-
-// ── Promote ───────────────────────────────────────────────────────────────────
 
 func TestVersionService_Promote_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -494,8 +487,6 @@ func TestVersionService_Promote_UpdateError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-
-// ── Export ────────────────────────────────────────────────────────────────────
 
 func TestVersionService_Export_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -586,8 +577,6 @@ func TestVersionService_Export_WorkflowGetError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-
-// ── Diff ──────────────────────────────────────────────────────────────────────
 
 func TestVersionService_Diff_UsesStoredPlan(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -813,8 +802,6 @@ func TestVersionService_Diff_StepRemoved(t *testing.T) {
 	}
 }
 
-// ── Publish error paths (inner tx failures) ──────────────────────────────────
-
 func publishPreFlightMocks(
 	t *testing.T,
 	vRepo *mocks.MockWorkflowVersionRepository,
@@ -941,6 +928,7 @@ func TestVersionService_Publish_UpdateActiveVersionError(t *testing.T) {
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	publishPreFlightMocks(t, vRepo, compiler, tenantID, wfID, vID, buildPlan())
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
@@ -968,6 +956,7 @@ func TestVersionService_Publish_EnqueueError(t *testing.T) {
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	publishPreFlightMocks(t, vRepo, compiler, tenantID, wfID, vID, buildPlan())
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
@@ -1046,8 +1035,6 @@ func TestVersionService_Publish_EligibilityCheckError(t *testing.T) {
 	}
 }
 
-// ── Clone error paths ────────────────────────────────────────────────────────
-
 func TestVersionService_Clone_CreateWorkflowError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tx := mocks.NewMockTransactor(ctrl)
@@ -1064,7 +1051,7 @@ func TestVersionService_Clone_CreateWorkflowError(t *testing.T) {
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(errors.New("duplicate key"))
 
-	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, service.CloneReq{NewKey: "copy"})
+	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise", service.CloneReq{NewKey: "copy"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1087,13 +1074,11 @@ func TestVersionService_Clone_CreateVersionError(t *testing.T) {
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(errors.New("version error"))
 
-	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, service.CloneReq{NewKey: "copy"})
+	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise", service.CloneReq{NewKey: "copy"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 }
-
-// ── Publish pre-flight: inner tx Publish error ────────────────────────────────
 
 func TestVersionService_Publish_PublishVersionError(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -1117,8 +1102,6 @@ func TestVersionService_Publish_PublishVersionError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-
-// ── Publish with eligible assignees: covers checkAssigneeEligibility return nil ──
 
 func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -1154,6 +1137,7 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
 	compiler.EXPECT().Compile(gomock.Any(), "<bpmn/>").Return(plan, nil)
 	compiler.EXPECT().Hash("<bpmn/>").Return("h", nil)
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	// All assignees eligible → checkAssigneeEligibility returns nil
 	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "finance", "manager").
 		Return(true, nil)
@@ -1171,8 +1155,6 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 		t.Fatalf("unexpected: %v %v", got, err)
 	}
 }
-
-// ── extractAssignees: invalid UUID with skipEligibilityCheck ─────────────────
 
 func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -1206,6 +1188,7 @@ func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
 	compiler.EXPECT().Compile(gomock.Any(), "<bpmn/>").Return(plan, nil)
 	compiler.EXPECT().Hash("<bpmn/>").Return("h", nil)
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
@@ -1215,14 +1198,12 @@ func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
-	// skipEligibilityCheck=true skips UUID validation in checkStageEligibility
+	// forcePublishStructural=true; no membership dep → eligibility skipped
 	got, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, true)
 	if err != nil || got == nil {
 		t.Fatalf("unexpected: %v %v", got, err)
 	}
 }
-
-// ── computeDiff: removed department ──────────────────────────────────────────
 
 func TestVersionService_Diff_DepartmentRemoved(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -1249,5 +1230,63 @@ func TestVersionService_Diff_DepartmentRemoved(t *testing.T) {
 	}
 	if len(result.Changes.RemovedDepartments) != 1 || result.Changes.RemovedDepartments[0] != "old-dept" {
 		t.Errorf("expected old-dept removed, got %v", result.Changes.RemovedDepartments)
+	}
+}
+
+func TestVersionService_Clone_QuotaNotExceeded(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tx := txPassthrough(ctrl)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	outbox := mocks.NewMockOutboxRepository(ctrl)
+	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
+
+	svc := service.NewVersionService(service.VersionDeps{
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo, Outbox: outbox,
+	})
+
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), tenantID).Return(int64(3), nil)
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
+		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
+	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
+
+	newWF, newV, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, "starter",
+		service.CloneReq{NewKey: "k", NewName: "n"})
+	if err != nil || newWF == nil || newV == nil {
+		t.Fatalf("unexpected: err=%v wf=%v v=%v", err, newWF, newV)
+	}
+}
+
+func TestVersionService_Clone_QuotaExceeded(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
+
+	svc := service.NewVersionService(service.VersionDeps{Workflows: wfRepo})
+
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), tenantID).Return(int64(5), nil)
+
+	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, "starter",
+		service.CloneReq{NewKey: "k", NewName: "n"})
+	if !errors.Is(err, domain.ErrPlanQuotaExceeded) {
+		t.Fatalf("expected ErrPlanQuotaExceeded, got %v", err)
+	}
+}
+
+func TestVersionService_Clone_QuotaCountError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
+
+	svc := service.NewVersionService(service.VersionDeps{Workflows: wfRepo})
+
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), tenantID).Return(int64(0), errors.New("db error"))
+
+	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, "pro",
+		service.CloneReq{NewKey: "k", NewName: "n"})
+	if err == nil {
+		t.Fatal("expected error")
 	}
 }

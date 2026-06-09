@@ -15,7 +15,8 @@ func healthzHandler(c *gin.Context) {
 
 func readyzHandler(pool *pgcommon.Pool, cache port.CacheStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if err := pool.Ping(c.Request.Context()); err != nil {
+		hs := pool.Health(c.Request.Context())
+		if !hs.Healthy {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable", "db": "unreachable"})
 			return
 		}
@@ -23,6 +24,11 @@ func readyzHandler(pool *pgcommon.Pool, cache port.CacheStore) gin.HandlerFunc {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable", "cache": "unreachable"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "OK"})
+		c.JSON(http.StatusOK, gin.H{
+			"status":         "OK",
+			"db_utilization": hs.Utilization,
+			"db_conns":       hs.AcquiredConns,
+			"db_max_conns":   hs.MaxConns,
+		})
 	}
 }

@@ -93,6 +93,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		Outbox:     outboxRepo,
 		Cache:      cache,
 		Execution:  executionSvc,
+		Compiler:   compiler,
 		Log:        log,
 	})
 	draftSvc := service.NewDraftService(service.DraftDeps{

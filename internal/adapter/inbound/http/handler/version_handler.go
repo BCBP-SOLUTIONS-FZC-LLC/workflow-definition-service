@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -21,36 +22,48 @@ type cloneVersionReq struct {
 	NewDescription string `json:"new_description"`
 }
 
+type validationErrorItem struct {
+	NodeID string `json:"node_id"`
+	Error  string `json:"error"`
+}
+
 type versionResp struct {
-	ID               uuid.UUID            `json:"id"`
-	WorkflowID       uuid.UUID            `json:"workflow_id"`
-	Status           domain.VersionStatus `json:"status"`
-	VersionNumber    *int32               `json:"version_number,omitempty"`
-	BPMNXML          string               `json:"bpmn_xml"`
-	ArtifactHash     string               `json:"artifact_hash,omitempty"`
-	IsValid          bool                 `json:"is_valid"`
-	CompiledPlanJSON *string              `json:"compiled_plan_json,omitempty"`
-	CreatedByUserID  uuid.UUID            `json:"created_by_user_id"`
-	PublishedAt      *time.Time           `json:"published_at,omitempty"`
-	CreatedAt        time.Time            `json:"created_at"`
-	UpdatedAt        time.Time            `json:"updated_at"`
+	ID               uuid.UUID             `json:"id"`
+	WorkflowID       uuid.UUID             `json:"workflow_id"`
+	Status           domain.VersionStatus  `json:"status"`
+	VersionNumber    *int32                `json:"version_number,omitempty"`
+	BPMNXML          string                `json:"bpmn_xml"`
+	ArtifactHash     string                `json:"artifact_hash,omitempty"`
+	IsValid          bool                  `json:"is_valid"`
+	ValidationErrors []validationErrorItem `json:"validation_errors,omitempty"`
+	CompiledPlanJSON json.RawMessage       `json:"compiled_plan_json,omitempty"`
+	CreatedByUserID  uuid.UUID             `json:"created_by_user_id"`
+	PublishedAt      *time.Time            `json:"published_at,omitempty"`
+	CreatedAt        time.Time             `json:"created_at"`
+	UpdatedAt        time.Time             `json:"updated_at"`
 }
 
 func toVersionResp(v *domain.WorkflowVersion) versionResp {
-	return versionResp{
-		ID:               v.ID,
-		WorkflowID:       v.WorkflowID,
-		Status:           v.Status,
-		VersionNumber:    v.VersionNumber,
-		BPMNXML:          v.BPMNXML,
-		ArtifactHash:     v.ArtifactHash,
-		IsValid:          v.IsValid,
-		CompiledPlanJSON: v.CompiledPlanJSON,
-		CreatedByUserID:  v.CreatedByUserID,
-		PublishedAt:      v.PublishedAt,
-		CreatedAt:        v.CreatedAt,
-		UpdatedAt:        v.UpdatedAt,
+	r := versionResp{
+		ID:              v.ID,
+		WorkflowID:      v.WorkflowID,
+		Status:          v.Status,
+		VersionNumber:   v.VersionNumber,
+		BPMNXML:         v.BPMNXML,
+		ArtifactHash:    v.ArtifactHash,
+		IsValid:         v.IsValid,
+		CreatedByUserID: v.CreatedByUserID,
+		PublishedAt:     v.PublishedAt,
+		CreatedAt:       v.CreatedAt,
+		UpdatedAt:       v.UpdatedAt,
 	}
+	if v.CompiledPlanJSON != nil && *v.CompiledPlanJSON != "" {
+		r.CompiledPlanJSON = json.RawMessage(*v.CompiledPlanJSON)
+	}
+	if v.ValidationErrorsJSON != nil && *v.ValidationErrorsJSON != "" {
+		_ = json.Unmarshal([]byte(*v.ValidationErrorsJSON), &r.ValidationErrors)
+	}
+	return r
 }
 
 func (h *Handler) ListVersions(c *gin.Context) {
@@ -78,9 +91,11 @@ func (h *Handler) ListVersions(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"versions": resp,
-		"total":    total,
-		"page":     page,
-		"limit":    limit,
+		"pagination": gin.H{
+			"total_count": total,
+			"page":        page,
+			"limit":       limit,
+		},
 	})
 }
 
@@ -127,7 +142,7 @@ func (h *Handler) PublishVersion(c *gin.Context) {
 	}
 
 	var req publishVersionReq
-	_ = c.ShouldBindJSON(&req) // body is optional; default skip_eligibility_check=false
+	_ = c.ShouldBindJSON(&req) // body is optional; default forcePublishStructural=false
 
 	v, err := h.versions.Publish(c.Request.Context(), tenantID, userID, workflowID, versionID, req.ForcePublishStructural)
 	if err != nil {
@@ -135,8 +150,13 @@ func (h *Handler) PublishVersion(c *gin.Context) {
 		return
 	}
 
-	vr := toVersionResp(v)
-	c.JSON(http.StatusOK, vr)
+	c.JSON(http.StatusOK, gin.H{
+		"workflow_id":    workflowID,
+		"version_id":     v.ID,
+		"status":         v.Status,
+		"version_number": v.VersionNumber,
+		"message":        "Version published",
+	})
 }
 
 func (h *Handler) CloneVersion(c *gin.Context) {
@@ -161,7 +181,7 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 		return
 	}
 
-	wf, version, err := h.versions.Clone(c.Request.Context(), tenantID, userID, workflowID, versionID, service.CloneReq{
+	wf, version, err := h.versions.Clone(c.Request.Context(), tenantID, userID, workflowID, versionID, c.GetHeader("x-plan"), service.CloneReq{
 		NewKey:         req.NewKey,
 		NewName:        req.NewName,
 		NewDescription: req.NewDescription,

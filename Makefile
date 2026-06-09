@@ -12,6 +12,7 @@ GOOSE_VERSION      := v3.24.3
 BUF_VERSION        := v1.50.0
 MOCKGEN_VERSION    := v0.6.0
 GOLANGCI_VERSION   := v2.12.2
+GOVULNCHECK_VERSION := v1.1.4
 
 # Docker images pulled by integration tests via testcontainers-go.
 # Run `make tools-integration` once to warm the local Docker image cache.
@@ -27,6 +28,7 @@ GOOSE              := $(TOOLS_DIR)/goose
 BUF                := $(TOOLS_DIR)/buf
 MOCKGEN            := $(TOOLS_DIR)/mockgen
 GOLANGCI           := $(TOOLS_DIR)/golangci-lint
+GOVULNCHECK        := $(TOOLS_DIR)/govulncheck
 
 BUILD_VERSION      ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS            := -X main.version=$(BUILD_VERSION)
@@ -45,7 +47,7 @@ COVER_THRESHOLD    := 95  # baseline as of feat/grpc-sqs (97.3%); postgres adapt
         migrate-up migrate-down \
         build test test-integration \
         cover cover-func cover-html cover-check \
-        lint lint-fix \
+        lint lint-fix vuln \
         docs-serve docs-build \
         docker-up docker-down \
         clean help
@@ -62,6 +64,7 @@ tools:
 	GOBIN=$(PWD)/$(TOOLS_DIR) go install go.uber.org/mock/mockgen@$(MOCKGEN_VERSION)
 	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
 		| sh -s -- -b $(PWD)/$(TOOLS_DIR) $(GOLANGCI_VERSION)
+	GOBIN=$(PWD)/$(TOOLS_DIR) go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	@echo "✓ tools installed to $(TOOLS_DIR)/"
 
 ## tools-integration: Pre-pull Docker images used by integration tests (testcontainers-go)
@@ -170,7 +173,7 @@ cover-html: cover
 	@echo "✓ report: $(COVER_HTML)"
 	@open $(COVER_HTML) 2>/dev/null || xdg-open $(COVER_HTML) 2>/dev/null || true
 
-## cover-check: Fail if total coverage is below COVER_THRESHOLD (currently 50%; see variable comment)
+## cover-check: Fail if total coverage is below COVER_THRESHOLD (95%; postgres adapter + generated pkgs excluded)
 cover-check: cover
 	@TOTAL=$$(go tool cover -func=$(COVER_PROFILE) | tail -1 | awk '{print $$3}' | tr -d '%'); \
 	echo "Coverage: $${TOTAL}% (threshold: $(COVER_THRESHOLD)%)"; \
@@ -188,6 +191,10 @@ lint:
 ## lint-fix: Run golangci-lint with auto-fix
 lint-fix:
 	$(GOLANGCI) run --fix ./...
+
+## vuln: Run govulncheck to detect known vulnerabilities in dependencies
+vuln:
+	$(GOVULNCHECK) ./...
 
 
 ## docs-serve: Serve MkDocs locally at http://localhost:8001  (requires: brew install mkdocs)

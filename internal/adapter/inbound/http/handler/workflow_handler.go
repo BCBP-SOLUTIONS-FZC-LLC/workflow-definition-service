@@ -167,16 +167,16 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 	}
 	wr := toWorkflowResp(wf)
 	c.JSON(http.StatusOK, gin.H{
-		"id":                   wr.ID,
-		"key":                  wr.Key,
-		"name":                 wr.Name,
-		"description":          wr.Description,
-		"active_version_id":    wr.ActiveVersionID,
+		"id":                    wr.ID,
+		"key":                   wr.Key,
+		"name":                  wr.Name,
+		"description":           wr.Description,
+		"active_version_id":     wr.ActiveVersionID,
 		"active_version_number": wr.ActiveVersionNumber,
-		"has_draft":            wr.HasDraft,
-		"created_at":           wr.CreatedAt,
-		"updated_at":           wr.UpdatedAt,
-		"versions":             summaries,
+		"has_draft":             wr.HasDraft,
+		"created_at":            wr.CreatedAt,
+		"updated_at":            wr.UpdatedAt,
+		"versions":              summaries,
 	})
 }
 

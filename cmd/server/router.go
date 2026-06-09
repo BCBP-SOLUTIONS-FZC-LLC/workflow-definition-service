@@ -39,23 +39,31 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 		api.Use(mw)
 	}
 
+	idem := func(fn gin.HandlerFunc) gin.HandlerFunc {
+		return handler.WithIdempotency(cache, fn)
+	}
+
 	wf := api.Group("/workflows")
 	wf.GET("", h.ListWorkflows)
-	wf.POST("", h.CreateWorkflow)
+	wf.POST("", idem(h.CreateWorkflow))
 	wf.POST("/validate", h.ValidateBPMN)
 	wf.GET("/:id", h.GetWorkflow)
-	wf.GET("/:id/versions", h.ListVersions)
-	wf.GET("/:id/draft", h.GetDraft)
-	wf.POST("/:id/draft", h.InitDraft)
-	wf.PUT("/:id/draft", h.UpdateDraft)
-	wf.DELETE("/:id/draft", h.DiscardDraft)
-	wf.POST("/:id/archive", h.ArchiveWorkflow)
-	wf.GET("/:id/versions/:version_id", h.GetVersion)
-	wf.POST("/:id/versions/:version_id/publish", h.PublishVersion)
-	wf.POST("/:id/versions/:version_id/clone", h.CloneVersion)
-	wf.POST("/:id/versions/:version_id/promote", h.PromoteVersion)
-	wf.GET("/:id/versions/:version_id/export", h.ExportBPMN)
-	wf.GET("/:id/versions/:version_id/diff/:target_version_id", h.GetVersionDiff)
+	wf.POST("/:id/archive", idem(h.ArchiveWorkflow))
+
+	draft := wf.Group("/:id/draft")
+	draft.GET("", h.GetDraft)
+	draft.POST("", idem(h.InitDraft))
+	draft.PUT("", idem(h.UpdateDraft))
+	draft.DELETE("", idem(h.DiscardDraft))
+
+	ver := wf.Group("/:id/versions")
+	ver.GET("", h.ListVersions)
+	ver.GET("/:version_id", h.GetVersion)
+	ver.POST("/:version_id/publish", idem(h.PublishVersion))
+	ver.POST("/:version_id/clone", idem(h.CloneVersion))
+	ver.POST("/:version_id/promote", idem(h.PromoteVersion))
+	ver.GET("/:version_id/export", h.ExportBPMN)
+	ver.GET("/:version_id/diff/:target_version_id", h.GetVersionDiff)
 
 	return r
 }

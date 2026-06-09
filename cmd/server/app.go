@@ -100,7 +100,9 @@ func (a *app) stopServers(ctx context.Context) {
 		a.log.Error("outbox relay stop error", map[string]any{"error": err.Error()})
 	}
 
-	a.pool.Close()
+	if err := a.pool.DrainAndClose(ctx); err != nil {
+		a.log.Warn("db pool drain timed out", map[string]any{"error": err.Error()})
+	}
 	if err := a.cacheClose.Close(); err != nil {
 		a.log.Error("valkey close error", map[string]any{"error": err.Error()})
 	}

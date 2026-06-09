@@ -34,8 +34,6 @@ func newDraftSvc(ctrl *gomock.Controller,
 	})
 }
 
-// ── Get ───────────────────────────────────────────────────────────────────────
-
 func TestDraftService_Get_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
@@ -63,8 +61,6 @@ func TestDraftService_Get_NotFound(t *testing.T) {
 		t.Fatalf("expected ErrNoDraftExists, got %v", err)
 	}
 }
-
-// ── Init ──────────────────────────────────────────────────────────────────────
 
 func TestDraftService_Init_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -155,8 +151,6 @@ func TestDraftService_Init_CreateError(t *testing.T) {
 		t.Fatalf("expected ErrDraftAlreadyExists, got %v", err)
 	}
 }
-
-// ── Update ────────────────────────────────────────────────────────────────────
 
 func TestDraftService_Update_OK_BPMNOnly(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -382,8 +376,6 @@ func TestDraftService_Update_GetWorkflowForMetaError(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
-
-// ── Discard ───────────────────────────────────────────────────────────────────
 
 func TestDraftService_Discard_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)

@@ -8,10 +8,19 @@ import (
 // FakeLogger is a no-op port.Logger for use in unit tests.
 type FakeLogger struct{}
 
-func (FakeLogger) Info(msg string, fields map[string]any)  {}
-func (FakeLogger) Error(msg string, fields map[string]any) {}
-func (FakeLogger) Fatal(msg string, fields map[string]any) {}
-func (FakeLogger) Warn(msg string, fields map[string]any)  {}
-func (FakeLogger) Debug(msg string, fields map[string]any) {}
+// Info implements port.Logger.
+func (FakeLogger) Info(_ string, _ map[string]any) { /* no-op */ }
+
+// Error implements port.Logger.
+func (FakeLogger) Error(_ string, _ map[string]any) { /* no-op */ }
+
+// Fatal implements port.Logger.
+func (FakeLogger) Fatal(_ string, _ map[string]any) { /* no-op */ }
+
+// Warn implements port.Logger.
+func (FakeLogger) Warn(_ string, _ map[string]any) { /* no-op */ }
+
+// Debug implements port.Logger.
+func (FakeLogger) Debug(_ string, _ map[string]any) { /* no-op */ }
 
 var _ port.Logger = FakeLogger{}

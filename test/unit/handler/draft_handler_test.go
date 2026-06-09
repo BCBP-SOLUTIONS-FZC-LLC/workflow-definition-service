@@ -30,7 +30,7 @@ func TestGetDraft_OK(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotNil(t, resp["draft"])
+	assert.NotNil(t, resp["id"])
 }
 
 func TestGetDraft_InvalidUUID(t *testing.T) {
@@ -66,7 +66,7 @@ func TestInitDraft_OK(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotNil(t, resp["draft"])
+	assert.NotNil(t, resp["version_id"])
 }
 
 func TestInitDraft_InvalidUUID(t *testing.T) {
@@ -123,7 +123,7 @@ func TestUpdateDraft_OK(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotNil(t, resp["draft"])
+	assert.NotNil(t, resp["version_id"])
 }
 
 func TestUpdateDraft_BindError(t *testing.T) {

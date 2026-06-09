@@ -50,7 +50,7 @@ func NewVersionService(d VersionDeps) *VersionService {
 		membership:      d.Membership,
 		execution:       d.Execution,
 		compiler:        d.Compiler,
-		log:             d.Log,
+		log:             logOrNoop(d.Log),
 	}
 }
 
@@ -83,10 +83,10 @@ func (s *VersionService) Get(
 func (s *VersionService) Publish(
 	ctx context.Context,
 	tenantID, userID, workflowID, versionID uuid.UUID,
-	skipEligibilityCheck bool,
+	forcePublishStructural bool,
 ) (*domain.WorkflowVersion, error) {
 	draft, compiledJSON, artifactHash, versionNumber, assignees, err :=
-		s.publishPreFlight(ctx, tenantID, workflowID, versionID, skipEligibilityCheck)
+		s.publishPreFlight(ctx, tenantID, workflowID, versionID, forcePublishStructural)
 	if err != nil {
 		return nil, err
 	}
@@ -122,14 +122,26 @@ func (s *VersionService) Publish(
 	draft.VersionNumber = &versionNumber
 	draft.CompiledPlanJSON = &compiledJSON
 	draft.ArtifactHash = artifactHash
+	s.log.Info("version published", map[string]any{
+		"tenant_id":      tenantID.String(),
+		"user_id":        userID.String(),
+		"workflow_id":    workflowID.String(),
+		"version_id":     versionID.String(),
+		"version_number": versionNumber,
+	})
 	return draft, nil
 }
 
 func (s *VersionService) Clone(
 	ctx context.Context,
 	tenantID, userID, workflowID, versionID uuid.UUID,
+	planTier string,
 	req CloneReq,
 ) (*domain.Workflow, *domain.WorkflowVersion, error) {
+	if err := s.enforceWorkflowQuota(ctx, tenantID, planTier); err != nil {
+		return nil, nil, err
+	}
+
 	source, err := s.versions.GetByID(ctx, tenantID, versionID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get source version: %w", err)
@@ -181,6 +193,14 @@ func (s *VersionService) Clone(
 	}); err != nil {
 		return nil, nil, fmt.Errorf("clone version: %w", err)
 	}
+	s.log.Info("version cloned", map[string]any{
+		"tenant_id":          tenantID.String(),
+		"user_id":            userID.String(),
+		"source_workflow_id": workflowID.String(),
+		"source_version_id":  versionID.String(),
+		"new_workflow_id":    newWF.ID.String(),
+		"new_version_id":     newVersion.ID.String(),
+	})
 	return newWF, newVersion, nil
 }
 
@@ -201,6 +221,12 @@ func (s *VersionService) Promote(
 	if err := s.workflows.UpdateActiveVersion(ctx, tenantID, workflowID, &versionID); err != nil {
 		return nil, fmt.Errorf("promote version: %w", err)
 	}
+	s.log.Info("version promoted", map[string]any{
+		"tenant_id":   tenantID.String(),
+		"user_id":     userID.String(),
+		"workflow_id": workflowID.String(),
+		"version_id":  versionID.String(),
+	})
 	return v, nil
 }
 
@@ -261,8 +287,6 @@ func (s *VersionService) Diff(
 	}, nil
 }
 
-// resolvePlan returns the compiled plan for a version, using the stored
-// compiled_plan_json when available to avoid redundant recompilation.
 func (s *VersionService) resolvePlan(
 	ctx context.Context,
 	v *domain.WorkflowVersion,
@@ -281,4 +305,19 @@ func versionLabel(v *domain.WorkflowVersion) string {
 		return fmt.Sprintf("%d", *v.VersionNumber)
 	}
 	return "draft"
+}
+
+func (s *VersionService) enforceWorkflowQuota(ctx context.Context, tenantID uuid.UUID, planTier string) error {
+	limit := workflowQuotaLimit(planTier)
+	if limit <= 0 {
+		return nil
+	}
+	count, err := s.workflows.CountByTenant(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("count workflows: %w", err)
+	}
+	if count >= limit {
+		return domain.ErrPlanQuotaExceeded
+	}
+	return nil
 }

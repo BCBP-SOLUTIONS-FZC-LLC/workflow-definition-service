@@ -22,8 +22,6 @@ func txPassthrough(ctrl *gomock.Controller) *mocks.MockTransactor {
 	return tx
 }
 
-// ── List ─────────────────────────────────────────────────────────────────────
-
 func TestWorkflowService_List_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
@@ -52,8 +50,6 @@ func TestWorkflowService_List_Error(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-
-// ── Create ────────────────────────────────────────────────────────────────────
 
 func TestWorkflowService_Create_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -110,7 +106,53 @@ func TestWorkflowService_Create_VersionCreateError(t *testing.T) {
 	}
 }
 
-// ── Get ───────────────────────────────────────────────────────────────────────
+func TestWorkflowService_Create_WithCompiler_ValidationOK(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tx := txPassthrough(ctrl)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	compiler := mocks.NewMockPlanCompiler(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo, Compiler: compiler,
+	})
+
+	compiler.EXPECT().Validate(gomock.Any(), "<bpmn/>").Return(nil, nil)
+	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>")
+	if err != nil || wf == nil || v == nil {
+		t.Fatalf("unexpected: err=%v wf=%v v=%v", err, wf, v)
+	}
+}
+
+func TestWorkflowService_Create_WithCompiler_ValidationErrors(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	compiler := mocks.NewMockPlanCompiler(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{Compiler: compiler})
+
+	compiler.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(
+		[]domain.BPMNValidationError{{Code: "MISSING_START"}}, nil)
+
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bad/>")
+	var vfe *domain.ValidationFailedError
+	if !errors.As(err, &vfe) {
+		t.Fatalf("expected ValidationFailedError, got %v", err)
+	}
+}
+
+func TestWorkflowService_Create_WithCompiler_ValidateError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	compiler := mocks.NewMockPlanCompiler(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{Compiler: compiler})
+
+	compiler.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil, errors.New("compiler error"))
+
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
 
 func TestWorkflowService_Get_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -157,8 +199,6 @@ func TestWorkflowService_Get_VersionListError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-
-// ── Archive ───────────────────────────────────────────────────────────────────
 
 func TestWorkflowService_Archive_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)

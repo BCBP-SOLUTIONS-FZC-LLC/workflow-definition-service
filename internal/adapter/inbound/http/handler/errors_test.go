@@ -45,11 +45,12 @@ func TestErrResponse_StatusAndCode(t *testing.T) {
 		{"ErrNotFound", domain.ErrNotFound, http.StatusNotFound, CodeNotFound},
 		{"pgx.ErrNoRows", pgx.ErrNoRows, http.StatusNotFound, CodeNotFound},
 		{"ErrNoDraftExists", domain.ErrNoDraftExists, http.StatusNotFound, CodeDraftNotFound},
-		{"ErrNoActiveVersion", domain.ErrNoActiveVersion, http.StatusNotFound, CodeNoActiveVersion},
 		// 401 / 403
 		{"ErrUnauthorized", domain.ErrUnauthorized, http.StatusUnauthorized, CodeUnauthorized},
 		{"ErrForbidden", domain.ErrForbidden, http.StatusForbidden, CodeForbidden},
+		{"ErrPlanQuotaExceeded", domain.ErrPlanQuotaExceeded, http.StatusForbidden, CodePlanQuota},
 		// 409
+		{"ErrNoActiveVersion", domain.ErrNoActiveVersion, http.StatusConflict, CodeNoActiveVersion},
 		{"ErrDraftAlreadyExists", domain.ErrDraftAlreadyExists, http.StatusConflict, CodeDraftAlreadyExists},
 		{"ErrDuplicateBusinessKey", domain.ErrDuplicateBusinessKey, http.StatusConflict, CodeDuplicateKey},
 		{"ErrDraftConcurrency", domain.ErrDraftConcurrency, http.StatusConflict, CodeDraftConcurrency},
@@ -61,7 +62,6 @@ func TestErrResponse_StatusAndCode(t *testing.T) {
 		{"ErrStructuralDivergence", domain.ErrStructuralDivergence, http.StatusConflict, CodeStructuralDiv},
 		{"ErrIdempotencyKeyReplay", domain.ErrIdempotencyKeyReplay, http.StatusConflict, CodeIdempotencyReplay},
 		// 422
-		{"ErrPlanQuotaExceeded", domain.ErrPlanQuotaExceeded, http.StatusUnprocessableEntity, CodePlanQuota},
 		{"ErrAssigneeIneligible", domain.ErrAssigneeIneligible, http.StatusUnprocessableEntity, CodeAssigneeIneligible},
 		// 503
 		{"ErrUpstreamUnavailable", domain.ErrUpstreamUnavailable, http.StatusServiceUnavailable, CodeUpstream},

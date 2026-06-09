@@ -27,7 +27,8 @@ func TestListVersions_OK(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, float64(1), resp["total"])
+	pagination := resp["pagination"].(map[string]any)
+	assert.Equal(t, float64(1), pagination["total_count"])
 	versions := resp["versions"].([]any)
 	assert.Len(t, versions, 1)
 }
@@ -192,7 +193,7 @@ func TestCloneVersion_OK(t *testing.T) {
 	wf := newWorkflow()
 	ver := newDraftVersion()
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
-		clone: func(_ context.Context, _, _, _, _ uuid.UUID, r service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error) {
+		clone: func(_ context.Context, _, _, _, _ uuid.UUID, _ string, r service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error) {
 			assert.Equal(t, "new-key", r.NewKey)
 			return wf, ver, nil
 		},
@@ -223,7 +224,7 @@ func TestCloneVersion_BindError(t *testing.T) {
 
 func TestCloneVersion_VersionNotPublished(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
-		clone: func(_ context.Context, _, _, _, _ uuid.UUID, _ service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error) {
+		clone: func(_ context.Context, _, _, _, _ uuid.UUID, _ string, _ service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error) {
 			return nil, nil, domain.ErrVersionNotPublished
 		},
 	}, &fakeValidationSvc{})

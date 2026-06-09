@@ -18,6 +18,11 @@ import (
 )
 
 func newDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) {
+	// Logger is omitted: pgcommon.Config.Logger is typed as platform-pgcommon's
+	// internal port.Logger, which uses unexported port.Field in its method
+	// signatures. External consumers cannot implement that interface.
+	// SlowQueryThreshold is still recorded; slow-query log lines will appear
+	// once pgcommon exports its logger type.
 	pool, err := pgcommon.NewPool(ctx, pgcommon.Config{
 		DSN:                cfg.DatabaseURL,
 		MaxConns:           cfg.PGMaxConns,
