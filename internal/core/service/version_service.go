@@ -91,7 +91,7 @@ func (s *VersionService) Publish(
 		return nil, err
 	}
 
-	env, err := buildEnvelope(domain.EventTypeTemplatePublished, tenantID.String(), domain.TemplatePublishedPayload{
+	env, err := buildEnvelope(ctx, domain.EventTypeTemplatePublished, tenantID.String(), domain.TemplatePublishedPayload{
 		WorkflowID:       workflowID.String(),
 		VersionID:        versionID.String(),
 		VersionNumber:    versionNumber,
@@ -170,7 +170,7 @@ func (s *VersionService) Clone(
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
-	env, err := buildEnvelope(domain.EventTypeTemplateCloned, tenantID.String(), domain.TemplateClonedPayload{
+	env, err := buildEnvelope(ctx, domain.EventTypeTemplateCloned, tenantID.String(), domain.TemplateClonedPayload{
 		SourceWorkflowID: workflowID.String(),
 		SourceVersionID:  versionID.String(),
 		NewWorkflowID:    newWF.ID.String(),

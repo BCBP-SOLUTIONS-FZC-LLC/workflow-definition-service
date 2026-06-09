@@ -165,7 +165,7 @@ func (s *WorkflowService) Archive(ctx context.Context, tenantID, userID, id uuid
 	}
 
 	versionID := *wf.ActiveVersionID
-	env, err := buildEnvelope(domain.EventTypeTemplateArchived, tenantID.String(), domain.TemplateArchivedPayload{
+	env, err := buildEnvelope(ctx, domain.EventTypeTemplateArchived, tenantID.String(), domain.TemplateArchivedPayload{
 		WorkflowID: id.String(),
 		VersionID:  versionID.String(),
 		ArchivedBy: userID.String(),
