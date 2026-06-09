@@ -98,9 +98,7 @@ jobs:
           name: generated
 
       - name: Download modules
-        run: |
-          grep -v "BCBP-SOLUTIONS-FZC-LLC" go.sum > go.sum.tmp && mv go.sum.tmp go.sum
-          GOFLAGS=-mod=mod go mod download
+        run: go mod download
 
       - run: go build -o /dev/null ./cmd/server
       - run: go build -tags=integration -o /dev/null ./cmd/server
@@ -135,9 +133,7 @@ jobs:
           name: generated
 
       - name: Download modules
-        run: |
-          grep -v "BCBP-SOLUTIONS-FZC-LLC" go.sum > go.sum.tmp && mv go.sum.tmp go.sum
-          GOFLAGS=-mod=mod go mod download
+        run: go mod download
 
       - name: Format check
         run: |
@@ -151,9 +147,7 @@ jobs:
       - name: Tidy check
         run: |
           go mod tidy
-          git diff --exit-code go.mod
-          # go.sum is excluded: private module hashes are stripped and regenerated
-          # by the "Download modules" step above (BCBP tags may be force-pushed).
+          git diff --exit-code go.mod go.sum
 
       - run: go vet ./...
 
@@ -186,9 +180,7 @@ jobs:
           name: generated
 
       - name: Download modules
-        run: |
-          grep -v "BCBP-SOLUTIONS-FZC-LLC" go.sum > go.sum.tmp && mv go.sum.tmp go.sum
-          GOFLAGS=-mod=mod go mod download
+        run: go mod download
 
       - name: Unit Tests & Coverage
         run: |
@@ -256,9 +248,7 @@ jobs:
           name: generated
 
       - name: Download modules
-        run: |
-          grep -v "BCBP-SOLUTIONS-FZC-LLC" go.sum > go.sum.tmp && mv go.sum.tmp go.sum
-          GOFLAGS=-mod=mod go mod download
+        run: go mod download
 
       - name: Pre-pull testcontainers images
         run: docker pull postgres:16-alpine
@@ -302,11 +292,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generated
-
-      - name: Refresh private module checksums
-        run: |
-          grep -v "BCBP-SOLUTIONS-FZC-LLC" go.sum > go.sum.tmp && mv go.sum.tmp go.sum
-          GOFLAGS=-mod=mod go mod download
 
       - uses: golangci/golangci-lint-action@v7
         with:

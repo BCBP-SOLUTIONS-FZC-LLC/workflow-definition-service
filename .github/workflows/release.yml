@@ -77,9 +77,7 @@ jobs:
           chmod 600 ~/.git-credentials
 
       - name: Download modules
-        run: |
-          grep -v "BCBP-SOLUTIONS-FZC-LLC" go.sum > go.sum.tmp && mv go.sum.tmp go.sum
-          GOFLAGS=-mod=mod go mod download
+        run: go mod download
 
       - name: Build binary
         run: |

@@ -144,5 +144,3 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon v1.1.0 => ./platform-libs/platform-pgcommon-1.1.0
