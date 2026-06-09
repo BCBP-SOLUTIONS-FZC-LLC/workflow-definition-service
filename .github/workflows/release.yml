@@ -9,7 +9,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-  GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC
+  GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
   GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
 
 jobs:

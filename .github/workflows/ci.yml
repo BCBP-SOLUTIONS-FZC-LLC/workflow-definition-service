@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 env:
-  GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC
+  GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
   GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
