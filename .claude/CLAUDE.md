@@ -10,6 +10,34 @@ Key responsibilities: BPMN ingestion, structural/semantic/topological validation
 
 ---
 
+## Platform Libraries
+
+The three BCBP platform libraries are private Go modules hosted on GitHub. They are fetched at build time via `GOPRIVATE` — **never** reference or import them from local directories.
+
+| Module | Version | Purpose |
+| --- | --- | --- |
+| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events` | v1.0.0 | SNS/SQS publisher, transactional outbox runner, processed-event dedup |
+| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon` | v1.1.0 | pgx pool, RLS GUC injection, transactor, migration runner |
+| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon` | v1.0.0 | Gin middleware, OTel tracing init, Zap logger, gRPC middleware |
+
+**How to fetch / upgrade:**
+
+```bash
+export GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*   # must be set in every shell
+go get github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon@v1.2.0
+go mod tidy
+go mod vendor
+```
+
+**Critical rules — never break these:**
+
+- **Never add a `replace` directive** pointing to `./platform-libs/` in `go.mod`. That directory is gitignored and does not exist in CI. Committing a local replace causes go.sum hash mismatches for every downstream dependency.
+- **Never import from `./platform-libs/`** in source code. The import path must always be the full `github.com/BCBP-SOLUTIONS-FZC-LLC/...` module path.
+- **`platform-libs/`** is a local read-only reference copy only — useful for reading source while offline, nothing more.
+- **`.design/`** is the same: design documents (HLD, LLD, DBML) for reference. Neither folder should influence imports, go.mod, or go.sum.
+
+---
+
 ## Common Commands
 
 ```bash
@@ -193,3 +221,23 @@ Branch protection required checks: `generate`, `Build`, `vet`, `Test`, `coverage
 The `Iint` job runs real integration tests (testcontainers) in CI - Docker is available on `ubuntu-latest`.
 
 The `coverage` job enforces a unit-test-only threshold (95% as of `feat/grpc-sqs`). Generated packages (`postgres/db`, `mocks`) and the postgres repo adapter (`postgres/`) are excluded from the gate denominator — they are integration-tested by the `Iint` job. The integration coverage profile is uploaded as a separate artifact but is not merged into the gate.
+
+---
+
+## Documentation (MkDocs)
+
+Docs live in `docs/` and are served via MkDocs (`make docs-serve`). The nav is declared in `mkdocs.yml`.
+
+**Keep docs in sync when you make changes:**
+
+| Change type | Docs to update |
+| --- | --- |
+| New HTTP endpoint or field | `docs/api.md` |
+| New gRPC method | `docs/grpc.md` |
+| New config env var | `docs/configuration.md` |
+| New migration or schema change | `docs/database.md` |
+| Architecture / layer change | `docs/architecture.md` |
+| Platform lib upgrade | `docs/platform-pgcommon.md`, `docs/platform-events.md`, or `docs/platform-gincommon.md` |
+| New coding pattern or decision | `docs/standards.md` and a numbered entry in this file |
+
+After any significant feature PR, run `make docs-serve` and verify the affected pages render correctly before merging.

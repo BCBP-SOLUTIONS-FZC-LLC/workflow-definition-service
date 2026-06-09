@@ -2,6 +2,11 @@ site_name: Workflow Definition Service
 site_description: Design-time control plane for the BPMN-driven Workflow Engine
 site_author: BCBP Solutions
 
+# NOTE: platform-libs/ and .design/ are local read-only reference folders — they are
+# gitignored and must never be imported or referenced from go.mod/go.sum.
+# Platform libraries are fetched exclusively via GOPRIVATE (go get / go mod vendor).
+# See .claude/CLAUDE.md §"Platform Libraries" for upgrade instructions.
+
 docs_dir: docs
 site_dir: site
 
