@@ -346,6 +346,7 @@ func TestWorkflowRepo_List_CombinedFilters(t *testing.T) {
 func TestWorkflowRepo_UpdateActiveVersion(t *testing.T) {
 	pool := newTestPool(t)
 	repo := postgres.NewWorkflowRepo(pool)
+	vRepo := postgres.NewWorkflowVersionRepo(pool)
 	ctx := context.Background()
 
 	tenantID := uuid.New()
@@ -357,8 +358,12 @@ func TestWorkflowRepo_UpdateActiveVersion(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	versionID := uuid.New()
-	if err := repo.UpdateActiveVersion(ctx, tenantID, wf.ID, &versionID); err != nil {
+	v := newDraftVersion(wf.ID, tenantID)
+	if err := vRepo.Create(ctx, v); err != nil {
+		t.Fatalf("Create version: %v", err)
+	}
+
+	if err := repo.UpdateActiveVersion(ctx, tenantID, wf.ID, &v.ID); err != nil {
 		t.Fatalf("UpdateActiveVersion: %v", err)
 	}
 
@@ -366,8 +371,8 @@ func TestWorkflowRepo_UpdateActiveVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
-	if got.ActiveVersionID == nil || *got.ActiveVersionID != versionID {
-		t.Errorf("ActiveVersionID = %v, want %v", got.ActiveVersionID, versionID)
+	if got.ActiveVersionID == nil || *got.ActiveVersionID != v.ID {
+		t.Errorf("ActiveVersionID = %v, want %v", got.ActiveVersionID, v.ID)
 	}
 }
 
