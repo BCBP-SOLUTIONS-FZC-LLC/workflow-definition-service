@@ -97,8 +97,13 @@ jobs:
         with:
           name: generated
 
-      - name: Strip private module checksums
-        run: sed -i '/BCBP-SOLUTIONS-FZC-LLC.*\/go\.mod /d' go.sum
+      - name: Strip and re-pin private module checksums
+        run: |
+          sed -i '/BCBP-SOLUTIONS-FZC-LLC/d' go.sum
+          go mod download \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events@$(grep 'platform-events ' go.mod | awk '{print $2}')" \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon@$(grep 'platform-gincommon ' go.mod | awk '{print $2}')" \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon@$(grep 'platform-pgcommon ' go.mod | awk '{print $2}')"
 
       - name: Download modules
         run: go mod download
@@ -135,8 +140,13 @@ jobs:
         with:
           name: generated
 
-      - name: Strip private module checksums
-        run: sed -i '/BCBP-SOLUTIONS-FZC-LLC.*\/go\.mod /d' go.sum
+      - name: Strip and re-pin private module checksums
+        run: |
+          sed -i '/BCBP-SOLUTIONS-FZC-LLC/d' go.sum
+          go mod download \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events@$(grep 'platform-events ' go.mod | awk '{print $2}')" \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon@$(grep 'platform-gincommon ' go.mod | awk '{print $2}')" \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon@$(grep 'platform-pgcommon ' go.mod | awk '{print $2}')"
 
       - name: Download modules
         run: go mod download
@@ -185,8 +195,13 @@ jobs:
         with:
           name: generated
 
-      - name: Strip private module checksums
-        run: sed -i '/BCBP-SOLUTIONS-FZC-LLC.*\/go\.mod /d' go.sum
+      - name: Strip and re-pin private module checksums
+        run: |
+          sed -i '/BCBP-SOLUTIONS-FZC-LLC/d' go.sum
+          go mod download \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events@$(grep 'platform-events ' go.mod | awk '{print $2}')" \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon@$(grep 'platform-gincommon ' go.mod | awk '{print $2}')" \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon@$(grep 'platform-pgcommon ' go.mod | awk '{print $2}')"
 
       - name: Download modules
         run: go mod download
@@ -256,8 +271,13 @@ jobs:
         with:
           name: generated
 
-      - name: Strip private module checksums
-        run: sed -i '/BCBP-SOLUTIONS-FZC-LLC.*\/go\.mod /d' go.sum
+      - name: Strip and re-pin private module checksums
+        run: |
+          sed -i '/BCBP-SOLUTIONS-FZC-LLC/d' go.sum
+          go mod download \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events@$(grep 'platform-events ' go.mod | awk '{print $2}')" \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon@$(grep 'platform-gincommon ' go.mod | awk '{print $2}')" \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon@$(grep 'platform-pgcommon ' go.mod | awk '{print $2}')"
 
       - name: Download modules
         run: go mod download
@@ -305,8 +325,13 @@ jobs:
         with:
           name: generated
 
-      - name: Strip private module checksums
-        run: sed -i '/BCBP-SOLUTIONS-FZC-LLC.*\/go\.mod /d' go.sum
+      - name: Strip and re-pin private module checksums
+        run: |
+          sed -i '/BCBP-SOLUTIONS-FZC-LLC/d' go.sum
+          go mod download \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events@$(grep 'platform-events ' go.mod | awk '{print $2}')" \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon@$(grep 'platform-gincommon ' go.mod | awk '{print $2}')" \
+            "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon@$(grep 'platform-pgcommon ' go.mod | awk '{print $2}')"
 
       - uses: golangci/golangci-lint-action@v7
         with:
