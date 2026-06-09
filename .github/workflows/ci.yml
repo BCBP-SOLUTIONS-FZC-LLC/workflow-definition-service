@@ -98,7 +98,7 @@ jobs:
           name: generated
 
       - name: Strip private module checksums
-        run: sed -i '/github\.com\/BCBP-SOLUTIONS-FZC-LLC\//d' go.sum
+        run: sed -i '/BCBP-SOLUTIONS-FZC-LLC.*\/go\.mod /d' go.sum
 
       - name: Download modules
         run: go mod download
@@ -136,7 +136,7 @@ jobs:
           name: generated
 
       - name: Strip private module checksums
-        run: sed -i '/github\.com\/BCBP-SOLUTIONS-FZC-LLC\//d' go.sum
+        run: sed -i '/BCBP-SOLUTIONS-FZC-LLC.*\/go\.mod /d' go.sum
 
       - name: Download modules
         run: go mod download
@@ -186,7 +186,7 @@ jobs:
           name: generated
 
       - name: Strip private module checksums
-        run: sed -i '/github\.com\/BCBP-SOLUTIONS-FZC-LLC\//d' go.sum
+        run: sed -i '/BCBP-SOLUTIONS-FZC-LLC.*\/go\.mod /d' go.sum
 
       - name: Download modules
         run: go mod download
@@ -257,7 +257,7 @@ jobs:
           name: generated
 
       - name: Strip private module checksums
-        run: sed -i '/github\.com\/BCBP-SOLUTIONS-FZC-LLC\//d' go.sum
+        run: sed -i '/BCBP-SOLUTIONS-FZC-LLC.*\/go\.mod /d' go.sum
 
       - name: Download modules
         run: go mod download
@@ -306,7 +306,7 @@ jobs:
           name: generated
 
       - name: Strip private module checksums
-        run: sed -i '/github\.com\/BCBP-SOLUTIONS-FZC-LLC\//d' go.sum
+        run: sed -i '/BCBP-SOLUTIONS-FZC-LLC.*\/go\.mod /d' go.sum
 
       - uses: golangci/golangci-lint-action@v7
         with:
