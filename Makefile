@@ -48,6 +48,7 @@ COVER_THRESHOLD    := 95  # baseline as of feat/grpc-sqs (97.3%); postgres adapt
         build test test-integration \
         cover cover-func cover-html cover-check \
         lint lint-fix vuln \
+        check \
         docs-serve docs-build \
         docker-up docker-down \
         clean help
@@ -183,6 +184,16 @@ cover-check: cover
 		echo "✓ coverage ok"; \
 	fi
 
+
+## check: Run vet, lint, unit tests, and coverage gate — full local CI pass
+check:
+	@echo "==> go vet"
+	go vet ./...
+	@echo "==> lint"
+	$(GOLANGCI) run ./...
+	@echo "==> test + coverage gate"
+	$(MAKE) cover-check
+	@echo "✓ all checks passed"
 
 ## lint: Run golangci-lint
 lint:
