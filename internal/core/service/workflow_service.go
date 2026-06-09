@@ -183,7 +183,7 @@ func (s *WorkflowService) Archive(ctx context.Context, tenantID, userID, id uuid
 		}
 		return s.outbox.Enqueue(ctx, env)
 	}); err != nil {
-		return err
+		return fmt.Errorf("archive workflow: %w", err)
 	}
 	s.log.Info("workflow archived", map[string]any{
 		"tenant_id":   tenantID.String(),

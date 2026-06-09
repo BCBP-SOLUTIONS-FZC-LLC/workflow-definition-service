@@ -21,7 +21,7 @@ type ValidationService struct {
 func NewValidationService(d ValidationDeps) *ValidationService {
 	return &ValidationService{
 		compiler: d.Compiler,
-		log:      d.Log,
+		log:      logOrNoop(d.Log),
 	}
 }
 

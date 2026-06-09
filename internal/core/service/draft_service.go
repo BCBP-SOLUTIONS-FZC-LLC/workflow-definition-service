@@ -136,7 +136,7 @@ func (s *DraftService) Update(
 	draft.UpdatedAt = time.Now()
 
 	if err := s.runUpdateTx(ctx, tenantID, workflowID, draft, req); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update draft: %w", err)
 	}
 	s.log.Info("draft updated", map[string]any{
 		"tenant_id":   tenantID.String(),
