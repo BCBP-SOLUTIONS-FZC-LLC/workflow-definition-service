@@ -104,15 +104,25 @@ func writeProblem(c *gin.Context, status int, code ErrCode, detail string, param
 	})
 }
 
-// errResponse maps a domain or infrastructure error to an RFC-9457 HTTP response.
-func errResponse(c *gin.Context, err error) {
-	var valErr *domain.ValidationFailedError
+// bindErrResponse handles errors returned by c.ShouldBindJSON. It returns 413
+// when err is *http.MaxBytesError (body exceeded the LimitRequestBody cap), and
+// 400 BAD_REQUEST for all other bind failures.
+func bindErrResponse(c *gin.Context, err error) {
 	var maxBytesErr *http.MaxBytesError
-	switch {
-	case errors.As(err, &maxBytesErr):
+	if errors.As(err, &maxBytesErr) {
 		writeProblem(c, http.StatusRequestEntityTooLarge, CodePayloadTooLarge,
 			"request body exceeds the 5 MB limit", nil)
 		return
+	}
+	writeProblem(c, http.StatusBadRequest, CodeBadRequest, err.Error(), nil)
+}
+
+// errResponse maps a domain or infrastructure error to an RFC-9457 HTTP response.
+// Bind errors (including *http.MaxBytesError from oversized bodies) must be routed
+// through bindErrResponse, not here — this function handles service/domain errors only.
+func errResponse(c *gin.Context, err error) {
+	var valErr *domain.ValidationFailedError
+	switch {
 	case errors.Is(err, domain.ErrNotFound), errors.Is(err, pgx.ErrNoRows):
 		writeProblem(c, http.StatusNotFound, CodeNotFound, err.Error(), nil)
 	case errors.Is(err, domain.ErrNoDraftExists):

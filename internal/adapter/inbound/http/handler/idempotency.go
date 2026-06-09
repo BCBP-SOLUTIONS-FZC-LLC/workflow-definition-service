@@ -43,7 +43,7 @@ func hashBody(b []byte) string {
 //
 // On the first call with a given Idempotency-Key the handler runs normally and
 // the response (status + body) plus a SHA-256 hash of the request body are
-// stored in Valkey under a tenant-scoped key with a 24-hour TTL.
+// stored in Valkey under a tenant- and route-scoped key with a 24-hour TTL.
 //
 // On subsequent requests with the same key:
 //   - If the request body hash matches the stored hash, the cached response is
@@ -56,7 +56,7 @@ func hashBody(b []byte) string {
 //
 // If the cache is nil (dev/test) or the header is absent, the handler runs
 // as-is with no idempotency enforcement.
-func WithIdempotency(cache port.CacheStore, h gin.HandlerFunc) gin.HandlerFunc {
+func WithIdempotency(cache port.CacheStore, log port.Logger, h gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := c.GetHeader("Idempotency-Key")
 		if key == "" || cache == nil {
@@ -71,12 +71,19 @@ func WithIdempotency(cache port.CacheStore, h gin.HandlerFunc) gin.HandlerFunc {
 
 		bodyBytes, incomingHash, ok := drainBody(c)
 		if !ok {
+			if log != nil {
+				log.Warn("idempotency: failed to read request body, bypassing idempotency protection", map[string]any{
+					"tenant_id": rc.TenantID,
+					"path":      c.FullPath(),
+				})
+			}
 			h(c)
 			return
 		}
 		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-		cacheKey := "idem:" + rc.TenantID + ":" + key
+		// Key is scoped to tenant + route + client-supplied key to prevent cross-endpoint collisions.
+		cacheKey := "idem:" + rc.TenantID + ":" + c.FullPath() + ":" + key
 		if replayed := replayIfCached(c, cache, cacheKey, incomingHash); replayed {
 			return
 		}
@@ -84,7 +91,7 @@ func WithIdempotency(cache port.CacheStore, h gin.HandlerFunc) gin.HandlerFunc {
 		rec := &bodyRecorder{ResponseWriter: c.Writer, buf: &bytes.Buffer{}}
 		c.Writer = rec
 		h(c)
-		storeIfSuccess(c, cache, cacheKey, incomingHash, rec)
+		storeIfSuccess(c, cache, log, cacheKey, incomingHash, rec)
 	}
 }
 
@@ -115,13 +122,19 @@ func replayIfCached(c *gin.Context, cache port.CacheStore, cacheKey, incomingHas
 	return true
 }
 
-func storeIfSuccess(c *gin.Context, cache port.CacheStore, cacheKey, incomingHash string, rec *bodyRecorder) {
+func storeIfSuccess(c *gin.Context, cache port.CacheStore, log port.Logger, cacheKey, incomingHash string, rec *bodyRecorder) {
 	status := rec.Status()
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
 		return
 	}
 	entry := cachedResp{Status: status, Body: rec.buf.Bytes(), BodyHash: incomingHash}
-	if b, err := json.Marshal(entry); err == nil {
-		_ = cache.Set(c.Request.Context(), cacheKey, string(b), idempotencyTTL)
+	b, _ := json.Marshal(entry) // cachedResp contains only JSON-safe types; Marshal never errors
+	if err := cache.Set(c.Request.Context(), cacheKey, string(b), idempotencyTTL); err != nil {
+		if log != nil {
+			log.Warn("idempotency: failed to cache response", map[string]any{
+				"cache_key": cacheKey,
+				"error":     err.Error(),
+			})
+		}
 	}
 }

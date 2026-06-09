@@ -439,3 +439,43 @@ func TestWorkflowService_Archive_UpdateActiveVersionError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestWorkflowService_Create_ProPlan_BelowLimit_OK(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tx := txPassthrough(ctrl)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
+	})
+
+	// Pro plan limit is 50; count=49 must proceed without error.
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(49), nil)
+	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "pro")
+	if err != nil || wf == nil || v == nil {
+		t.Fatalf("unexpected: %v %v %v", wf, v, err)
+	}
+}
+
+func TestWorkflowService_Create_StarterPlan_BelowLimit_OK(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tx := txPassthrough(ctrl)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
+	})
+
+	// Starter plan limit is 5; count=4 must proceed without error.
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(4), nil)
+	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "starter")
+	if err != nil || wf == nil || v == nil {
+		t.Fatalf("unexpected: %v %v %v", wf, v, err)
+	}
+}

@@ -3,6 +3,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -65,7 +66,7 @@ func newIdempotencyRouter(cache *fakeCache, h gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := newRouter(newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{}))
 	// Overlay a dedicated route that wraps h with idempotency middleware.
-	r.POST("/idempotency-test", handler.WithIdempotency(cache, h))
+	r.POST("/idempotency-test", handler.WithIdempotency(cache, nil, h))
 	return r
 }
 
@@ -91,7 +92,7 @@ func TestWithIdempotency_NilCache_PassThrough(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	r := newRouter(newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{}))
-	r.POST("/idempotency-test", handler.WithIdempotency(nil, h))
+	r.POST("/idempotency-test", handler.WithIdempotency(nil, nil, h))
 
 	httpReq := req(http.MethodPost, "/idempotency-test", nil)
 	httpReq.Header.Set("Idempotency-Key", "key-abc")
@@ -213,4 +214,184 @@ func TestWithIdempotency_HashMismatch_Returns409(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, w.Code)
 	assert.Equal(t, 0, called, "handler must not be called on hash mismatch")
+}
+
+func TestWithIdempotency_PathScopedKey_IsolatedPerRoute(t *testing.T) {
+	// Same Idempotency-Key on two different routes must produce distinct cache keys.
+	var storedKeys []string
+
+	cache := &fakeCache{
+		get: func(_ context.Context, _ string) (string, error) { return "", assert.AnError },
+		set: func(_ context.Context, key, _ string, _ time.Duration) error {
+			storedKeys = append(storedKeys, key)
+			return nil
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := newRouter(newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{}))
+	r.POST("/route-a", handler.WithIdempotency(cache, nil, echoHandler(http.StatusCreated, gin.H{"r": "a"})))
+	r.POST("/route-b", handler.WithIdempotency(cache, nil, echoHandler(http.StatusCreated, gin.H{"r": "b"})))
+
+	for _, path := range []string{"/route-a", "/route-b"} {
+		httpReq := req(http.MethodPost, path, map[string]string{"x": "1"})
+		httpReq.Header.Set("Idempotency-Key", "same-key")
+		do(r, httpReq)
+	}
+
+	require.Len(t, storedKeys, 2)
+	assert.NotEqual(t, storedKeys[0], storedKeys[1], "cache keys must differ between routes")
+	assert.Contains(t, storedKeys[0], "/route-a")
+	assert.Contains(t, storedKeys[1], "/route-b")
+}
+
+func TestWithIdempotency_UnmarshalFailure_TreatedAsMiss(t *testing.T) {
+	called := 0
+
+	cache := &fakeCache{
+		get: func(_ context.Context, _ string) (string, error) { return "not-valid-json", nil },
+		set: func(_ context.Context, _, _ string, _ time.Duration) error { return nil },
+	}
+
+	h := func(c *gin.Context) {
+		called++
+		c.JSON(http.StatusCreated, gin.H{"ok": true})
+	}
+	r := newIdempotencyRouter(cache, h)
+
+	httpReq := req(http.MethodPost, "/idempotency-test", nil)
+	httpReq.Header.Set("Idempotency-Key", "bad-json-key")
+	w := do(r, httpReq)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, 1, called, "handler must be called when cached entry cannot be parsed")
+}
+
+func TestWithIdempotency_CacheHit_NoHash_Replay(t *testing.T) {
+	// Cached entry with no body_hash — response is replayed regardless of incoming body.
+	type cachedResp struct {
+		Status int    `json:"status"`
+		Body   []byte `json:"body"`
+	}
+	cachedBody := []byte(`{"legacy":true}`)
+	cached, _ := json.Marshal(cachedResp{Status: http.StatusCreated, Body: cachedBody})
+
+	cache := &fakeCache{
+		get: func(_ context.Context, _ string) (string, error) { return string(cached), nil },
+	}
+
+	called := 0
+	h := func(c *gin.Context) {
+		called++
+		c.JSON(http.StatusOK, gin.H{"fresh": true})
+	}
+	r := newIdempotencyRouter(cache, h)
+
+	httpReq := req(http.MethodPost, "/idempotency-test", map[string]string{"any": "body"})
+	httpReq.Header.Set("Idempotency-Key", "no-hash-key")
+	w := do(r, httpReq)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, 0, called, "handler must not be called when cache hit has no hash")
+	assert.JSONEq(t, `{"legacy":true}`, w.Body.String())
+}
+
+func TestWithIdempotency_CacheSetFails_ResponseStillReturned(t *testing.T) {
+	called := 0
+
+	cache := &fakeCache{
+		get: func(_ context.Context, _ string) (string, error) { return "", assert.AnError },
+		set: func(_ context.Context, _, _ string, _ time.Duration) error { return assert.AnError },
+	}
+
+	h := func(c *gin.Context) {
+		called++
+		c.JSON(http.StatusCreated, gin.H{"id": "abc"})
+	}
+	r := newIdempotencyRouter(cache, h)
+
+	httpReq := req(http.MethodPost, "/idempotency-test", nil)
+	httpReq.Header.Set("Idempotency-Key", "set-fail-key")
+	w := do(r, httpReq)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, 1, called, "handler must still be called even when cache.Set fails")
+}
+
+func TestWithIdempotency_NoRequestContext_PassThrough(t *testing.T) {
+	// Router without ProtectedMiddlewares — gincommon.RequestContext will be absent.
+	// WithIdempotency must fall through to the handler rather than panicking.
+	called := 0
+	h := func(c *gin.Context) {
+		called++
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New() // no ProtectedMiddlewares
+	r.POST("/bare", handler.WithIdempotency(&fakeCache{}, nil, h))
+
+	httpReq, _ := http.NewRequest(http.MethodPost, "/bare", nil)
+	httpReq.Header.Set("Idempotency-Key", "any-key")
+	w := do(r, httpReq)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 1, called)
+}
+
+func TestWithIdempotency_DrainBodyError_PassThrough(t *testing.T) {
+	// Simulate an unreadable request body; drainBody returns ok=false.
+	// The middleware must log a warning (when logger is non-nil) and still call the handler.
+	called := 0
+	logger := &fakeLogger{}
+
+	cache := &fakeCache{
+		get: func(_ context.Context, _ string) (string, error) { return "", assert.AnError },
+	}
+	h := func(c *gin.Context) {
+		called++
+		c.JSON(http.StatusCreated, gin.H{"ok": true})
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := newRouter(newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{}))
+	r.POST("/drain-test", handler.WithIdempotency(cache, logger, h))
+
+	httpReq := req(http.MethodPost, "/drain-test", nil)
+	httpReq.Body = io.NopCloser(errReader{})
+	httpReq.Header.Set("Idempotency-Key", "drain-key")
+	w := do(r, httpReq)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, 1, called, "handler must be called even when body read fails")
+	require.Len(t, logger.warnCalls, 1, "expected one warn log for body read failure")
+	assert.Contains(t, logger.warnCalls[0], "failed to read request body")
+}
+
+func TestWithIdempotency_CacheSetFails_LogsWarning(t *testing.T) {
+	// cache.Set fails after a successful handler run; a warn must be logged when logger is non-nil.
+	called := 0
+	logger := &fakeLogger{}
+
+	cache := &fakeCache{
+		get: func(_ context.Context, _ string) (string, error) { return "", assert.AnError },
+		set: func(_ context.Context, _, _ string, _ time.Duration) error { return assert.AnError },
+	}
+	h := func(c *gin.Context) {
+		called++
+		c.JSON(http.StatusCreated, gin.H{"id": "xyz"})
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := newRouter(newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{}))
+	r.POST("/set-warn-test", handler.WithIdempotency(cache, logger, h))
+
+	httpReq := req(http.MethodPost, "/set-warn-test", nil)
+	httpReq.Header.Set("Idempotency-Key", "warn-key")
+	w := do(r, httpReq)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, 1, called)
+	require.Len(t, logger.warnCalls, 1, "expected one warn log for cache set failure")
+	assert.Contains(t, logger.warnCalls[0], "failed to cache response")
 }

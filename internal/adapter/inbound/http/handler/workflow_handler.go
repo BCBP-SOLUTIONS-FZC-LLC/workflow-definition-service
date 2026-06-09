@@ -31,6 +31,11 @@ type workflowResp struct {
 	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
+type getWorkflowResp struct {
+	workflowResp
+	Versions []versionSummary `json:"versions"`
+}
+
 type versionSummary struct {
 	ID              uuid.UUID            `json:"id"`
 	Status          domain.VersionStatus `json:"status"`
@@ -123,7 +128,7 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 
 	var req createWorkflowReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeProblem(c, http.StatusBadRequest, CodeBadRequest, err.Error(), nil)
+		bindErrResponse(c, err)
 		return
 	}
 
@@ -168,18 +173,9 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 	for i, v := range versions {
 		summaries[i] = toVersionSummary(v)
 	}
-	wr := toWorkflowResp(wf)
-	c.JSON(http.StatusOK, gin.H{
-		"id":                    wr.ID,
-		"key":                   wr.Key,
-		"name":                  wr.Name,
-		"description":           wr.Description,
-		"active_version_id":     wr.ActiveVersionID,
-		"active_version_number": wr.ActiveVersionNumber,
-		"has_draft":             wr.HasDraft,
-		"created_at":            wr.CreatedAt,
-		"updated_at":            wr.UpdatedAt,
-		"versions":              summaries,
+	c.JSON(http.StatusOK, getWorkflowResp{
+		workflowResp: toWorkflowResp(wf),
+		Versions:     summaries,
 	})
 }
 

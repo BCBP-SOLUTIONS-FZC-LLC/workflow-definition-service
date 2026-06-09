@@ -225,6 +225,24 @@ func do(router *gin.Engine, r *http.Request) *httptest.ResponseRecorder {
 	return w
 }
 
+// fakeLogger is a port.Logger that records calls for test assertions.
+type fakeLogger struct {
+	warnCalls []string
+}
+
+func (f *fakeLogger) Debug(string, map[string]any) { /* no-op */ }
+func (f *fakeLogger) Info(string, map[string]any)  { /* no-op */ }
+func (f *fakeLogger) Error(string, map[string]any) { /* no-op */ }
+func (f *fakeLogger) Fatal(string, map[string]any) { /* no-op */ }
+func (f *fakeLogger) Warn(msg string, _ map[string]any) {
+	f.warnCalls = append(f.warnCalls, msg)
+}
+
+// errReader is an io.Reader that always returns an error.
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
 func newWorkflow() *domain.Workflow {
 	now := time.Now()
 	return &domain.Workflow{

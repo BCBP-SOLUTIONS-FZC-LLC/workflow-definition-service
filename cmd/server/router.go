@@ -39,11 +39,11 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 	for _, mw := range gincommon.ProtectedMiddlewares(mwCfg) {
 		api.Use(mw)
 	}
-	api.Use(httpmiddleware.InjectGUCSet())
+	api.Use(httpmiddleware.InjectGUCSet(log))
 	api.Use(httpmiddleware.LimitRequestBody())
 
 	idem := func(fn gin.HandlerFunc) gin.HandlerFunc {
-		return handler.WithIdempotency(cache, fn)
+		return handler.WithIdempotency(cache, log, fn)
 	}
 
 	wf := api.Group("/workflows")

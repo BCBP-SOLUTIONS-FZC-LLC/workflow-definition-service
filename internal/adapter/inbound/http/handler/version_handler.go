@@ -177,7 +177,7 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 
 	var req cloneVersionReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeProblem(c, http.StatusBadRequest, CodeBadRequest, err.Error(), nil)
+		bindErrResponse(c, err)
 		return
 	}
 
