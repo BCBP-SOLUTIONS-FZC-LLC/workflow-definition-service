@@ -110,12 +110,16 @@ func (s *WorkflowService) Create(
 func (s *WorkflowService) Get(
 	ctx context.Context,
 	tenantID, id uuid.UUID,
+	versionsLimit int,
 ) (*domain.Workflow, []*domain.WorkflowVersion, error) {
 	wf, err := s.workflows.GetByID(ctx, tenantID, id)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get workflow: %w", err)
 	}
-	versions, _, err := s.versions.ListByWorkflow(ctx, tenantID, id, 1, 20)
+	if versionsLimit < 1 || versionsLimit > 100 {
+		versionsLimit = 20
+	}
+	versions, _, err := s.versions.ListByWorkflow(ctx, tenantID, id, 1, versionsLimit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list versions: %w", err)
 	}

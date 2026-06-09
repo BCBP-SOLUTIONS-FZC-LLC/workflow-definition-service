@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -30,9 +31,36 @@ type app struct {
 	grpcServer     *grpc.Server
 	sqsConsumer    events.Consumer
 	outboxRelay    *outbox.Runner
+	eventPruner    *processedEventPruner
 	shutdown       func()
 	cacheClose     io.Closer
 	executionClose io.Closer // nil when execution service is not configured
+}
+
+// processedEventPruner periodically deletes processed_event rows older than the configured TTL.
+type processedEventPruner struct {
+	repo     port.ProcessedEventRepository
+	days     int
+	interval time.Duration
+	log      port.Logger
+}
+
+func (p *processedEventPruner) start(ctx context.Context) {
+	ticker := time.NewTicker(p.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := p.repo.PruneOlderThan(ctx, p.days); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+				p.log.Error("processed event prune failed", map[string]any{"error": err.Error()})
+			}
+		}
+	}
 }
 
 func (a *app) run() {
@@ -85,6 +113,8 @@ func (a *app) startServers(ctx context.Context) {
 			a.log.Error("outbox relay exited", map[string]any{"error": err.Error()})
 		}
 	}()
+
+	go a.eventPruner.start(ctx)
 }
 
 func (a *app) stopServers(ctx context.Context) {

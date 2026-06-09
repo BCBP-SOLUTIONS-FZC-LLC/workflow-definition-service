@@ -39,8 +39,12 @@ type Config struct {
 	OutboxPollInterval time.Duration
 	OutboxBatchSize    int
 
-	OrgMembershipBaseURL string
-	ExecutionServiceAddr string
+	OrgMembershipBaseURL   string
+	ExecutionServiceAddr   string
+	ExecutionClientTimeout time.Duration
+
+	ProcessedEventsPruneDays     int
+	ProcessedEventsPruneInterval time.Duration
 }
 
 func Load() (*Config, error) {
@@ -76,8 +80,12 @@ func Load() (*Config, error) {
 		OutboxPollInterval: getEnvDurationOrDefault("OUTBOX_POLL_INTERVAL", 500*time.Millisecond),
 		OutboxBatchSize:    getEnvIntOrDefault("OUTBOX_BATCH_SIZE", 50),
 
-		OrgMembershipBaseURL: getEnvOrDefault("ORG_MEMBERSHIP_BASE_URL", ""),
-		ExecutionServiceAddr: getEnvOrDefault("EXECUTION_SERVICE_ADDR", ""),
+		OrgMembershipBaseURL:   getEnvOrDefault("ORG_MEMBERSHIP_BASE_URL", ""),
+		ExecutionServiceAddr:   getEnvOrDefault("EXECUTION_SERVICE_ADDR", ""),
+		ExecutionClientTimeout: getEnvDurationOrDefault("EXECUTION_CLIENT_TIMEOUT", 5*time.Second),
+
+		ProcessedEventsPruneDays:     getEnvIntOrDefault("PROCESSED_EVENTS_PRUNE_DAYS", 7),
+		ProcessedEventsPruneInterval: getEnvDurationOrDefault("PROCESSED_EVENTS_PRUNE_INTERVAL", 24*time.Hour),
 	}
 
 	if err := cfg.validate(); err != nil {

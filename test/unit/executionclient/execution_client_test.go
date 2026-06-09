@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -16,6 +17,8 @@ import (
 	grpcadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/grpc"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
+
+const defaultTimeout = 5 * time.Second
 
 // fakeExecutionServer implements executionv1.ExecutionServiceServer.
 type fakeExecutionServer struct {
@@ -47,7 +50,7 @@ func startServer(t *testing.T, srv executionv1.ExecutionServiceServer) string {
 
 func TestExecutionClient_New_AndClose(t *testing.T) {
 	addr := startServer(t, &fakeExecutionServer{})
-	c, err := grpcadapter.NewExecutionClient(addr)
+	c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
 	if err != nil {
 		t.Fatalf("NewExecutionClient: %v", err)
 	}
@@ -61,7 +64,7 @@ func TestExecutionClient_CheckActiveInstances_HasActive(t *testing.T) {
 		resp: &executionv1.CheckActiveInstancesResponse{HasActive: true, Count: 3},
 	}
 	addr := startServer(t, fake)
-	c, err := grpcadapter.NewExecutionClient(addr)
+	c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
 	if err != nil {
 		t.Fatalf("NewExecutionClient: %v", err)
 	}
@@ -92,7 +95,7 @@ func TestExecutionClient_CheckActiveInstances_NoActive(t *testing.T) {
 		resp: &executionv1.CheckActiveInstancesResponse{HasActive: false, Count: 0},
 	}
 	addr := startServer(t, fake)
-	c, err := grpcadapter.NewExecutionClient(addr)
+	c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
 	if err != nil {
 		t.Fatalf("NewExecutionClient: %v", err)
 	}
@@ -115,7 +118,7 @@ func TestExecutionClient_CheckActiveInstances_UpstreamError(t *testing.T) {
 		err: status.Error(codes.Internal, "internal error"),
 	}
 	addr := startServer(t, fake)
-	c, err := grpcadapter.NewExecutionClient(addr)
+	c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
 	if err != nil {
 		t.Fatalf("NewExecutionClient: %v", err)
 	}
@@ -127,5 +130,44 @@ func TestExecutionClient_CheckActiveInstances_UpstreamError(t *testing.T) {
 	}
 	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
 		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
+	}
+}
+
+// slowExecutionServer blocks until the context deadline fires, simulating a hung upstream.
+type slowExecutionServer struct {
+	executionv1.UnimplementedExecutionServiceServer
+}
+
+func (s *slowExecutionServer) CheckActiveInstances(
+	ctx context.Context,
+	_ *executionv1.CheckActiveInstancesRequest,
+) (*executionv1.CheckActiveInstancesResponse, error) {
+	<-ctx.Done()
+	return nil, status.FromContextError(ctx.Err()).Err()
+}
+
+func TestExecutionClient_CheckActiveInstances_CallTimeout(t *testing.T) {
+	addr := startServer(t, &slowExecutionServer{})
+
+	// 50 ms timeout — the slow server blocks indefinitely so this must fire.
+	c, err := grpcadapter.NewExecutionClient(addr, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewExecutionClient: %v", err)
+	}
+	defer c.Close() //nolint:errcheck
+
+	start := time.Now()
+	_, _, err = c.CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error from timeout")
+	}
+	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
+		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
+	}
+	// Should complete well within 1 s; the 50 ms deadline must not be silently ignored.
+	if elapsed > time.Second {
+		t.Errorf("call took %v; deadline appears to have been ignored", elapsed)
 	}
 }

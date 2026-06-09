@@ -19,7 +19,7 @@ import (
 type workflowSvc interface {
 	List(ctx context.Context, tenantID uuid.UUID, filter port.WorkflowFilter) ([]*domain.Workflow, int64, error)
 	Create(ctx context.Context, tenantID, userID uuid.UUID, businessKey, name, description, bpmnXML string) (*domain.Workflow, *domain.WorkflowVersion, error)
-	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Workflow, []*domain.WorkflowVersion, error)
+	Get(ctx context.Context, tenantID, id uuid.UUID, versionsLimit int) (*domain.Workflow, []*domain.WorkflowVersion, error)
 	Archive(ctx context.Context, tenantID, userID, id uuid.UUID) error
 }
 

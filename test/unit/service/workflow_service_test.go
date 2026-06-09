@@ -165,9 +165,45 @@ func TestWorkflowService_Get_OK(t *testing.T) {
 	vRepo.EXPECT().ListByWorkflow(gomock.Any(), tenantID, wfID, 1, 20).
 		Return([]*domain.WorkflowVersion{{ID: uuid.New()}}, int64(1), nil)
 
-	wf, versions, err := svc.Get(context.Background(), tenantID, wfID)
+	wf, versions, err := svc.Get(context.Background(), tenantID, wfID, 20)
 	if err != nil || wf == nil || len(versions) != 1 {
 		t.Fatalf("unexpected result: %v %v %v", wf, versions, err)
+	}
+}
+
+func TestWorkflowService_Get_CustomVersionsLimit(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{Workflows: wfRepo, Versions: vRepo})
+
+	tenantID, wfID := uuid.New(), uuid.New()
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ID: wfID}, nil)
+	// Caller requests 5 versions; expect exactly 5 forwarded to the repo.
+	vRepo.EXPECT().ListByWorkflow(gomock.Any(), tenantID, wfID, 1, 5).
+		Return([]*domain.WorkflowVersion{}, int64(0), nil)
+
+	_, _, err := svc.Get(context.Background(), tenantID, wfID, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWorkflowService_Get_VersionsLimitClamped(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{Workflows: wfRepo, Versions: vRepo})
+
+	tenantID, wfID := uuid.New(), uuid.New()
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ID: wfID}, nil)
+	// Out-of-range values (0 and 999) are clamped to 20.
+	vRepo.EXPECT().ListByWorkflow(gomock.Any(), tenantID, wfID, 1, 20).
+		Return([]*domain.WorkflowVersion{}, int64(0), nil)
+
+	_, _, err := svc.Get(context.Background(), tenantID, wfID, 999)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -178,7 +214,7 @@ func TestWorkflowService_Get_WorkflowNotFound(t *testing.T) {
 
 	wfRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrNotFound)
 
-	_, _, err := svc.Get(context.Background(), uuid.New(), uuid.New())
+	_, _, err := svc.Get(context.Background(), uuid.New(), uuid.New(), 20)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -194,7 +230,7 @@ func TestWorkflowService_Get_VersionListError(t *testing.T) {
 	vRepo.EXPECT().ListByWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, int64(0), errors.New("list error"))
 
-	_, _, err := svc.Get(context.Background(), uuid.New(), uuid.New())
+	_, _, err := svc.Get(context.Background(), uuid.New(), uuid.New(), 20)
 	if err == nil {
 		t.Fatal("expected error")
 	}

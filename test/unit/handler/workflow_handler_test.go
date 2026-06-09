@@ -209,7 +209,7 @@ func TestGetWorkflow_OK(t *testing.T) {
 	ver := newDraftVersion()
 
 	h := newHandler(&fakeWorkflowSvc{
-		get: func(_ context.Context, _ uuid.UUID, id uuid.UUID) (*domain.Workflow, []*domain.WorkflowVersion, error) {
+		get: func(_ context.Context, _ uuid.UUID, id uuid.UUID, _ int) (*domain.Workflow, []*domain.WorkflowVersion, error) {
 			return wf, []*domain.WorkflowVersion{ver}, nil
 		},
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
@@ -225,6 +225,21 @@ func TestGetWorkflow_OK(t *testing.T) {
 	assert.Len(t, versions, 1)
 }
 
+func TestGetWorkflow_VersionsLimit(t *testing.T) {
+	wf := newWorkflow()
+	var capturedLimit int
+	h := newHandler(&fakeWorkflowSvc{
+		get: func(_ context.Context, _ uuid.UUID, _ uuid.UUID, lim int) (*domain.Workflow, []*domain.WorkflowVersion, error) {
+			capturedLimit = lim
+			return wf, nil, nil
+		},
+	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
+
+	w := do(newRouter(h), req(http.MethodGet, "/api/v1/workflows/"+testWFID.String()+"?versions_limit=5", nil))
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 5, capturedLimit)
+}
+
 func TestGetWorkflow_InvalidUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 	w := do(newRouter(h), req(http.MethodGet, "/api/v1/workflows/not-a-uuid", nil))
@@ -233,7 +248,7 @@ func TestGetWorkflow_InvalidUUID(t *testing.T) {
 
 func TestGetWorkflow_NotFound(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{
-		get: func(_ context.Context, _ uuid.UUID, _ uuid.UUID) (*domain.Workflow, []*domain.WorkflowVersion, error) {
+		get: func(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ int) (*domain.Workflow, []*domain.WorkflowVersion, error) {
 			return nil, nil, domain.ErrNotFound
 		},
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
@@ -244,7 +259,7 @@ func TestGetWorkflow_NotFound(t *testing.T) {
 
 func TestGetWorkflow_Unauthorized(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{
-		get: func(_ context.Context, _ uuid.UUID, _ uuid.UUID) (*domain.Workflow, []*domain.WorkflowVersion, error) {
+		get: func(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ int) (*domain.Workflow, []*domain.WorkflowVersion, error) {
 			return nil, nil, domain.ErrUnauthorized
 		},
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})

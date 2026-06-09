@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -16,19 +17,21 @@ import (
 var _ port.ExecutionService = (*ExecutionClient)(nil)
 
 type ExecutionClient struct {
-	client executionv1.ExecutionServiceClient
-	conn   *grpc.ClientConn
+	client      executionv1.ExecutionServiceClient
+	conn        *grpc.ClientConn
+	callTimeout time.Duration
 }
 
-func NewExecutionClient(addr string) (*ExecutionClient, error) {
+func NewExecutionClient(addr string, callTimeout time.Duration) (*ExecutionClient, error) {
 	// Insecure credentials are intentional: intra-cluster traffic only; mTLS is terminated at the service mesh.
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("dial execution service: %w", err)
 	}
 	return &ExecutionClient{
-		client: executionv1.NewExecutionServiceClient(conn),
-		conn:   conn,
+		client:      executionv1.NewExecutionServiceClient(conn),
+		conn:        conn,
+		callTimeout: callTimeout,
 	}, nil
 }
 
@@ -44,6 +47,9 @@ func (c *ExecutionClient) CheckActiveInstances(
 	ctx context.Context,
 	tenantID, workflowID uuid.UUID,
 ) (hasActive bool, count int32, err error) {
+	ctx, cancel := context.WithTimeout(ctx, c.callTimeout)
+	defer cancel()
+
 	resp, err := c.client.CheckActiveInstances(ctx, &executionv1.CheckActiveInstancesRequest{
 		TenantId:   tenantID.String(),
 		WorkflowId: workflowID.String(),

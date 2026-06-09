@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -155,7 +156,9 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		return
 	}
 
-	wf, versions, err := h.workflows.Get(c.Request.Context(), tenantID, workflowID)
+	versionsLimit, _ := strconv.Atoi(c.DefaultQuery("versions_limit", "20"))
+
+	wf, versions, err := h.workflows.Get(c.Request.Context(), tenantID, workflowID, versionsLimit)
 	if err != nil {
 		errResponse(c, err)
 		return

@@ -62,7 +62,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		membershipSvc = outboundhttp.NewMembershipClient(cfg.OrgMembershipBaseURL)
 	}
 	if cfg.ExecutionServiceAddr != "" {
-		executionSvc, err = outboundgrpc.NewExecutionClient(cfg.ExecutionServiceAddr)
+		executionSvc, err = outboundgrpc.NewExecutionClient(cfg.ExecutionServiceAddr, cfg.ExecutionClientTimeout)
 		if err != nil {
 			pool.Close()
 			tracingShutdown()
@@ -157,6 +157,13 @@ func newApp(cfg *config.Config) (*app, error) {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	pruner := &processedEventPruner{
+		repo:     processedEventRepo,
+		days:     cfg.ProcessedEventsPruneDays,
+		interval: cfg.ProcessedEventsPruneInterval,
+		log:      log,
+	}
+
 	return &app{
 		cfg:            cfg,
 		log:            log,
@@ -166,6 +173,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		grpcServer:     grpcSrv,
 		sqsConsumer:    sqsConsumer,
 		outboxRelay:    relay,
+		eventPruner:    pruner,
 		shutdown:       tracingShutdown,
 		cacheClose:     redisClient,
 		executionClose: executionSvc,

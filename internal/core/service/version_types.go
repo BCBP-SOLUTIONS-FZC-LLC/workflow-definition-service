@@ -26,8 +26,8 @@ func logOrNoop(l port.Logger) port.Logger {
 	return l
 }
 
-// TODO: check with billing service
-// if these need to hard coded
+// NOTE: quota tiers are hardcoded until a billing service integration is available.
+// When that integration lands, replace this switch with a gRPC/HTTP call to the billing service.
 func workflowQuotaLimit(planTier string) int64 {
 	switch strings.ToLower(planTier) {
 	case "starter":

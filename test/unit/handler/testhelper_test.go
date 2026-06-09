@@ -31,7 +31,7 @@ var (
 type fakeWorkflowSvc struct {
 	list    func(context.Context, uuid.UUID, port.WorkflowFilter) ([]*domain.Workflow, int64, error)
 	create  func(context.Context, uuid.UUID, uuid.UUID, string, string, string, string) (*domain.Workflow, *domain.WorkflowVersion, error)
-	get     func(context.Context, uuid.UUID, uuid.UUID) (*domain.Workflow, []*domain.WorkflowVersion, error)
+	get     func(context.Context, uuid.UUID, uuid.UUID, int) (*domain.Workflow, []*domain.WorkflowVersion, error)
 	archive func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error
 }
 
@@ -47,9 +47,9 @@ func (f *fakeWorkflowSvc) Create(ctx context.Context, tenantID, userID uuid.UUID
 	}
 	return nil, nil, nil
 }
-func (f *fakeWorkflowSvc) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Workflow, []*domain.WorkflowVersion, error) {
+func (f *fakeWorkflowSvc) Get(ctx context.Context, tenantID, id uuid.UUID, versionsLimit int) (*domain.Workflow, []*domain.WorkflowVersion, error) {
 	if f.get != nil {
-		return f.get(ctx, tenantID, id)
+		return f.get(ctx, tenantID, id, versionsLimit)
 	}
 	return nil, nil, nil
 }
