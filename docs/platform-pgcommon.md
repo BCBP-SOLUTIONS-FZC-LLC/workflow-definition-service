@@ -9,18 +9,40 @@ Provides the PostgreSQL connection pool with RLS GUC injection, transaction help
 ## Pool setup
 
 ```go
-import "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+import (
+    "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+    "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgmetrics"
+)
+
+// Call once at startup alongside events.Init — registers pgcommon_* Prometheus counters.
+pgmetrics.Init(cfg.OTELServiceName, cfg.BuildVersion)
 
 pool, err := pgcommon.NewPool(ctx, pgcommon.Config{
-    DSN:         cfg.DatabaseURL,
-    MaxConns:    cfg.PGMaxConns,
-    MinConns:    cfg.PGMinConns,
-    Logger:      log,              // accepts port.Logger — pass gincommon ZapLogger directly
-    GUCProvider: pgcommon.GUCSetFromContext,  // auto-injects tenant_id, user_id, roles on every connection
+    DSN:                cfg.DatabaseURL,
+    MaxConns:           cfg.PGMaxConns,
+    MinConns:           cfg.PGMinConns,
+    SlowQueryThreshold: time.Duration(cfg.PGSlowQueryThresholdMS) * time.Millisecond,
+    GUCProvider:        pgcommon.GUCSetFromContext,  // auto-injects tenant_id, user_id, roles on every connection
 })
 ```
 
-`GUCSetFromContext` reads the `GUCSet` stored by `WithGUCSet(ctx, gs)` — the `platform-gincommon` middleware calls this for every HTTP request.
+`GUCSetFromContext` reads the `GUCSet` stored by `WithGUCSet(ctx, gs)` — the `InjectGUCSet` middleware does this for every authenticated HTTP request (see Decision 23 in CLAUDE.md).
+
+> **`Config.Logger` and `Config.Tracer` are not wired.** The library's internal `port.Logger` and `port.Tracer` interfaces use unexported `port.Field` types, making them unimplementable by external packages. `SlowQueryThreshold` still triggers slow-query events internally; they will appear in structured logs once the library exports those types.
+
+## Prometheus metrics (`pgmetrics`)
+
+`pgmetrics.Init` registers the following Prometheus counters with the default registerer:
+
+| Metric                                   | Description                                                   |
+| ---------------------------------------- | ------------------------------------------------------------- |
+| `pgcommon_query_total`                   | Total queries by status (`ok` / `error`)                      |
+| `pgcommon_pool_acquire_total`            | Pool connections acquired                                     |
+| `pgcommon_pool_acquire_duration_seconds` | Histogram of acquire wait times                               |
+| `pgcommon_retry_total`                   | Transaction retries by reason (`deadlock` / `serialization`)  |
+| `pgcommon_slow_query_total`              | Queries exceeding `SlowQueryThreshold`                        |
+
+`pgmetrics.Init` is idempotent — safe to call multiple times (e.g., in tests that call `main` directly).
 
 ---
 

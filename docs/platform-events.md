@@ -8,21 +8,41 @@ Provides SNS publisher, SQS consumer, transactional outbox runner, and typed eve
 
 ## Event Envelope
 
-`Envelope[T]` is the canonical wire format. Always construct with `NewEnvelope` — it generates a UUID v7 `ID` and sets `Timestamp` automatically:
+`Envelope[T]` is the canonical wire format. Always construct with `NewEnvelope` — it generates a UUID v7 `ID` and sets `Timestamp` automatically. Always pass both `WithTenantID` and `WithTraceID` so the consumer-side span links back to the publisher's trace across the SNS/SQS boundary.
+
+The definition service builds envelopes from the service layer via `buildEnvelope` in `internal/core/service/helpers.go`. Because the service layer does not have access to the Gin context, it extracts the trace ID directly from the OTel span stored in `ctx`:
 
 ```go
 import (
+    "context"
     "encoding/json"
+    "go.opentelemetry.io/otel/trace"
     "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
 )
 
-env := events.NewEnvelope[json.RawMessage](
-    "wf.template.published",           // event type
-    "workflow-definition-service",     // source
-    json.RawMessage(compiledPlanJSON), // payload
-    events.WithTenantID(rc.TenantID),  // from gincommon.RequestContext
-    events.WithTraceID(rc.TraceID),    // from gincommon.RequestContext
-)
+opts := []events.EnvelopeOpt{events.WithTenantID(tenantID)}
+if sc := trace.SpanFromContext(ctx).SpanContext(); sc.IsValid() {
+    opts = append(opts, events.WithTraceID(sc.TraceID().String()))
+}
+env := events.NewEnvelope[json.RawMessage](eventType, source, raw, opts...)
+```
+
+`sc.IsValid()` is false on non-traced paths (unit tests, stub runners) so no zero trace ID is attached. On the HTTP path the span is created by gincommon's `TracingMiddleware`; on the SQS path the consumer injects it from `env.TraceID`.
+
+> **If you are building envelopes at the HTTP handler layer** (direct Gin context access), use `rc.TraceID` from `gincommon.RequestContext(c)` instead — it is the same OTel trace ID already stringified.
+
+Envelope JSON shape:
+
+```json
+{
+  "id":        "01926e4f-...",
+  "type":      "wf.template.published",
+  "source":    "workflow-definition-service",
+  "tenant_id": "acme",
+  "trace_id":  "4bf92f3577...",
+  "timestamp": "2026-05-27T12:00:00Z",
+  "payload":   { ... }
+}
 ```
 
 Envelope JSON shape:

@@ -59,6 +59,34 @@ rpc GetCompiledWorkflow(GetCompiledWorkflowRequest)
 
 ---
 
+## Health Check (`grpc.health.v1.Health`)
+
+The server registers the standard gRPC health service at startup:
+
+```go
+grpc_health_v1.RegisterHealthServer(grpcSrv, health.NewServer())
+```
+
+`health.NewServer()` reports `SERVING` for all service names by default. Use this for Kubernetes liveness/readiness probes on the gRPC port (`:9090`) and for service-mesh health checks:
+
+```bash
+# Check overall server health
+grpcurl -plaintext localhost:9090 grpc.health.v1.Health/Check
+
+# Check a specific service
+grpcurl -plaintext \
+  -d '{"service":"definition.v1.DefinitionService"}' \
+  localhost:9090 grpc.health.v1.Health/Check
+```
+
+Expected response:
+
+```json
+{ "status": "SERVING" }
+```
+
+---
+
 ## Code generation
 
 Proto stubs are generated via `make generate` (runs `buf generate`). Output goes to `gen/proto/` which is **gitignored** — regenerate locally before building:

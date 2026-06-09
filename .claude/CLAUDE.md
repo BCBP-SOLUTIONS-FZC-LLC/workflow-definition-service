@@ -212,6 +212,12 @@ Integration tests require Docker. Pre-pull the image once: `make tools-integrati
 
 25. **`WorkflowService.Create` enforces plan quota** — The `Create` method signature includes `planTier string` (8th parameter), sourced from the `x-plan` gateway header. After BPMN validation and before any DB write, `enforceWorkflowQuota(ctx, tenantID, planTier)` calls `CountByTenant` and compares against the hardcoded tier limit (Starter=5, Pro=50, Enterprise=unlimited). Returns `ErrPlanQuotaExceeded` → 403 `PLAN_QUOTA_EXCEEDED` if the limit is reached. Enterprise (`planTier="enterprise"`) skips the count query entirely.
 
+26. **`buildEnvelope` attaches `WithTraceID` via OTel span context** — `internal/core/service/helpers.go` extracts the trace ID using `trace.SpanFromContext(ctx).SpanContext()` and attaches `events.WithTraceID` only when `sc.IsValid()`. This propagates the OTel trace across the SNS/SQS boundary so the consumer-side span links back to the publisher's trace in Tempo/Grafana. The span is valid on the HTTP path (gincommon's `TracingMiddleware` creates it) and on the SQS path (platform-events consumer injects it). On non-traced paths (unit tests, stub runners) `IsValid()` returns false so no zero trace ID is attached. Use `trace.SpanFromContext` — not `rc.TraceID` from gincommon RequestContext — because `buildEnvelope` lives at the service layer and does not have access to the Gin context.
+
+27. **`pgmetrics.Init` registered at startup** — `cmd/server/wire.go` calls `pgmetrics.Init(cfg.OTELServiceName, cfg.BuildVersion)` immediately after `events.Init`. This registers `pgcommon_*` Prometheus counters (pool acquire, query total, retry total, slow-query histogram) with the default registerer. It is idempotent — safe to call multiple times. Note: `pgcommon.Config.Logger` and `Config.Tracer` cannot currently be wired — those interfaces use unexported `port.Field` types making them unimplementable by external packages. Slow-query events still appear in structured logs once the library exports those types.
+
+28. **gRPC health check service registered** — `cmd/server/wire.go` registers `grpc_health_v1.RegisterHealthServer(grpcSrv, health.NewServer())` on the gRPC server alongside `DefinitionService`. `health.NewServer()` returns `SERVING` for all service names by default. This enables Kubernetes liveness/readiness probes on the gRPC port (`:9090`) via the standard `grpc.health.v1.Health` protocol, and lets service meshes perform targeted health checks without a custom endpoint.
+
 ---
 
 ## CI/CD
