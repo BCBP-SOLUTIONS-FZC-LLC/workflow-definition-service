@@ -2,7 +2,7 @@ package service
 
 import (
 	"context"
-	"errors"
+	"fmt"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
@@ -21,12 +21,22 @@ type ValidationService struct {
 func NewValidationService(d ValidationDeps) *ValidationService {
 	return &ValidationService{
 		compiler: d.Compiler,
-		log:      d.Log,
+		log:      logOrNoop(d.Log),
 	}
 }
 
-// Validate runs stateless BPMN parsing and structural/semantic checks with no DB writes.
-// Returns isValid=true and an empty slice when the XML passes all rules.
-func (s *ValidationService) Validate(_ context.Context, _ string) (isValid bool, errs []domain.BPMNValidationError, err error) {
-	return false, nil, errors.New("not implemented")
+// Validate performs no DB writes — safe to call without a transaction.
+func (s *ValidationService) Validate(
+	ctx context.Context,
+	bpmnXML string,
+) (isValid bool, errs []domain.BPMNValidationError, err error) {
+	validationErrs, err := s.compiler.Validate(ctx, bpmnXML)
+	if err != nil {
+		return false, nil, fmt.Errorf("validate bpmn: %w", err)
+	}
+	if len(validationErrs) > 0 {
+		wfValidationFailuresTotal.Inc()
+		return false, validationErrs, nil
+	}
+	return true, nil, nil
 }
