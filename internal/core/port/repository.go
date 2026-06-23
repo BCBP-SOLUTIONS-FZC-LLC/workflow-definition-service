@@ -2,7 +2,9 @@ package port
 
 import (
 	"context"
+	"encoding/json"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
 	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -14,6 +16,7 @@ type WorkflowRepository interface {
 	GetByBusinessKey(ctx context.Context, tenantID uuid.UUID, businessKey string) (*domain.Workflow, error)
 	List(ctx context.Context, tenantID uuid.UUID, filter WorkflowFilter) ([]*domain.Workflow, int64, error)
 	UpdateActiveVersion(ctx context.Context, tenantID, workflowID uuid.UUID, versionID *uuid.UUID) error
+	UpdateMetadata(ctx context.Context, tenantID, workflowID uuid.UUID, name, description string) error
 	CountByTenant(ctx context.Context, tenantID uuid.UUID) (int64, error)
 }
 
@@ -21,9 +24,18 @@ type WorkflowVersionRepository interface {
 	Create(ctx context.Context, v *domain.WorkflowVersion) error
 	GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.WorkflowVersion, error)
 	GetDraft(ctx context.Context, tenantID, workflowID uuid.UUID) (*domain.WorkflowVersion, error)
-	ListByWorkflow(ctx context.Context, tenantID, workflowID uuid.UUID, page, limit int) ([]*domain.WorkflowVersion, int64, error)
+	ListByWorkflow(
+		ctx context.Context,
+		tenantID, workflowID uuid.UUID,
+		page, limit int,
+	) ([]*domain.WorkflowVersion, int64, error)
 	UpdateDraft(ctx context.Context, v *domain.WorkflowVersion) error
-	Publish(ctx context.Context, tenantID, versionID uuid.UUID, versionNumber int32, compiledPlanJSON, artifactHash string) error
+	Publish(
+		ctx context.Context,
+		tenantID, versionID uuid.UUID,
+		versionNumber int32,
+		compiledPlanJSON, artifactHash string,
+	) error
 	Archive(ctx context.Context, tenantID, versionID uuid.UUID) error
 	DeleteDraft(ctx context.Context, tenantID, versionID uuid.UUID) error
 	SetInvalid(ctx context.Context, tenantID, versionID uuid.UUID, errorsJSON string) error
@@ -31,23 +43,29 @@ type WorkflowVersionRepository interface {
 }
 
 type AssigneeRepository interface {
-	BulkInsert(ctx context.Context, tenantID, versionID uuid.UUID, assignees []*domain.NodeAssignee) error
+	BulkInsert(
+		ctx context.Context,
+		tenantID, versionID uuid.UUID,
+		assignees []*domain.NodeAssignee,
+	) error
 	ListByUser(ctx context.Context, tenantID, userID uuid.UUID) ([]*domain.NodeAssignee, error)
 	DeleteByVersion(ctx context.Context, tenantID, versionID uuid.UUID) error
 }
 
+// OutboxRepository enqueues events inside a business transaction.
+// The outbox relay (fetch → publish → mark-sent/failed) is handled entirely
+// by the platform-events outbox.Runner.
+// The envelope is stored as canonical JSON by platform-events so the runner can
+// deserialise and publish it without any service-side transformation.
 type OutboxRepository interface {
-	Enqueue(ctx context.Context, event *domain.OutboxEvent) error
-	FetchPending(ctx context.Context, limit int) ([]*domain.OutboxEvent, error)
-	MarkSent(ctx context.Context, id uuid.UUID) error
-	MarkFailed(ctx context.Context, id uuid.UUID, errMsg string) error
+	Enqueue(ctx context.Context, env events.Envelope[json.RawMessage]) error
 }
 
 type ProcessedEventRepository interface {
-	// RecordIfNew inserts the event ID and returns true if it was new,
-	// false if it was already processed (ON CONFLICT DO NOTHING).
-	RecordIfNew(ctx context.Context, eventID, tenantID uuid.UUID, source string) (bool, error)
-	PruneOlderThan(ctx context.Context, days int) error
+	// RecordIfNew inserts the (event_id, consumer) pair and returns true if it
+	// was new, false if it was already processed (ON CONFLICT DO NOTHING).
+	// eventType is stored for observability and may be empty.
+	RecordIfNew(ctx context.Context, eventID uuid.UUID, consumer, eventType string) (bool, error)
 }
 
 type WorkflowFilter struct {
