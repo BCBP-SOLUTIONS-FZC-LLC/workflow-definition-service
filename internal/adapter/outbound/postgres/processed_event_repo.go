@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/google/uuid"
-
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
@@ -21,10 +22,31 @@ func NewProcessedEventRepo(pool *pgcommon.Pool) *ProcessedEventRepo {
 	return &ProcessedEventRepo{pool: pool}
 }
 
-func (r *ProcessedEventRepo) RecordIfNew(_ context.Context, _, _ uuid.UUID, _ string) (bool, error) {
-	return false, errors.New("not implemented")
-}
-
-func (r *ProcessedEventRepo) PruneOlderThan(_ context.Context, _ int) error {
-	return errors.New("not implemented")
+// RecordIfNew inserts the (event_id, consumer) pair and returns true if new,
+// false if already seen (ON CONFLICT DO NOTHING returns no row → pgx.ErrNoRows).
+// consumer identifies the logical queue/source; eventType is stored for
+// observability and may be empty.
+func (r *ProcessedEventRepo) RecordIfNew(
+	ctx context.Context,
+	eventID uuid.UUID,
+	consumer, eventType string,
+) (bool, error) {
+	var isNew bool
+	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		_, err := db.New(dbtx).RecordEventIfNew(ctx, db.RecordEventIfNewParams{
+			EventID:   eventID,
+			Consumer:  consumer,
+			EventType: toNullableText(eventType),
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			isNew = false
+			return nil
+		}
+		if err != nil {
+			return mapErr(err)
+		}
+		isNew = true
+		return nil
+	})
+	return isNew, err
 }
