@@ -1,0 +1,50 @@
+package element
+
+import (
+	"fmt"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/validator"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+)
+
+type UserTaskHandler struct{}
+
+func (UserTaskHandler) NodeType() bpmncore.FlowNodeType { return bpmncore.NodeTypeUserTask }
+func (UserTaskHandler) ActivityKind() string            { return "userTask" }
+
+func (UserTaskHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *bpmncore.Graph, _ *bpmncore.BPMNDefinitions, stageTypes map[string]bpmncore.StageTypeHandler, _ map[bpmncore.FlowNodeType]bpmncore.ElementHandler) []domain.BPMNValidationError {
+	laneRefs := bpmncore.BuildLaneRefSet(proc)
+	task := bpmncore.FindTask(proc, nodeID)
+	if task == nil {
+		return nil
+	}
+	var errs []domain.BPMNValidationError
+	errs = append(errs, validator.ValidateTaskDef(task.ID, task.ExtensionElements, stageTypes)...)
+	errs = append(errs, validator.ValidateAssignmentDef(task.ID, task.ExtensionElements)...)
+	errs = append(errs, validator.ValidateLaneMembership(task.ID, laneRefs)...)
+	errs = append(errs, validator.ValidateRequiresComment(task.ID, task.ExtensionElements)...)
+	return errs
+}
+
+func (UserTaskHandler) Compile(nodeID string, cs *bpmncore.CompileState) error {
+	task := bpmncore.FindTask(cs.Proc, nodeID)
+	if task == nil {
+		return fmt.Errorf("task %q not found in process", nodeID)
+	}
+	deptID, label := cs.DeptOf(nodeID)
+
+	stage, err := bpmncore.BuildStageDef(task, cs.StageTypes, cs.Proc)
+	if err != nil {
+		return err
+	}
+	cs.FillBoundaryTimerTarget(task.ID, &stage)
+	cs.EnsureDept(deptID, label)
+	cs.AppendStage(deptID, stage)
+	cs.AddToSeqBuf(deptID)
+
+	if nexts := cs.G.Outgoing[nodeID]; len(nexts) > 0 {
+		return cs.TraverseNode(nexts[0])
+	}
+	return nil
+}
