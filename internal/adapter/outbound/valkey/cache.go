@@ -2,6 +2,7 @@ package valkey
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,6 +19,9 @@ func NewCache(client redis.Cmdable) *Cache {
 
 func (c *Cache) Get(ctx context.Context, key string) (string, error) {
 	val, err := c.client.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) { // redis.Nil signals a cache miss, not an error
+		return "", nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("valkey get: %w", err)
 	}
@@ -44,4 +48,11 @@ func (c *Cache) SetNX(ctx context.Context, key string, value string, ttl time.Du
 		return false, fmt.Errorf("valkey setnx: %w", err)
 	}
 	return val, nil
+}
+
+func (c *Cache) Ping(ctx context.Context) error {
+	if err := c.client.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("valkey ping: %w", err)
+	}
+	return nil
 }
