@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_SubprocessError" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:error id="Error_Rejected" errorCode="REJECTED" />
+  <bpmn:process id="Process_SubprocessError" name="Subprocess Error Boundary Test" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_design" name="design">
+        <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>SubProcess_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_qa" name="qa">
+        <bpmn:flowNodeRef>Task_qa_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>BE_Error_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="StartEvent_1" name="Start" />
+    <bpmn:subProcess id="SubProcess_1" name="Design Sub">
+      <bpmn:outgoing>Flow_sub_qa</bpmn:outgoing>
+      <bpmn:laneSet id="InnerLaneSet_1">
+        <bpmn:lane id="Lane_inner_design" name="design">
+          <bpmn:flowNodeRef>InnerStart_1</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>InnerTask_prep</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>InnerEnd_1</bpmn:flowNodeRef>
+        </bpmn:lane>
+      </bpmn:laneSet>
+      <bpmn:startEvent id="InnerStart_1" name="Inner Start" />
+      <bpmn:userTask id="InnerTask_prep" name="Inner Prep">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="prep"/>
+          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        </bpmn:extensionElements>
+      </bpmn:userTask>
+      <bpmn:endEvent id="InnerEnd_1" name="Inner End" />
+      <bpmn:sequenceFlow id="InnerFlow_start_prep" sourceRef="InnerStart_1" targetRef="InnerTask_prep" />
+      <bpmn:sequenceFlow id="InnerFlow_prep_end" sourceRef="InnerTask_prep" targetRef="InnerEnd_1" />
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="BE_Error_1" attachedToRef="SubProcess_1">
+      <bpmn:errorEventDefinition errorRef="Error_Rejected" />
+    </bpmn:boundaryEvent>
+    <bpmn:userTask id="Task_qa_review" name="QA Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_sub_qa</bpmn:incoming>
+    </bpmn:userTask>
+    <bpmn:endEvent id="EndEvent_1" name="End" />
+    <bpmn:sequenceFlow id="Flow_start_sub" sourceRef="StartEvent_1" targetRef="SubProcess_1" />
+    <bpmn:sequenceFlow id="Flow_sub_qa" sourceRef="SubProcess_1" targetRef="Task_qa_review" />
+    <bpmn:sequenceFlow id="Flow_error_qa" sourceRef="BE_Error_1" targetRef="Task_qa_review" />
+    <bpmn:sequenceFlow id="Flow_qa_end" sourceRef="Task_qa_review" targetRef="EndEvent_1" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_SubprocessError">
+      <!-- Lane shapes -->
+      <bpmndi:BPMNShape id="Lane_design_di" bpmnElement="Lane_design" isHorizontal="true">
+        <dc:Bounds x="30" y="0" width="870" height="250"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_qa_di" bpmnElement="Lane_qa" isHorizontal="true">
+        <dc:Bounds x="30" y="250" width="870" height="150"/>
+      </bpmndi:BPMNShape>
+      <!-- Inner lane inside SubProcess_1 -->
+      <bpmndi:BPMNShape id="Lane_inner_design_di" bpmnElement="Lane_inner_design" isHorizontal="true">
+        <dc:Bounds x="278" y="28" width="310" height="194"/>
+      </bpmndi:BPMNShape>
+      <!-- Design lane elements -->
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="162" y="107" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SubProcess_1_di" bpmnElement="SubProcess_1" isExpanded="true">
+        <dc:Bounds x="248" y="28" width="340" height="194"/>
+      </bpmndi:BPMNShape>
+      <!-- Inner subprocess elements -->
+      <bpmndi:BPMNShape id="InnerStart_1_di" bpmnElement="InnerStart_1">
+        <dc:Bounds x="298" y="112" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="InnerTask_prep_di" bpmnElement="InnerTask_prep">
+        <dc:Bounds x="396" y="90" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="InnerEnd_1_di" bpmnElement="InnerEnd_1">
+        <dc:Bounds x="548" y="112" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <!-- Boundary error event on SubProcess_1 -->
+      <bpmndi:BPMNShape id="BE_Error_1_di" bpmnElement="BE_Error_1">
+        <dc:Bounds x="570" y="200" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <!-- QA lane elements -->
+      <bpmndi:BPMNShape id="Task_qa_review_di" bpmnElement="Task_qa_review">
+        <dc:Bounds x="660" y="285" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_1_di" bpmnElement="EndEvent_1">
+        <dc:Bounds x="822" y="307" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <!-- Sequence flow edges (outer process) -->
+      <bpmndi:BPMNEdge id="Flow_start_sub_di" bpmnElement="Flow_start_sub">
+        <di:waypoint x="198" y="125"/>
+        <di:waypoint x="248" y="125"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_sub_qa_di" bpmnElement="Flow_sub_qa">
+        <di:waypoint x="588" y="125"/>
+        <di:waypoint x="624" y="125"/>
+        <di:waypoint x="624" y="325"/>
+        <di:waypoint x="660" y="325"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_error_qa_di" bpmnElement="Flow_error_qa">
+        <di:waypoint x="588" y="218"/>
+        <di:waypoint x="624" y="218"/>
+        <di:waypoint x="624" y="325"/>
+        <di:waypoint x="660" y="325"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_qa_end_di" bpmnElement="Flow_qa_end">
+        <di:waypoint x="760" y="325"/>
+        <di:waypoint x="822" y="325"/>
+      </bpmndi:BPMNEdge>
+      <!-- Sequence flow edges (inner subprocess) -->
+      <bpmndi:BPMNEdge id="InnerFlow_start_prep_di" bpmnElement="InnerFlow_start_prep">
+        <di:waypoint x="334" y="130"/>
+        <di:waypoint x="396" y="130"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="InnerFlow_prep_end_di" bpmnElement="InnerFlow_prep_end">
+        <di:waypoint x="496" y="130"/>
+        <di:waypoint x="548" y="130"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

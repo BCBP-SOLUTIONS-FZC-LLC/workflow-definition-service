@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_Para" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.46.1">
+  <bpmn:process id="Process_Parallel" name="Parallel Procurement and Planning" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_commissioning" name="commissioning">
+        <bpmn:flowNodeRef>Task_commissioning_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_ExclusiveJoin</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_qa" name="qa">
+        <bpmn:flowNodeRef>Task_qa_prep</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_construction" name="construction">
+        <bpmn:flowNodeRef>Task_construction_prep</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_planning" name="planning">
+        <bpmn:flowNodeRef>Task_planning_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_ParallelJoin</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_ExclusiveSplit</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_procurement" name="procurement">
+        <bpmn:flowNodeRef>Task_procurement_prep</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_design" name="design">
+        <bpmn:flowNodeRef>Task_design_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_ParallelSplit</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="StartEvent_1" name="Start" />
+    <bpmn:userTask id="Task_design_prep" name="Design Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:parallelGateway id="Gateway_ParallelSplit" name="Split" />
+    <bpmn:userTask id="Task_procurement_prep" name="Procurement Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_planning_prep" name="Planning Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:parallelGateway id="Gateway_ParallelJoin" name="Join" />
+    <bpmn:exclusiveGateway id="Gateway_ExclusiveSplit" name="Approval Route" />
+    <bpmn:userTask id="Task_construction_prep" name="Construction Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_qa_prep" name="QA Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="772a0622-04bd-63f6-c938-668877662222"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="Gateway_ExclusiveJoin" name="Merge" />
+    <bpmn:userTask id="Task_commissioning_prep" name="Commissioning Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="883b1733-15ce-74a7-da49-779988773333"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:endEvent id="EndEvent_1" name="End" />
+    <bpmn:sequenceFlow id="Flow_start_design" sourceRef="StartEvent_1" targetRef="Task_design_prep" />
+    <bpmn:sequenceFlow id="Flow_design_split" sourceRef="Task_design_prep" targetRef="Gateway_ParallelSplit" />
+    <bpmn:sequenceFlow id="Flow_split_procurement" sourceRef="Gateway_ParallelSplit" targetRef="Task_procurement_prep" />
+    <bpmn:sequenceFlow id="Flow_procurement_join" sourceRef="Task_procurement_prep" targetRef="Gateway_ParallelJoin" />
+    <bpmn:sequenceFlow id="Flow_split_planning" sourceRef="Gateway_ParallelSplit" targetRef="Task_planning_prep" />
+    <bpmn:sequenceFlow id="Flow_planning_join" sourceRef="Task_planning_prep" targetRef="Gateway_ParallelJoin" />
+    <bpmn:sequenceFlow id="Flow_join_exclusive" sourceRef="Gateway_ParallelJoin" targetRef="Gateway_ExclusiveSplit" />
+    <bpmn:sequenceFlow id="Flow_exclusive_construction" sourceRef="Gateway_ExclusiveSplit" targetRef="Task_construction_prep">
+      <bpmn:conditionExpression>$.approved == true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_construction_merge" sourceRef="Task_construction_prep" targetRef="Gateway_ExclusiveJoin" />
+    <bpmn:sequenceFlow id="Flow_exclusive_qa" sourceRef="Gateway_ExclusiveSplit" targetRef="Task_qa_prep">
+      <bpmn:conditionExpression>$.approved == false</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_qa_merge" sourceRef="Task_qa_prep" targetRef="Gateway_ExclusiveJoin" />
+    <bpmn:sequenceFlow id="Flow_merge_commissioning" sourceRef="Gateway_ExclusiveJoin" targetRef="Task_commissioning_prep" />
+    <bpmn:sequenceFlow id="Flow_commissioning_end" sourceRef="Task_commissioning_prep" targetRef="EndEvent_1" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_Parallel">
+      <bpmndi:BPMNShape id="Shape_StartEvent_1" bpmnElement="StartEvent_1"><dc:Bounds x="152" y="82" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_design_prep" bpmnElement="Task_design_prep"><dc:Bounds x="250" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Gateway_ParallelSplit" bpmnElement="Gateway_ParallelSplit"><dc:Bounds x="400" y="75" width="50" height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_procurement_prep" bpmnElement="Task_procurement_prep"><dc:Bounds x="500" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_planning_prep" bpmnElement="Task_planning_prep"><dc:Bounds x="500" y="180" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Gateway_ParallelJoin" bpmnElement="Gateway_ParallelJoin"><dc:Bounds x="650" y="75" width="50" height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Gateway_ExclusiveSplit" bpmnElement="Gateway_ExclusiveSplit"><dc:Bounds x="750" y="75" width="50" height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_construction_prep" bpmnElement="Task_construction_prep"><dc:Bounds x="860" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_qa_prep" bpmnElement="Task_qa_prep"><dc:Bounds x="860" y="180" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Gateway_ExclusiveJoin" bpmnElement="Gateway_ExclusiveJoin"><dc:Bounds x="1010" y="75" width="50" height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_commissioning_prep" bpmnElement="Task_commissioning_prep"><dc:Bounds x="1110" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_EndEvent_1" bpmnElement="EndEvent_1"><dc:Bounds x="1262" y="82" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_Flow_start_design" bpmnElement="Flow_start_design"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_design_split" bpmnElement="Flow_design_split"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_split_procurement" bpmnElement="Flow_split_procurement"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_procurement_join" bpmnElement="Flow_procurement_join"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_split_planning" bpmnElement="Flow_split_planning"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_planning_join" bpmnElement="Flow_planning_join"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_join_exclusive" bpmnElement="Flow_join_exclusive"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_exclusive_construction" bpmnElement="Flow_exclusive_construction"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_construction_merge" bpmnElement="Flow_construction_merge"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_exclusive_qa" bpmnElement="Flow_exclusive_qa"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_qa_merge" bpmnElement="Flow_qa_merge"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_merge_commissioning" bpmnElement="Flow_merge_commissioning"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_commissioning_end" bpmnElement="Flow_commissioning_end"/>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

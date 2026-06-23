@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Example: parallel split/join PLUS an explicit guarded rework loop.
+
+  Procurement || Planning run in parallel, join, then Construction runs
+  prep -> review -> approve. The exclusive gateway Gateway_Approve either
+  exits forward to the End event (approved) or reverts back to
+  Task_construction_prep (rejected) — the back-edge Flow_12.
+
+  This is a GUARDED loop: the back-edge originates at a diverging exclusive
+  gateway that also has a forward exit branch (Flow_11), so termination is
+  always possible. The revert target is identified structurally by the node
+  (dept from lane=construction, stage_type=prep), never by user id. See
+  definition_service LLD §4.4 (Guarded-Loop Enforcement).
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_ParaLoop" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_ParallelLoop" name="Parallel Procurement &#38; Planning with Construction Rework Loop" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_design" name="design">
+        <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_design_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_Split</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_procurement" name="procurement">
+        <bpmn:flowNodeRef>Task_procurement_prep</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_planning" name="planning">
+        <bpmn:flowNodeRef>Task_planning_prep</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_construction" name="construction">
+        <bpmn:flowNodeRef>Gateway_Join</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_construction_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_construction_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_construction_approve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_Approve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="StartEvent_1" name="Start" />
+    <bpmn:userTask id="Task_design_prep" name="Design Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_procurement_prep" name="Procurement Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_planning_prep" name="Planning Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_construction_prep" name="Construction Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_construction_review" name="Construction Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_construction_approve" name="Construction Approve">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve"/>
+        <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:parallelGateway id="Gateway_Split" name="Split" />
+    <bpmn:parallelGateway id="Gateway_Join" name="Join" />
+    <bpmn:exclusiveGateway id="Gateway_Approve" name="Approved?" />
+    <bpmn:endEvent id="EndEvent_1" name="End" />
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Task_design_prep" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_design_prep" targetRef="Gateway_Split" />
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Gateway_Split" targetRef="Task_procurement_prep" />
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="Gateway_Split" targetRef="Task_planning_prep" />
+    <bpmn:sequenceFlow id="Flow_5" sourceRef="Task_procurement_prep" targetRef="Gateway_Join" />
+    <bpmn:sequenceFlow id="Flow_6" sourceRef="Task_planning_prep" targetRef="Gateway_Join" />
+    <bpmn:sequenceFlow id="Flow_7" sourceRef="Gateway_Join" targetRef="Task_construction_prep" />
+    <bpmn:sequenceFlow id="Flow_8" sourceRef="Task_construction_prep" targetRef="Task_construction_review" />
+    <bpmn:sequenceFlow id="Flow_9" sourceRef="Task_construction_review" targetRef="Task_construction_approve" />
+    <bpmn:sequenceFlow id="Flow_10" sourceRef="Task_construction_approve" targetRef="Gateway_Approve" />
+    <!-- Forward (exit) branch: leaves the loop when approved. -->
+    <bpmn:sequenceFlow id="Flow_11" name="approved" sourceRef="Gateway_Approve" targetRef="EndEvent_1">
+      <bpmn:conditionExpression>$.approved == true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <!-- Back-edge: revert/loop to construction prep when rejected. Guarded because
+         Gateway_Approve also has the forward exit Flow_11. -->
+    <bpmn:sequenceFlow id="Flow_12" name="revert to prep" sourceRef="Gateway_Approve" targetRef="Task_construction_prep">
+      <bpmn:conditionExpression>$.approved == false</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_ParallelLoop">
+      <bpmndi:BPMNShape id="Shape_StartEvent_1" bpmnElement="StartEvent_1"><dc:Bounds x="152" y="82" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_design_prep" bpmnElement="Task_design_prep"><dc:Bounds x="250" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Gateway_Split" bpmnElement="Gateway_Split"><dc:Bounds x="400" y="75" width="50" height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_procurement_prep" bpmnElement="Task_procurement_prep"><dc:Bounds x="500" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_planning_prep" bpmnElement="Task_planning_prep"><dc:Bounds x="500" y="180" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Gateway_Join" bpmnElement="Gateway_Join"><dc:Bounds x="650" y="75" width="50" height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_construction_prep" bpmnElement="Task_construction_prep"><dc:Bounds x="750" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_construction_review" bpmnElement="Task_construction_review"><dc:Bounds x="900" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_construction_approve" bpmnElement="Task_construction_approve"><dc:Bounds x="1050" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Gateway_Approve" bpmnElement="Gateway_Approve"><dc:Bounds x="1200" y="75" width="50" height="50"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_EndEvent_1" bpmnElement="EndEvent_1"><dc:Bounds x="1312" y="82" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_Flow_1" bpmnElement="Flow_1"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_2" bpmnElement="Flow_2"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_3" bpmnElement="Flow_3"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_4" bpmnElement="Flow_4"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_5" bpmnElement="Flow_5"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_6" bpmnElement="Flow_6"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_7" bpmnElement="Flow_7"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_8" bpmnElement="Flow_8"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_9" bpmnElement="Flow_9"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_10" bpmnElement="Flow_10"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_11" bpmnElement="Flow_11"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_12" bpmnElement="Flow_12"/>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

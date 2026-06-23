@@ -1,0 +1,388 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.46.1">
+  <bpmn:process id="Process_FullWorkflow" name="Engineering Package Review" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_commissioning" name="commissioning">
+        <bpmn:flowNodeRef>Task_commissioning_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_commissioning_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_commissioning_approve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_qa" name="qa">
+        <bpmn:flowNodeRef>Task_qa_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_qa_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_qa_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_construction" name="construction">
+        <bpmn:flowNodeRef>Task_construction_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_construction_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_construction_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_hse" name="hse">
+        <bpmn:flowNodeRef>Task_hse_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_hse_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_hse_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_logistics" name="logistics">
+        <bpmn:flowNodeRef>Task_logistics_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_logistics_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_logistics_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_planning" name="planning">
+        <bpmn:flowNodeRef>Task_planning_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_planning_approve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_planning_prep</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_procurement" name="procurement">
+        <bpmn:flowNodeRef>Task_procurement_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_procurement_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_procurement_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_contracts" name="contracts">
+        <bpmn:flowNodeRef>Task_contracts_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_contracts_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_contracts_approve</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_design" name="design">
+        <bpmn:flowNodeRef>Task_design_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_design_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_design_approve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="StartEvent_1" name="Start" />
+    <bpmn:userTask id="Task_design_prep" name="PrepActivity">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="false" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_design_review" name="ReviewActivity">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_design_approve" name="ApproveActivity">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve"/>
+        <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="883b1733-15ce-74a7-da49-779988773333"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_contracts_prep" name="Contracts Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="false" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_contracts_review" name="Contracts Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_contracts_approve" name="Contracts Approve">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve"/>
+        <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="883b1733-15ce-74a7-da49-779988773333"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_procurement_prep" name="Procurement Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="false" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_procurement_review" name="Procurement Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_procurement_approve" name="Procurement Approve">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve"/>
+        <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="883b1733-15ce-74a7-da49-779988773333"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_planning_prep" name="Planning Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="false" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_planning_review" name="Planning Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_planning_approve" name="Planning Approve">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve"/>
+        <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="883b1733-15ce-74a7-da49-779988773333"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_logistics_prep" name="Logistics Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="false" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_logistics_review" name="Logistics Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_logistics_approve" name="Logistics Approve">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve"/>
+        <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="883b1733-15ce-74a7-da49-779988773333"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_hse_prep" name="HSE Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="false" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_hse_review" name="HSE Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_hse_approve" name="HSE Approve">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve"/>
+        <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="883b1733-15ce-74a7-da49-779988773333"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_construction_prep" name="Construction Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="false" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_construction_review" name="Construction Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_construction_approve" name="Construction Approve">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve"/>
+        <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="883b1733-15ce-74a7-da49-779988773333"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_qa_prep" name="QA Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="false" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_qa_review" name="QA Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_qa_approve" name="QA Approve">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve"/>
+        <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="883b1733-15ce-74a7-da49-779988773333"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_commissioning_prep" name="Commissioning Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="false" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_commissioning_review" name="Commissioning Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_commissioning_approve" name="Commissioning Approve">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve"/>
+        <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="883b1733-15ce-74a7-da49-779988773333"/>
+        <zeebe:properties>
+          <zeebe:property name="requires_comment" value="true" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:endEvent id="EndEvent_1" name="Complete" />
+    <bpmn:sequenceFlow id="Flow_start_design_prep" sourceRef="StartEvent_1" targetRef="Task_design_prep" />
+    <bpmn:sequenceFlow id="Flow_design_prep_review" sourceRef="Task_design_prep" targetRef="Task_design_review" />
+    <bpmn:sequenceFlow id="Flow_design_review_approve" sourceRef="Task_design_review" targetRef="Task_design_approve" />
+    <bpmn:sequenceFlow id="Flow_design_contracts" sourceRef="Task_design_approve" targetRef="Task_contracts_prep" />
+    <bpmn:sequenceFlow id="Flow_contracts_prep_review" sourceRef="Task_contracts_prep" targetRef="Task_contracts_review" />
+    <bpmn:sequenceFlow id="Flow_contracts_review_approve" sourceRef="Task_contracts_review" targetRef="Task_contracts_approve" />
+    <bpmn:sequenceFlow id="Flow_contracts_procurement" sourceRef="Task_contracts_approve" targetRef="Task_procurement_prep" />
+    <bpmn:sequenceFlow id="Flow_procurement_prep_review" sourceRef="Task_procurement_prep" targetRef="Task_procurement_review" />
+    <bpmn:sequenceFlow id="Flow_procurement_review_approve" sourceRef="Task_procurement_review" targetRef="Task_procurement_approve" />
+    <bpmn:sequenceFlow id="Flow_procurement_planning" sourceRef="Task_procurement_approve" targetRef="Task_planning_prep" />
+    <bpmn:sequenceFlow id="Flow_planning_prep_review" sourceRef="Task_planning_prep" targetRef="Task_planning_review" />
+    <bpmn:sequenceFlow id="Flow_planning_review_approve" sourceRef="Task_planning_review" targetRef="Task_planning_approve" />
+    <bpmn:sequenceFlow id="Flow_planning_logistics" sourceRef="Task_planning_approve" targetRef="Task_logistics_prep" />
+    <bpmn:sequenceFlow id="Flow_logistics_prep_review" sourceRef="Task_logistics_prep" targetRef="Task_logistics_review" />
+    <bpmn:sequenceFlow id="Flow_logistics_review_approve" sourceRef="Task_logistics_review" targetRef="Task_logistics_approve" />
+    <bpmn:sequenceFlow id="Flow_logistics_hse" sourceRef="Task_logistics_approve" targetRef="Task_hse_prep" />
+    <bpmn:sequenceFlow id="Flow_hse_prep_review" sourceRef="Task_hse_prep" targetRef="Task_hse_review" />
+    <bpmn:sequenceFlow id="Flow_hse_review_approve" sourceRef="Task_hse_review" targetRef="Task_hse_approve" />
+    <bpmn:sequenceFlow id="Flow_hse_construction" sourceRef="Task_hse_approve" targetRef="Task_construction_prep" />
+    <bpmn:sequenceFlow id="Flow_construction_prep_review" sourceRef="Task_construction_prep" targetRef="Task_construction_review" />
+    <bpmn:sequenceFlow id="Flow_construction_review_approve" sourceRef="Task_construction_review" targetRef="Task_construction_approve" />
+    <bpmn:sequenceFlow id="Flow_construction_qa" sourceRef="Task_construction_approve" targetRef="Task_qa_prep" />
+    <bpmn:sequenceFlow id="Flow_qa_prep_review" sourceRef="Task_qa_prep" targetRef="Task_qa_review" />
+    <bpmn:sequenceFlow id="Flow_qa_review_approve" sourceRef="Task_qa_review" targetRef="Task_qa_approve" />
+    <bpmn:sequenceFlow id="Flow_qa_commissioning" sourceRef="Task_qa_approve" targetRef="Task_commissioning_prep" />
+    <bpmn:sequenceFlow id="Flow_commissioning_prep_review" sourceRef="Task_commissioning_prep" targetRef="Task_commissioning_review" />
+    <bpmn:sequenceFlow id="Flow_commissioning_review_approve" sourceRef="Task_commissioning_review" targetRef="Task_commissioning_approve" />
+    <bpmn:sequenceFlow id="Flow_commissioning_end" sourceRef="Task_commissioning_approve" targetRef="EndEvent_1" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_FullWorkflow">
+      <bpmndi:BPMNShape id="Shape_StartEvent_1" bpmnElement="StartEvent_1"><dc:Bounds x="152" y="82" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_EndEvent_1" bpmnElement="EndEvent_1"><dc:Bounds x="1512" y="82" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_design_prep" bpmnElement="Task_design_prep"><dc:Bounds x="250" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_design_review" bpmnElement="Task_design_review"><dc:Bounds x="400" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_design_approve" bpmnElement="Task_design_approve"><dc:Bounds x="550" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_contracts_prep" bpmnElement="Task_contracts_prep"><dc:Bounds x="250" y="180" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_contracts_review" bpmnElement="Task_contracts_review"><dc:Bounds x="400" y="180" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_contracts_approve" bpmnElement="Task_contracts_approve"><dc:Bounds x="550" y="180" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_procurement_prep" bpmnElement="Task_procurement_prep"><dc:Bounds x="250" y="300" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_procurement_review" bpmnElement="Task_procurement_review"><dc:Bounds x="400" y="300" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_procurement_approve" bpmnElement="Task_procurement_approve"><dc:Bounds x="550" y="300" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_planning_prep" bpmnElement="Task_planning_prep"><dc:Bounds x="250" y="420" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_planning_review" bpmnElement="Task_planning_review"><dc:Bounds x="400" y="420" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_planning_approve" bpmnElement="Task_planning_approve"><dc:Bounds x="550" y="420" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_logistics_prep" bpmnElement="Task_logistics_prep"><dc:Bounds x="250" y="540" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_logistics_review" bpmnElement="Task_logistics_review"><dc:Bounds x="400" y="540" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_logistics_approve" bpmnElement="Task_logistics_approve"><dc:Bounds x="550" y="540" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_hse_prep" bpmnElement="Task_hse_prep"><dc:Bounds x="250" y="660" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_hse_review" bpmnElement="Task_hse_review"><dc:Bounds x="400" y="660" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_hse_approve" bpmnElement="Task_hse_approve"><dc:Bounds x="550" y="660" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_construction_prep" bpmnElement="Task_construction_prep"><dc:Bounds x="250" y="780" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_construction_review" bpmnElement="Task_construction_review"><dc:Bounds x="400" y="780" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_construction_approve" bpmnElement="Task_construction_approve"><dc:Bounds x="550" y="780" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_qa_prep" bpmnElement="Task_qa_prep"><dc:Bounds x="250" y="900" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_qa_review" bpmnElement="Task_qa_review"><dc:Bounds x="400" y="900" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_qa_approve" bpmnElement="Task_qa_approve"><dc:Bounds x="550" y="900" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_commissioning_prep" bpmnElement="Task_commissioning_prep"><dc:Bounds x="250" y="1020" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_commissioning_review" bpmnElement="Task_commissioning_review"><dc:Bounds x="400" y="1020" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_commissioning_approve" bpmnElement="Task_commissioning_approve"><dc:Bounds x="550" y="1020" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_Flow_start_design_prep" bpmnElement="Flow_start_design_prep"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_design_prep_review" bpmnElement="Flow_design_prep_review"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_design_review_approve" bpmnElement="Flow_design_review_approve"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_design_contracts" bpmnElement="Flow_design_contracts"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_contracts_prep_review" bpmnElement="Flow_contracts_prep_review"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_contracts_review_approve" bpmnElement="Flow_contracts_review_approve"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_contracts_procurement" bpmnElement="Flow_contracts_procurement"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_procurement_prep_review" bpmnElement="Flow_procurement_prep_review"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_procurement_review_approve" bpmnElement="Flow_procurement_review_approve"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_procurement_planning" bpmnElement="Flow_procurement_planning"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_planning_prep_review" bpmnElement="Flow_planning_prep_review"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_planning_review_approve" bpmnElement="Flow_planning_review_approve"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_planning_logistics" bpmnElement="Flow_planning_logistics"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_logistics_prep_review" bpmnElement="Flow_logistics_prep_review"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_logistics_review_approve" bpmnElement="Flow_logistics_review_approve"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_logistics_hse" bpmnElement="Flow_logistics_hse"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_hse_prep_review" bpmnElement="Flow_hse_prep_review"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_hse_review_approve" bpmnElement="Flow_hse_review_approve"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_hse_construction" bpmnElement="Flow_hse_construction"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_construction_prep_review" bpmnElement="Flow_construction_prep_review"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_construction_review_approve" bpmnElement="Flow_construction_review_approve"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_construction_qa" bpmnElement="Flow_construction_qa"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_qa_prep_review" bpmnElement="Flow_qa_prep_review"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_qa_review_approve" bpmnElement="Flow_qa_review_approve"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_qa_commissioning" bpmnElement="Flow_qa_commissioning"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_commissioning_prep_review" bpmnElement="Flow_commissioning_prep_review"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_commissioning_review_approve" bpmnElement="Flow_commissioning_review_approve"/>
+      <bpmndi:BPMNEdge id="Edge_Flow_commissioning_end" bpmnElement="Flow_commissioning_end"/>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
