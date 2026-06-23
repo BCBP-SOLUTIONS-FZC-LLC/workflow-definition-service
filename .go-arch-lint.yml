@@ -1,0 +1,95 @@
+# go-arch-lint configuration — enforces Clean Architecture import direction.
+# Rules mirror the "Import rules" section of .claude/CLAUDE.md:
+#   domain ← port ← service ← adapter (dependency arrows point inward)
+#
+# Run: go-arch-lint check --project-path .
+version: 2
+workdir: .
+
+exclude:
+  - ".claude"
+  - "platform-libs"
+  - "vendor"
+  - "test"
+
+allow:
+  # Only check inter-component project imports; vendor packages are unrestricted.
+  depOnAnyVendor: true
+
+components:
+  domain:
+    in: "internal/core/domain/**"
+  port:
+    in: "internal/core/port/**"
+  service:
+    in: "internal/core/service/**"
+  # bpmn_compiler root files only (sub-packages declared separately below)
+  bpmn_compiler:
+    in: "internal/bpmn_compiler"
+  bpmncore:
+    in: "internal/bpmn_compiler/bpmncore/**"
+  bpmn_element:
+    in: "internal/bpmn_compiler/element/**"
+  bpmn_validator:
+    in: "internal/bpmn_compiler/validator/**"
+  config:
+    in: "internal/config/**"
+  # postgres/db is sqlc-generated code; declared separately so adapter can import it
+  db:
+    in: "internal/adapter/outbound/postgres/db/**"
+  adapter:
+    in: "internal/adapter/**"
+  # proto-generated code used by both adapter and cmd
+  gen:
+    in: "gen/**"
+  db_migrations:
+    in: "db/**"
+  cmd:
+    in: "cmd/**"
+
+deps:
+  port:
+    # port/mocks sub-package imports the port package itself (self-reference)
+    mayDependOn:
+      - domain
+      - port
+  service:
+    mayDependOn:
+      - domain
+      - port
+  bpmncore:
+    mayDependOn:
+      - domain
+  bpmn_validator:
+    mayDependOn:
+      - domain
+      - bpmncore
+  bpmn_element:
+    mayDependOn:
+      - domain
+      - bpmncore
+      - bpmn_validator
+  bpmn_compiler:
+    mayDependOn:
+      - domain
+      - port      # root package implements port.PlanCompiler
+      - bpmncore
+      - bpmn_element
+      - bpmn_validator
+  adapter:
+    mayDependOn:
+      - domain
+      - port
+      - service   # handlers reference service.UpdateDraftReq / CloneReq / DiffResult
+      - db        # sqlc-generated types
+      - gen       # proto-generated types (grpc server + execution client)
+  cmd:
+    mayDependOn:
+      - domain
+      - port
+      - service
+      - adapter
+      - config
+      - bpmn_compiler
+      - gen
+      - db_migrations

@@ -9,32 +9,66 @@
 | Python | 3.9+ | Required for MkDocs only |
 | Make | Any | Pre-installed on macOS/Linux |
 
+## Private Module Access
+
+This service consumes private Go modules hosted in the `github.com/BCBP-SOLUTIONS-FZC-LLC/*` organization (such as `platform-events`, `platform-pgcommon`, and `platform-gincommon`).
+
+To fetch these modules, configure Go to bypass the public proxy and checksum database:
+
+```bash
+go env -w GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*
+```
+
+### GitHub Authentication
+
+You must configure Git to authenticate against GitHub when fetching private modules:
+
+**SSH key (recommended for local dev):**
+
+```bash
+git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
+```
+
+**Personal Access Token (for CI/CD or HTTPS):**
+Add a classic or fine-grained GitHub PAT with read repository permissions:
+
+```bash
+git config --global credential.helper store
+echo "https://x-access-token:<your-github-token>@github.com" > ~/.git-credentials
+chmod 600 ~/.git-credentials
+```
+
+---
+
 ## First-time setup
 
 ```bash
-# 1. Install dev tooling (sqlc, goose, buf, mockgen, golangci-lint)
+# 1. Configure Go private module path
+go env -w GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*
+
+# 2. Install dev tooling (sqlc, buf, mockgen, golangci-lint)
 make tools
 
-# 2. Copy env template and fill in local values
+# 3. Copy env template and fill in local values
 cp .env.example .env
 
-# 3. Start local infra (PostgreSQL 16 + Valkey 8)
+# 4. Start local infra (PostgreSQL 18 + Valkey 8)
 make docker-up
 
-# 4. Run database migrations
-make migrate-up
-
-# 5. Start the server
+# 5. Apply schema migrations (outbox + domain), then start the server
+make migrate          # or: go run ./cmd/server migrate
 go run ./cmd/server
 ```
+
+`make migrate` runs the migrations to completion and exits — the server no longer
+migrates at startup (see [Database → Migrations](database.md#migrations) for why).
 
 The server is ready when you see:
 
 ```sh
 INFO  HTTP server starting         {"addr": ":8080"}
 INFO  gRPC server starting         {"addr": ":9090"}
-INFO  stub: SQS consumer started (no-op — AWS_USE_STUB=true)
-INFO  stub: outbox relay started (no-op)
+INFO  outbox relay starting
 ```
 
 Verify with:
@@ -47,7 +81,39 @@ curl http://localhost:8080/metrics   # → Prometheus text
 
 ## AWS stubs
 
-By default `AWS_USE_STUB=true` in `.env.example`. This activates no-op stub adapters for SNS (publisher) and SQS (consumer) so the service boots without any AWS credentials.
+By default `AWS_USE_STUB=true` in `.env.example`. This activates a no-op stub SNS publisher so the service boots without any AWS credentials. (The service does not consume SQS in-process — inbound events arrive over HTTP at `POST /internal/events`.)
+
+## LocalStack + full stack (end-to-end)
+
+`make docker-up` includes a LocalStack container that emulates SNS locally. To run the service against real AWS clients and test the full event pipeline:
+
+```bash
+# 1. Start everything (Postgres + Valkey + LocalStack)
+make docker-up
+
+# 2. Start outbound service stubs (gRPC + HTTP)
+go run ./cmd/stub/execution &    # :9091 (gRPC), :9092 (control)
+go run ./cmd/stub/membership &   # :8081 (HTTP + /control toggle)
+
+# 3. Run the server against LocalStack and stubs (AWS_USE_STUB=false)
+ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_ADDR=localhost:9091 \
+  AWS_USE_STUB=false go run ./cmd/server &
+
+# 4. Run the smoke test
+./scripts/smoke-test.sh
+```
+
+The stub binaries expose a runtime control plane to toggle their responses:
+
+```bash
+# Toggle membership eligibility
+curl -X POST http://localhost:8081/control -d '{"eligible":true}'
+curl -X POST http://localhost:8081/control -d '{"eligible":false}'
+
+# Toggle active instances on execution service
+curl -X POST http://localhost:9092/control -d '{"has_active":false}'
+curl -X POST http://localhost:9092/control -d '{"has_active":true}'
+```
 
 ## Code generation
 
@@ -62,11 +128,23 @@ Generated files are gitignored — never commit them.
 
 ## Running tests
 
+The service uses unit tests and integration tests. Integration tests spin up database/infrastructure dependencies dynamically using `testcontainers-go`, meaning a local running Docker daemon is required.
+
 ```bash
-make test                # unit tests with race detector
-make test-integration    # integration tests (requires running infra)
-make cover               # unit tests + coverage summary
-make cover-html          # opens HTML coverage report in browser
+# 1. Pre-pull Docker images for testcontainers (one-time command to warm cache)
+make tools-integration
+
+# 2. Run unit tests with race detector and coverage
+make test
+
+# 3. Run integration tests (spins up Docker containers via testcontainers-go automatically)
+make test-integration
+
+# 4. Print unit test coverage summary
+make cover
+
+# 5. Open HTML coverage report in browser
+make cover-html
 ```
 
 ## Docs
@@ -83,7 +161,7 @@ The Makefile automatically loads `.env` if the file exists, so variables like `D
 
 ```bash
 cp .env.example .env   # do this once
-make migrate-up        # DATABASE_URL is read automatically
+make test-integration  # DATABASE_URL etc. are read automatically
 ```
 
 Variables in `.env` override any existing shell environment values for the duration of the make process only.

@@ -1,0 +1,36 @@
+# Version control
+.git/
+.github/
+
+# Local dev tooling and build artifacts
+.tools/
+bin/
+.coverage/
+site/
+
+# Local reference copies — never imported, not needed in image
+platform-libs/
+.design/
+
+# Documentation
+docs/
+*.md
+mkdocs.yml
+
+# Tests and scripts — not part of the server binary
+test/
+scripts/
+
+# Generated outputs (rebuilt during docker build via go build)
+gen/
+internal/adapter/outbound/postgres/db/
+internal/core/port/mocks/
+
+# Environment files — secrets must be passed via build args or runtime env
+.env
+.env.*
+
+# Editor and OS artifacts
+.DS_Store
+*.swp
+*.swo

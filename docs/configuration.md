@@ -42,6 +42,9 @@ Copy `.env.example` to `.env` for local development.
 | --- | --- | --- | --- |
 | `VALKEY_ADDR` | No | `localhost:6379` | go-redis dial address |
 | `VALKEY_PASSWORD` | No | *(empty)* | Auth password; leave empty for local dev |
+| `VALKEY_DIAL_TIMEOUT` | No | `2s` | Timeout for establishing a new connection to Valkey |
+| `VALKEY_READ_TIMEOUT` | No | `1s` | Timeout for socket reads (also used as write timeout) |
+| `CACHE_COMPILED_PLAN_TTL` | No | `1h` | TTL for the gRPC `GetCompiledWorkflow` compiled-plan cache (`wf:plan:<tenant>:<version>`); entries are also deleted on archive / membership invalidation |
 
 ## AWS
 
@@ -51,8 +54,14 @@ Copy `.env.example` to `.env` for local development.
 | `AWS_REGION` | No | `us-east-1` | AWS region |
 | `AWS_ENDPOINT_URL` | No | *(empty)* | Custom endpoint URL (e.g. `http://localhost:4566` for LocalStack) |
 | `SNS_TOPIC_ARN` | When `AWS_USE_STUB=false` | — | SNS topic for `wf.template.events` |
-| `SQS_QUEUE_URL` | When `AWS_USE_STUB=false` | — | SQS queue URL for `membership-wf-q` |
-| `SQS_CONCURRENCY` | No | `1` | Concurrency limit for SQS consumer workers |
+
+> The service deosnt consume SQS in-process. Inbound events are delivered by the shared workflow-events consumer over HTTP to `POST /internal/events`.
+
+## Internal endpoint
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `INTERNAL_API_TOKEN` | No | *(empty)* | When set, required as the `x-internal-token` header on `POST /internal/events`. Empty disables the check (local/dev); NetworkPolicy / mesh remains the primary control. |
 
 ## Outbox relay
 

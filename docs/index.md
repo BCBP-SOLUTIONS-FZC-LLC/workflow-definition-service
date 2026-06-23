@@ -28,10 +28,10 @@ The **Workflow Definition Service** is the design-time control plane for the BPM
 | --- | --- |
 | Language | Go 1.26 |
 | HTTP framework | Gin + `platform-gincommon` |
-| Database | PostgreSQL 16 (pgx/v5, sqlc, Goose migrations) |
+| Database | PostgreSQL 18 (pgx/v5, sqlc, golang-migrate via `platform-pgcommon`) |
 | Cache / locks | Valkey 8 (go-redis/v9) |
-| Events (outbound) | AWS SNS via `aws-sdk-go-v2` |
-| Events (inbound) | AWS SQS via `aws-sdk-go-v2` |
+| Events (outbound) | AWS SNS via `platform-events` transactional outbox |
+| Events (inbound) | HTTP `POST /internal/events` from the shared workflow-events consumer |
 | Internal RPC | gRPC / protobuf (buf toolchain) |
 | Observability | OTel tracing + Prometheus metrics + Zap structured logs |
 | Mocks | GoMock (`go.uber.org/mock`) |
