@@ -148,6 +148,8 @@ published := pub.Published() // []Envelope[json.RawMessage]
 
 ## SQS Consumer
 
+> **Note (definition service):** This service does not use `NewSQSConsumer`. Inbound membership events arrive over HTTP at `POST /internal/events`, delivered by a shared workflow-events consumer. See [api.md](api.md) for the internal endpoint contract. The code below documents the platform library API for other services.
+
 ```go
 consumer, err := events.NewSQSConsumer(
     events.SQSConfig{

@@ -28,31 +28,25 @@ func doInternalReq(r *gin.Engine, headerValue string, setHeader bool) int {
 	return w.Code
 }
 
-// Empty token disables the check (local/dev) — every request passes through.
-func TestRequireInternalToken_DisabledWhenEmpty(t *testing.T) {
-	r := internalRouter("")
-	if code := doInternalReq(r, "", false); code != http.StatusOK {
-		t.Fatalf("expected 200 when token unset, got %d", code)
+func TestRequireInternalToken(t *testing.T) {
+	tests := []struct {
+		name        string
+		configToken string
+		sendHeader  bool
+		headerValue string
+		wantStatus  int
+	}{
+		{"disabled when token empty", "", false, "", http.StatusOK},
+		{"matching header passes", "secret", true, "secret", http.StatusOK},
+		{"missing header rejected", "secret", false, "", http.StatusUnauthorized},
+		{"mismatched header rejected", "secret", true, "wrong", http.StatusUnauthorized},
 	}
-}
-
-func TestRequireInternalToken_MatchingHeaderPasses(t *testing.T) {
-	r := internalRouter("secret")
-	if code := doInternalReq(r, "secret", true); code != http.StatusOK {
-		t.Fatalf("expected 200 on matching token, got %d", code)
-	}
-}
-
-func TestRequireInternalToken_MissingHeaderRejected(t *testing.T) {
-	r := internalRouter("secret")
-	if code := doInternalReq(r, "", false); code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 when header absent, got %d", code)
-	}
-}
-
-func TestRequireInternalToken_MismatchRejected(t *testing.T) {
-	r := internalRouter("secret")
-	if code := doInternalReq(r, "wrong", true); code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 on token mismatch, got %d", code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := internalRouter(tt.configToken)
+			if code := doInternalReq(r, tt.headerValue, tt.sendHeader); code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", code, tt.wantStatus)
+			}
+		})
 	}
 }

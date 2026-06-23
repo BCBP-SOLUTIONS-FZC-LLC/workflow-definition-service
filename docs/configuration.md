@@ -35,6 +35,9 @@ Copy `.env.example` to `.env` for local development.
 | `PG_MAX_CONNS` | No | `10` | Max open connections in the pgx pool |
 | `PG_MIN_CONNS` | No | `2` | Min idle connections kept alive |
 | `PG_SLOW_QUERY_THRESHOLD_MS` | No | `200` | Queries exceeding this duration (ms) are logged as slow; passed to `platform-pgcommon` on integration |
+| `PG_BOUNCER_MODE` | No | `false` | Set `true` when `DATABASE_URL` points to PgBouncer; switches pgx to simple protocol + transaction-local GUC injection |
+| `MIGRATION_DATABASE_URL` | No | *(uses `DATABASE_URL`)* | Direct Postgres DSN for the `migrate` subcommand; required when `DATABASE_URL` points to PgBouncer (advisory locks require a direct connection) |
+| `DATABASE_FALLBACK_URL` | No | *(empty)* | Startup-only fallback DSN tried once if the primary pool is unreachable (rolling deploys, PgBouncer not ready) |
 
 ## Valkey
 
@@ -54,8 +57,10 @@ Copy `.env.example` to `.env` for local development.
 | `AWS_REGION` | No | `us-east-1` | AWS region |
 | `AWS_ENDPOINT_URL` | No | *(empty)* | Custom endpoint URL (e.g. `http://localhost:4566` for LocalStack) |
 | `SNS_TOPIC_ARN` | When `AWS_USE_STUB=false` | — | SNS topic for `wf.template.events` |
+| `GLUE_REGISTRY_NAME` | When `AWS_USE_STUB=false` | — | AWS Glue Schema Registry name for event schema validation |
+| `GLUE_REGISTRY_ARN` | When `AWS_USE_STUB=false` | — | AWS Glue Schema Registry ARN |
 
-> The service deosnt consume SQS in-process. Inbound events are delivered by the shared workflow-events consumer over HTTP to `POST /internal/events`.
+> The service doesn't consume SQS in-process. Inbound events are delivered by the shared workflow-events consumer over HTTP to `POST /internal/events`.
 
 ## Internal endpoint
 
@@ -76,3 +81,4 @@ Copy `.env.example` to `.env` for local development.
 | --- | --- | --- | --- |
 | `ORG_MEMBERSHIP_BASE_URL` | No | *(empty)* | Base URL of the Org & Membership Service for assignee eligibility checks |
 | `EXECUTION_SERVICE_ADDR` | No | *(empty)* | gRPC dial target for `CheckActiveInstances` (archive precondition guard) |
+| `EXECUTION_CLIENT_TIMEOUT` | No | `5s` | gRPC dial timeout for the Execution Service client |

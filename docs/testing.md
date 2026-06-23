@@ -197,7 +197,7 @@ Optional tools unlock additional assertions:
 | Tool | What it unlocks |
 | --- | --- |
 | `grpcurl` (`brew install grpcurl`) | Section 10: gRPC endpoint tests |
-| `psql` (`brew install postgresql`) | Section 11: DB-level SQS assertions |
-| `aws` CLI (`brew install awscli`) | Section 11: SQS message injection |
+| `psql` (`brew install postgresql`) | Section 11: DB-level assertions |
+| `aws` CLI (`brew install awscli`) | Section 11: LocalStack / SNS outbox assertions |
 
 The script exits `0` on full pass or `1` with a summary of failures.

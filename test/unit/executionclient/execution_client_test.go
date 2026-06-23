@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
 	executionv1 "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/execution/v1"
@@ -20,7 +19,6 @@ import (
 
 const defaultTimeout = 5 * time.Second
 
-// fakeExecutionServer implements executionv1.ExecutionServiceServer.
 type fakeExecutionServer struct {
 	executionv1.UnimplementedExecutionServiceServer
 	resp *executionv1.CheckActiveInstancesResponse
@@ -34,7 +32,6 @@ func (f *fakeExecutionServer) CheckActiveInstances(
 	return f.resp, f.err
 }
 
-// flakyExecutionServer fails the first failCount calls with Unavailable, then succeeds.
 type flakyExecutionServer struct {
 	executionv1.UnimplementedExecutionServiceServer
 	failCount int
@@ -53,7 +50,50 @@ func (f *flakyExecutionServer) CheckActiveInstances(
 	return f.resp, nil
 }
 
-// startServer starts a local gRPC server and returns its address plus a cleanup func.
+type slowExecutionServer struct {
+	executionv1.UnimplementedExecutionServiceServer
+}
+
+func (s *slowExecutionServer) CheckActiveInstances(
+	ctx context.Context,
+	_ *executionv1.CheckActiveInstancesRequest,
+) (*executionv1.CheckActiveInstancesResponse, error) {
+	<-ctx.Done()
+	return nil, status.FromContextError(ctx.Err()).Err()
+}
+
+type pauseServer struct {
+	executionv1.UnimplementedExecutionServiceServer
+	err error
+}
+
+func (p *pauseServer) PauseUserTasks(
+	_ context.Context,
+	_ *executionv1.PauseUserTasksRequest,
+) (*executionv1.PauseUserTasksResponse, error) {
+	if p.err != nil {
+		return nil, p.err
+	}
+	return &executionv1.PauseUserTasksResponse{}, nil
+}
+
+type flakyPauseServer struct {
+	executionv1.UnimplementedExecutionServiceServer
+	failCount int
+	calls     int
+}
+
+func (f *flakyPauseServer) PauseUserTasks(
+	_ context.Context,
+	_ *executionv1.PauseUserTasksRequest,
+) (*executionv1.PauseUserTasksResponse, error) {
+	f.calls++
+	if f.calls <= f.failCount {
+		return nil, status.Error(codes.Unavailable, "transient")
+	}
+	return &executionv1.PauseUserTasksResponse{}, nil
+}
+
 func startServer(t *testing.T, srv executionv1.ExecutionServiceServer) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -78,219 +118,161 @@ func TestExecutionClient_New_AndClose(t *testing.T) {
 	}
 }
 
-func TestExecutionClient_CheckActiveInstances_HasActive(t *testing.T) {
-	fake := &fakeExecutionServer{
-		resp: &executionv1.CheckActiveInstancesResponse{HasActive: true, Count: 3},
+func TestExecutionClient_CheckActiveInstances(t *testing.T) {
+	tests := []struct {
+		name          string
+		srv           executionv1.ExecutionServiceServer
+		clientTimeout time.Duration
+		wantErr       bool
+		wantSentinel  error
+		wantActive    bool
+		wantCount     int32
+		checkServer   func(t *testing.T, srv executionv1.ExecutionServiceServer)
+		checkElapsed  func(t *testing.T, elapsed time.Duration)
+	}{
+		{
+			name:       "active instances",
+			srv:        &fakeExecutionServer{resp: &executionv1.CheckActiveInstancesResponse{HasActive: true, Count: 3}},
+			wantActive: true,
+			wantCount:  3,
+		},
+		{
+			name: "no active instances",
+			srv:  &fakeExecutionServer{resp: &executionv1.CheckActiveInstancesResponse{}},
+		},
+		{
+			name:         "upstream error",
+			srv:          &fakeExecutionServer{err: status.Error(codes.Internal, "internal error")},
+			wantErr:      true,
+			wantSentinel: domain.ErrUpstreamUnavailable,
+		},
+		{
+			name:          "call timeout",
+			srv:           &slowExecutionServer{},
+			clientTimeout: 50 * time.Millisecond,
+			wantErr:       true,
+			wantSentinel:  domain.ErrUpstreamUnavailable,
+			checkElapsed: func(t *testing.T, elapsed time.Duration) {
+				if elapsed > time.Second {
+					t.Errorf("call took %v; deadline appears to have been ignored", elapsed)
+				}
+			},
+		},
+		{
+			name: "retries then succeeds",
+			srv: &flakyExecutionServer{
+				failCount: 2,
+				resp:      &executionv1.CheckActiveInstancesResponse{HasActive: true, Count: 1},
+			},
+			wantActive: true,
+			wantCount:  1,
+			checkServer: func(t *testing.T, srv executionv1.ExecutionServiceServer) {
+				if fake := srv.(*flakyExecutionServer); fake.calls != 3 {
+					t.Errorf("expected 3 attempts (2 retries), got %d", fake.calls)
+				}
+			},
+		},
 	}
-	addr := startServer(t, fake)
-	c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
-	if err != nil {
-		t.Fatalf("NewExecutionClient: %v", err)
-	}
-	defer c.Close() //nolint:errcheck
 
-	ctx := context.Background()
-	// The client dials lazily; wait for the connection to come up.
-	conn, dialErr := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if dialErr != nil {
-		t.Fatalf("wait dial: %v", dialErr)
-	}
-	conn.Close() //nolint:errcheck
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			addr := startServer(t, tt.srv)
+			timeout := defaultTimeout
+			if tt.clientTimeout > 0 {
+				timeout = tt.clientTimeout
+			}
+			c, err := grpcadapter.NewExecutionClient(addr, timeout)
+			if err != nil {
+				t.Fatalf("NewExecutionClient: %v", err)
+			}
+			defer c.Close() //nolint:errcheck
 
-	hasActive, count, err := c.CheckActiveInstances(ctx, uuid.New(), uuid.New())
-	if err != nil {
-		t.Fatalf("CheckActiveInstances: %v", err)
-	}
-	if !hasActive {
-		t.Error("expected hasActive=true")
-	}
-	if count != 3 {
-		t.Errorf("expected count=3, got %d", count)
+			start := time.Now()
+			hasActive, count, err := c.CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
+			elapsed := time.Since(start)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tt.wantSentinel != nil && !errors.Is(err, tt.wantSentinel) {
+					t.Errorf("expected %v, got %v", tt.wantSentinel, err)
+				}
+				if tt.checkElapsed != nil {
+					tt.checkElapsed(t, elapsed)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if hasActive != tt.wantActive {
+				t.Errorf("hasActive = %v, want %v", hasActive, tt.wantActive)
+			}
+			if count != tt.wantCount {
+				t.Errorf("count = %d, want %d", count, tt.wantCount)
+			}
+			if tt.checkServer != nil {
+				tt.checkServer(t, tt.srv)
+			}
+		})
 	}
 }
 
-func TestExecutionClient_CheckActiveInstances_NoActive(t *testing.T) {
-	fake := &fakeExecutionServer{
-		resp: &executionv1.CheckActiveInstancesResponse{HasActive: false, Count: 0},
+func TestExecutionClient_PauseUserTasks(t *testing.T) {
+	tests := []struct {
+		name         string
+		srv          executionv1.ExecutionServiceServer
+		wantErr      bool
+		wantSentinel error
+		checkServer  func(t *testing.T, srv executionv1.ExecutionServiceServer)
+	}{
+		{
+			name: "ok",
+			srv:  &pauseServer{},
+		},
+		{
+			name:         "upstream error",
+			srv:          &pauseServer{err: status.Error(codes.Internal, "internal error")},
+			wantErr:      true,
+			wantSentinel: domain.ErrUpstreamUnavailable,
+		},
+		{
+			name: "retries then succeeds",
+			srv:  &flakyPauseServer{failCount: 2},
+			checkServer: func(t *testing.T, srv executionv1.ExecutionServiceServer) {
+				if fake := srv.(*flakyPauseServer); fake.calls != 3 {
+					t.Errorf("expected 3 attempts (2 retries), got %d", fake.calls)
+				}
+			},
+		},
 	}
-	addr := startServer(t, fake)
-	c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
-	if err != nil {
-		t.Fatalf("NewExecutionClient: %v", err)
-	}
-	defer c.Close() //nolint:errcheck
 
-	hasActive, count, err := c.CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if hasActive {
-		t.Error("expected hasActive=false")
-	}
-	if count != 0 {
-		t.Errorf("expected count=0, got %d", count)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			addr := startServer(t, tt.srv)
+			c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
+			if err != nil {
+				t.Fatalf("NewExecutionClient: %v", err)
+			}
+			defer c.Close() //nolint:errcheck
 
-func TestExecutionClient_CheckActiveInstances_UpstreamError(t *testing.T) {
-	fake := &fakeExecutionServer{
-		err: status.Error(codes.Internal, "internal error"),
-	}
-	addr := startServer(t, fake)
-	c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
-	if err != nil {
-		t.Fatalf("NewExecutionClient: %v", err)
-	}
-	defer c.Close() //nolint:errcheck
-
-	_, _, err = c.CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
-	if err == nil {
-		t.Fatal("expected error from upstream")
-	}
-	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
-		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
-	}
-}
-
-// slowExecutionServer blocks until the context deadline fires, simulating a hung upstream.
-type slowExecutionServer struct {
-	executionv1.UnimplementedExecutionServiceServer
-}
-
-func (s *slowExecutionServer) CheckActiveInstances(
-	ctx context.Context,
-	_ *executionv1.CheckActiveInstancesRequest,
-) (*executionv1.CheckActiveInstancesResponse, error) {
-	<-ctx.Done()
-	return nil, status.FromContextError(ctx.Err()).Err()
-}
-
-func TestExecutionClient_CheckActiveInstances_CallTimeout(t *testing.T) {
-	addr := startServer(t, &slowExecutionServer{})
-
-	// 50 ms timeout — the slow server blocks indefinitely so this must fire.
-	c, err := grpcadapter.NewExecutionClient(addr, 50*time.Millisecond)
-	if err != nil {
-		t.Fatalf("NewExecutionClient: %v", err)
-	}
-	defer c.Close() //nolint:errcheck
-
-	start := time.Now()
-	_, _, err = c.CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("expected error from timeout")
-	}
-	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
-		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
-	}
-	// Should complete well within 1 s; the 50 ms deadline must not be silently ignored.
-	if elapsed > time.Second {
-		t.Errorf("call took %v; deadline appears to have been ignored", elapsed)
-	}
-}
-
-func TestExecutionClient_CheckActiveInstances_RetriesThenSucceeds(t *testing.T) {
-	fake := &flakyExecutionServer{
-		failCount: 2, // first two calls fail with Unavailable, third succeeds
-		resp:      &executionv1.CheckActiveInstancesResponse{HasActive: true, Count: 1},
-	}
-	addr := startServer(t, fake)
-	c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
-	if err != nil {
-		t.Fatalf("NewExecutionClient: %v", err)
-	}
-	defer c.Close() //nolint:errcheck
-
-	hasActive, count, err := c.CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
-	if err != nil {
-		t.Fatalf("unexpected error after retries: %v", err)
-	}
-	if !hasActive || count != 1 {
-		t.Errorf("got hasActive=%v count=%d, want true/1", hasActive, count)
-	}
-	if fake.calls != 3 {
-		t.Errorf("expected 3 attempts (2 retries), got %d", fake.calls)
-	}
-}
-
-type pauseServer struct {
-	executionv1.UnimplementedExecutionServiceServer
-	err error
-}
-
-func (p *pauseServer) PauseUserTasks(
-	_ context.Context,
-	_ *executionv1.PauseUserTasksRequest,
-) (*executionv1.PauseUserTasksResponse, error) {
-	if p.err != nil {
-		return nil, p.err
-	}
-	return &executionv1.PauseUserTasksResponse{}, nil
-}
-
-// flakyPauseServer fails the first failCount calls with Unavailable, then succeeds.
-type flakyPauseServer struct {
-	executionv1.UnimplementedExecutionServiceServer
-	failCount int
-	calls     int
-}
-
-func (f *flakyPauseServer) PauseUserTasks(
-	_ context.Context,
-	_ *executionv1.PauseUserTasksRequest,
-) (*executionv1.PauseUserTasksResponse, error) {
-	f.calls++
-	if f.calls <= f.failCount {
-		return nil, status.Error(codes.Unavailable, "transient")
-	}
-	return &executionv1.PauseUserTasksResponse{}, nil
-}
-
-func TestExecutionClient_PauseUserTasks_OK(t *testing.T) {
-	addr := startServer(t, &pauseServer{})
-	c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
-	if err != nil {
-		t.Fatalf("NewExecutionClient: %v", err)
-	}
-	defer c.Close() //nolint:errcheck
-
-	if err := c.PauseUserTasks(context.Background(), uuid.New(), uuid.New()); err != nil {
-		t.Fatalf("PauseUserTasks: %v", err)
-	}
-}
-
-func TestExecutionClient_PauseUserTasks_UpstreamError(t *testing.T) {
-	addr := startServer(t, &pauseServer{err: status.Error(codes.Internal, "internal error")})
-	c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
-	if err != nil {
-		t.Fatalf("NewExecutionClient: %v", err)
-	}
-	defer c.Close() //nolint:errcheck
-
-	err = c.PauseUserTasks(context.Background(), uuid.New(), uuid.New())
-	if err == nil {
-		t.Fatal("expected error from upstream")
-	}
-	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
-		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
-	}
-}
-
-func TestExecutionClient_PauseUserTasks_RetriesThenSucceeds(t *testing.T) {
-	fake := &flakyPauseServer{failCount: 2}
-	addr := startServer(t, fake)
-	c, err := grpcadapter.NewExecutionClient(addr, defaultTimeout)
-	if err != nil {
-		t.Fatalf("NewExecutionClient: %v", err)
-	}
-	defer c.Close() //nolint:errcheck
-
-	if err := c.PauseUserTasks(context.Background(), uuid.New(), uuid.New()); err != nil {
-		t.Fatalf("unexpected error after retries: %v", err)
-	}
-	if fake.calls != 3 {
-		t.Errorf("expected 3 attempts (2 retries), got %d", fake.calls)
+			err = c.PauseUserTasks(context.Background(), uuid.New(), uuid.New())
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tt.wantSentinel != nil && !errors.Is(err, tt.wantSentinel) {
+					t.Errorf("expected %v, got %v", tt.wantSentinel, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.checkServer != nil {
+				tt.checkServer(t, tt.srv)
+			}
+		})
 	}
 }

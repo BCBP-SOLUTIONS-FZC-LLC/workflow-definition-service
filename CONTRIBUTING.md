@@ -34,7 +34,7 @@ CI uses `GO_PRIVATE_TOKEN` (GitHub PAT with `repo:read` scope) — see the secre
 make tools                  # install sqlc, buf, mockgen, golangci-lint to .tools/
 cp .env.example .env        # fill in DATABASE_URL, VALKEY_URL, etc.
 make docker-up              # start PostgreSQL on :5432, Valkey on :6379
-# migrations run automatically at server startup (cmd/server/migrate.go)
+make migrate                # apply DB schema migrations (run once, before server start)
 make generate               # buf (proto → gen/) + sqlc (queries → postgres/db/)
 make mock                   # regenerate GoMock stubs for port interfaces
 make build                  # compile bin/server
@@ -113,7 +113,7 @@ ALTER TABLE workflow DROP COLUMN foo;
 
 - Both an `.up.sql` and a `.down.sql` are required; test the down path too.
 - The pgx/v5 driver runs each file as a single statement, so `$$`-quoted PL/pgSQL functions need no special wrapping.
-- Migrations apply automatically at server startup (`cmd/server/migrate.go`) and in the integration test fixture — there is no separate `migrate` command.
+- Run `make migrate` (or `go run ./cmd/server migrate`) before starting the server. The integration test fixture runs migrations internally via the embedded `db/migrations/migrations.go`. There is **no** auto-migration at server boot.
 - Migrations that lock large tables (e.g. `ADD COLUMN NOT NULL DEFAULT`) must be split into safe steps (add nullable → backfill → add constraint).
 - Never modify an already-applied migration file — create a new one.
 

@@ -61,6 +61,7 @@ func TestErrResponse_StatusAndCode(t *testing.T) {
 		{"ErrNotFound", domain.ErrNotFound, http.StatusNotFound, CodeNotFound},
 		{"pgx.ErrNoRows", pgx.ErrNoRows, http.StatusNotFound, CodeNotFound},
 		{"ErrNoDraftExists", domain.ErrNoDraftExists, http.StatusNotFound, CodeDraftNotFound},
+		{"wrapped sentinel", fmt.Errorf("service layer: %w", domain.ErrNotFound), http.StatusNotFound, CodeNotFound},
 		// 401 / 403
 		{"ErrUnauthorized", domain.ErrUnauthorized, http.StatusUnauthorized, CodeUnauthorized},
 		{"ErrForbidden", domain.ErrForbidden, http.StatusForbidden, CodeForbidden},
@@ -114,180 +115,211 @@ func TestErrResponse_StatusAndCode(t *testing.T) {
 	}
 }
 
-func TestErrResponse_WrappedSentinel(t *testing.T) {
-	wrapped := fmt.Errorf("service layer: %w", domain.ErrNotFound)
-	c, w := newTestCtx("/wrap")
-	errResponse(c, nil, wrapped)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("wrapped sentinel: status = %d, want 404", w.Code)
-	}
-	p := decodeProblem(t, w.Body.Bytes())
-	if p.Code != CodeNotFound {
-		t.Errorf("wrapped sentinel: code = %q, want %q", p.Code, CodeNotFound)
-	}
-}
-
 func TestErrResponse_ValidationFailedError(t *testing.T) {
-	valErr := &domain.ValidationFailedError{
-		Errors: []domain.BPMNValidationError{
-			{Code: domain.BPMNErrCycleDetected, NodeID: "Node_1", Message: "cycle detected"},
-			{Code: domain.BPMNErrDanglingNode, NodeID: "Node_2", Message: "dangling node"},
+	tests := []struct {
+		name            string
+		err             error
+		wantParamCount  int
+		wantFirstNodeID string
+		wantFirstCode   ErrCode
+	}{
+		{
+			name: "direct",
+			err: &domain.ValidationFailedError{
+				Errors: []domain.BPMNValidationError{
+					{Code: domain.BPMNErrCycleDetected, NodeID: "Node_1", Message: "cycle detected"},
+					{Code: domain.BPMNErrDanglingNode, NodeID: "Node_2", Message: "dangling node"},
+				},
+			},
+			wantParamCount:  2,
+			wantFirstNodeID: "Node_1",
+			wantFirstCode:   ErrCode(domain.BPMNErrCycleDetected),
+		},
+		{
+			name: "wrapped",
+			err: fmt.Errorf("publish: %w", &domain.ValidationFailedError{
+				Errors: []domain.BPMNValidationError{
+					{Code: domain.BPMNErrNoStartEvent, Message: "no start event"},
+				},
+			}),
+			wantParamCount: 1,
 		},
 	}
-	c, w := newTestCtx("/publish")
-	errResponse(c, nil, valErr)
 
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Errorf("status = %d, want 422", w.Code)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, w := newTestCtx("/validate")
+			errResponse(c, nil, tt.err)
 
-	p := decodeProblem(t, w.Body.Bytes())
-	if p.Code != CodeBPMNValidation {
-		t.Errorf("code = %q, want %q", p.Code, CodeBPMNValidation)
-	}
-	if len(p.InvalidParams) != 2 {
-		t.Fatalf("invalid_params len = %d, want 2", len(p.InvalidParams))
-	}
-	if p.InvalidParams[0].Name != "Node_1" {
-		t.Errorf("invalid_params[0].name = %q, want %q", p.InvalidParams[0].Name, "Node_1")
-	}
-	if p.InvalidParams[0].Code != ErrCode(domain.BPMNErrCycleDetected) {
-		t.Errorf("invalid_params[0].code = %q, want %q", p.InvalidParams[0].Code, domain.BPMNErrCycleDetected)
+			if w.Code != http.StatusUnprocessableEntity {
+				t.Errorf("status = %d, want 422", w.Code)
+			}
+			p := decodeProblem(t, w.Body.Bytes())
+			if p.Code != CodeBPMNValidation {
+				t.Errorf("code = %q, want %q", p.Code, CodeBPMNValidation)
+			}
+			if len(p.InvalidParams) != tt.wantParamCount {
+				t.Fatalf("invalid_params len = %d, want %d", len(p.InvalidParams), tt.wantParamCount)
+			}
+			if tt.wantFirstNodeID != "" && p.InvalidParams[0].Name != tt.wantFirstNodeID {
+				t.Errorf("invalid_params[0].name = %q, want %q", p.InvalidParams[0].Name, tt.wantFirstNodeID)
+			}
+			if tt.wantFirstCode != "" && p.InvalidParams[0].Code != tt.wantFirstCode {
+				t.Errorf("invalid_params[0].code = %q, want %q", p.InvalidParams[0].Code, tt.wantFirstCode)
+			}
+		})
 	}
 }
 
-func TestErrResponse_ValidationFailedError_Wrapped(t *testing.T) {
-	valErr := &domain.ValidationFailedError{
-		Errors: []domain.BPMNValidationError{
-			{Code: domain.BPMNErrNoStartEvent, Message: "no start event"},
+func TestWriteProblem(t *testing.T) {
+	tests := []struct {
+		name            string
+		status          int
+		code            ErrCode
+		detail          string
+		wantContentType string
+		wantType        string
+	}{
+		{
+			name:            "sets JSON content type",
+			status:          http.StatusNotFound,
+			code:            CodeNotFound,
+			detail:          "test detail",
+			wantContentType: "application/json; charset=utf-8",
+		},
+		{
+			name:     "unknown status falls back to internal-error type",
+			status:   http.StatusTeapot,
+			code:     CodeInternal,
+			detail:   "teapot",
+			wantType: errBase + "internal-error",
 		},
 	}
-	wrapped := fmt.Errorf("publish: %w", valErr)
-	c, w := newTestCtx("/wrapped-val")
-	errResponse(c, nil, wrapped)
 
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Errorf("wrapped ValidationFailedError: status = %d, want 422", w.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, w := newTestCtx("/test")
+			writeProblem(c, tt.status, tt.code, tt.detail, nil)
+			if tt.wantContentType != "" {
+				if ct := w.Header().Get("Content-Type"); ct != tt.wantContentType {
+					t.Errorf("Content-Type = %q, want %q", ct, tt.wantContentType)
+				}
+			}
+			if tt.wantType != "" {
+				p := decodeProblem(t, w.Body.Bytes())
+				if p.Type != tt.wantType {
+					t.Errorf("type = %q, want %q", p.Type, tt.wantType)
+				}
+			}
+		})
 	}
 }
 
-func TestWriteProblem_ContentType(t *testing.T) {
-	c, w := newTestCtx("/ct")
-	writeProblem(c, http.StatusNotFound, CodeNotFound, "test detail", nil)
+func TestErrResponse_Logger(t *testing.T) {
+	tests := []struct {
+		name       string
+		run        func(log *spyLogger) *httptest.ResponseRecorder
+		wantStatus int
+		wantErrors int
+	}{
+		{
+			name: "5xx logs error",
+			run: func(log *spyLogger) *httptest.ResponseRecorder {
+				c, w := newTestCtx("/api/v1/something")
+				errResponse(c, log, errors.New("unexpected failure"))
+				return w
+			},
+			wantStatus: http.StatusInternalServerError,
+			wantErrors: 1,
+		},
+		{
+			name: "4xx does not log",
+			run: func(log *spyLogger) *httptest.ResponseRecorder {
+				c, w := newTestCtx("/api/v1/something")
+				errResponse(c, log, domain.ErrNotFound)
+				return w
+			},
+			wantStatus: http.StatusNotFound,
+			wantErrors: 0,
+		},
+		{
+			name: "5xx with request context",
+			run: func(log *spyLogger) *httptest.ResponseRecorder {
+				r := gin.New()
+				for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{}) {
+					r.Use(mw)
+				}
+				r.GET("/test", func(c *gin.Context) {
+					errResponse(c, log, errors.New("something internal"))
+				})
+				w := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, "/test", nil)
+				req.Header.Set("x-tenant-id", "11111111-1111-1111-1111-111111111111")
+				req.Header.Set("x-user-id", "22222222-2222-2222-2222-222222222222")
+				r.ServeHTTP(w, req)
+				return w
+			},
+			wantStatus: http.StatusInternalServerError,
+			wantErrors: 1,
+		},
+	}
 
-	ct := w.Header().Get("Content-Type")
-	if ct != "application/json; charset=utf-8" {
-		t.Errorf("Content-Type = %q, want application/json; charset=utf-8", ct)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			log := &spyLogger{}
+			w := tt.run(log)
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+			}
+			if log.errors != tt.wantErrors {
+				t.Errorf("log.errors = %d, want %d", log.errors, tt.wantErrors)
+			}
+		})
 	}
 }
 
-func TestWriteProblem_UnknownStatus_FallsBackToInternalError(t *testing.T) {
-	c, w := newTestCtx("/unknown")
-	writeProblem(c, http.StatusTeapot, CodeInternal, "teapot", nil)
-
-	p := decodeProblem(t, w.Body.Bytes())
-	if p.Type != errBase+"internal-error" {
-		t.Errorf("unexpected type for unmapped status: %q", p.Type)
+func TestLogForbiddenXML(t *testing.T) {
+	tests := []struct {
+		name      string
+		nilLogger bool
+		err       error
+		useRC     bool
+		wantWarns int
+	}{
+		{name: "warns on forbidden XML", err: domain.ErrForbiddenXML, wantWarns: 1},
+		{name: "skips nil logger", nilLogger: true, err: domain.ErrForbiddenXML},
+		{name: "skips non-forbidden error", err: errors.New("some other parse error")},
+		{name: "warns with request context", err: domain.ErrForbiddenXML, useRC: true, wantWarns: 1},
 	}
-}
 
-func TestErrResponse_5xxWithLogger(t *testing.T) {
-	log := &spyLogger{}
-	c, w := newTestCtx("/api/v1/something")
-	errResponse(c, log, errors.New("unexpected failure"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			log := &spyLogger{}
+			var svc Services
+			if !tt.nilLogger {
+				svc.Log = log
+			}
+			h := New(svc)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("want 500, got %d", w.Code)
-	}
-	if log.errors != 1 {
-		t.Errorf("want 1 log.Error call, got %d", log.errors)
-	}
-}
+			if tt.useRC {
+				r := gin.New()
+				for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{}) {
+					r.Use(mw)
+				}
+				r.GET("/upload", func(c *gin.Context) { h.logForbiddenXML(c, tt.err) })
+				w := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, "/upload", nil)
+				req.Header.Set("x-tenant-id", "11111111-1111-1111-1111-111111111111")
+				req.Header.Set("x-user-id", "22222222-2222-2222-2222-222222222222")
+				r.ServeHTTP(w, req)
+			} else {
+				c, _ := newTestCtx("/api/v1/upload")
+				h.logForbiddenXML(c, tt.err)
+			}
 
-func TestErrResponse_4xxWithLogger_NoLog(t *testing.T) {
-	log := &spyLogger{}
-	c, w := newTestCtx("/api/v1/something")
-	errResponse(c, log, domain.ErrNotFound)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("want 404, got %d", w.Code)
-	}
-	if log.errors != 0 {
-		t.Errorf("4xx should not log error, got %d log.Error calls", log.errors)
-	}
-}
-
-func TestLogForbiddenXML_LogsWarnForForbiddenXML(t *testing.T) {
-	log := &spyLogger{}
-	h := New(Services{Log: log})
-	c, _ := newTestCtx("/api/v1/upload")
-	h.logForbiddenXML(c, domain.ErrForbiddenXML)
-
-	if log.warns != 1 {
-		t.Errorf("want 1 log.Warn call for ErrForbiddenXML, got %d", log.warns)
-	}
-}
-
-func TestLogForbiddenXML_SkipsNilLogger(t *testing.T) {
-	h := New(Services{})
-	c, _ := newTestCtx("/api/v1/upload")
-	h.logForbiddenXML(c, domain.ErrForbiddenXML) // must not panic
-}
-
-func TestLogForbiddenXML_SkipsNonForbiddenError(t *testing.T) {
-	log := &spyLogger{}
-	h := New(Services{Log: log})
-	c, _ := newTestCtx("/api/v1/upload")
-	h.logForbiddenXML(c, errors.New("some other parse error"))
-
-	if log.warns != 0 {
-		t.Errorf("non-forbidden error must not emit warn, got %d", log.warns)
-	}
-}
-
-func TestErrResponse_5xxWithRequestContext(t *testing.T) {
-	log := &spyLogger{}
-	r := gin.New()
-	for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{}) {
-		r.Use(mw)
-	}
-	r.GET("/test", func(c *gin.Context) {
-		errResponse(c, log, errors.New("something internal"))
-	})
-
-	w := httptest.NewRecorder()
-	httpReq := httptest.NewRequest(http.MethodGet, "/test", nil)
-	httpReq.Header.Set("x-tenant-id", "11111111-1111-1111-1111-111111111111")
-	httpReq.Header.Set("x-user-id", "22222222-2222-2222-2222-222222222222")
-	r.ServeHTTP(w, httpReq)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("want 500, got %d", w.Code)
-	}
-	if log.errors != 1 {
-		t.Errorf("want 1 Error call with request context, got %d", log.errors)
-	}
-}
-
-func TestLogForbiddenXML_WithRequestContext(t *testing.T) {
-	log := &spyLogger{}
-	h := New(Services{Log: log})
-	r := gin.New()
-	for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{}) {
-		r.Use(mw)
-	}
-	r.GET("/upload", func(c *gin.Context) {
-		h.logForbiddenXML(c, domain.ErrForbiddenXML)
-	})
-
-	w := httptest.NewRecorder()
-	httpReq := httptest.NewRequest(http.MethodGet, "/upload", nil)
-	httpReq.Header.Set("x-tenant-id", "11111111-1111-1111-1111-111111111111")
-	httpReq.Header.Set("x-user-id", "22222222-2222-2222-2222-222222222222")
-	r.ServeHTTP(w, httpReq)
-
-	if log.warns != 1 {
-		t.Errorf("want 1 Warn with tenant context, got %d", log.warns)
+			if log.warns != tt.wantWarns {
+				t.Errorf("warns = %d, want %d", log.warns, tt.wantWarns)
+			}
+		})
 	}
 }

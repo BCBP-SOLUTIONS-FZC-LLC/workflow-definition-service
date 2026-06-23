@@ -21,146 +21,160 @@ func TestMembershipClient_New(t *testing.T) {
 	}
 }
 
-func TestMembershipClient_CheckEligibility_HappyPath(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST, got %s", r.Method)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck
-	}))
-	defer srv.Close()
-
-	client := httpadapter.NewMembershipClient(srv.URL)
-	ok, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), "dept-1", "approver")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestMembershipClient_CheckEligibility(t *testing.T) {
+	tests := []struct {
+		name         string
+		makeHandler  func(t *testing.T, calls *int) http.HandlerFunc
+		closeServer  bool
+		dept         string
+		level        string
+		wantEligible bool
+		wantErr      bool
+		wantSentinel error
+		wantCalls    int
+	}{
+		{
+			name: "eligible",
+			makeHandler: func(t *testing.T, _ *int) http.HandlerFunc {
+				return func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST, got %s", r.Method)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck
+				}
+			},
+			dept:         "dept-1",
+			level:        "approver",
+			wantEligible: true,
+		},
+		{
+			name: "retries then succeeds",
+			makeHandler: func(_ *testing.T, calls *int) http.HandlerFunc {
+				return func(w http.ResponseWriter, _ *http.Request) {
+					*calls++
+					if *calls < 3 {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck
+				}
+			},
+			dept:         "dept-1",
+			level:        "approver",
+			wantEligible: true,
+			wantCalls:    3,
+		},
+		{
+			name: "retries exhausted",
+			makeHandler: func(_ *testing.T, calls *int) http.HandlerFunc {
+				return func(w http.ResponseWriter, _ *http.Request) {
+					*calls++
+					w.WriteHeader(http.StatusBadGateway)
+				}
+			},
+			dept:         "dept-1",
+			level:        "approver",
+			wantErr:      true,
+			wantSentinel: domain.ErrUpstreamUnavailable,
+			wantCalls:    3,
+		},
+		{
+			name: "ineligible",
+			makeHandler: func(_ *testing.T, _ *int) http.HandlerFunc {
+				return func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusConflict)
+				}
+			},
+			dept:  "dept-1",
+			level: "approver",
+		},
+		{
+			name: "non-OK status",
+			makeHandler: func(_ *testing.T, _ *int) http.HandlerFunc {
+				return func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusServiceUnavailable)
+				}
+			},
+			dept:         "dept-1",
+			level:        "approver",
+			wantErr:      true,
+			wantSentinel: domain.ErrUpstreamUnavailable,
+		},
+		{
+			name: "decode error",
+			makeHandler: func(_ *testing.T, _ *int) http.HandlerFunc {
+				return func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte("not-json")) //nolint:errcheck
+				}
+			},
+			dept:    "dept-1",
+			level:   "approver",
+			wantErr: true,
+		},
+		{
+			name: "request error (server closed)",
+			makeHandler: func(_ *testing.T, _ *int) http.HandlerFunc {
+				return func(w http.ResponseWriter, _ *http.Request) {}
+			},
+			closeServer: true,
+			dept:        "dept-1",
+			level:       "approver",
+			wantErr:     true,
+		},
+		{
+			name: "URL encodes params",
+			makeHandler: func(t *testing.T, _ *int) http.HandlerFunc {
+				return func(w http.ResponseWriter, r *http.Request) {
+					if got := r.URL.Query().Get("department"); got != "dept&special=1" {
+						t.Errorf("department = %q, want %q", got, "dept&special=1")
+					}
+					if got := r.URL.Query().Get("level"); got != "role=admin&x=y" {
+						t.Errorf("level = %q, want %q", got, "role=admin&x=y")
+					}
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck
+				}
+			},
+			dept:         "dept&special=1",
+			level:        "role=admin&x=y",
+			wantEligible: true,
+		},
 	}
-	if !ok {
-		t.Fatal("expected eligible=true")
-	}
-}
 
-func TestMembershipClient_CheckEligibility_RetriesThenSucceeds(t *testing.T) {
-	var calls int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
-		if calls < 3 { // first two attempts fail transiently
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck
-	}))
-	defer srv.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int
+			srv := httptest.NewServer(tt.makeHandler(t, &calls))
+			if tt.closeServer {
+				srv.Close()
+			} else {
+				defer srv.Close()
+			}
 
-	client := httpadapter.NewMembershipClient(srv.URL)
-	ok, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), "dept-1", "approver")
-	if err != nil {
-		t.Fatalf("unexpected error after retries: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected eligible=true")
-	}
-	if calls != 3 {
-		t.Errorf("expected 3 attempts (2 retries), got %d", calls)
-	}
-}
+			client := httpadapter.NewMembershipClient(srv.URL)
+			ok, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), tt.dept, tt.level)
 
-func TestMembershipClient_CheckEligibility_RetriesExhausted(t *testing.T) {
-	var calls int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
-		w.WriteHeader(http.StatusBadGateway) // persistent 5xx
-	}))
-	defer srv.Close()
-
-	client := httpadapter.NewMembershipClient(srv.URL)
-	_, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), "dept-1", "approver")
-	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
-		t.Fatalf("expected ErrUpstreamUnavailable, got %v", err)
-	}
-	if calls != 3 {
-		t.Errorf("expected 3 attempts before giving up, got %d", calls)
-	}
-}
-
-func TestMembershipClient_CheckEligibility_Ineligible(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusConflict)
-	}))
-	defer srv.Close()
-
-	client := httpadapter.NewMembershipClient(srv.URL)
-	ok, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), "dept-1", "approver")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ok {
-		t.Fatal("expected eligible=false for 409")
-	}
-}
-
-func TestMembershipClient_CheckEligibility_NonOKStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer srv.Close()
-
-	client := httpadapter.NewMembershipClient(srv.URL)
-	_, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), "dept-1", "approver")
-	if err == nil {
-		t.Fatal("expected error for 503")
-	}
-	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
-		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
-	}
-}
-
-func TestMembershipClient_CheckEligibility_DecodeError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("not-json")) //nolint:errcheck
-	}))
-	defer srv.Close()
-
-	client := httpadapter.NewMembershipClient(srv.URL)
-	_, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), "dept-1", "approver")
-	if err == nil {
-		t.Fatal("expected decode error for malformed JSON")
-	}
-}
-
-func TestMembershipClient_CheckEligibility_RequestError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	srv.Close()
-
-	client := httpadapter.NewMembershipClient(srv.URL)
-	_, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), "dept-1", "approver")
-	if err == nil {
-		t.Fatal("expected error when server is closed")
-	}
-}
-
-func TestMembershipClient_CheckEligibility_URLEncodesParams(t *testing.T) {
-	var gotDept, gotLevel string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotDept = r.URL.Query().Get("department")
-		gotLevel = r.URL.Query().Get("level")
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck
-	}))
-	defer srv.Close()
-
-	client := httpadapter.NewMembershipClient(srv.URL)
-	_, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), "dept&special=1", "role=admin&x=y")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if gotDept != "dept&special=1" {
-		t.Errorf("expected department to be URL-decoded to 'dept&special=1', got %q", gotDept)
-	}
-	if gotLevel != "role=admin&x=y" {
-		t.Errorf("expected level to be URL-decoded to 'role=admin&x=y', got %q", gotLevel)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tt.wantSentinel != nil && !errors.Is(err, tt.wantSentinel) {
+					t.Errorf("expected %v, got %v", tt.wantSentinel, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if ok != tt.wantEligible {
+					t.Errorf("eligible = %v, want %v", ok, tt.wantEligible)
+				}
+			}
+			if tt.wantCalls > 0 && calls != tt.wantCalls {
+				t.Errorf("calls = %d, want %d", calls, tt.wantCalls)
+			}
+		})
 	}
 }

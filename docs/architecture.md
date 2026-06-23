@@ -400,6 +400,6 @@ The happy path is always a single query. The probe only fires on the exceptional
 
 | Purpose | Key pattern | TTL |
 | --- | --- | --- |
-| Compiled plan cache | `plan:{tenant_id}:{version_id}` | 5 min |
+| Compiled plan cache | `wf:plan:{tenant_id}:{version_id}` | 1 h (configurable: `CACHE_COMPILED_PLAN_TTL`) |
 | Idempotency key | `idempotency:{tenant_id}:{key}` | 24 h |
 | Draft edit lock | `draft_lock:{tenant_id}:{workflow_id}` | 30 s (refreshed) |
