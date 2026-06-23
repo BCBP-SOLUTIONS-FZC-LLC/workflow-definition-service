@@ -11,8 +11,24 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
+
+type spyLogger struct {
+	errors int
+	warns  int
+}
+
+func (l *spyLogger) Info(string, map[string]any)      {}
+func (l *spyLogger) Error(_ string, _ map[string]any) { l.errors++ }
+func (l *spyLogger) Fatal(string, map[string]any)     {}
+func (l *spyLogger) Warn(_ string, _ map[string]any)  { l.warns++ }
+func (l *spyLogger) Debug(string, map[string]any)     {}
+
+var _ port.Logger = (*spyLogger)(nil)
 
 func init() {
 	gin.SetMode(gin.TestMode)
@@ -45,20 +61,23 @@ func TestErrResponse_StatusAndCode(t *testing.T) {
 		{"ErrNotFound", domain.ErrNotFound, http.StatusNotFound, CodeNotFound},
 		{"pgx.ErrNoRows", pgx.ErrNoRows, http.StatusNotFound, CodeNotFound},
 		{"ErrNoDraftExists", domain.ErrNoDraftExists, http.StatusNotFound, CodeDraftNotFound},
-		{"ErrNoActiveVersion", domain.ErrNoActiveVersion, http.StatusNotFound, CodeNoActiveVersion},
 		// 401 / 403
 		{"ErrUnauthorized", domain.ErrUnauthorized, http.StatusUnauthorized, CodeUnauthorized},
 		{"ErrForbidden", domain.ErrForbidden, http.StatusForbidden, CodeForbidden},
+		{"ErrPlanQuotaExceeded", domain.ErrPlanQuotaExceeded, http.StatusForbidden, CodePlanQuota},
 		// 409
+		{"ErrNoActiveVersion", domain.ErrNoActiveVersion, http.StatusConflict, CodeNoActiveVersion},
 		{"ErrDraftAlreadyExists", domain.ErrDraftAlreadyExists, http.StatusConflict, CodeDraftAlreadyExists},
 		{"ErrDuplicateBusinessKey", domain.ErrDuplicateBusinessKey, http.StatusConflict, CodeDuplicateKey},
 		{"ErrDraftConcurrency", domain.ErrDraftConcurrency, http.StatusConflict, CodeDraftConcurrency},
 		{"ErrInvalidVersionStatus", domain.ErrInvalidVersionStatus, http.StatusConflict, CodeInvalidStatus},
+		{"ErrVersionNotDraft", domain.ErrVersionNotDraft, http.StatusConflict, CodeInvalidStatus},
+		{"ErrVersionNotPublished", domain.ErrVersionNotPublished, http.StatusConflict, CodeInvalidStatus},
+		{"ErrVersionAlreadyPublished", domain.ErrVersionAlreadyPublished, http.StatusConflict, CodeInvalidStatus},
 		{"ErrActiveInstancesExist", domain.ErrActiveInstancesExist, http.StatusConflict, CodeActiveInstances},
 		{"ErrStructuralDivergence", domain.ErrStructuralDivergence, http.StatusConflict, CodeStructuralDiv},
 		{"ErrIdempotencyKeyReplay", domain.ErrIdempotencyKeyReplay, http.StatusConflict, CodeIdempotencyReplay},
 		// 422
-		{"ErrPlanQuotaExceeded", domain.ErrPlanQuotaExceeded, http.StatusUnprocessableEntity, CodePlanQuota},
 		{"ErrAssigneeIneligible", domain.ErrAssigneeIneligible, http.StatusUnprocessableEntity, CodeAssigneeIneligible},
 		// 503
 		{"ErrUpstreamUnavailable", domain.ErrUpstreamUnavailable, http.StatusServiceUnavailable, CodeUpstream},
@@ -69,7 +88,7 @@ func TestErrResponse_StatusAndCode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, w := newTestCtx("/test-path")
-			errResponse(c, tt.err)
+			errResponse(c, nil, tt.err)
 
 			if w.Code != tt.wantStatus {
 				t.Errorf("HTTP status = %d, want %d", w.Code, tt.wantStatus)
@@ -98,7 +117,7 @@ func TestErrResponse_StatusAndCode(t *testing.T) {
 func TestErrResponse_WrappedSentinel(t *testing.T) {
 	wrapped := fmt.Errorf("service layer: %w", domain.ErrNotFound)
 	c, w := newTestCtx("/wrap")
-	errResponse(c, wrapped)
+	errResponse(c, nil, wrapped)
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("wrapped sentinel: status = %d, want 404", w.Code)
@@ -117,7 +136,7 @@ func TestErrResponse_ValidationFailedError(t *testing.T) {
 		},
 	}
 	c, w := newTestCtx("/publish")
-	errResponse(c, valErr)
+	errResponse(c, nil, valErr)
 
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want 422", w.Code)
@@ -146,7 +165,7 @@ func TestErrResponse_ValidationFailedError_Wrapped(t *testing.T) {
 	}
 	wrapped := fmt.Errorf("publish: %w", valErr)
 	c, w := newTestCtx("/wrapped-val")
-	errResponse(c, wrapped)
+	errResponse(c, nil, wrapped)
 
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("wrapped ValidationFailedError: status = %d, want 422", w.Code)
@@ -170,5 +189,105 @@ func TestWriteProblem_UnknownStatus_FallsBackToInternalError(t *testing.T) {
 	p := decodeProblem(t, w.Body.Bytes())
 	if p.Type != errBase+"internal-error" {
 		t.Errorf("unexpected type for unmapped status: %q", p.Type)
+	}
+}
+
+func TestErrResponse_5xxWithLogger(t *testing.T) {
+	log := &spyLogger{}
+	c, w := newTestCtx("/api/v1/something")
+	errResponse(c, log, errors.New("unexpected failure"))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("want 500, got %d", w.Code)
+	}
+	if log.errors != 1 {
+		t.Errorf("want 1 log.Error call, got %d", log.errors)
+	}
+}
+
+func TestErrResponse_4xxWithLogger_NoLog(t *testing.T) {
+	log := &spyLogger{}
+	c, w := newTestCtx("/api/v1/something")
+	errResponse(c, log, domain.ErrNotFound)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
+	}
+	if log.errors != 0 {
+		t.Errorf("4xx should not log error, got %d log.Error calls", log.errors)
+	}
+}
+
+func TestLogForbiddenXML_LogsWarnForForbiddenXML(t *testing.T) {
+	log := &spyLogger{}
+	h := New(Services{Log: log})
+	c, _ := newTestCtx("/api/v1/upload")
+	h.logForbiddenXML(c, domain.ErrForbiddenXML)
+
+	if log.warns != 1 {
+		t.Errorf("want 1 log.Warn call for ErrForbiddenXML, got %d", log.warns)
+	}
+}
+
+func TestLogForbiddenXML_SkipsNilLogger(t *testing.T) {
+	h := New(Services{})
+	c, _ := newTestCtx("/api/v1/upload")
+	h.logForbiddenXML(c, domain.ErrForbiddenXML) // must not panic
+}
+
+func TestLogForbiddenXML_SkipsNonForbiddenError(t *testing.T) {
+	log := &spyLogger{}
+	h := New(Services{Log: log})
+	c, _ := newTestCtx("/api/v1/upload")
+	h.logForbiddenXML(c, errors.New("some other parse error"))
+
+	if log.warns != 0 {
+		t.Errorf("non-forbidden error must not emit warn, got %d", log.warns)
+	}
+}
+
+func TestErrResponse_5xxWithRequestContext(t *testing.T) {
+	log := &spyLogger{}
+	r := gin.New()
+	for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{}) {
+		r.Use(mw)
+	}
+	r.GET("/test", func(c *gin.Context) {
+		errResponse(c, log, errors.New("something internal"))
+	})
+
+	w := httptest.NewRecorder()
+	httpReq := httptest.NewRequest(http.MethodGet, "/test", nil)
+	httpReq.Header.Set("x-tenant-id", "11111111-1111-1111-1111-111111111111")
+	httpReq.Header.Set("x-user-id", "22222222-2222-2222-2222-222222222222")
+	r.ServeHTTP(w, httpReq)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("want 500, got %d", w.Code)
+	}
+	if log.errors != 1 {
+		t.Errorf("want 1 Error call with request context, got %d", log.errors)
+	}
+}
+
+func TestLogForbiddenXML_WithRequestContext(t *testing.T) {
+	log := &spyLogger{}
+	h := New(Services{Log: log})
+	r := gin.New()
+	for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{}) {
+		r.Use(mw)
+	}
+	r.GET("/upload", func(c *gin.Context) {
+		h.logForbiddenXML(c, domain.ErrForbiddenXML)
+	})
+
+	w := httptest.NewRecorder()
+	httpReq := httptest.NewRequest(http.MethodGet, "/upload", nil)
+	httpReq.Header.Set("x-tenant-id", "11111111-1111-1111-1111-111111111111")
+	httpReq.Header.Set("x-user-id", "22222222-2222-2222-2222-222222222222")
+	r.ServeHTTP(w, httpReq)
+
+	if log.warns != 1 {
+		t.Errorf("want 1 Warn with tenant context, got %d", log.warns)
 	}
 }
