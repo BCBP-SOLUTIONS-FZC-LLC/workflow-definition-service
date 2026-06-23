@@ -1,0 +1,89 @@
+asyncapi: 3.0.0
+info:
+  title: workflow-definition-svc events
+  version: 1.0.0
+  description: Outbound events published to wf.template.events (SNS → SQS fan-out)
+
+channels:
+  wf/template/events:
+    address: wf.template.events
+    bindings:
+      sns:
+        name: workflow-template-events
+    messages:
+      WorkflowTemplatePublished:
+        $ref: '#/components/messages/WorkflowTemplatePublished'
+
+operations:
+  publishTemplateEvents:
+    action: send
+    channel:
+      $ref: '#/channels/wf~1template~1events'
+    messages:
+      - $ref: '#/channels/wf~1template~1events/messages/WorkflowTemplatePublished'
+
+components:
+  messages:
+    WorkflowTemplatePublished:
+      name: WorkflowTemplatePublished
+      title: Workflow template version published
+      schemaFormat: application/vnd.aai.asyncapi+json;version=3.0.0
+      payload:
+        $ref: '#/components/schemas/WorkflowTemplatePublishedPayload'
+
+  schemas:
+    # Shared event envelope fields
+    EventEnvelope:
+      type: object
+      required: [id, source, tenant_id, trace_id, schema_version, event_type]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUID v7 message identifier (used for consumer deduplication)
+        source:
+          type: string
+          const: workflow-definition-svc
+        tenant_id:
+          type: string
+          format: uuid
+        trace_id:
+          type: string
+          description: OTel trace context propagated from the publisher context
+        schema_version:
+          type: string
+          description: Incremented on additive payload schema changes
+        event_type:
+          type: string
+          description: PascalCase event type name (used as SNS MessageAttribute for filter policies)
+
+    WorkflowTemplatePublishedPayload:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [workflow_id, workflow_key, version_id, version_number, artifact_hash, published_by]
+              properties:
+                workflow_id:
+                  type: string
+                  format: uuid
+                workflow_key:
+                  type: string
+                version_id:
+                  type: string
+                  format: uuid
+                version_number:
+                  type: integer
+                artifact_hash:
+                  type: string
+                  description: SHA-256 hash of the BPMN XML to verify integrity
+                published_by:
+                  type: string
+                  format: uuid
+                promoted_from_version_id:
+                  type: string
+                  format: uuid
+                  nullable: true
