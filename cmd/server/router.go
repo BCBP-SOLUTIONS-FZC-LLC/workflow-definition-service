@@ -37,12 +37,11 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 	r.GET("/readyz", readyzHandler(pool, cache))
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	// Swagger UI — dev only; serves the existing api/openapi.yaml without Swaggo annotations.
 	if cfg.AppEnv == "dev" {
-		r.StaticFile("/swagger/openapi.yaml", "api/openapi.yaml")
+		r.StaticFile("/api/openapi.yaml", "api/openapi.yaml")
 		r.GET("/swagger/*any", ginSwagger.WrapHandler(
 			swaggerFiles.Handler,
-			ginSwagger.URL("/swagger/openapi.yaml"),
+			ginSwagger.URL("/api/openapi.yaml"),
 		))
 	}
 
