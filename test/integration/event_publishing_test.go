@@ -164,8 +164,12 @@ func TestEventPublishing_PublishVersion_SNSPayload(t *testing.T) {
 func seedPublishFixtures(
 	t *testing.T,
 	ctx context.Context,
-	workflowRepo interface{ Create(context.Context, *domain.Workflow) error },
-	versionRepo interface{ Create(context.Context, *domain.WorkflowVersion) error },
+	workflowRepo interface {
+		Create(context.Context, *domain.Workflow) error
+	},
+	versionRepo interface {
+		Create(context.Context, *domain.WorkflowVersion) error
+	},
 ) (tenantID, userID, wfID, versionID uuid.UUID) {
 	t.Helper()
 

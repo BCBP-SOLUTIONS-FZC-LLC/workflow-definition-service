@@ -229,6 +229,8 @@ cover-check: cover-check-pkg
 
 ## check: Run vet, arch-lint, lint, unit tests, integration tests, and coverage gate — full local CI pass
 check:
+	@echo "==> gofmt"
+	@files=$$(gofmt -l .); if [ -n "$$files" ]; then echo "gofmt violations:"; echo "$$files"; exit 1; fi
 	@echo "==> go vet"
 	go vet ./...
 	@echo "==> arch-lint"

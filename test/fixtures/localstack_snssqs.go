@@ -24,11 +24,11 @@ import (
 // Queue and registry names match the fan-out topology in api/asyncapi.yaml and
 // scripts/localstack-init.sh.
 const (
-	WFTopicName        = "wf-template-events"
-	MembershipQueue    = "membership-wf-q"
-	MembershipDLQ      = "membership-wf-q-dlq"
-	GlueRegistryName   = "workflow-template-events"
-	GlueSchemaName     = "WorkflowTemplatePublished"
+	WFTopicName      = "wf-template-events"
+	MembershipQueue  = "membership-wf-q"
+	MembershipDLQ    = "membership-wf-q-dlq"
+	GlueRegistryName = "workflow-template-events"
+	GlueSchemaName   = "WorkflowTemplatePublished"
 )
 
 // LocalStackSNSSQS holds a running LocalStack container pre-configured with:
