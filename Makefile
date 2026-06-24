@@ -48,11 +48,11 @@ COVER_THRESHOLD    := 95  # target 97%; postgres adapter, generated pkgs, and gl
 # gRPC adapters are excluded because server-reflection and transport-level paths
 # require a live gRPC connection and are covered by integration tests instead.
 COVER_PKG_FLOORS   := internal/adapter/inbound/grpc:75 \
-                      internal/adapter/outbound/grpc:85 \
+                      internal/adapter/outbound/grpc:90 \
                       internal/adapter/outbound/http:85 \
                       internal/bpmn_compiler:90 \
                       internal/bpmn_compiler/element:75 \
-                      internal/config:88
+                      internal/config:90
 
 .PHONY: all tools tools-integration generate generate-proto generate-sqlc mock \
         build migrate test test-integration \

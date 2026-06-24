@@ -190,12 +190,12 @@ jobs:
       - name: Unit Tests & Coverage
         run: |
           mkdir -p .coverage
-          EXCLUDE='/postgres/db$\|/postgres$\|/mocks$'
+          EXCLUDE='/postgres/db$\|/postgres$\|/mocks$\|/glue$'
           go test -race -count=1 \
             -coverpkg=$(go list ./internal/... ./cmd/... | grep -v "$EXCLUDE" | tr '\n' ',' | sed 's/,$//') \
             -coverprofile=.coverage/coverage.out -covermode=atomic \
             ./internal/... ./test/unit/...
-          grep -v '/postgres/db/\|/postgres/\|/mocks/' .coverage/coverage.out > .coverage/coverage.out.filtered && mv .coverage/coverage.out.filtered .coverage/coverage.out
+          grep -v '/postgres/db/\|/postgres/\|/mocks/\|/glue/\|/service/noop_logger.go' .coverage/coverage.out > .coverage/coverage.out.filtered && mv .coverage/coverage.out.filtered .coverage/coverage.out
 
       - uses: actions/upload-artifact@v4
         with:
