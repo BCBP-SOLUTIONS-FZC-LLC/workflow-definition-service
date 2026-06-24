@@ -61,8 +61,9 @@ make cover-html             # open HTML coverage report
 
 # Code quality
 make arch-lint              # go-arch-lint: enforce import direction rules
-make lint                   # golangci-lint
-make check                  # vet + arch-lint + lint + test + coverage gate (full local CI)
+make lint                   # golangci-lint (read-only)
+make fix                    # gofmt + golangci-lint --fix (auto-fix formatting and lint)
+make check                  # gofmt check + lint + vet + arch-lint + test + coverage gate (full local CI, read-only)
 ```
 
 ---

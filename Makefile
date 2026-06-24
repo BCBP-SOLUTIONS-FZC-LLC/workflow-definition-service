@@ -62,7 +62,7 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/grpc:75 \
         build migrate test test-integration \
         cover cover-func cover-html cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
-        check \
+        fix check \
         docs-serve docs-build \
         docker-up docker-down \
         clean help
@@ -227,16 +227,24 @@ cover-check: cover-check-pkg
 	fi
 
 
-## check: Run vet, arch-lint, lint, unit tests, integration tests, and coverage gate — full local CI pass
+## fix: Auto-fix formatting (gofmt) and lint issues (golangci-lint --fix)
+fix:
+	@echo "==> gofmt (auto-fix)"
+	gofmt -w cmd/ internal/ test/
+	@echo "==> lint (auto-fix)"
+	$(GOLANGCI) run --fix ./...
+	@echo "✓ formatting and lint fixes applied"
+
+## check: Verify formatting/lint (read-only), run vet, tests, and coverage gate — full local CI pass
 check:
 	@echo "==> gofmt"
-	@files=$$(gofmt -l .); if [ -n "$$files" ]; then echo "gofmt violations:"; echo "$$files"; exit 1; fi
+	@files=$$(gofmt -l cmd/ internal/ test/); if [ -n "$$files" ]; then echo "gofmt violations (run 'make fix'):"; echo "$$files"; exit 1; fi
+	@echo "==> lint"
+	$(GOLANGCI) run ./...
 	@echo "==> go vet"
 	go vet ./...
 	@echo "==> arch-lint"
 	$(MAKE) arch-lint
-	@echo "==> lint"
-	$(GOLANGCI) run ./...
 	@echo "==> test + coverage gate"
 	$(MAKE) test
 	$(MAKE) cover-check
