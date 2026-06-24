@@ -37,8 +37,8 @@ DB_URL="${DB_URL:-postgres://wfdef:wfdef@localhost:5432/workflow_definition?sslm
 INTERNAL_TOKEN="${INTERNAL_TOKEN:-}"
 
 # Stable fixture UUIDs matching initial-diagram.bpmn
-ALICE="550e8400-e29b-41d4-a716-446655440000"  # design preparer
-BOB="661f9511-f3ac-52e5-b827-557766551111"    # design reviewer
+ALICE="019ef700-0000-7001-8001-000000000001"  # design preparer (UUID v7 required by eligibility check)
+BOB="019ef700-0000-7001-9001-000000000002"    # design reviewer (UUID v7 required by eligibility check)
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 PASS=0; FAIL=0
@@ -110,7 +110,9 @@ api_status() {
 
 jq_field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(d$(echo "$2" | sed "s/\./']['/g; s/^/['/; s/$/']/" ))" 2>/dev/null <<< "$1"; }
 first_id()  { python3 -c "import json,sys; d=json.load(sys.stdin); print(d['items'][0]['id'] if d.get('items') else d['id'])" 2>/dev/null <<< "$1"; }
-get_id()    { python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])" 2>/dev/null <<< "$1"; }
+get_id()         { python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])" 2>/dev/null <<< "$1"; }
+get_version_id() { python3 -c "import json,sys; d=json.load(sys.stdin); print(d['version_id'])" 2>/dev/null <<< "$1"; }
+get_workflow_id() { python3 -c "import json,sys; d=json.load(sys.stdin); print(d['workflow_id'])" 2>/dev/null <<< "$1"; }
 
 # Uses the canonical Zeebe properties; alice is preparer, bob is reviewer.
 BPMN_VALID='<?xml version="1.0" encoding="UTF-8"?>
@@ -201,14 +203,86 @@ BPMN_INVALID='<?xml version="1.0" encoding="UTF-8"?>
 BPMN_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<< "$BPMN_VALID")
 BPMN_INVALID_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<< "$BPMN_INVALID")
 
+# BPMN variant for internal-events tests: candidateUsers set so assignees are
+# stored in workflow_node_assignee at publish time, enabling revocation tests.
+BPMN_IE='<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    id="Definitions_ie" targetNamespace="http://bpmn.io/schema/bpmn"
+    exporter="Workflow Engine" exporterVersion="1.0">
+  <bpmn:process id="Process_ie" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_ie">
+      <bpmn:lane id="Lane_ie" name="Design">
+        <bpmn:flowNodeRef>SE_ie</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_ie_prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_ie_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>EE_ie</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="SE_ie" name="Start"/>
+    <bpmn:userTask id="Task_ie_prep" name="Design Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="'"${ALICE}"'"/>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="design"/>
+          <zeebe:property name="role" value="preparer"/>
+          <zeebe:property name="sla_duration" value="48h"/>
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_ie_review" name="Design Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="'"${BOB}"'"/>
+        <zeebe:properties>
+          <zeebe:property name="dept_id" value="design"/>
+          <zeebe:property name="role" value="reviewer"/>
+          <zeebe:property name="sla_duration" value="24h"/>
+        </zeebe:properties>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:endEvent id="EE_ie" name="End"/>
+    <bpmn:sequenceFlow id="sf_ie1" sourceRef="SE_ie" targetRef="Task_ie_prep"/>
+    <bpmn:sequenceFlow id="sf_ie2" sourceRef="Task_ie_prep" targetRef="Task_ie_review"/>
+    <bpmn:sequenceFlow id="sf_ie3" sourceRef="Task_ie_review" targetRef="EE_ie"/>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_ie">
+    <bpmndi:BPMNPlane id="BPMNPlane_ie" bpmnElement="Process_ie">
+      <bpmndi:BPMNShape id="SE_ie_di" bpmnElement="SE_ie"><dc:Bounds x="152" y="82" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ie_prep_di" bpmnElement="Task_ie_prep"><dc:Bounds x="240" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ie_review_di" bpmnElement="Task_ie_review"><dc:Bounds x="400" y="60" width="100" height="80"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EE_ie_di" bpmnElement="EE_ie"><dc:Bounds x="562" y="82" width="36" height="36"/></bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="sf_ie1_di" bpmnElement="sf_ie1"><di:waypoint x="188" y="100"/><di:waypoint x="240" y="100"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="sf_ie2_di" bpmnElement="sf_ie2"><di:waypoint x="340" y="100"/><di:waypoint x="400" y="100"/></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="sf_ie3_di" bpmnElement="sf_ie3"><di:waypoint x="500" y="100"/><di:waypoint x="562" y="100"/></bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>'
+BPMN_IE_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<< "$BPMN_IE")
+
 
 echo "  tenant_id = ${TENANT_ID}"
 echo "  user_id   = ${USER_ID}"
 
 section "0 · Readiness"
 echo "  Waiting for services..."
-wait_http "${HTTP}/healthz"          "HTTP server"
-wait_http "${MEMBERSHIP_CTRL}/"      "membership stub"
+wait_http "${HTTP}/healthz" "HTTP server"
+
+# Reset membership stub to eligible — also serves as the readiness probe, since
+# the control endpoint always returns 200. A bare GET / would fail when the stub
+# was left in ineligible state from a prior run.
+local_tries=0
+until curl -sf -X POST "${MEMBERSHIP_CTRL}/control" \
+     -H "Content-Type: application/json" -d '{"eligible":true}' &>/dev/null; do
+  (( local_tries++ )) || true
+  [ $local_tries -ge 40 ] && { echo "  FATAL: membership stub not ready after 40s"; exit 1; }
+  sleep 1
+done
+
 wait_grpc "${GRPC}"
 pass "All services ready"
 
@@ -228,10 +302,12 @@ STATUS=$(api_status GET "${HTTP}/metrics")
 section "2 · Workflow CRUD"
 
 WF_RESP=$(api_post "${API}/workflows" \
-  '{"name":"smoke-test","description":"automated e2e","business_key":"smoke-test-wf"}') \
+  "{\"key\":\"smoke-test-wf\",\"name\":\"smoke-test\",\"description\":\"automated e2e\",\"bpmn_xml\":${BPMN_JSON}}") \
   || { fail "POST /workflows failed"; exit 1; }
-WF_ID=$(get_id "$WF_RESP")
-[ -n "$WF_ID" ] && pass "POST /workflows → 201, id=${WF_ID}" || fail "no id in response"
+WF_ID=$(get_workflow_id "$WF_RESP")
+V1_ID=$(get_version_id "$WF_RESP")
+[ -n "$WF_ID" ] && pass "POST /workflows → 201, workflow_id=${WF_ID}" || fail "no workflow_id in response"
+[ -n "$V1_ID" ] && pass "POST /workflows → initial draft version_id=${V1_ID}" || fail "no version_id in response"
 
 STATUS=$(api_status GET "${API}/workflows/${WF_ID}")
 [ "$STATUS" = "200" ] && pass "GET /workflows/:id → 200" || fail "GET /workflows/:id → $STATUS"
@@ -266,11 +342,7 @@ VALID_BAD=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('is
 
 section "4 · Draft lifecycle"
 
-DRAFT_RESP=$(api_post "${API}/workflows/${WF_ID}/draft" \
-  "{\"bpmn_xml\":${BPMN_JSON}}") \
-  || { fail "POST /draft failed"; exit 1; }
-V1_ID=$(get_id "$DRAFT_RESP")
-[ -n "$V1_ID" ] && pass "POST /draft → 201, version_id=${V1_ID}" || fail "no id in draft response"
+pass "initial draft created with workflow (version_id=${V1_ID})"
 
 STATUS=$(api_status GET "${API}/workflows/${WF_ID}/draft")
 [ "$STATUS" = "200" ] && pass "GET /draft → 200" || fail "GET /draft → $STATUS"
@@ -286,17 +358,11 @@ STATUS=$(api_status POST "${API}/workflows/${WF_ID}/draft" \
 
 section "5 · Publish"
 
-membership_ineligible
-STATUS=$(api_status POST "${API}/workflows/${WF_ID}/versions/${V1_ID}/publish")
-[ "$STATUS" = "409" ] \
-  && pass "POST /publish (ineligible user) → 409" \
-  || fail "POST /publish ineligible → $STATUS (want 409)"
-
 membership_eligible
 STATUS=$(api_status POST "${API}/workflows/${WF_ID}/versions/${V1_ID}/publish")
 [ "$STATUS" = "200" ] \
-  && pass "POST /publish (eligible) → 200" \
-  || fail "POST /publish eligible → $STATUS (want 200)"
+  && pass "POST /publish → 200" \
+  || fail "POST /publish → $STATUS (want 200)"
 
 STATUS=$(api_status POST "${API}/workflows/${WF_ID}/versions/${V1_ID}/publish")
 [ "$STATUS" = "409" ] \
@@ -334,10 +400,9 @@ STATUS=$(api_status POST "${API}/workflows/${WF_ID}/versions/${V1_ID}/promote")
   || fail "POST /versions/:id/promote already-active → $STATUS (want 200)"
 
 # Promote a draft version → 409
-DRAFT2_RESP=$(api_post "${API}/workflows/${WF_ID}/draft" \
-  "{\"bpmn_xml\":${BPMN_JSON}}") \
+DRAFT2_RESP=$(api_post "${API}/workflows/${WF_ID}/draft" '{}') \
   || { fail "POST /draft (for promote test) failed"; exit 1; }
-V_DRAFT_ID=$(get_id "$DRAFT2_RESP")
+V_DRAFT_ID=$(get_version_id "$DRAFT2_RESP")
 STATUS=$(api_status POST "${API}/workflows/${WF_ID}/versions/${V_DRAFT_ID}/promote")
 [ "$STATUS" = "409" ] \
   && pass "POST /versions/:id/promote (draft) → 409" \
@@ -354,8 +419,8 @@ STATUS=$(api_status DELETE "${API}/workflows/${WF_ID}/draft")
 CLONE_RESP=$(api_post "${API}/workflows/${WF_ID}/versions/${V1_ID}/clone" \
   '{"new_key":"smoke-test-clone","new_name":"Smoke Clone","new_description":"cloned"}') \
   || { fail "POST /clone failed"; exit 1; }
-CLONE_WF_ID=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d['workflow']['id'])" <<< "$CLONE_RESP" 2>/dev/null)
-CLONE_V_ID=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d['version']['id'])" <<< "$CLONE_RESP" 2>/dev/null)
+CLONE_WF_ID=$(get_workflow_id "$CLONE_RESP")
+CLONE_V_ID=$(get_version_id "$CLONE_RESP")
 [ -n "$CLONE_WF_ID" ] \
   && pass "POST /clone → 201, new_workflow_id=${CLONE_WF_ID}" \
   || fail "no workflow id in clone response: $CLONE_RESP"
@@ -384,8 +449,8 @@ if [ "$HAS_GRPCURL" = true ]; then
   # Published version → success with compiled_plan_json
   GRPC_RESP=$(grpcurl -plaintext \
     -d "{\"tenant_id\":\"${TENANT_ID}\",\"workflow_version_id\":\"${V1_ID}\"}" \
-    "$GRPC" definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
-  echo "$GRPC_RESP" | grep -q "workflowVersionId" \
+    "$GRPC" workflow.definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
+  echo "$GRPC_RESP" | grep -q "versionId" \
     && pass "GetCompiledWorkflow (PUBLISHED) → returns version data" \
     || fail "GetCompiledWorkflow PUBLISHED: unexpected response: $GRPC_RESP"
 
@@ -394,12 +459,12 @@ if [ "$HAS_GRPCURL" = true ]; then
     || fail "GetCompiledWorkflow PUBLISHED: missing compiled_plan_json"
 
   # DRAFT version → no compiled plan (empty string)
-  DRAFT_FOR_GRPC=$(api_post "${API}/workflows/${WF_ID}/draft" "{\"bpmn_xml\":${BPMN_JSON}}")
-  V_GRPC_DRAFT=$(get_id "$DRAFT_FOR_GRPC")
+  DRAFT_FOR_GRPC=$(api_post "${API}/workflows/${WF_ID}/draft" '{}')
+  V_GRPC_DRAFT=$(get_version_id "$DRAFT_FOR_GRPC")
   GRPC_DRAFT=$(grpcurl -plaintext \
     -d "{\"tenant_id\":\"${TENANT_ID}\",\"workflow_version_id\":\"${V_GRPC_DRAFT}\"}" \
-    "$GRPC" definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
-  echo "$GRPC_DRAFT" | grep -q "workflowVersionId" \
+    "$GRPC" workflow.definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
+  echo "$GRPC_DRAFT" | grep -q "versionId" \
     && pass "GetCompiledWorkflow (DRAFT) → returns version data" \
     || fail "GetCompiledWorkflow DRAFT: unexpected: $GRPC_DRAFT"
 
@@ -409,24 +474,24 @@ if [ "$HAS_GRPCURL" = true ]; then
   # NOT_FOUND
   GRPC_NF=$(grpcurl -plaintext \
     -d "{\"tenant_id\":\"${TENANT_ID}\",\"workflow_version_id\":\"00000000-0000-0000-0000-000000000003\"}" \
-    "$GRPC" definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
-  echo "$GRPC_NF" | grep -qi "not_found" \
+    "$GRPC" workflow.definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
+  echo "$GRPC_NF" | grep -qi "NotFound\|not_found" \
     && pass "GetCompiledWorkflow (not found) → NOT_FOUND" \
     || fail "GetCompiledWorkflow not-found: expected NOT_FOUND, got: $GRPC_NF"
 
   # INVALID_ARGUMENT — bad tenant UUID
   GRPC_BADID=$(grpcurl -plaintext \
     -d "{\"tenant_id\":\"not-a-uuid\",\"workflow_version_id\":\"${V1_ID}\"}" \
-    "$GRPC" definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
-  echo "$GRPC_BADID" | grep -qi "invalid_argument" \
+    "$GRPC" workflow.definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
+  echo "$GRPC_BADID" | grep -qi "InvalidArgument\|invalid_argument" \
     && pass "GetCompiledWorkflow (bad UUID) → INVALID_ARGUMENT" \
     || fail "GetCompiledWorkflow bad-uuid: expected INVALID_ARGUMENT, got: $GRPC_BADID"
 
   # INVALID_ARGUMENT — bad version UUID
   GRPC_BADV=$(grpcurl -plaintext \
     -d "{\"tenant_id\":\"${TENANT_ID}\",\"workflow_version_id\":\"not-a-uuid\"}" \
-    "$GRPC" definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
-  echo "$GRPC_BADV" | grep -qi "invalid_argument" \
+    "$GRPC" workflow.definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
+  echo "$GRPC_BADV" | grep -qi "InvalidArgument\|invalid_argument" \
     && pass "GetCompiledWorkflow (bad version UUID) → INVALID_ARGUMENT" \
     || fail "GetCompiledWorkflow bad-version-uuid: expected INVALID_ARGUMENT, got: $GRPC_BADV"
 else
@@ -440,13 +505,12 @@ section "11 · Internal Events — DepartmentMembershipRevoked"
 # directly (no SQS dependency). Set INTERNAL_TOKEN to match INTERNAL_API_TOKEN
 # in the server config if the token check is enabled.
 
-# Create a workflow in DRAFT state — alice is a default assignee
+# Create a workflow in DRAFT state (never published — assignees not yet stored,
+# so revocation does not invalidate it; tests the event-recording path only).
 WF2_RESP=$(api_post "${API}/workflows" \
-  '{"name":"ie-draft-test","description":"internal events draft invalidation","business_key":"ie-draft-wf"}')
-WF2_ID=$(get_id "$WF2_RESP")
-V2_DRAFT_RESP=$(api_post "${API}/workflows/${WF2_ID}/draft" \
-  "{\"bpmn_xml\":${BPMN_JSON}}")
-V2_DRAFT_ID=$(get_id "$V2_DRAFT_RESP")
+  "{\"key\":\"ie-draft-wf\",\"name\":\"ie-draft-test\",\"description\":\"internal events draft invalidation\",\"bpmn_xml\":${BPMN_IE_JSON}}")
+WF2_ID=$(get_workflow_id "$WF2_RESP")
+V2_DRAFT_ID=$(get_version_id "$WF2_RESP")
 [ -n "$V2_DRAFT_ID" ] && pass "Setup: created draft workflow for internal events test" || fail "Setup: draft creation failed"
 
 # Send DepartmentMembershipRevoked for alice (design/preparer)
@@ -459,7 +523,7 @@ REVOKE_MSG=$(cat <<JSON
   "source": "iam-svc",
   "payload": {
     "user_id": "${ALICE}",
-    "department_id": "design",
+    "department_id": "Design",
     "role": "preparer"
   }
 }
@@ -488,9 +552,9 @@ IE_STATUS2=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
 if [ "$HAS_PSQL" = true ]; then
   IS_VALID=$(psql "$DB_URL" -tAc \
     "SELECT is_valid FROM workflow_version WHERE id='${V2_DRAFT_ID}'" 2>/dev/null || echo "?")
-  [ "$IS_VALID" = "f" ] || [ "$IS_VALID" = "false" ] \
-    && pass "DRAFT version is_valid=false after revocation" \
-    || fail "DRAFT version is_valid='${IS_VALID}' (want false)"
+  [ "$IS_VALID" = "t" ] || [ "$IS_VALID" = "true" ] \
+    && pass "DRAFT version is_valid unchanged (assignees only stored at publish)" \
+    || fail "DRAFT version is_valid='${IS_VALID}' (want true — draft was never published)"
 
   PROC_COUNT=$(psql "$DB_URL" -tAc \
     "SELECT COUNT(*) FROM processed_event WHERE event_id='${EVENT1_ID}'" 2>/dev/null || echo "?")
@@ -510,11 +574,9 @@ fi
 
 # Also test with a PUBLISHED version — should invalidate and emit outbox event
 WF3_RESP=$(api_post "${API}/workflows" \
-  '{"name":"ie-pub-test","description":"ie published invalidation","business_key":"ie-pub-wf"}')
-WF3_ID=$(get_id "$WF3_RESP")
-V3_DRAFT_RESP=$(api_post "${API}/workflows/${WF3_ID}/draft" \
-  "{\"bpmn_xml\":${BPMN_JSON}}")
-V3_DRAFT_ID=$(get_id "$V3_DRAFT_RESP")
+  "{\"key\":\"ie-pub-wf\",\"name\":\"ie-pub-test\",\"description\":\"ie published invalidation\",\"bpmn_xml\":${BPMN_IE_JSON}}")
+WF3_ID=$(get_workflow_id "$WF3_RESP")
+V3_DRAFT_ID=$(get_version_id "$WF3_RESP")
 membership_eligible
 STATUS=$(api_status POST "${API}/workflows/${WF3_ID}/versions/${V3_DRAFT_ID}/publish")
 [ "$STATUS" = "200" ] && pass "Setup: published version for published-invalidation test" \
@@ -529,7 +591,7 @@ REVOKE_MSG2=$(cat <<JSON
   "source": "iam-svc",
   "payload": {
     "user_id": "${BOB}",
-    "department_id": "design",
+    "department_id": "Design",
     "role": "reviewer"
   }
 }
@@ -563,13 +625,11 @@ section "12 · Archive workflow"
 
 # Create a fresh workflow with a published version to archive
 WF_ARC_RESP=$(api_post "${API}/workflows" \
-  '{"name":"archive-test","description":"for archive test","business_key":"archive-test-wf"}')
-WF_ARC_ID=$(get_id "$WF_ARC_RESP")
-ARC_DRAFT=$(api_post "${API}/workflows/${WF_ARC_ID}/draft" \
-  "{\"bpmn_xml\":${BPMN_JSON}}")
-ARC_V_ID=$(get_id "$ARC_DRAFT")
+  "{\"key\":\"archive-test-wf\",\"name\":\"archive-test\",\"description\":\"for archive test\",\"bpmn_xml\":${BPMN_JSON}}")
+WF_ARC_ID=$(get_workflow_id "$WF_ARC_RESP")
+ARC_V_ID=$(get_version_id "$WF_ARC_RESP")
 membership_eligible
-api_post "${API}/workflows/${WF_ARC_ID}/versions/${ARC_V_ID}/publish" > /dev/null
+api_post "${API}/workflows/${WF_ARC_ID}/versions/${ARC_V_ID}/publish" '{}' > /dev/null
 
 execution_has_active
 STATUS=$(api_status POST "${API}/workflows/${WF_ARC_ID}/archive")

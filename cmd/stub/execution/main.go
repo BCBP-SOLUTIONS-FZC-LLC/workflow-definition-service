@@ -52,6 +52,14 @@ func (s *server) CheckActiveInstances(
 	return &executionv1.CheckActiveInstancesResponse{HasActive: hasActive, Count: count}, nil
 }
 
+func (s *server) PauseUserTasks(
+	_ context.Context,
+	req *executionv1.PauseUserTasksRequest,
+) (*executionv1.PauseUserTasksResponse, error) {
+	log.Printf("PauseUserTasks tenant=%s user=%s → ok", req.TenantId, req.UserId)
+	return &executionv1.PauseUserTasksResponse{}, nil
+}
+
 func main() {
 	if os.Getenv("HAS_ACTIVE") == "true" {
 		active.Store(1)
