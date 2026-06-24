@@ -1,87 +1,82 @@
 #!/usr/bin/env bash
 # Executed automatically by LocalStack when the container is ready (ready.d hook).
-# Creates the SNS topic, SQS queue, and AWS Glue registry/schemas used by the definition service.
+# Creates the SNS topic, SQS queues (with DLQs), and AWS Glue registry/schema used
+# by the definition service.
 set -euo pipefail
 
 AWS="awslocal"   # awslocal is pre-installed in localstack/localstack image
 
+# subscribe_queue <queue-name> <topic-arn> [filter-policy-json]
+#
+# Creates a DLQ (<queue-name>-dlq), then the main queue with a redrive policy
+# pointing at the DLQ (maxReceiveCount=5), then subscribes the main queue to the
+# given SNS topic with RawMessageDelivery=true.  An optional SNS MessageAttribute
+# filter policy is applied when the third argument is non-empty.
+subscribe_queue() {
+  local QUEUE="$1"
+  local TOPIC_ARN="$2"
+  local FILTER="${3:-}"
+
+  local DLQ="${QUEUE}-dlq"
+
+  echo "[localstack-init] creating DLQ: $DLQ"
+  $AWS sqs create-queue --queue-name "$DLQ"
+  DLQ_ARN=$($AWS sqs get-queue-attributes \
+    --queue-url "http://localhost:4566/000000000000/${DLQ}" \
+    --attribute-names QueueArn --output text --query 'Attributes.QueueArn')
+
+  echo "[localstack-init] creating queue: $QUEUE (redrive → $DLQ)"
+  REDRIVE=$(printf '{"deadLetterTargetArn":"%s","maxReceiveCount":"5"}' "$DLQ_ARN")
+  $AWS sqs create-queue --queue-name "$QUEUE" \
+    --attributes "RedrivePolicy=$(echo "$REDRIVE" | sed 's/"/\\"/g')"
+
+  QUEUE_ARN=$($AWS sqs get-queue-attributes \
+    --queue-url "http://localhost:4566/000000000000/${QUEUE}" \
+    --attribute-names QueueArn --output text --query 'Attributes.QueueArn')
+
+  echo "[localstack-init] subscribing $QUEUE to topic"
+  SUB_ARGS=(--topic-arn "$TOPIC_ARN" --protocol sqs --notification-endpoint "$QUEUE_ARN" \
+    --attributes RawMessageDelivery=true)
+
+  if [ -n "$FILTER" ]; then
+    SUB_ARGS+=(--attributes "FilterPolicy=$(echo "$FILTER" | sed 's/"/\\"/g')")
+  fi
+
+  $AWS sns subscribe "${SUB_ARGS[@]}"
+}
+
 echo "[localstack-init] creating SNS topic: wf.template.events"
 TOPIC_ARN=$($AWS sns create-topic --name wf.template.events --output text --query TopicArn)
-
-echo "[localstack-init] creating SQS queue: membership-wf-q"
-$AWS sqs create-queue --queue-name membership-wf-q
-QUEUE_ARN=$($AWS sqs get-queue-attributes \
-  --queue-url http://localhost:4566/000000000000/membership-wf-q \
-  --attribute-names QueueArn --output text --query 'Attributes.QueueArn')
-
-echo "[localstack-init] subscribing queue to topic"
-$AWS sns subscribe --topic-arn "$TOPIC_ARN" --protocol sqs --notification-endpoint "$QUEUE_ARN"
 
 echo "[localstack-init] creating AWS Glue Schema Registry: workflow-template-events"
 $AWS glue create-registry --registry-name workflow-template-events
 
-# Register JSON schemas for the outbound event payloads
 SCHEMA_PUB='{
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "workflow_id": { "type": "string", "format": "uuid" },
-    "version_id": { "type": "string", "format": "uuid" },
-    "version_number": { "type": "integer" },
-    "published_by": { "type": "string", "format": "uuid" },
-    "compiled_plan_json": { "type": "string" },
+    "workflow_id":              { "type": "string", "format": "uuid" },
+    "workflow_key":             { "type": "string" },
+    "version_id":               { "type": "string", "format": "uuid" },
+    "version_number":           { "type": "integer" },
+    "artifact_hash":            { "type": "string" },
+    "published_by":             { "type": "string", "format": "uuid" },
     "promoted_from_version_id": { "type": ["string", "null"], "format": "uuid" }
   },
-  "required": ["workflow_id", "version_id", "version_number", "published_by", "compiled_plan_json"]
+  "required": ["workflow_id", "workflow_key", "version_id", "version_number", "artifact_hash", "published_by"]
 }'
 
-SCHEMA_CLONE='{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "properties": {
-    "source_workflow_id": { "type": "string", "format": "uuid" },
-    "source_version_id": { "type": "string", "format": "uuid" },
-    "new_workflow_id": { "type": "string", "format": "uuid" },
-    "new_workflow_key": { "type": "string" },
-    "new_workflow_name": { "type": "string" },
-    "cloned_by_user_id": { "type": "string", "format": "uuid" }
-  },
-  "required": ["source_workflow_id", "source_version_id", "new_workflow_id", "new_workflow_key", "new_workflow_name", "cloned_by_user_id"]
-}'
+echo "[localstack-init] registering schema: WorkflowTemplatePublished"
+$AWS glue create-schema \
+  --registry-id RegistryName=workflow-template-events \
+  --schema-name WorkflowTemplatePublished \
+  --data-format JSON \
+  --compatibility BACKWARD \
+  --schema-definition "$SCHEMA_PUB"
 
-SCHEMA_ARCHIVE='{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "properties": {
-    "workflow_id": { "type": "string", "format": "uuid" },
-    "version_id": { "type": "string", "format": "uuid" },
-    "archived_by": { "type": "string", "format": "uuid" }
-  },
-  "required": ["workflow_id", "version_id", "archived_by"]
-}'
+# Fan-out consumers — each gets its own DLQ and an SNS filter on event_type.
+# §9.1 Fan-out queue registry (see api/asyncapi.yaml for full topology).
+subscribe_queue "membership-wf-q" "$TOPIC_ARN" \
+  '{"event_type":["workflow.template.published"]}'
 
-SCHEMA_INVALID='{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "properties": {
-    "workflow_id": { "type": "string", "format": "uuid" },
-    "version_id": { "type": "string", "format": "uuid" },
-    "version_number": { "type": "integer" },
-    "revoked_user_id": { "type": "string", "format": "uuid" },
-    "affected_nodes": { "type": "array", "items": { "type": "string" } },
-    "reason": { "type": "string" }
-  },
-  "required": ["workflow_id", "version_id", "version_number", "revoked_user_id", "affected_nodes", "reason"]
-}'
-
-echo "[localstack-init] registering schemas..."
-$AWS glue create-schema --registry-id RegistryName=workflow-template-events \
-  --schema-name WorkflowTemplatePublished --data-format JSON --compatibility BACKWARD --schema-definition "$SCHEMA_PUB"
-$AWS glue create-schema --registry-id RegistryName=workflow-template-events \
-  --schema-name WorkflowTemplateCloned --data-format JSON --compatibility BACKWARD --schema-definition "$SCHEMA_CLONE"
-$AWS glue create-schema --registry-id RegistryName=workflow-template-events \
-  --schema-name WorkflowTemplateArchived --data-format JSON --compatibility BACKWARD --schema-definition "$SCHEMA_ARCHIVE"
-$AWS glue create-schema --registry-id RegistryName=workflow-template-events \
-  --schema-name WorkflowTemplateEligibilityInvalidated --data-format JSON --compatibility BACKWARD --schema-definition "$SCHEMA_INVALID"
-
-echo "[localstack-init] done. topic=$TOPIC_ARN queue=$QUEUE_ARN"
+echo "[localstack-init] done. topic=$TOPIC_ARN"

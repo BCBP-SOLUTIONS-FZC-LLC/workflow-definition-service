@@ -26,62 +26,64 @@ func (s *VersionService) publishPreFlight(
 	ctx context.Context,
 	tenantID, workflowID, versionID uuid.UUID,
 	forcePublishStructural bool,
-) (*domain.WorkflowVersion, string, string, int32, []*domain.NodeAssignee, error) {
+) (*domain.WorkflowVersion, string, string, int32, []*domain.NodeAssignee, string, error) {
 	draft, err := s.versions.GetByID(ctx, tenantID, versionID)
 	if err != nil {
-		return nil, "", "", 0, nil, fmt.Errorf("get draft version: %w", err)
+		return nil, "", "", 0, nil, "", fmt.Errorf("get draft version: %w", err)
 	}
 	if draft.Status != domain.VersionStatusDraft {
-		return nil, "", "", 0, nil, domain.ErrVersionNotDraft
+		return nil, "", "", 0, nil, "", domain.ErrVersionNotDraft
 	}
 	if draft.WorkflowID != workflowID {
-		return nil, "", "", 0, nil, domain.ErrNotFound
+		return nil, "", "", 0, nil, "", domain.ErrNotFound
 	}
 
 	plan, err := s.compiler.Compile(ctx, draft.BPMNXML)
 	if err != nil {
-		return nil, "", "", 0, nil, fmt.Errorf("compile bpmn: %w", err)
+		return nil, "", "", 0, nil, "", fmt.Errorf("compile bpmn: %w", err)
 	}
 	artifactHash, err := s.compiler.Hash(draft.BPMNXML)
 	if err != nil {
-		return nil, "", "", 0, nil, fmt.Errorf("hash bpmn: %w", err)
+		return nil, "", "", 0, nil, "", fmt.Errorf("hash bpmn: %w", err)
 	}
 
-	if err := s.checkStructuralDivergence(ctx, tenantID, workflowID, plan, forcePublishStructural); err != nil {
-		return nil, "", "", 0, nil, err
+	var businessKey string
+	if s.workflows != nil {
+		wf, err := s.workflows.GetByID(ctx, tenantID, workflowID)
+		if err != nil {
+			return nil, "", "", 0, nil, "", fmt.Errorf(errGetWorkflow, err)
+		}
+		if err := s.checkStructuralDivergence(ctx, tenantID, wf, plan, forcePublishStructural); err != nil {
+			return nil, "", "", 0, nil, "", err
+		}
+		businessKey = wf.BusinessKey
 	}
 
 	if s.membership != nil {
 		if err := s.checkAssigneeEligibility(ctx, tenantID, plan); err != nil {
-			return nil, "", "", 0, nil, err
+			return nil, "", "", 0, nil, "", err
 		}
 	}
 
 	versionNumber, err := s.versions.NextVersionNumber(ctx, tenantID, workflowID)
 	if err != nil {
-		return nil, "", "", 0, nil, fmt.Errorf("next version number: %w", err)
+		return nil, "", "", 0, nil, "", fmt.Errorf("next version number: %w", err)
 	}
 	compiledJSON, err := marshalPlan(plan)
 	if err != nil {
-		return nil, "", "", 0, nil, fmt.Errorf("marshal compiled plan: %w", err)
+		return nil, "", "", 0, nil, "", fmt.Errorf("marshal compiled plan: %w", err)
 	}
 
-	return draft, compiledJSON, artifactHash, versionNumber, extractAssignees(tenantID, versionID, plan), nil
+	return draft, compiledJSON, artifactHash, versionNumber, extractAssignees(tenantID, versionID, plan), businessKey, nil
 }
 
 func (s *VersionService) checkStructuralDivergence(
 	ctx context.Context,
-	tenantID, workflowID uuid.UUID,
+	tenantID uuid.UUID,
+	wf *domain.Workflow,
 	draftPlan *domain.CompiledPlan,
 	forcePublishStructural bool,
 ) error {
-	if s.workflows == nil {
-		return nil
-	}
-	wf, err := s.workflows.GetByID(ctx, tenantID, workflowID)
-	if err != nil {
-		return fmt.Errorf("get workflow for divergence check: %w", err)
-	}
 	if wf.ActiveVersionID == nil {
 		return nil // first publish. no divergence possible
 	}

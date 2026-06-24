@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	swaggerFiles "github.com/swaggo/files"
@@ -9,6 +11,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
 
+	inboundhttp "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	httpmiddleware "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/middleware"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
@@ -39,10 +42,18 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 
 	if cfg.AppEnv == "dev" {
 		r.StaticFile("/api/openapi.yaml", "api/openapi.yaml")
-		r.GET("/swagger/*any", ginSwagger.WrapHandler(
-			swaggerFiles.Handler,
-			ginSwagger.URL("/api/openapi.yaml"),
-		))
+		stdSwagger := ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.URL("/api/openapi.yaml"))
+		r.GET("/swagger/*any", func(c *gin.Context) {
+			switch {
+			case strings.HasSuffix(c.Request.URL.Path, "/index.css"):
+				inboundhttp.SwaggerThemeHandler(c)
+			case strings.HasSuffix(c.Request.URL.Path, "/swagger-initializer.js"):
+				inboundhttp.SwaggerInitializerHandler(c)
+			default:
+				stdSwagger(c)
+			}
+		})
+		r.GET("/asyncapi", inboundhttp.AsyncAPIHandler)
 	}
 
 	// Internal service-to-service routes and not exposed on the public gateway.

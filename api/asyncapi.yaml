@@ -27,12 +27,13 @@ components:
     WorkflowTemplatePublished:
       name: WorkflowTemplatePublished
       title: Workflow template version published
-      schemaFormat: application/vnd.aai.asyncapi+json;version=3.0.0
       payload:
         $ref: '#/components/schemas/WorkflowTemplatePublishedPayload'
 
   schemas:
-    # Shared event envelope fields
+    # Shared event envelope fields emitted by every outbox event.
+    # The envelope is serialised by platform-events; consumers receive a JSON
+    # object where these fields appear at the top level alongside `data`.
     EventEnvelope:
       type: object
       required: [id, source, tenant_id, trace_id, schema_version, event_type]
@@ -55,7 +56,10 @@ components:
           description: Incremented on additive payload schema changes
         event_type:
           type: string
-          description: PascalCase event type name (used as SNS MessageAttribute for filter policies)
+          description: >
+            Dot-separated event type name (e.g. workflow.template.published).
+            Also set as the SNS MessageAttribute `event_type` so consumers can
+            apply SNS filter policies per queue.
 
     WorkflowTemplatePublishedPayload:
       allOf:
@@ -65,25 +69,37 @@ components:
           properties:
             data:
               type: object
-              required: [workflow_id, workflow_key, version_id, version_number, artifact_hash, published_by]
+              required:
+                - workflow_id
+                - workflow_key
+                - version_id
+                - version_number
+                - artifact_hash
+                - published_by
               properties:
                 workflow_id:
                   type: string
                   format: uuid
                 workflow_key:
                   type: string
+                  description: business key for the workflow template
                 version_id:
                   type: string
                   format: uuid
                 version_number:
                   type: integer
+                  description: Monotonically increasing version counter scoped to the workflow
                 artifact_hash:
                   type: string
-                  description: SHA-256 hash of the BPMN XML to verify integrity
+                  description: SHA-256 hash of the BPMN XML — consumers use this to verify integrity
                 published_by:
                   type: string
                   format: uuid
+                  description: User ID of the actor who triggered the publish
                 promoted_from_version_id:
                   type: string
                   format: uuid
                   nullable: true
+                  description: >
+                    ID of the version that was previously active when this version
+                    was promoted. Null for the first publish of a workflow.

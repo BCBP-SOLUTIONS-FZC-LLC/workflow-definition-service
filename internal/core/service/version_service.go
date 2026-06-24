@@ -12,7 +12,10 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-const errGetVersion = "get version: %w"
+const (
+	errGetVersion  = "get version: %w"
+	errGetWorkflow = "get workflow: %w"
+)
 
 type VersionDeps struct {
 	Transactor      port.Transactor
@@ -114,18 +117,19 @@ func (s *VersionService) Publish(
 		wfPublishTotal.WithLabelValues(outcomeLabel(err)).Inc()
 		wfPublishLatency.Observe(time.Since(start).Seconds())
 	}()
-	draft, compiledJSON, artifactHash, versionNumber, assignees, err :=
+	draft, compiledJSON, artifactHash, versionNumber, assignees, businessKey, err :=
 		s.publishPreFlight(ctx, tenantID, workflowID, versionID, forcePublishStructural)
 	if err != nil {
 		return nil, err
 	}
 
 	env, err := buildEnvelope(ctx, s.glueCodec, domain.EventTypeTemplatePublished, tenantID.String(), domain.TemplatePublishedPayload{
-		WorkflowID:       workflowID.String(),
-		VersionID:        versionID.String(),
-		VersionNumber:    versionNumber,
-		PublishedBy:      userID.String(),
-		CompiledPlanJSON: compiledJSON,
+		WorkflowID:    workflowID.String(),
+		WorkflowKey:   businessKey,
+		VersionID:     versionID.String(),
+		VersionNumber: versionNumber,
+		ArtifactHash:  artifactHash,
+		PublishedBy:   userID.String(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build publish event: %w", err)
@@ -246,7 +250,7 @@ func (s *VersionService) Promote(
 
 	wf, err := s.workflows.GetByID(ctx, tenantID, workflowID)
 	if err != nil {
-		return nil, fmt.Errorf("get workflow: %w", err)
+		return nil, fmt.Errorf(errGetWorkflow, err)
 	}
 	if wf.ActiveVersionID != nil && *wf.ActiveVersionID == versionID {
 		return v, nil
@@ -261,17 +265,13 @@ func (s *VersionService) Promote(
 	if v.VersionNumber != nil {
 		versionNumber = *v.VersionNumber
 	}
-	var compiledJSON string
-	if v.CompiledPlanJSON != nil {
-		compiledJSON = *v.CompiledPlanJSON
-	}
-
 	env, err := buildEnvelope(ctx, s.glueCodec, domain.EventTypeTemplatePublished, tenantID.String(), domain.TemplatePublishedPayload{
 		WorkflowID:            workflowID.String(),
+		WorkflowKey:           wf.BusinessKey,
 		VersionID:             versionID.String(),
 		VersionNumber:         versionNumber,
+		ArtifactHash:          v.ArtifactHash,
 		PublishedBy:           userID.String(),
-		CompiledPlanJSON:      compiledJSON,
 		PromotedFromVersionID: promotedFrom,
 	})
 	if err != nil {
@@ -309,7 +309,7 @@ func (s *VersionService) Export(
 	}
 	wf, err := s.workflows.GetByID(ctx, tenantID, workflowID)
 	if err != nil {
-		return "", "", fmt.Errorf("get workflow: %w", err)
+		return "", "", fmt.Errorf(errGetWorkflow, err)
 	}
 	return v.BPMNXML, fmt.Sprintf("%s-v%s.bpmn", wf.BusinessKey, versionLabel(v)), nil
 }
