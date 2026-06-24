@@ -1,14 +1,13 @@
-package element_test
+package element
 
 import (
 	"testing"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/element"
 )
 
 func TestDefaultElementHandlers_Registry(t *testing.T) {
-	m := element.DefaultElementHandlers()
+	m := DefaultElementHandlers()
 	if m == nil {
 		t.Fatal("DefaultElementHandlers() returned nil")
 	}
@@ -28,7 +27,6 @@ func TestDefaultElementHandlers_Registry(t *testing.T) {
 		}
 	}
 
-	// each registered handler's NodeType() must match its map key
 	for nodeType, handler := range m {
 		if got := handler.NodeType(); got != nodeType {
 			t.Errorf("handler %T is registered under %q but NodeType() returns %q", handler, nodeType, got)
