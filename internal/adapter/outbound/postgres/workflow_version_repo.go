@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
 	"github.com/google/uuid"
@@ -155,7 +156,7 @@ func (r *WorkflowVersionRepo) Publish(
 			TenantID:         tenantID,
 			ID:               versionID,
 			VersionNumber:    pgtype.Int4{Int32: versionNumber, Valid: true},
-			CompiledPlanJson: []byte(compiledPlanJSON),
+			CompiledPlanJson: json.RawMessage(compiledPlanJSON),
 			ArtifactHash:     toNullableText(artifactHash),
 		})
 		if err != nil {
@@ -209,7 +210,7 @@ func (r *WorkflowVersionRepo) SetInvalid(
 		tag, err := db.New(dbtx).SetVersionInvalid(ctx, db.SetVersionInvalidParams{
 			TenantID:             tenantID,
 			ID:                   versionID,
-			ValidationErrorsJson: []byte(errorsJSON),
+			ValidationErrorsJson: json.RawMessage(errorsJSON),
 		})
 		if err != nil {
 			return mapErr(err)

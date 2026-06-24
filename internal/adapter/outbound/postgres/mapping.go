@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -76,14 +77,14 @@ func toPgtypeTimestamp(t *time.Time) pgtype.Timestamp {
 	return pgtype.Timestamp{Time: *t, Valid: true}
 }
 
-func toNullableJSONB(s *string) []byte {
+func toNullableJSONB(s *string) json.RawMessage {
 	if s == nil || *s == "" {
 		return nil
 	}
-	return []byte(*s)
+	return json.RawMessage(*s)
 }
 
-func fromJSONB(b []byte) *string {
+func fromJSONB(b json.RawMessage) *string {
 	if len(b) == 0 {
 		return nil
 	}
