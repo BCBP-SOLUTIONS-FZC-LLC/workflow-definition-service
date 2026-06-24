@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,6 +26,7 @@ func TestMembershipClient_CheckEligibility(t *testing.T) {
 	tests := []struct {
 		name         string
 		makeHandler  func(t *testing.T, calls *int) http.HandlerFunc
+		makeCtx      func(t *testing.T) context.Context
 		closeServer  bool
 		dept         string
 		level        string
@@ -32,6 +34,7 @@ func TestMembershipClient_CheckEligibility(t *testing.T) {
 		wantErr      bool
 		wantSentinel error
 		wantCalls    int
+		checkElapsed func(t *testing.T, elapsed time.Duration)
 	}{
 		{
 			name: "eligible",
@@ -125,6 +128,30 @@ func TestMembershipClient_CheckEligibility(t *testing.T) {
 			wantErr:     true,
 		},
 		{
+			name: "context cancelled during backoff short-circuits retry",
+			makeHandler: func(_ *testing.T, calls *int) http.HandlerFunc {
+				return func(w http.ResponseWriter, _ *http.Request) {
+					*calls++
+					w.WriteHeader(http.StatusServiceUnavailable)
+				}
+			},
+			makeCtx: func(t *testing.T) context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				t.Cleanup(cancel)
+				time.AfterFunc(30*time.Millisecond, cancel)
+				return ctx
+			},
+			dept:         "dept-1",
+			level:        "approver",
+			wantErr:      true,
+			wantSentinel: domain.ErrUpstreamUnavailable,
+			checkElapsed: func(t *testing.T, elapsed time.Duration) {
+				if elapsed > 200*time.Millisecond {
+					t.Errorf("expected context cancel to short-circuit retry; elapsed = %v", elapsed)
+				}
+			},
+		},
+		{
 			name: "URL encodes params",
 			makeHandler: func(t *testing.T, _ *int) http.HandlerFunc {
 				return func(w http.ResponseWriter, r *http.Request) {
@@ -155,7 +182,13 @@ func TestMembershipClient_CheckEligibility(t *testing.T) {
 			}
 
 			client := httpadapter.NewMembershipClient(srv.URL)
-			ok, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), tt.dept, tt.level)
+			ctx := context.Background()
+			if tt.makeCtx != nil {
+				ctx = tt.makeCtx(t)
+			}
+			start := time.Now()
+			ok, err := client.CheckEligibility(ctx, uuid.New(), uuid.New(), tt.dept, tt.level)
+			elapsed := time.Since(start)
 
 			if tt.wantErr {
 				if err == nil {
@@ -163,6 +196,9 @@ func TestMembershipClient_CheckEligibility(t *testing.T) {
 				}
 				if tt.wantSentinel != nil && !errors.Is(err, tt.wantSentinel) {
 					t.Errorf("expected %v, got %v", tt.wantSentinel, err)
+				}
+				if tt.checkElapsed != nil {
+					tt.checkElapsed(t, elapsed)
 				}
 			} else {
 				if err != nil {

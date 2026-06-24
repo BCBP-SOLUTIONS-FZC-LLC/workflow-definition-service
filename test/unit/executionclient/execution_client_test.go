@@ -62,6 +62,29 @@ func (s *slowExecutionServer) CheckActiveInstances(
 	return nil, status.FromContextError(ctx.Err()).Err()
 }
 
+//verify that non-retryable errors do not trigger retries.
+type countingServer struct {
+	executionv1.UnimplementedExecutionServiceServer
+	calls int
+	code  codes.Code
+}
+
+func (s *countingServer) CheckActiveInstances(
+	_ context.Context,
+	_ *executionv1.CheckActiveInstancesRequest,
+) (*executionv1.CheckActiveInstancesResponse, error) {
+	s.calls++
+	return nil, status.Error(s.code, "error")
+}
+
+func (s *countingServer) PauseUserTasks(
+	_ context.Context,
+	_ *executionv1.PauseUserTasksRequest,
+) (*executionv1.PauseUserTasksResponse, error) {
+	s.calls++
+	return nil, status.Error(s.code, "error")
+}
+
 type pauseServer struct {
 	executionv1.UnimplementedExecutionServiceServer
 	err error
@@ -123,6 +146,7 @@ func TestExecutionClient_CheckActiveInstances(t *testing.T) {
 		name          string
 		srv           executionv1.ExecutionServiceServer
 		clientTimeout time.Duration
+		makeCtx       func(t *testing.T) context.Context
 		wantErr       bool
 		wantSentinel  error
 		wantActive    bool
@@ -172,6 +196,34 @@ func TestExecutionClient_CheckActiveInstances(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:         "non-retryable error makes only 1 attempt",
+			srv:          &countingServer{code: codes.PermissionDenied},
+			wantErr:      true,
+			wantSentinel: domain.ErrUpstreamUnavailable,
+			checkServer: func(t *testing.T, srv executionv1.ExecutionServiceServer) {
+				if got := srv.(*countingServer).calls; got != 1 {
+					t.Errorf("expected 1 attempt for non-retryable error, got %d", got)
+				}
+			},
+		},
+		{
+			name: "context cancelled during backoff short-circuits retry",
+			srv:  &countingServer{code: codes.Unavailable},
+			makeCtx: func(t *testing.T) context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				t.Cleanup(cancel)
+				time.AfterFunc(30*time.Millisecond, cancel)
+				return ctx
+			},
+			wantErr:      true,
+			wantSentinel: domain.ErrUpstreamUnavailable,
+			checkElapsed: func(t *testing.T, elapsed time.Duration) {
+				if elapsed > 100*time.Millisecond {
+					t.Errorf("expected context cancel to short-circuit retry; elapsed = %v", elapsed)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -187,8 +239,12 @@ func TestExecutionClient_CheckActiveInstances(t *testing.T) {
 			}
 			defer c.Close() //nolint:errcheck
 
+			ctx := context.Background()
+			if tt.makeCtx != nil {
+				ctx = tt.makeCtx(t)
+			}
 			start := time.Now()
-			hasActive, count, err := c.CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
+			hasActive, count, err := c.CheckActiveInstances(ctx, uuid.New(), uuid.New())
 			elapsed := time.Since(start)
 
 			if tt.wantErr {
@@ -223,9 +279,11 @@ func TestExecutionClient_PauseUserTasks(t *testing.T) {
 	tests := []struct {
 		name         string
 		srv          executionv1.ExecutionServiceServer
+		makeCtx      func(t *testing.T) context.Context
 		wantErr      bool
 		wantSentinel error
 		checkServer  func(t *testing.T, srv executionv1.ExecutionServiceServer)
+		checkElapsed func(t *testing.T, elapsed time.Duration)
 	}{
 		{
 			name: "ok",
@@ -246,6 +304,34 @@ func TestExecutionClient_PauseUserTasks(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:         "non-retryable error makes only 1 attempt",
+			srv:          &countingServer{code: codes.PermissionDenied},
+			wantErr:      true,
+			wantSentinel: domain.ErrUpstreamUnavailable,
+			checkServer: func(t *testing.T, srv executionv1.ExecutionServiceServer) {
+				if got := srv.(*countingServer).calls; got != 1 {
+					t.Errorf("expected 1 attempt for non-retryable error, got %d", got)
+				}
+			},
+		},
+		{
+			name: "context cancelled during backoff short-circuits retry",
+			srv:  &countingServer{code: codes.Unavailable},
+			makeCtx: func(t *testing.T) context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				t.Cleanup(cancel)
+				time.AfterFunc(30*time.Millisecond, cancel)
+				return ctx
+			},
+			wantErr:      true,
+			wantSentinel: domain.ErrUpstreamUnavailable,
+			checkElapsed: func(t *testing.T, elapsed time.Duration) {
+				if elapsed > 100*time.Millisecond {
+					t.Errorf("expected context cancel to short-circuit retry; elapsed = %v", elapsed)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -257,13 +343,23 @@ func TestExecutionClient_PauseUserTasks(t *testing.T) {
 			}
 			defer c.Close() //nolint:errcheck
 
-			err = c.PauseUserTasks(context.Background(), uuid.New(), uuid.New())
+			ctx := context.Background()
+			if tt.makeCtx != nil {
+				ctx = tt.makeCtx(t)
+			}
+			start := time.Now()
+			err = c.PauseUserTasks(ctx, uuid.New(), uuid.New())
+			elapsed := time.Since(start)
+
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
 				}
 				if tt.wantSentinel != nil && !errors.Is(err, tt.wantSentinel) {
 					t.Errorf("expected %v, got %v", tt.wantSentinel, err)
+				}
+				if tt.checkElapsed != nil {
+					tt.checkElapsed(t, elapsed)
 				}
 				return
 			}

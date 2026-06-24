@@ -251,6 +251,64 @@ func TestLoad_ValidationFailures(t *testing.T) {
 	}
 }
 
+func TestMigrationDSN(t *testing.T) {
+	const dbURL = "postgres://localhost:5432/test"
+	const migURL = "postgres://localhost:5432/migration"
+
+	tests := []struct {
+		name        string
+		databaseURL string
+		migrationURL string
+		wantDSN     string
+	}{
+		{
+			name:         "MIGRATION_DATABASE_URL set — returns migration URL",
+			databaseURL:  dbURL,
+			migrationURL: migURL,
+			wantDSN:      migURL,
+		},
+		{
+			name:         "MIGRATION_DATABASE_URL empty — falls back to DATABASE_URL",
+			databaseURL:  dbURL,
+			migrationURL: "",
+			wantDSN:      dbURL,
+		},
+	}
+
+	keysToBackup := []string{"DATABASE_URL", "MIGRATION_DATABASE_URL"}
+	envBackup := make(map[string]string)
+	for _, k := range keysToBackup {
+		envBackup[k] = os.Getenv(k)
+	}
+	defer func() {
+		for k, v := range envBackup {
+			if v == "" {
+				_ = os.Unsetenv(k)
+			} else {
+				_ = os.Setenv(k, v)
+			}
+		}
+	}()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_ = os.Setenv("DATABASE_URL", tt.databaseURL)
+			if tt.migrationURL == "" {
+				_ = os.Unsetenv("MIGRATION_DATABASE_URL")
+			} else {
+				_ = os.Setenv("MIGRATION_DATABASE_URL", tt.migrationURL)
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+			if got := cfg.MigrationDSN(); got != tt.wantDSN {
+				t.Errorf("MigrationDSN() = %q, want %q", got, tt.wantDSN)
+			}
+		})
+	}
+}
+
 func TestLoad_InvalidValues_FallBackToDefaults(t *testing.T) {
 	keysToBackup := []string{"HTTP_PORT", "OTEL_EXPORTER_OTLP_INSECURE", "OTEL_TRACES_SAMPLER_RATIO", "OUTBOX_POLL_INTERVAL"}
 	envBackup := make(map[string]string)
