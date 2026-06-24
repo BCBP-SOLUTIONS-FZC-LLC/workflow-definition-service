@@ -1,15 +1,16 @@
 services:
   postgres:
-    image: postgres:18-slim
+    image: postgres:18-alpine
     container_name: wf-definition-postgres
     environment:
       POSTGRES_USER: wfdef
       POSTGRES_PASSWORD: wfdef
       POSTGRES_DB: workflow_definition
+      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wfdef -d workflow_definition"]
       interval: 5s
@@ -60,6 +61,8 @@ services:
       MAX_CLIENT_CONN: "20"
       DEFAULT_POOL_SIZE: "10"
       MIN_POOL_SIZE: "1"
+      LISTEN_PORT: "6432"
+      AUTH_TYPE: trust
       IGNORE_STARTUP_PARAMETERS: extra_float_digits
       SERVER_RESET_QUERY: ""
     ports:
