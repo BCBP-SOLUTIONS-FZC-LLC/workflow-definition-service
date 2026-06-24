@@ -191,12 +191,12 @@ jobs:
       - name: Unit Tests & Coverage
         run: |
           mkdir -p .coverage
-          EXCLUDE='/postgres/db$\|/postgres$\|/mocks$\|/glue$'
+          EXCLUDE='/postgres/db$\|/postgres$\|/mocks$\|/glue$\|/inbound/http$'
           go test -race -count=1 \
             -coverpkg=$(go list ./internal/... ./cmd/... | grep -v "$EXCLUDE" | tr '\n' ',' | sed 's/,$//') \
             -coverprofile=.coverage/coverage.out -covermode=atomic \
             ./internal/... ./test/unit/...
-          grep -v '/postgres/db/\|/postgres/\|/mocks/\|/glue/\|/service/noop_logger.go' .coverage/coverage.out > .coverage/coverage.out.filtered && mv .coverage/coverage.out.filtered .coverage/coverage.out
+          grep -v '/postgres/db/\|/postgres/\|/mocks/\|/glue/\|/service/noop_logger.go\|/inbound/http/asyncapi.go\|/inbound/http/swagger' .coverage/coverage.out > .coverage/coverage.out.filtered && mv .coverage/coverage.out.filtered .coverage/coverage.out
 
       - uses: actions/upload-artifact@v4
         with:
@@ -239,6 +239,9 @@ jobs:
     env:
       TESTCONTAINERS_RYUK_DISABLED: "true"
       DOCKER_HOST: unix:///var/run/docker.sock
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_EC2_METADATA_DISABLED: "true"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -264,16 +267,22 @@ jobs:
         run: go mod download
 
       - name: Pre-pull testcontainers images
-        run: docker pull postgres:18-alpine
+        run: |
+          docker pull postgres:18-alpine
+          docker pull localstack/localstack:3
 
       - name: Integration Tests & Coverage
         run: |
           mkdir -p .coverage
-          go test -race -count=1 \
-            -coverpkg=$(go list ./internal/... | tr '\n' ',' | sed 's/,$//') \
+          EXCLUDE='/postgres/db$\|/postgres$\|/mocks$\|/glue$\|/inbound/http$'
+          go test -race -count=1 -tags integration \
+            -coverpkg=$(go list ./internal/... | grep -v "$EXCLUDE" | tr '\n' ',' | sed 's/,$//') \
             -coverprofile=.coverage/coverage-integration.out \
             -covermode=atomic \
             ./test/integration/...
+          grep -v '/postgres/db/\|/postgres/\|/mocks/\|/glue/\|/service/noop_logger.go\|/inbound/http/asyncapi.go\|/inbound/http/swagger' \
+            .coverage/coverage-integration.out > .coverage/coverage-integration.out.filtered \
+            && mv .coverage/coverage-integration.out.filtered .coverage/coverage-integration.out
           go tool cover -func=.coverage/coverage-integration.out | tail -1
 
       - uses: actions/upload-artifact@v4

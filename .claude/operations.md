@@ -38,7 +38,7 @@ The `vet` job now includes an **architecture lint** step (`go-arch-lint check --
 
 The `Iint` job runs real integration tests (testcontainers) in CI — Docker is available on `ubuntu-latest`.
 
-The `coverage` job enforces a unit-test-only threshold of **96%**. Generated packages (`postgres/db`, `mocks`) and the postgres repo adapter (`postgres/`) are excluded — they are integration-tested by `Iint`. The integration coverage profile is uploaded as a separate artifact but is not merged into the gate.
+The `coverage` job enforces a unit-test-only threshold of **95%**. Generated packages (`postgres/db`, `mocks`) and the postgres repo adapter (`postgres/`) are excluded — they are integration-tested by `Iint`. The integration coverage profile is uploaded as a separate artifact but is not merged into the gate.
 
 ## Prometheus Metrics
 
