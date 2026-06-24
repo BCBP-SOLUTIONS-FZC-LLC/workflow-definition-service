@@ -256,10 +256,10 @@ func TestMigrationDSN(t *testing.T) {
 	const migURL = "postgres://localhost:5432/migration"
 
 	tests := []struct {
-		name        string
-		databaseURL string
+		name         string
+		databaseURL  string
 		migrationURL string
-		wantDSN     string
+		wantDSN      string
 	}{
 		{
 			name:         "MIGRATION_DATABASE_URL set — returns migration URL",

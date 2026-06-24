@@ -62,7 +62,7 @@ func (s *slowExecutionServer) CheckActiveInstances(
 	return nil, status.FromContextError(ctx.Err()).Err()
 }
 
-//verify that non-retryable errors do not trigger retries.
+// verify that non-retryable errors do not trigger retries.
 type countingServer struct {
 	executionv1.UnimplementedExecutionServiceServer
 	calls int
