@@ -45,8 +45,8 @@ subscribe_queue() {
   $AWS sns subscribe "${SUB_ARGS[@]}"
 }
 
-echo "[localstack-init] creating SNS topic: wf.template.events"
-TOPIC_ARN=$($AWS sns create-topic --name wf.template.events --output text --query TopicArn)
+echo "[localstack-init] creating SNS topic: wf-template-events"
+TOPIC_ARN=$($AWS sns create-topic --name wf-template-events --output text --query TopicArn)
 
 echo "[localstack-init] creating AWS Glue Schema Registry: workflow-template-events"
 $AWS glue create-registry --registry-name workflow-template-events

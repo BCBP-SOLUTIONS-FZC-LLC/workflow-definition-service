@@ -217,7 +217,7 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 	fmt.Fprintf(w, `<div class="header">
   <div>
     <h1>%s</h1>
-    <p>Events published to <strong>wf.template.events</strong> SNS topic</p>
+    <p>Events published to <strong>wf-template-events</strong> SNS topic</p>
   </div>
   <span class="badge badge-version">v%s</span>
   <span class="badge" style="background:linear-gradient(to right,#bd0283,#ec4b3c);color:#fff">AsyncAPI %s</span>

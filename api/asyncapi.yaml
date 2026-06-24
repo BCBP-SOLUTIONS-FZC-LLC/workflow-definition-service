@@ -2,11 +2,11 @@ asyncapi: 3.0.0
 info:
   title: workflow-definition-svc events
   version: 1.0.0
-  description: Outbound events published to wf.template.events (SNS → SQS fan-out)
+  description: Outbound events published to wf-template-events (SNS → SQS fan-out)
 
 channels:
   wf/template/events:
-    address: wf.template.events
+    address: wf-template-events
     bindings:
       sns:
         name: workflow-template-events
