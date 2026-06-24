@@ -62,6 +62,7 @@ jobs:
           .tools/mockgen -source=internal/core/port/cache.go       -destination=internal/core/port/mocks/cache_mock.go       -package=mocks
           .tools/mockgen -source=internal/core/port/services.go    -destination=internal/core/port/mocks/services_mock.go    -package=mocks
           .tools/mockgen -source=internal/core/port/transactor.go  -destination=internal/core/port/mocks/transactor_mock.go  -package=mocks
+          .tools/mockgen -source=internal/core/port/glue.go        -destination=internal/core/port/mocks/glue_mock.go        -package=mocks
 
       - uses: actions/upload-artifact@v4
         with:
