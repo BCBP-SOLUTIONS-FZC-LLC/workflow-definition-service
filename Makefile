@@ -18,6 +18,7 @@ GOARCHLINT_VERSION   := latest
 # Run `make tools-integration` once to warm the local Docker image cache.
 TESTCONTAINERS_POSTGRES_IMAGE    := postgres:18-alpine
 TESTCONTAINERS_LOCALSTACK_IMAGE  := localstack/localstack:3
+TESTCONTAINERS_VALKEY_IMAGE      := valkey/valkey:8-alpine
 
 TOOLS_DIR          := .tools
 BIN_DIR            := bin
@@ -86,6 +87,7 @@ tools:
 tools-integration:
 	docker pull $(TESTCONTAINERS_POSTGRES_IMAGE)
 	docker pull $(TESTCONTAINERS_LOCALSTACK_IMAGE)
+	docker pull $(TESTCONTAINERS_VALKEY_IMAGE)
 	@echo "✓ Docker images ready for integration tests"
 
 
@@ -159,7 +161,7 @@ test-integration:
 	    -coverpkg=$$(go list ./internal/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
 	    -coverprofile=$(COVERAGE_DIR)/coverage-integration.out \
 	    -covermode=atomic \
-	    ./test/integration/...
+	    ./test/integration/... ./test/e2e/...
 	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/coverage-integration.out > $(COVERAGE_DIR)/coverage-integration.out.filtered && mv $(COVERAGE_DIR)/coverage-integration.out.filtered $(COVERAGE_DIR)/coverage-integration.out
 	@go tool cover -func=$(COVERAGE_DIR)/coverage-integration.out | tail -1
 
@@ -215,9 +217,8 @@ cover-check-pkg:
 	    exit fail \
 	  }' $(COVER_PROFILE)
 
-## cover-check: Global + per-package coverage gate (run 'make test' first)
-cover-check: cover-check-pkg
-	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+## cover-check: Global + per-package coverage gate (runs tests automatically)
+cover-check: test cover-check-pkg
 	@TOTAL=$$(go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print $$NF}' | tr -d '%'); \
 	echo "total: $${TOTAL}% (floor: $(COVER_THRESHOLD)%)"; \
 	if [ $$(echo "$${TOTAL} < $(COVER_THRESHOLD)" | bc -l) -eq 1 ]; then \

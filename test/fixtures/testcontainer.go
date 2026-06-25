@@ -30,6 +30,14 @@ const serviceMigrationsTable = "wf_definition_migrations"
 // run without Docker. Cleanup (container termination) is registered via
 // t.Cleanup.
 func NewTestPool(t *testing.T) *pgcommon.Pool {
+	pool, _ := NewTestPoolAndDSN(t)
+	return pool
+}
+
+// NewTestPoolAndDSN is like NewTestPool but also returns the raw connection DSN.
+// Use this when you need to create additional pools against the same container
+// (e.g. tenant-scoped pools for RLS tests).
+func NewTestPoolAndDSN(t *testing.T) (*pgcommon.Pool, string) {
 	t.Helper()
 
 	if testing.Short() {
@@ -56,17 +64,17 @@ func NewTestPool(t *testing.T) *pgcommon.Pool {
 		Started:          true,
 	})
 	if err != nil {
-		t.Fatalf("fixtures.NewTestPool: start container: %v", err)
+		t.Fatalf("fixtures.NewTestPoolAndDSN: start container: %v", err)
 	}
 	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
 
 	host, err := container.Host(ctx)
 	if err != nil {
-		t.Fatalf("fixtures.NewTestPool: container host: %v", err)
+		t.Fatalf("fixtures.NewTestPoolAndDSN: container host: %v", err)
 	}
 	port, err := container.MappedPort(ctx, "5432")
 	if err != nil {
-		t.Fatalf("fixtures.NewTestPool: mapped port: %v", err)
+		t.Fatalf("fixtures.NewTestPoolAndDSN: mapped port: %v", err)
 	}
 
 	dsn := fmt.Sprintf("postgres://postgres:postgres@%s:%s/testdb?sslmode=disable", host, port.Port())
@@ -75,11 +83,11 @@ func NewTestPool(t *testing.T) *pgcommon.Pool {
 
 	pool, err := pgcommon.NewPool(ctx, pgcommon.Config{DSN: dsn})
 	if err != nil {
-		t.Fatalf("fixtures.NewTestPool: create pool: %v", err)
+		t.Fatalf("fixtures.NewTestPoolAndDSN: create pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
 
-	return pool
+	return pool, dsn
 }
 
 // applyMigrations runs the outbox schema first (its tables are referenced by the

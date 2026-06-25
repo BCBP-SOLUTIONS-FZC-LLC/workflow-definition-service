@@ -270,6 +270,7 @@ jobs:
         run: |
           docker pull postgres:18-alpine
           docker pull localstack/localstack:3
+          docker pull valkey/valkey:8-alpine
 
       - name: Integration Tests & Coverage
         run: |
@@ -279,7 +280,7 @@ jobs:
             -coverpkg=$(go list ./internal/... | grep -v "$EXCLUDE" | tr '\n' ',' | sed 's/,$//') \
             -coverprofile=.coverage/coverage-integration.out \
             -covermode=atomic \
-            ./test/integration/...
+            ./test/integration/... ./test/e2e/...
           grep -v '/postgres/db/\|/postgres/\|/mocks/\|/glue/\|/service/noop_logger.go\|/inbound/http/asyncapi.go\|/inbound/http/swagger' \
             .coverage/coverage-integration.out > .coverage/coverage-integration.out.filtered \
             && mv .coverage/coverage-integration.out.filtered .coverage/coverage-integration.out

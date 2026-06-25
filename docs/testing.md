@@ -101,13 +101,15 @@ make tools-integration   # docker pull postgres:18-alpine (one-time)
 make test-integration    # spins containers up/down automatically
 ```
 
-Integration tests are separated by directory (not build tags). The `make test` target runs only `./internal/... ./test/unit/...`; `make test-integration` runs `./test/integration/...`. There is no `//go:build integration` tag — the separation is structural.
+Integration tests carry a `//go:build integration` build tag. The `make test` target runs only `./internal/... ./test/unit/...`; `make test-integration` runs `./test/integration/... ./test/e2e/...` with `-tags integration`. The CI `Iint` job does the same.
 
 The integration coverage profile is written to `.coverage/coverage-integration.out`.
 
 An example integration test:
 
 ```go
+//go:build integration
+
 package postgres_test
 
 import "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/fixtures"
@@ -118,6 +120,38 @@ func TestWorkflowRepo_CreateAndGet(t *testing.T) {
     // ...
 }
 ```
+
+## E2E tests (`test/e2e/`)
+
+`test/e2e/` contains service-layer end-to-end tests that exercise full business flows with real containers — no HTTP server, no stubs. These are distinct from the repo-level integration tests in `test/integration/postgres/`.
+
+| Test | What it covers | Containers |
+| --- | --- | --- |
+| `TestE2E_WorkflowLifecycle` | Full state machine: Create → Update → Publish → Promote → InitDraft → Publish → Archive | Postgres |
+| `TestE2E_RLSCrossTenantIsolation` | Row-Level Security: tenant A cannot read tenant B's rows | Postgres |
+| `TestE2E_Promote_EndToEnd` | Promote emits SNS event with `promoted_from_version_id` set | Postgres + LocalStack |
+| `TestE2E_SNSFilterPolicies_QueueRouting` | SNS filter routes `workflow.template.published` to correct queue | Postgres + LocalStack |
+| `TestE2E_Valkey_CacheIntegration` | `Archive()` invalidates the compiled-plan cache entry | Postgres + Valkey |
+
+Run:
+
+```bash
+make tools-integration   # docker pull postgres:18-alpine + localstack:3 + valkey:8-alpine
+make test-integration    # runs test/integration/... and test/e2e/...
+
+# individual:
+go test -v -tags integration ./test/e2e/... -run TestE2E_WorkflowLifecycle
+```
+
+Shared fixtures are in `test/fixtures/`: `NewTestPool` (Postgres), `NewTestValkey` (Valkey), `NewLocalStackSNSSQS` (LocalStack SNS+SQS).
+
+The e2e tests are **distinct** from `scripts/smoke-test.sh`:
+
+| | `scripts/smoke-test.sh` | `test/e2e/` |
+| --- | --- | --- |
+| Trigger | Manual, developer pre-merge | Automated in CI (`Iint` job) |
+| Layer | Full HTTP + gRPC against live server | Service layer directly, no HTTP |
+| Scope | Route/response sanity | Business logic, RLS, event pipeline |
 
 ## Mock generation
 

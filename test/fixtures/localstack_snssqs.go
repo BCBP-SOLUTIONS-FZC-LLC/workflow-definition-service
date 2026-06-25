@@ -260,6 +260,46 @@ func (ls *LocalStackSNSSQS) SchemaVersionID(ctx context.Context, t *testing.T) s
 	return aws.ToString(out.SchemaVersionId)
 }
 
+// CreateQueueAndSubscribe creates a plain SQS queue (no DLQ) and subscribes it
+// to the topic. Pass filterPolicy as a JSON SNS filter string (e.g.
+// `{"event_type":["workflow.template.published"]}`) or "" for no filter.
+// Returns the queue URL. Registered for cleanup on t.
+func (ls *LocalStackSNSSQS) CreateQueueAndSubscribe(ctx context.Context, t *testing.T, queueName, filterPolicy string) string {
+	t.Helper()
+
+	queueOut, err := ls.SQSClient.CreateQueue(ctx, &sqs.CreateQueueInput{
+		QueueName: aws.String(queueName),
+	})
+	if err != nil {
+		t.Fatalf("CreateQueueAndSubscribe: CreateQueue %s: %v", queueName, err)
+	}
+	queueURL := aws.ToString(queueOut.QueueUrl)
+
+	attrOut, err := ls.SQSClient.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       aws.String(queueURL),
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameQueueArn},
+	})
+	if err != nil {
+		t.Fatalf("CreateQueueAndSubscribe: GetQueueAttributes %s: %v", queueName, err)
+	}
+	queueARN := attrOut.Attributes[string(sqstypes.QueueAttributeNameQueueArn)]
+
+	subAttrs := map[string]string{"RawMessageDelivery": "true"}
+	if filterPolicy != "" {
+		subAttrs["FilterPolicy"] = filterPolicy
+	}
+	if _, err := ls.SNSClient.Subscribe(ctx, &sns.SubscribeInput{
+		TopicArn:   aws.String(ls.TopicARN),
+		Protocol:   aws.String("sqs"),
+		Endpoint:   aws.String(queueARN),
+		Attributes: subAttrs,
+	}); err != nil {
+		t.Fatalf("CreateQueueAndSubscribe: Subscribe %s → topic: %v", queueName, err)
+	}
+
+	return queueURL
+}
+
 // DrainQueue receives and deletes all currently available messages from the
 // given SQS queue URL, returning each message body. Uses short-poll.
 func (ls *LocalStackSNSSQS) DrainQueue(ctx context.Context, t *testing.T, queueURL string) []string {
