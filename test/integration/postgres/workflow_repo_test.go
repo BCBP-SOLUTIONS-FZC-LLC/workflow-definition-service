@@ -388,6 +388,47 @@ func TestWorkflowRepo_UpdateActiveVersion_NotFound(t *testing.T) {
 	}
 }
 
+func TestWorkflowRepo_UpdateMetadata(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewWorkflowRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	wf := &domain.Workflow{
+		ID: uuid.New(), TenantID: tenantID,
+		CreatedByUserID: uuid.New(), BusinessKey: "upd-meta", Name: "Original", Description: "old desc",
+	}
+	if err := repo.Create(ctx, wf); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := repo.UpdateMetadata(ctx, tenantID, wf.ID, "Updated Name", "new desc"); err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, tenantID, wf.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Name != "Updated Name" {
+		t.Errorf("Name = %q, want %q", got.Name, "Updated Name")
+	}
+	if got.Description != "new desc" {
+		t.Errorf("Description = %q, want %q", got.Description, "new desc")
+	}
+}
+
+func TestWorkflowRepo_UpdateMetadata_NotFound(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewWorkflowRepo(pool)
+	ctx := context.Background()
+
+	err := repo.UpdateMetadata(ctx, uuid.New(), uuid.New(), "X", "")
+	if err != domain.ErrNotFound {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
 func firstKey(wfs []*domain.Workflow) string {
 	if len(wfs) == 0 {
 		return "<empty>"
