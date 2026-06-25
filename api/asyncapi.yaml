@@ -36,7 +36,7 @@ components:
     # object where these fields appear at the top level alongside `data`.
     EventEnvelope:
       type: object
-      required: [id, source, tenant_id, trace_id, schema_version, event_type]
+      required: [id, source, tenant_id, trace_id, schema_version, type, timestamp]
       properties:
         id:
           type: string
@@ -54,52 +54,62 @@ components:
         schema_version:
           type: string
           description: Incremented on additive payload schema changes
-        event_type:
+        type:
           type: string
           description: >
             Dot-separated event type name (e.g. workflow.template.published).
             Also set as the SNS MessageAttribute `event_type` so consumers can
             apply SNS filter policies per queue.
+        timestamp:
+          type: string
+          format: date-time
+          description: UTC timestamp at which the event was created
+        correlation_id:
+          type: string
+          description: Optional correlation ID for request tracing across services
 
     WorkflowTemplatePublishedPayload:
       allOf:
         - $ref: '#/components/schemas/EventEnvelope'
         - type: object
-          required: [data]
+          required: [payload]
           properties:
-            data:
-              type: object
-              required:
-                - workflow_id
-                - workflow_key
-                - version_id
-                - version_number
-                - artifact_hash
-                - published_by
-              properties:
-                workflow_id:
-                  type: string
-                  format: uuid
-                workflow_key:
-                  type: string
-                  description: business key for the workflow template
-                version_id:
-                  type: string
-                  format: uuid
-                version_number:
-                  type: integer
-                  description: Monotonically increasing version counter scoped to the workflow
-                artifact_hash:
-                  type: string
-                  description: SHA-256 hash of the BPMN XML — consumers use this to verify integrity
-                published_by:
-                  type: string
-                  format: uuid
-                  description: User ID of the actor who triggered the publish
-                promoted_from_version_id:
-                  type: string
-                  format: uuid
-                  nullable: true
-                  description: >
-                    ID of the version that was previously active when this version
-                    was promoted. Null for the first publish of a workflow.
+            payload:
+              $ref: '#/components/schemas/WorkflowPublishedData'
+
+    WorkflowPublishedData:
+      type: object
+      required:
+        - workflow_id
+        - workflow_key
+        - version_id
+        - version_number
+        - artifact_hash
+        - published_by
+      properties:
+        workflow_id:
+          type: string
+          format: uuid
+        workflow_key:
+          type: string
+          description: business key for the workflow template
+        version_id:
+          type: string
+          format: uuid
+        version_number:
+          type: integer
+          description: Monotonically increasing version counter scoped to the workflow
+        artifact_hash:
+          type: string
+          description: SHA-256 hash of the BPMN XML — consumers use this to verify integrity
+        published_by:
+          type: string
+          format: uuid
+          description: User ID of the actor who triggered the publish
+        promoted_from_version_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: >
+            ID of the version that was previously active when this version
+            was promoted. Null for the first publish of a workflow.

@@ -273,6 +273,7 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 	schemaOrder := []string{
 		"EventEnvelope",
 		"WorkflowTemplatePublishedPayload",
+		"WorkflowPublishedData",
 	}
 	for _, name := range schemaOrder {
 		sc, ok := s.Comps.Schemas[name]
