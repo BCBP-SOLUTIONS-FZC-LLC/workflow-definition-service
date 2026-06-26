@@ -406,13 +406,14 @@ jobs:
           secrets: go_private_token=${{ secrets.GO_PRIVATE_TOKEN }}
           cache-from: type=gha
 
-      - uses: aquasecurity/trivy-action@v0.28.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: workflow-definition-service:${{ github.sha }}
           format: table
           exit-code: '1'
-          severity: HIGH,CRITICAL
           ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
 
   smoke-tests:
     name: Smoke tests
@@ -429,6 +430,15 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
