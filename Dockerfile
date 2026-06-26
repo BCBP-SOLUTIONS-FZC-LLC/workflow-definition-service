@@ -16,7 +16,7 @@
 #     --build-arg BUILD_VERSION=$(git describe --tags --always --dirty) \
 #     -t workflow-definition-service:$TAG .
 
-FROM golang:1.26-slim AS builder
+FROM golang:1.26-alpine AS builder
 
 ARG BUILD_VERSION=dev
 ENV CGO_ENABLED=0 \

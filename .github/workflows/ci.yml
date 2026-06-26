@@ -25,6 +25,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
           cache-dependency-path: |
             go.sum
             go.mod
@@ -84,6 +85,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
           cache-dependency-path: |
             go.sum
             go.mod
@@ -119,6 +121,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
           cache-dependency-path: |
             go.sum
             go.mod
@@ -171,6 +174,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
           cache-dependency-path: |
             go.sum
             go.mod
@@ -250,6 +254,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
           cache-dependency-path: |
             go.sum
             go.mod
@@ -266,11 +271,24 @@ jobs:
       - name: Download modules
         run: go mod download
 
-      - name: Pre-pull testcontainers images
+      - name: Restore Docker image cache
+        id: docker-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/docker-images.tar.gz
+          key: docker-${{ hashFiles('.github/docker-image-versions') }}
+
+      - name: Load or pull testcontainers images
         run: |
-          docker pull postgres:18-alpine
-          docker pull localstack/localstack:3
-          docker pull valkey/valkey:8-alpine
+          if [ "${{ steps.docker-cache.outputs.cache-hit }}" = "true" ]; then
+            docker load < /tmp/docker-images.tar.gz
+          else
+            docker pull postgres:18-alpine
+            docker pull localstack/localstack:3
+            docker pull valkey/valkey:8-alpine
+            docker save postgres:18-alpine localstack/localstack:3 valkey/valkey:8-alpine \
+              | gzip > /tmp/docker-images.tar.gz
+          fi
 
       - name: Integration Tests & Coverage
         run: |
@@ -302,6 +320,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
           cache-dependency-path: |
             go.sum
             go.mod

@@ -64,6 +64,12 @@ make arch-lint              # go-arch-lint: enforce import direction rules
 make lint                   # golangci-lint (read-only)
 make fix                    # gofmt + golangci-lint --fix (auto-fix formatting and lint)
 make check                  # gofmt check + lint + vet + arch-lint + test + coverage gate (full local CI, read-only)
+
+# Container checks (run 'make tools' first to install hadolint + trivy)
+make docker-lint            # lint Dockerfile with Hadolint (native binary, no image needed)
+make docker-trivy           # scan source/deps for HIGH/CRITICAL CVEs (trivy fs, no image needed)
+make docker-check           # docker-lint + docker-trivy (no GO_PRIVATE_TOKEN needed)
+make docker-build           # build service image (requires GO_PRIVATE_TOKEN in env)
 ```
 
 ---

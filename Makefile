@@ -13,6 +13,8 @@ MOCKGEN_VERSION      := v0.6.0
 GOLANGCI_VERSION     := v2.12.2
 GOVULNCHECK_VERSION  := v1.1.4
 GOARCHLINT_VERSION   := latest
+HADOLINT_VERSION     := v2.12.0
+TRIVY_VERSION        := 0.71.2
 
 # Docker images pulled by integration tests via testcontainers-go.
 # Run `make tools-integration` once to warm the local Docker image cache.
@@ -31,6 +33,8 @@ MOCKGEN            := $(TOOLS_DIR)/mockgen
 GOLANGCI           := $(TOOLS_DIR)/golangci-lint
 GOVULNCHECK        := $(TOOLS_DIR)/govulncheck
 GOARCHLINT         := $(TOOLS_DIR)/go-arch-lint
+HADOLINT           := $(TOOLS_DIR)/hadolint
+TRIVY              := $(TOOLS_DIR)/trivy
 
 BUILD_VERSION      ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS            := -X main.version=$(BUILD_VERSION)
@@ -66,6 +70,7 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/grpc:75 \
         fix check \
         docs-serve docs-build \
         docker-up docker-down \
+        docker-build docker-lint docker-trivy docker-check \
         clean help
 
 all: generate build
@@ -81,6 +86,25 @@ tools:
 		| sh -s -- -b $(PWD)/$(TOOLS_DIR) $(GOLANGCI_VERSION)
 	GOBIN=$(PWD)/$(TOOLS_DIR) go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/fe3dback/go-arch-lint@$(GOARCHLINT_VERSION)
+	@OS=$$(uname -s); ARCH=$$(uname -m); \
+	if [ "$$OS" = "Darwin" ]; then \
+	    if command -v brew >/dev/null 2>&1; then \
+	        brew install hadolint >/dev/null && cp "$$(brew --prefix)/bin/hadolint" $(TOOLS_DIR)/hadolint; \
+	    else \
+	        echo "hadolint: brew not found on macOS — install manually: brew install hadolint"; exit 1; \
+	    fi; \
+	else \
+	    curl -sLo $(TOOLS_DIR)/hadolint \
+	      "https://github.com/hadolint/hadolint/releases/download/$(HADOLINT_VERSION)/hadolint-$$OS-$$ARCH" && \
+	    chmod +x $(TOOLS_DIR)/hadolint; \
+	fi
+	@OS=$$(uname -s); ARCH=$$(uname -m); \
+	if [ "$$OS" = "Darwin" ] && [ "$$ARCH" = "arm64" ]; then TRIVY_OS_ARCH="macOS-ARM64"; \
+	elif [ "$$OS" = "Darwin" ]; then TRIVY_OS_ARCH="macOS-64bit"; \
+	else TRIVY_OS_ARCH="Linux-$$ARCH"; fi; \
+	curl -sLo /tmp/trivy.tar.gz \
+	  "https://github.com/aquasecurity/trivy/releases/download/v$(TRIVY_VERSION)/trivy_$(TRIVY_VERSION)_$$TRIVY_OS_ARCH.tar.gz" && \
+	tar -xzf /tmp/trivy.tar.gz -C $(TOOLS_DIR) trivy && rm /tmp/trivy.tar.gz
 	@echo "✓ tools installed to $(TOOLS_DIR)/"
 
 ## tools-integration: Pre-pull Docker images used by integration tests (testcontainers-go)
@@ -277,6 +301,35 @@ docs-serve:
 ## docs-build: Build static MkDocs site to site/
 docs-build:
 	mkdocs build
+
+
+IMAGE_TAG ?= local
+
+## docker-build: Build the service container image (requires GO_PRIVATE_TOKEN in env)
+docker-build:
+	docker buildx build \
+	  --secret id=go_private_token,env=GO_PRIVATE_TOKEN \
+	  --build-arg BUILD_VERSION=$(IMAGE_TAG) \
+	  --load \
+	  -t workflow-definition-service:$(IMAGE_TAG) .
+
+## docker-lint: Lint Dockerfile with Hadolint (run 'make tools' to install)
+docker-lint:
+	$(HADOLINT) --config .hadolint.yaml Dockerfile
+
+## docker-trivy: Scan source and dependencies for HIGH/CRITICAL CVEs (run 'make tools' to install)
+docker-trivy:
+	$(TRIVY) fs . \
+	  --severity HIGH,CRITICAL \
+	  --ignore-unfixed \
+	  --exit-code 1 \
+	  --skip-dirs vendor \
+	  --skip-dirs platform-libs \
+	  --skip-dirs .design
+
+## docker-check: Run Dockerfile lint + dependency CVE scan (no image build required)
+docker-check: docker-lint docker-trivy
+	@echo "✓ all container checks passed"
 
 
 ## docker-up: Start local infra (PostgreSQL + Valkey)

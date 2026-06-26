@@ -28,6 +28,11 @@
 
 set -euo pipefail
 
+HEALTH_ONLY=false
+for arg in "$@"; do
+  case "$arg" in --health-only) HEALTH_ONLY=true ;; esac
+done
+
 HTTP="${HTTP_BASE:-http://localhost:8080}"
 API="${HTTP}/api/v1"
 GRPC="${GRPC_ADDR:-localhost:9090}"
@@ -272,22 +277,23 @@ section "0 · Readiness"
 echo "  Waiting for services..."
 wait_http "${HTTP}/healthz" "HTTP server"
 
-# Reset membership stub to eligible — also serves as the readiness probe, since
-# the control endpoint always returns 200. A bare GET / would fail when the stub
-# was left in ineligible state from a prior run.
-local_tries=0
-until curl -sf -X POST "${MEMBERSHIP_CTRL}/control" \
-     -H "Content-Type: application/json" -d '{"eligible":true}' &>/dev/null; do
-  (( local_tries++ )) || true
-  [ $local_tries -ge 40 ] && { echo "  FATAL: membership stub not ready after 40s"; exit 1; }
-  sleep 1
-done
+if [ "$HEALTH_ONLY" = "false" ]; then
+  # Reset membership stub to eligible — also serves as the readiness probe, since
+  # the control endpoint always returns 200. A bare GET / would fail when the stub
+  # was left in ineligible state from a prior run.
+  local_tries=0
+  until curl -sf -X POST "${MEMBERSHIP_CTRL}/control" \
+       -H "Content-Type: application/json" -d '{"eligible":true}' &>/dev/null; do
+    (( local_tries++ )) || true
+    [ $local_tries -ge 40 ] && { echo "  FATAL: membership stub not ready after 40s"; exit 1; }
+    sleep 1
+  done
 
-wait_grpc "${GRPC}"
+  wait_grpc "${GRPC}"
+  membership_eligible
+  execution_no_active
+fi
 pass "All services ready"
-
-membership_eligible
-execution_no_active
 
 section "1 · Health endpoints"
 STATUS=$(api_status GET "${HTTP}/healthz")
@@ -298,6 +304,12 @@ STATUS=$(api_status GET "${HTTP}/readyz")
 
 STATUS=$(api_status GET "${HTTP}/metrics")
 [ "$STATUS" = "200" ] && pass "GET /metrics → 200" || fail "GET /metrics → $STATUS"
+
+if [ "$HEALTH_ONLY" = "true" ]; then
+  echo ""
+  echo -e "${GREEN}✓ health-only smoke test passed${NC}"
+  exit 0
+fi
 
 section "2 · Workflow CRUD"
 
