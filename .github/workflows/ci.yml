@@ -406,7 +406,7 @@ jobs:
           secrets: go_private_token=${{ secrets.GO_PRIVATE_TOKEN }}
           cache-from: type=gha
 
-      - uses: aquasecurity/trivy-action@v0.29.0
+      - uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: workflow-definition-service:${{ github.sha }}
           format: table
@@ -425,6 +425,8 @@ jobs:
           POSTGRES_USER: wfdef
           POSTGRES_PASSWORD: wfdef
           POSTGRES_DB: wfdef
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 5s
