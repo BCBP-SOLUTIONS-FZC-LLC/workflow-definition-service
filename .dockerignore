@@ -21,10 +21,6 @@ mkdocs.yml
 test/
 scripts/
 
-# Generated outputs (rebuilt during docker build via go build)
-gen/
-internal/adapter/outbound/postgres/db/
-internal/core/port/mocks/
 
 # Environment files — secrets must be passed via build args or runtime env
 .env
