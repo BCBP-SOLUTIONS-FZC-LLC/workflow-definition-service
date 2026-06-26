@@ -16,7 +16,7 @@ The three BCBP platform libraries are private Go modules hosted on GitHub. They 
 
 | Module | Version | Purpose |
 | --- | --- | --- |
-| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events` | v1.2.0 | SNS publisher, transactional outbox runner + schema, typed event envelopes |
+| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events` | v1.3.0 | SNS publisher, transactional outbox runner + schema, typed event envelopes |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon` | v1.1.1 | pgx pool, RLS GUC injection, transactor, `migrate.Runner` (golang-migrate) |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon` | v1.2.0 | Gin middleware, OTel tracing init, Zap logger, gRPC middleware |
 

@@ -84,7 +84,7 @@ func TestE2E_Promote_EndToEnd(t *testing.T) {
 
 	var env struct {
 		Type    string          `json:"type"`
-		Payload json.RawMessage `json:"payload"`
+		Payload json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(messages[0]), &env); err != nil {
 		t.Fatalf("unmarshal envelope: %v\nbody: %s", err, messages[0])

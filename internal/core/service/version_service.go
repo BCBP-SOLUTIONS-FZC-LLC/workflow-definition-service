@@ -123,14 +123,17 @@ func (s *VersionService) Publish(
 		return nil, err
 	}
 
-	env, err := buildEnvelope(ctx, s.glueCodec, domain.EventTypeTemplatePublished, tenantID.String(), domain.TemplatePublishedPayload{
-		WorkflowID:    workflowID.String(),
-		WorkflowKey:   businessKey,
-		VersionID:     versionID.String(),
-		VersionNumber: versionNumber,
-		ArtifactHash:  artifactHash,
-		PublishedBy:   userID.String(),
-	})
+	env, err := buildEnvelope(ctx, s.glueCodec, domain.EventTypeTemplatePublished, tenantID.String(),
+		"workflows/"+workflowID.String()+"/versions/"+versionID.String(),
+		userID.String(),
+		domain.TemplatePublishedPayload{
+			WorkflowID:    workflowID.String(),
+			WorkflowKey:   businessKey,
+			VersionID:     versionID.String(),
+			VersionNumber: versionNumber,
+			ArtifactHash:  artifactHash,
+			PublishedBy:   userID.String(),
+		})
 	if err != nil {
 		return nil, fmt.Errorf("build publish event: %w", err)
 	}
@@ -265,15 +268,18 @@ func (s *VersionService) Promote(
 	if v.VersionNumber != nil {
 		versionNumber = *v.VersionNumber
 	}
-	env, err := buildEnvelope(ctx, s.glueCodec, domain.EventTypeTemplatePublished, tenantID.String(), domain.TemplatePublishedPayload{
-		WorkflowID:            workflowID.String(),
-		WorkflowKey:           wf.BusinessKey,
-		VersionID:             versionID.String(),
-		VersionNumber:         versionNumber,
-		ArtifactHash:          v.ArtifactHash,
-		PublishedBy:           userID.String(),
-		PromotedFromVersionID: promotedFrom,
-	})
+	env, err := buildEnvelope(ctx, s.glueCodec, domain.EventTypeTemplatePublished, tenantID.String(),
+		"workflows/"+workflowID.String()+"/versions/"+versionID.String(),
+		userID.String(),
+		domain.TemplatePublishedPayload{
+			WorkflowID:            workflowID.String(),
+			WorkflowKey:           wf.BusinessKey,
+			VersionID:             versionID.String(),
+			VersionNumber:         versionNumber,
+			ArtifactHash:          v.ArtifactHash,
+			PublishedBy:           userID.String(),
+			PromotedFromVersionID: promotedFrom,
+		})
 	if err != nil {
 		return nil, fmt.Errorf("build promote event: %w", err)
 	}

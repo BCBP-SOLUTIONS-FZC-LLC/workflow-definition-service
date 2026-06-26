@@ -32,11 +32,12 @@ components:
 
   schemas:
     # Shared event envelope fields emitted by every outbox event.
-    # The envelope is serialised by platform-events; consumers receive a JSON
-    # object where these fields appear at the top level alongside `data`.
+    # The envelope is serialised by platform-events (v1.3+) with CloudEvents-aligned
+    # JSON keys. Consumers receive a JSON object where these fields appear at the top
+    # level alongside `data`.
     EventEnvelope:
       type: object
-      required: [id, source, tenant_id, trace_id, schema_version, type, timestamp]
+      required: [id, source, tenant_id, trace_id, specversion, type, time]
       properties:
         id:
           type: string
@@ -51,19 +52,30 @@ components:
         trace_id:
           type: string
           description: OTel trace context propagated from the publisher context
-        schema_version:
+        specversion:
           type: string
-          description: Incremented on additive payload schema changes
+          description: Schema version; incremented on additive payload schema changes (CloudEvents specversion)
         type:
           type: string
           description: >
             Dot-separated event type name (e.g. workflow.template.published).
             Also set as the SNS MessageAttribute `event_type` so consumers can
             apply SNS filter policies per queue.
-        timestamp:
+        time:
           type: string
           format: date-time
-          description: UTC timestamp at which the event was created
+          description: UTC timestamp at which the event was created (CloudEvents time)
+        subject:
+          type: string
+          description: >
+            Resource URI identifying the subject of the event
+            (e.g. "workflows/{workflow_id}/versions/{version_id}").
+            Forwarded as an SNS message attribute `Subject` for filter-policy routing.
+        actor:
+          type: string
+          description: >
+            Identity that caused the event (user UUID or service-account name).
+            Audit trail field — not forwarded as an SNS attribute.
         correlation_id:
           type: string
           description: Optional correlation ID for request tracing across services
@@ -72,9 +84,9 @@ components:
       allOf:
         - $ref: '#/components/schemas/EventEnvelope'
         - type: object
-          required: [payload]
+          required: [data]
           properties:
-            payload:
+            data:
               $ref: '#/components/schemas/WorkflowPublishedData'
 
     WorkflowPublishedData:

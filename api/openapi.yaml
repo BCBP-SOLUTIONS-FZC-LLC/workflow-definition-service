@@ -468,17 +468,17 @@ components:
         A domain-event envelope forwarded by the shared workflow-events consumer to the internal
         ingest endpoint. Mirrors the platform-events envelope. The tenant context is carried in
         tenant_id (the RLS GUC is set from this field), and id is the idempotency anchor.
-      required: [id, type, tenant_id, payload]
+      required: [id, type, tenant_id, data]
       properties:
         id:        { type: string, format: uuid, description: "Unique event id; dedup anchor in processed_event." }
         type:      { type: string, example: DepartmentMembershipRevoked, description: "Event type used for dispatch. Unknown types are accepted and ignored." }
         tenant_id: { type: string, format: uuid, description: "Tenant the event applies to; used to set the RLS GUC." }
-        payload:   { type: object, additionalProperties: true, description: "Type-specific payload (e.g. user_id, department_id, role)." }
+        data:      { type: object, additionalProperties: true, description: "Type-specific payload (e.g. user_id, department_id, role). CloudEvents data field." }
       example:
         id: "f0a11222-3844-42bc-938b-665cd42c9999"
         type: "DepartmentMembershipRevoked"
         tenant_id: "7ca648b2-b432-4744-884c-35fd556a310c"
-        payload:
+        data:
           user_id: "3fa18cde-7244-47ac-986c-665cd42caaaa"
           department_id: "engineering"
           role: "reviewer"

@@ -71,7 +71,7 @@ func envelope(eventType, eventID, tenantID string, payload any) map[string]any {
 		"id":        eventID,
 		"type":      eventType,
 		"tenant_id": tenantID,
-		"payload":   json.RawMessage(raw),
+		"data":      json.RawMessage(raw),
 	}
 }
 

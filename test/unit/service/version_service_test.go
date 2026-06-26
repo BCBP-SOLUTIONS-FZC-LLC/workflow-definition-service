@@ -1671,7 +1671,7 @@ func TestVersionService_Publish_EventPayload(t *testing.T) {
 		func(_ any, env any) error {
 			// env is events.Envelope[json.RawMessage]; Payload holds the raw JSON.
 			type envelopeWithPayload struct {
-				Payload json.RawMessage `json:"payload"`
+				Payload json.RawMessage `json:"data"`
 			}
 			b, err := json.Marshal(env)
 			if err != nil {

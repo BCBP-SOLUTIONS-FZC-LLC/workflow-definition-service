@@ -31,33 +31,31 @@ env := events.NewEnvelope[json.RawMessage](eventType, source, raw, opts...)
 
 > **If you are building envelopes at the HTTP handler layer** (direct Gin context access), use `rc.TraceID` from `gincommon.RequestContext(c)` instead — it is the same OTel trace ID already stringified.
 
-Envelope JSON shape:
+Envelope JSON shape (v1.3+ CloudEvents-aligned keys):
 
 ```json
 {
-  "id":        "01926e4f-...",
-  "type":      "wf.template.published",
-  "source":    "workflow-definition-service",
-  "tenant_id": "acme",
-  "trace_id":  "4bf92f3577...",
-  "timestamp": "2026-05-27T12:00:00Z",
-  "payload":   { ... }
+  "id":          "01926e4f-...",
+  "type":        "workflow.template.published",
+  "source":      "workflow-definition-svc",
+  "tenant_id":   "acme-tenant-uuid",
+  "trace_id":    "4bf92f3577...",
+  "time":        "2026-05-27T12:00:00Z",
+  "specversion": "1",
+  "subject":     "workflows/01926e4f-.../versions/01926e50-...",
+  "actor":       "user-uuid",
+  "data":        { ... }
 }
 ```
 
-Envelope JSON shape:
-
-```json
-{
-  "id":        "01926e4f-...",
-  "type":      "wf.template.published",
-  "source":    "workflow-definition-service",
-  "tenant_id": "acme",
-  "trace_id":  "4bf92f3577...",
-  "timestamp": "2026-05-27T12:00:00Z",
-  "payload":   { ... }
-}
-```
+> **v1.3 key renames (breaking wire format, Go field names unchanged):**
+> `payload → data`, `timestamp → time`, `schema_version → specversion`, `schema_id → dataschema`.
+> Any local struct or raw map that hardcodes these keys as JSON tags must be updated.
+>
+> **Deploy note:** Drain the outbox before deploying — records written with old keys produce
+> empty `data` if read by the v1.3 struct. Coordinate with IAM: the domain-owned SQS consumer
+> that forwards `DepartmentMembershipRevoked` will silently drop the payload if IAM still
+> publishes in v1.2 format.
 
 ---
 
@@ -132,7 +130,7 @@ publisher, err := events.NewSNSPublisher(events.SNSConfig{
 })
 ```
 
-`PublishBatch` splits automatically at 10 (SNS hard limit). SNS message attributes (`EventType`, `TenantID`, `Source`, `EventID`) are always set for SQS subscription filter policies.
+`PublishBatch` splits automatically at 10 (SNS hard limit). SNS message attributes (`EventType`, `TenantID`, `Source`, `EventID`) are always set for SQS subscription filter policies. When `Subject` is non-empty it is also forwarded as an SNS `Subject` attribute, enabling filter-policy routing without body parsing.
 
 **Mock for tests:**
 

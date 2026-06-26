@@ -521,7 +521,7 @@ REVOKE_MSG=$(cat <<JSON
   "type": "DepartmentMembershipRevoked",
   "tenant_id": "${TENANT_ID}",
   "source": "iam-svc",
-  "payload": {
+  "data": {
     "user_id": "${ALICE}",
     "department_id": "Design",
     "role": "preparer"
@@ -589,7 +589,7 @@ REVOKE_MSG2=$(cat <<JSON
   "type": "DepartmentMembershipRevoked",
   "tenant_id": "${TENANT_ID}",
   "source": "iam-svc",
-  "payload": {
+  "data": {
     "user_id": "${BOB}",
     "department_id": "Design",
     "role": "reviewer"

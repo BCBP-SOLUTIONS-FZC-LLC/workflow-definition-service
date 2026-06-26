@@ -219,7 +219,7 @@ func assertSNSPayload(t *testing.T, body string, wfID, versionID, userID uuid.UU
 	// serialised events.Envelope[json.RawMessage].
 	var env struct {
 		Type    string          `json:"type"`
-		Payload json.RawMessage `json:"payload"`
+		Payload json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(body), &env); err != nil {
 		t.Fatalf("unmarshal envelope: %v\nbody: %s", err, body)

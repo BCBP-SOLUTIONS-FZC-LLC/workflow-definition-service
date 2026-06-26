@@ -13,6 +13,8 @@ func TestBuildEnvelope_SetsSchemaVersion(t *testing.T) {
 		noopGlueCodec{},
 		"workflow.template.published",
 		"11111111-1111-1111-1111-111111111111",
+		"", // subject
+		"", // actor
 		map[string]string{"k": "v"},
 	)
 	if err != nil {
