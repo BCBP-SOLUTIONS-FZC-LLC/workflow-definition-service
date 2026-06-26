@@ -470,7 +470,7 @@ jobs:
         run: |
           docker run --rm --network=host \
             -e DATABASE_URL \
-            workflow-definition-service:${{ github.sha }} /server migrate
+            workflow-definition-service:${{ github.sha }} migrate
 
       - name: Start service
         env:
