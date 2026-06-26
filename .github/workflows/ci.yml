@@ -412,6 +412,7 @@ jobs:
       GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
       GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
       DATABASE_URL: postgres://wfdef:wfdef@localhost:5432/wfdef?sslmode=disable
+      DB_URL: postgres://wfdef:wfdef@localhost:5432/wfdef?sslmode=disable
       AWS_USE_STUB: "true"
       APP_ENV: ci
       ORG_MEMBERSHIP_BASE_URL: http://localhost:8081
