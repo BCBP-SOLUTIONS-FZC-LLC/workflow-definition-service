@@ -420,6 +420,229 @@ func TestFindImplicitStart_SingleCandidate(t *testing.T) {
 	}
 }
 
+func TestBuildGraph_AllNodeTypes(t *testing.T) {
+	proc := &BPMNProcess{
+		StartEvents:       []BPMNEvent{{ID: "start"}},
+		EndEvents:         []BPMNEvent{{ID: "end"}},
+		UserTasks:         []BPMNUserTask{{ID: "ut1"}},
+		SendTasks:         []BPMNSendTask{{ID: "st1"}},
+		ReceiveTasks:      []BPMNReceiveTask{{ID: "rt1"}},
+		ParallelGateways:  []BPMNGateway{{ID: "pg1"}},
+		ExclusiveGateways: []BPMNGateway{{ID: "eg1"}},
+		InclusiveGateways: []BPMNGateway{{ID: "ig1"}},
+		SubProcesses:      []BPMNSubProcess{{ID: "sp1"}},
+		CallActivities:    []BPMNCallActivity{{ID: "ca1"}},
+		BoundaryEvents: []BPMNBoundaryEvent{
+			{ID: "be_timer", Timer: &BPMNTimerDef{}},
+			{ID: "be_error", Error: &BPMNErrorDef{}},
+			{ID: "be_message", Message: &BPMNMessageEventDef{}},
+			{ID: "be_default"},
+		},
+		SequenceFlows: []BPMNSequenceFlow{{SourceRef: "start", TargetRef: "ut1"}},
+	}
+	g := BuildGraph(proc)
+
+	want := map[string]FlowNodeType{
+		"start":      NodeTypeStartEvent,
+		"end":        NodeTypeEndEvent,
+		"ut1":        NodeTypeUserTask,
+		"st1":        NodeTypeSendTask,
+		"rt1":        NodeTypeReceiveTask,
+		"pg1":        NodeTypeParallelGateway,
+		"eg1":        NodeTypeExclusiveGateway,
+		"ig1":        NodeTypeInclusiveGateway,
+		"sp1":        NodeTypeSubProcess,
+		"ca1":        NodeTypeCallActivity,
+		"be_timer":   NodeTypeTimerBoundaryEvent,
+		"be_error":   NodeTypeErrorBoundaryEvent,
+		"be_message": NodeTypeMessageBoundaryEvent,
+		"be_default": NodeTypeBoundaryEvent,
+	}
+	for id, kind := range want {
+		if g.NodeType[id] != kind {
+			t.Errorf("NodeType[%q] = %v; want %v", id, g.NodeType[id], kind)
+		}
+		if _, ok := g.NodeIDs[id]; !ok {
+			t.Errorf("NodeIDs missing %q", id)
+		}
+	}
+	if len(g.Outgoing["start"]) != 1 || g.Outgoing["start"][0] != "ut1" {
+		t.Errorf("Outgoing[start] = %v", g.Outgoing["start"])
+	}
+	if len(g.Incoming["ut1"]) != 1 || g.Incoming["ut1"][0] != "start" {
+		t.Errorf("Incoming[ut1] = %v", g.Incoming["ut1"])
+	}
+}
+
+func TestBuildLaneLabels(t *testing.T) {
+	proc := &BPMNProcess{LaneSet: BPMNLaneSet{Lanes: []BPMNLane{{Name: "Ops"}, {Name: "Finance"}}}}
+	labels := BuildLaneLabels(proc)
+	if labels["Ops"] != "Ops" || labels["Finance"] != "Finance" {
+		t.Errorf("unexpected labels: %v", labels)
+	}
+}
+
+func TestBuildCondExprs(t *testing.T) {
+	proc := &BPMNProcess{SequenceFlows: []BPMNSequenceFlow{
+		{SourceRef: "a", TargetRef: "b", ConditionExpression: "x > 1"},
+		{SourceRef: "a", TargetRef: "c"}, // no condition -> excluded
+	}}
+	exprs := BuildCondExprs(proc)
+	if len(exprs) != 1 {
+		t.Fatalf("expected 1 entry; got %d", len(exprs))
+	}
+	if exprs[[2]string{"a", "b"}] != "x > 1" {
+		t.Errorf("got %q", exprs[[2]string{"a", "b"}])
+	}
+}
+
+func TestForwardReaches(t *testing.T) {
+	g := &Graph{Outgoing: map[string][]string{"a": {"b"}, "b": {"c"}}}
+	if !ForwardReaches("a", "c", g, nil) {
+		t.Error("expected c to be reachable from a")
+	}
+	if ForwardReaches("a", "z", g, nil) {
+		t.Error("expected z to be unreachable")
+	}
+}
+
+func TestForwardReaches_BackEdgeExcluded(t *testing.T) {
+	g := &Graph{Outgoing: map[string][]string{"a": {"b"}}}
+	backEdges := map[[2]string]bool{{"a", "b"}: true}
+	if ForwardReaches("a", "b", g, backEdges) {
+		t.Error("expected back edge to be excluded from reachability")
+	}
+}
+
+func TestBuildLaneRefSet(t *testing.T) {
+	proc := &BPMNProcess{LaneSet: BPMNLaneSet{Lanes: []BPMNLane{
+		{Name: "Ops", FlowNodeRefs: []string{"t1", "t2"}},
+	}}}
+	refs := BuildLaneRefSet(proc)
+	if _, ok := refs["t1"]; !ok {
+		t.Error("expected t1 in ref set")
+	}
+	if _, ok := refs["t3"]; ok {
+		t.Error("did not expect t3 in ref set")
+	}
+}
+
+func TestLaneNameFor(t *testing.T) {
+	proc := &BPMNProcess{LaneSet: BPMNLaneSet{Lanes: []BPMNLane{
+		{Name: "Ops", FlowNodeRefs: []string{"t1"}},
+	}}}
+	if got := LaneNameFor("t1", proc); got != "Ops" {
+		t.Errorf("got %q; want Ops", got)
+	}
+	if got := LaneNameFor("unknown", proc); got != "" {
+		t.Errorf("got %q; want empty", got)
+	}
+}
+
+func TestOutgoingTargetOf_Found(t *testing.T) {
+	proc := &BPMNProcess{SequenceFlows: []BPMNSequenceFlow{{SourceRef: "a", TargetRef: "b"}}}
+	if got := OutgoingTargetOf("a", proc); got != "b" {
+		t.Errorf("got %q; want b", got)
+	}
+}
+
+func TestInjectMessageBridges_RoundTripAndTerminal(t *testing.T) {
+	g := &Graph{
+		Outgoing: make(map[string][]string),
+		Incoming: make(map[string][]string),
+		NodeType: make(map[string]FlowNodeType),
+		NodeIDs:  make(map[string]struct{}),
+	}
+	bridges := []MessageBridge{
+		{FromTaskID: "send1", ToTaskID: "recv1", SyntheticNodeID: "syn1"},
+		{FromTaskID: "send2", ToTaskID: "", SyntheticNodeID: "syn2"},
+	}
+	InjectMessageBridges(g, bridges)
+
+	if g.NodeType["syn1"] != NodeTypeExternalParticipant {
+		t.Errorf("syn1 NodeType = %v; want ExternalParticipant", g.NodeType["syn1"])
+	}
+	if len(g.Outgoing["send1"]) != 1 || g.Outgoing["send1"][0] != "syn1" {
+		t.Errorf("Outgoing[send1] = %v", g.Outgoing["send1"])
+	}
+	if len(g.Incoming["syn1"]) != 1 || g.Incoming["syn1"][0] != "send1" {
+		t.Errorf("Incoming[syn1] = %v", g.Incoming["syn1"])
+	}
+	if len(g.Outgoing["syn1"]) != 1 || g.Outgoing["syn1"][0] != "recv1" {
+		t.Errorf("Outgoing[syn1] = %v", g.Outgoing["syn1"])
+	}
+	if len(g.Incoming["recv1"]) != 1 || g.Incoming["recv1"][0] != "syn1" {
+		t.Errorf("Incoming[recv1] = %v", g.Incoming["recv1"])
+	}
+
+	if g.NodeType["syn2"] != NodeTypeEndEvent {
+		t.Errorf("syn2 NodeType = %v; want EndEvent", g.NodeType["syn2"])
+	}
+	if len(g.Outgoing["syn2"]) != 0 {
+		t.Errorf("expected no outgoing edges from terminal synthetic node; got %v", g.Outgoing["syn2"])
+	}
+	if len(g.Incoming[""]) != 0 {
+		t.Errorf("expected no incoming edges registered on empty ToTaskID; got %v", g.Incoming[""])
+	}
+}
+
+func TestTimerBoundaryFor(t *testing.T) {
+	proc := &BPMNProcess{BoundaryEvents: []BPMNBoundaryEvent{
+		{ID: "be1", AttachedToRef: "t1", Timer: &BPMNTimerDef{Duration: "PT1H"}},
+		{ID: "be2", AttachedToRef: "t2", Message: &BPMNMessageEventDef{}},
+	}}
+	if got := TimerBoundaryFor("t1", proc); got == nil || got.ID != "be1" {
+		t.Errorf("expected to find be1; got %v", got)
+	}
+	if got := TimerBoundaryFor("t2", proc); got != nil {
+		t.Errorf("expected nil for non-timer boundary; got %v", got)
+	}
+	if got := TimerBoundaryFor("unknown", proc); got != nil {
+		t.Errorf("expected nil for unmatched task; got %v", got)
+	}
+}
+
+func TestMessageBoundaryFor(t *testing.T) {
+	proc := &BPMNProcess{BoundaryEvents: []BPMNBoundaryEvent{
+		{ID: "be1", AttachedToRef: "t1", Message: &BPMNMessageEventDef{}},
+		{ID: "be2", AttachedToRef: "t2", Timer: &BPMNTimerDef{}},
+	}}
+	if got := MessageBoundaryFor("t1", proc); got == nil || got.ID != "be1" {
+		t.Errorf("expected to find be1; got %v", got)
+	}
+	if got := MessageBoundaryFor("t2", proc); got != nil {
+		t.Errorf("expected nil for non-message boundary; got %v", got)
+	}
+}
+
+func TestFindJoin_BackEdgeExcludedFromSplitCount(t *testing.T) {
+	// gw has 3 outgoing edges; one (gw->loop) is a back edge and must not count
+	// toward splitOut, so the join at 2 incoming edges is still recognised.
+	g := &Graph{
+		NodeType: map[string]FlowNodeType{
+			"gw":   NodeTypeExclusiveGateway,
+			"a":    NodeTypeUserTask,
+			"b":    NodeTypeUserTask,
+			"loop": NodeTypeUserTask,
+			"join": NodeTypeExclusiveGateway,
+		},
+		Outgoing: map[string][]string{
+			"gw":   {"a", "b", "loop"},
+			"a":    {"join"},
+			"b":    {"join"},
+			"loop": {"gw"},
+		},
+		Incoming: map[string][]string{
+			"join": {"a", "b"},
+		},
+	}
+	backEdges := map[[2]string]bool{{"gw", "loop"}: true}
+	got, ok := FindJoin("gw", g, backEdges)
+	if !ok || got != "join" {
+		t.Fatalf("expected join to be found; got (%q, %v)", got, ok)
+	}
+}
+
 func TestFindImplicitStart_SkipsBoundaryAndEnd(t *testing.T) {
 	// Graph with a boundary event and end event — both must be skipped as candidates.
 	// Only the user task qualifies.

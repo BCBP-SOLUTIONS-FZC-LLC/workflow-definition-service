@@ -3,6 +3,8 @@ package bpmn_compiler
 import (
 	"context"
 	"testing"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 )
 
 const hashFixtureBPMN = `<?xml version="1.0" encoding="UTF-8"?>
@@ -37,6 +39,18 @@ func TestCompiler_Hash(t *testing.T) {
 			bpmn:    "",
 			wantErr: true,
 		},
+		{
+			name: "multiple processes returns error",
+			bpmn: `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="D1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="P1" name="One"/>
+  <bpmn:process id="P2" name="Two"/>
+</bpmn:definitions>`,
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -65,5 +79,32 @@ func TestCompiler_Hash(t *testing.T) {
 				t.Errorf("Hash is not deterministic: first=%q second=%q", h, h2)
 			}
 		})
+	}
+}
+
+func TestCanonicalHash_SortsZeebeProperties(t *testing.T) {
+	// sortedZeebeItems' comparator only runs when there are 2+ items to compare;
+	// exercise it directly via canonicalHash and confirm order-independence.
+	newProc := func(items []bpmncore.ZeebeProperty) *bpmncore.BPMNProcess {
+		return &bpmncore.BPMNProcess{
+			UserTasks: []bpmncore.BPMNUserTask{{
+				ID: "T1",
+				ExtensionElements: bpmncore.BPMNExtensionElements{
+					ZeebeProps: bpmncore.BPMNZeebeProperties{Items: items},
+				},
+			}},
+		}
+	}
+
+	h1, err := canonicalHash(newProc([]bpmncore.ZeebeProperty{{Name: "zzz", Value: "2"}, {Name: "aaa", Value: "1"}}))
+	if err != nil {
+		t.Fatalf("canonicalHash() error: %v", err)
+	}
+	h2, err := canonicalHash(newProc([]bpmncore.ZeebeProperty{{Name: "aaa", Value: "1"}, {Name: "zzz", Value: "2"}}))
+	if err != nil {
+		t.Fatalf("canonicalHash() error: %v", err)
+	}
+	if h1 != h2 {
+		t.Errorf("canonicalHash should be order-independent for zeebe:properties; h1=%q h2=%q", h1, h2)
 	}
 }

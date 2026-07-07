@@ -102,7 +102,7 @@ func (c *Compiler) Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNV
 			implicitStart := collabImplicitStart(proc, g, defs, ignoredProcIDs)
 			procErrs := validator.ValidateWithImplicitStart(proc, g, implicitStart, c.stageTypes, c.elements, defs)
 			if hasTerminalBridges(bridges) {
-				procErrs = filterCode(procErrs, domain.BPMNErrNoEndEvent)
+				procErrs = filterCode(procErrs)
 			}
 			allErrs = append(allErrs, procErrs...)
 			allErrs = append(allErrs, validator.ValidateDiagramCompleteness(proc, defs)...)
@@ -224,7 +224,7 @@ func (c *Compiler) validateCollaborationProcesses(bpmnXML string, defs *bpmncore
 		implicitStart := collabImplicitStart(proc, g, defs, ignoredProcIDs)
 		procErrs := validator.ValidateWithImplicitStart(proc, g, implicitStart, c.stageTypes, c.elements, defs)
 		if hasTerminalBridges(bridges) {
-			procErrs = filterCode(procErrs, domain.BPMNErrNoEndEvent)
+			procErrs = filterCode(procErrs)
 		}
 		valErrs = append(valErrs, procErrs...)
 	}
@@ -654,10 +654,10 @@ func hasTerminalBridges(bridges []bpmncore.MessageBridge) bool {
 	return false
 }
 
-func filterCode(errs []domain.BPMNValidationError, code domain.BPMNErrorCode) []domain.BPMNValidationError {
+func filterCode(errs []domain.BPMNValidationError) []domain.BPMNValidationError {
 	out := make([]domain.BPMNValidationError, 0, len(errs))
 	for _, e := range errs {
-		if e.Code != code {
+		if e.Code != domain.BPMNErrNoEndEvent {
 			out = append(out, e)
 		}
 	}

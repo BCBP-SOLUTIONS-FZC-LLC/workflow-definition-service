@@ -75,6 +75,32 @@ func TestCountTokens_ValidXML(t *testing.T) {
 	}
 }
 
+func TestParse_ForbiddenDoctype(t *testing.T) {
+	// Exercises parse()'s own early-return on securityScan failure (distinct
+	// call site from TestSecurityScan_DocTypeRejected, which calls securityScan directly).
+	xmlData := `<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY x "y">]><bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `"/>`
+	_, err := parse(context.Background(), xmlData)
+	if !errors.Is(err, errForbiddenXML) {
+		t.Errorf("parse() should propagate errForbiddenXML for a DOCTYPE document; got %v", err)
+	}
+}
+
+func TestParse_TokenLimitExceeded(t *testing.T) {
+	// Exercises parse()'s own early-return on countTokens failure (distinct
+	// call site from TestCountTokens_LimitExceeded, which calls countTokens directly).
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0"?><bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">`)
+	for i := 0; i < maxTokens/2+2; i++ {
+		b.WriteString("<a/>")
+	}
+	b.WriteString("</bpmn:definitions>")
+
+	_, err := parse(context.Background(), b.String())
+	if !errors.Is(err, errForbiddenXML) {
+		t.Errorf("parse() should propagate errForbiddenXML for a token-limit-exceeded document; got %v", err)
+	}
+}
+
 func TestParse_WrongNamespace(t *testing.T) {
 	xmlData := `<?xml version="1.0"?><definitions xmlns="http://wrong.namespace/v1" id="D1"/>`
 	_, err := parse(context.Background(), xmlData)
@@ -155,6 +181,60 @@ func TestScanRejected_InclusiveGatewayIsUnsupported(t *testing.T) {
 	errs := scanRejected(xmlData)
 	if !hasCodeIn(errs, domain.BPMNErrUnsupportedElement) {
 		t.Fatalf("inclusiveGateway must produce UNSUPPORTED_ELEMENT; got %v", errCodesOf(errs))
+	}
+}
+
+func TestScanRejected_ElementWithoutID(t *testing.T) {
+	// elementID falls back to the element's local name when no id attribute is present.
+	xmlData := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
+  <bpmn:process id="P1">
+    <bpmn:serviceTask name="Call API"/>
+  </bpmn:process>
+</bpmn:definitions>`
+	errs := scanRejected(xmlData)
+	if !hasCodeIn(errs, domain.BPMNErrRejectedElement) {
+		t.Fatalf("expected REJECTED_ELEMENT; got %v", errCodesOf(errs))
+	}
+	if errs[0].NodeID != "serviceTask" {
+		t.Errorf("expected fallback NodeID = local name %q; got %q", "serviceTask", errs[0].NodeID)
+	}
+}
+
+func TestParse_SubProcessGenericTaskPromotion(t *testing.T) {
+	// unmarshal() must also promote generic <task> elements and strip empty-ref
+	// sequence flows *inside* subProcesses, not just at the top-level process.
+	xmlData := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
+  <bpmn:process id="P1">
+    <bpmn:subProcess id="SP1">
+      <bpmn:task id="GT1" name="Generic"/>
+      <bpmn:sequenceFlow id="F1" sourceRef="" targetRef=""/>
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>`
+	defs, err := parse(context.Background(), xmlData)
+	if err != nil {
+		t.Fatalf("parse() unexpected error: %v", err)
+	}
+	if len(defs.Processes) != 1 || len(defs.Processes[0].SubProcesses) != 1 {
+		t.Fatalf("expected 1 process with 1 subprocess; got %+v", defs.Processes)
+	}
+	sp := defs.Processes[0].SubProcesses[0]
+	if len(sp.GenericTasks) != 0 {
+		t.Errorf("GenericTasks should be cleared after promotion; got %d", len(sp.GenericTasks))
+	}
+	found := false
+	for _, ut := range sp.UserTasks {
+		if ut.ID == "GT1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected generic task GT1 promoted into subProcess.UserTasks; got %+v", sp.UserTasks)
+	}
+	if len(sp.SequenceFlows) != 0 {
+		t.Errorf("empty-ref sequence flow should be stripped from subProcess; got %+v", sp.SequenceFlows)
 	}
 }
 
