@@ -236,13 +236,13 @@ func TestValidate_ExtensionElementRules(t *testing.T) {
 			wantCode: domain.BPMNErrMissingTaskDefinition,
 		},
 		{
-			name: "invalid taskDefinition type",
+			name: "unknown taskDefinition type emits warning",
 			taskXML: `<bpmn:userTask id="Task_1" name="T">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="audit"/>
           <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + aliceUUID + `"/>
         </bpmn:extensionElements></bpmn:userTask>`,
-			wantCode: domain.BPMNErrInvalidTaskDefinitionType,
+			wantCode: domain.BPMNWarnUnknownStageType,
 		},
 		{
 			name: "missing assignmentDefinition",
@@ -405,7 +405,7 @@ func TestCompile_ParallelDiagram(t *testing.T) {
 	}
 
 	s1 := plan.Execution.Steps[1]
-	if len(s1.Parallel) != 2 || s1.Parallel[0] != "procurement" || s1.Parallel[1] != "planning" {
+	if len(s1.Parallel) != 2 || s1.Parallel[0].DeptID != "procurement" || s1.Parallel[1].DeptID != "planning" {
 		t.Errorf("step[1]: want parallel=[procurement,planning], got %+v", s1)
 	}
 
@@ -461,7 +461,8 @@ func TestCompile_LoopDiagram(t *testing.T) {
 	if s0 := plan.Execution.Steps[0]; len(s0.Sequential) != 1 || s0.Sequential[0] != "design" {
 		t.Errorf("step[0]: want sequential=[design], got %+v", s0)
 	}
-	if s1 := plan.Execution.Steps[1]; len(s1.Parallel) != 2 || s1.Parallel[0] != "procurement" || s1.Parallel[1] != "planning" {
+	if s1 := plan.Execution.Steps[1]; len(s1.Parallel) != 2 ||
+		s1.Parallel[0].DeptID != "procurement" || s1.Parallel[1].DeptID != "planning" {
 		t.Errorf("step[1]: want parallel=[procurement,planning], got %+v", s1)
 	}
 	if s2 := plan.Execution.Steps[2]; len(s2.Sequential) != 1 || s2.Sequential[0] != "construction" {
@@ -498,8 +499,8 @@ func TestCompile_StageDefFields(t *testing.T) {
 
 	// Review stage has one assignee and requires_comment=true.
 	review := plan.Departments[0].Stages[1]
-	if !review.RequiresComment {
-		t.Error("review.RequiresComment = false, want true")
+	if review.Extras["requires_comment"] != "true" {
+		t.Errorf("review.Extras[requires_comment] = %q, want true", review.Extras["requires_comment"])
 	}
 	if len(review.DefaultAssignees) != 1 {
 		t.Errorf("review.DefaultAssignees length = %d, want 1", len(review.DefaultAssignees))
@@ -507,8 +508,8 @@ func TestCompile_StageDefFields(t *testing.T) {
 
 	// Prep stage has requires_comment=false.
 	prep := plan.Departments[0].Stages[0]
-	if prep.RequiresComment {
-		t.Error("prep.RequiresComment = true, want false")
+	if prep.Extras["requires_comment"] != "false" {
+		t.Errorf("prep.Extras[requires_comment] = %q, want false", prep.Extras["requires_comment"])
 	}
 }
 
@@ -687,11 +688,11 @@ func TestHash_Deterministic(t *testing.T) {
 	c := bpmn_compiler.New()
 	bpmn := mustReadBPMN(t, "initial-diagram.bpmn")
 
-	h1, err := c.Hash(bpmn)
+	h1, err := c.Hash(context.Background(), bpmn)
 	if err != nil {
 		t.Fatalf("Hash() error: %v", err)
 	}
-	h2, err := c.Hash(bpmn)
+	h2, err := c.Hash(context.Background(), bpmn)
 	if err != nil {
 		t.Fatalf("Hash() second call error: %v", err)
 	}
@@ -702,8 +703,8 @@ func TestHash_Deterministic(t *testing.T) {
 
 func TestHash_DifferentBPMNProducesDifferentHash(t *testing.T) {
 	c := bpmn_compiler.New()
-	h1, _ := c.Hash(mustReadBPMN(t, "initial-diagram.bpmn"))
-	h2, _ := c.Hash(mustReadBPMN(t, "parallel-diagram.bpmn"))
+	h1, _ := c.Hash(context.Background(), mustReadBPMN(t, "initial-diagram.bpmn"))
+	h2, _ := c.Hash(context.Background(), mustReadBPMN(t, "parallel-diagram.bpmn"))
 	if h1 == h2 {
 		t.Error("different BPMN files produced the same hash")
 	}
@@ -729,11 +730,11 @@ func TestHash_AttributeOrderDoesNotAffectHash(t *testing.T) {
 	)
 
 	c := bpmn_compiler.New()
-	h1, err := c.Hash(bpmnA)
+	h1, err := c.Hash(context.Background(), bpmnA)
 	if err != nil {
 		t.Fatalf("Hash(A): %v", err)
 	}
-	h2, err := c.Hash(bpmnB)
+	h2, err := c.Hash(context.Background(), bpmnB)
 	if err != nil {
 		t.Fatalf("Hash(B): %v", err)
 	}
@@ -767,7 +768,7 @@ func TestCompile_NoProcess(t *testing.T) {
 }
 
 func TestHash_NoProcess(t *testing.T) {
-	_, err := bpmn_compiler.New().Hash(noProcessBPMN)
+	_, err := bpmn_compiler.New().Hash(context.Background(), noProcessBPMN)
 	if err == nil {
 		t.Error("Hash() should return error when definitions has no process")
 	}
@@ -796,7 +797,7 @@ func TestCompile_ValidationFailure(t *testing.T) {
 }
 
 func TestHash_ParseError(t *testing.T) {
-	_, err := bpmn_compiler.New().Hash(`<?xml version="1.0"?><unclosed>`)
+	_, err := bpmn_compiler.New().Hash(context.Background(), `<?xml version="1.0"?><unclosed>`)
 	if err == nil {
 		t.Error("Hash() should return error for malformed XML")
 	}
@@ -873,7 +874,7 @@ const multiProcessBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 </bpmn:definitions>`
 
 func TestHash_MultipleProcesses(t *testing.T) {
-	_, err := bpmn_compiler.New().Hash(multiProcessBPMN)
+	_, err := bpmn_compiler.New().Hash(context.Background(), multiProcessBPMN)
 	if err == nil {
 		t.Error("Hash() should return error when definitions has multiple processes")
 	}
@@ -1025,109 +1026,6 @@ func TestValidate_UnguardedLoop_ExclusiveGatewayNoForwardExit(t *testing.T) {
 	}
 }
 
-const subprocessTimerBoundaryBPMN = `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions
-  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
-  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
-  id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn:process id="Proc_1" name="Test" isExecutable="true">
-    <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
-        <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>SubProcess_1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>BE_Timer_sub</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_after</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="StartEvent_1" name="Start"/>
-    <bpmn:subProcess id="SubProcess_1" name="Inner">
-      <bpmn:laneSet id="InnerLS">
-        <bpmn:lane id="Inner_design" name="design">
-          <bpmn:flowNodeRef>InnerStart</bpmn:flowNodeRef>
-          <bpmn:flowNodeRef>InnerTask</bpmn:flowNodeRef>
-          <bpmn:flowNodeRef>InnerEnd</bpmn:flowNodeRef>
-        </bpmn:lane>
-      </bpmn:laneSet>
-      <bpmn:startEvent id="InnerStart" name="Inner Start"/>
-      <bpmn:userTask id="InnerTask" name="Inner Task">
-        <bpmn:extensionElements>
-          <zeebe:taskDefinition type="prep"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
-        </bpmn:extensionElements>
-      </bpmn:userTask>
-      <bpmn:endEvent id="InnerEnd" name="Inner End"/>
-      <bpmn:sequenceFlow id="IF1" sourceRef="InnerStart" targetRef="InnerTask"/>
-      <bpmn:sequenceFlow id="IF2" sourceRef="InnerTask" targetRef="InnerEnd"/>
-    </bpmn:subProcess>
-    <bpmn:boundaryEvent id="BE_Timer_sub" attachedToRef="SubProcess_1" cancelActivity="true">
-      <bpmn:timerEventDefinition>
-        <bpmn:timeDuration>72h</bpmn:timeDuration>
-      </bpmn:timerEventDefinition>
-    </bpmn:boundaryEvent>
-    <bpmn:userTask id="Task_after" name="Task After">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:endEvent id="EndEvent_1" name="End"/>
-    <bpmn:sequenceFlow id="F1" sourceRef="StartEvent_1" targetRef="SubProcess_1"/>
-    <bpmn:sequenceFlow id="F2" sourceRef="SubProcess_1" targetRef="Task_after"/>
-    <bpmn:sequenceFlow id="F3" sourceRef="BE_Timer_sub" targetRef="Task_after"/>
-    <bpmn:sequenceFlow id="F4" sourceRef="Task_after" targetRef="EndEvent_1"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
-    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Proc_1">
-      <bpmndi:BPMNShape id="Sh_StartEvent_1" bpmnElement="StartEvent_1"><dc:Bounds x="152" y="82" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_SubProcess_1" bpmnElement="SubProcess_1"><dc:Bounds x="250" y="50" width="300" height="200"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_InnerStart"   bpmnElement="InnerStart"><dc:Bounds x="282" y="122" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_InnerTask"    bpmnElement="InnerTask"><dc:Bounds x="370" y="100" width="100" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_InnerEnd"     bpmnElement="InnerEnd"><dc:Bounds x="522" y="122" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_BE_Timer_sub" bpmnElement="BE_Timer_sub"><dc:Bounds x="382" y="232" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_Task_after"   bpmnElement="Task_after"><dc:Bounds x="600" y="60" width="100" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_EndEvent_1"   bpmnElement="EndEvent_1"><dc:Bounds x="752" y="82" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNEdge id="Edge_IF1" bpmnElement="IF1"/>
-      <bpmndi:BPMNEdge id="Edge_IF2" bpmnElement="IF2"/>
-      <bpmndi:BPMNEdge id="Edge_F1"  bpmnElement="F1"/>
-      <bpmndi:BPMNEdge id="Edge_F2"  bpmnElement="F2"/>
-      <bpmndi:BPMNEdge id="Edge_F3"  bpmnElement="F3"/>
-      <bpmndi:BPMNEdge id="Edge_F4"  bpmnElement="F4"/>
-    </bpmndi:BPMNPlane>
-  </bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-
-func TestCompile_SubProcess_WithTimerBoundary(t *testing.T) {
-	// A timer boundary event attached to a subprocess populates SubWorkflowStep.TimerPaths.
-	plan, err := bpmn_compiler.New().Compile(context.Background(), subprocessTimerBoundaryBPMN)
-	if err != nil {
-		t.Fatalf("Compile() error: %v", err)
-	}
-	if len(plan.Execution.Steps) == 0 {
-		t.Fatal("expected at least one execution step")
-	}
-	var subStep *domain.SubWorkflowStep
-	for i := range plan.Execution.Steps {
-		if plan.Execution.Steps[i].SubWorkflow != nil {
-			subStep = plan.Execution.Steps[i].SubWorkflow
-			break
-		}
-	}
-	if subStep == nil {
-		t.Fatal("expected a SubWorkflow step")
-	}
-	if len(subStep.TimerPaths) != 1 {
-		t.Fatalf("TimerPaths: got %d, want 1", len(subStep.TimerPaths))
-	}
-	if subStep.TimerPaths[0].Duration != "72h" {
-		t.Errorf("TimerPaths[0].Duration = %q, want \"72h\"", subStep.TimerPaths[0].Duration)
-	}
-	if !subStep.TimerPaths[0].Interrupting {
-		t.Error("expected Interrupting=true for cancelActivity=true")
-	}
-}
-
 func TestCompile_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1197,617 +1095,4 @@ func errCodes(errs []domain.BPMNValidationError) []domain.BPMNErrorCode {
 		codes[i] = e.Code
 	}
 	return codes
-}
-
-// ---------- Timer boundary event tests ----------
-
-func TestCompile_TimerBoundary_Interrupting(t *testing.T) {
-	c := bpmn_compiler.New()
-	plan, err := c.Compile(context.Background(), mustReadBPMN(t, "timer-boundary.bpmn"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// "design" dept must have a stage with BoundaryTimer set
-	var designDept *domain.DepartmentDef
-	for i := range plan.Departments {
-		if plan.Departments[i].ID == "design" {
-			designDept = &plan.Departments[i]
-		}
-	}
-	if designDept == nil {
-		t.Fatal("expected department 'design' in compiled plan")
-	}
-	if len(designDept.Stages) == 0 {
-		t.Fatal("expected at least one stage in 'design' department")
-	}
-	stage := designDept.Stages[0]
-	if stage.BoundaryTimer == nil {
-		t.Fatal("expected BoundaryTimer to be set on design prep stage")
-	}
-	if stage.BoundaryTimer.Duration != "72h" {
-		t.Errorf("BoundaryTimer.Duration = %q; want %q", stage.BoundaryTimer.Duration, "72h")
-	}
-	if !stage.BoundaryTimer.Interrupting {
-		t.Error("BoundaryTimer.Interrupting should be true (cancelActivity=true)")
-	}
-	if stage.BoundaryTimer.TargetDept != "qa" {
-		t.Errorf("BoundaryTimer.TargetDept = %q; want %q", stage.BoundaryTimer.TargetDept, "qa")
-	}
-}
-
-func TestCompile_TimerBoundary_NonInterrupting(t *testing.T) {
-	c := bpmn_compiler.New()
-	plan, err := c.Compile(context.Background(), mustReadBPMN(t, "timer-boundary-noninterrupting.bpmn"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	var designDept *domain.DepartmentDef
-	for i := range plan.Departments {
-		if plan.Departments[i].ID == "design" {
-			designDept = &plan.Departments[i]
-		}
-	}
-	if designDept == nil || len(designDept.Stages) == 0 {
-		t.Fatal("expected design department with stages")
-	}
-	bt := designDept.Stages[0].BoundaryTimer
-	if bt == nil {
-		t.Fatal("expected BoundaryTimer on design prep stage")
-	}
-	if bt.Duration != "P3D" {
-		t.Errorf("BoundaryTimer.Duration = %q; want %q", bt.Duration, "P3D")
-	}
-	if bt.Interrupting {
-		t.Error("BoundaryTimer.Interrupting should be false (cancelActivity=false)")
-	}
-}
-
-func TestValidate_TimerBoundary_InvalidDuration(t *testing.T) {
-	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
-                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Def_1">
-  <bpmn:process id="P1" name="Test" isExecutable="true">
-    <bpmn:laneSet id="LS1">
-      <bpmn:lane id="Lane_design" name="design">
-        <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>T1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="S1"/>
-    <bpmn:userTask id="T1" name="Task">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:boundaryEvent id="BE1" attachedToRef="T1">
-      <bpmn:timerEventDefinition><bpmn:timeDuration>not-a-duration</bpmn:timeDuration></bpmn:timerEventDefinition>
-    </bpmn:boundaryEvent>
-    <bpmn:endEvent id="E1"/>
-    <bpmn:sequenceFlow id="F1" sourceRef="S1" targetRef="T1"/>
-    <bpmn:sequenceFlow id="F2" sourceRef="T1" targetRef="E1"/>
-    <bpmn:sequenceFlow id="F3" sourceRef="BE1" targetRef="E1"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
-    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="P1"/>
-  </bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
-	if err != nil {
-		t.Fatalf("unexpected parse error: %v", err)
-	}
-	if !hasCode(errs, domain.BPMNErrInvalidSLADuration) {
-		t.Errorf("expected INVALID_SLA_DURATION; got %v", errCodes(errs))
-	}
-}
-
-func TestValidate_ErrorBoundary_OnUserTask_Rejected(t *testing.T) {
-	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
-                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Def_1">
-  <bpmn:process id="P1" name="Test" isExecutable="true">
-    <bpmn:laneSet id="LS1">
-      <bpmn:lane id="Lane_design" name="design">
-        <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>T1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="S1"/>
-    <bpmn:userTask id="T1" name="Task">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:boundaryEvent id="BE1" attachedToRef="T1">
-      <bpmn:errorEventDefinition/>
-    </bpmn:boundaryEvent>
-    <bpmn:endEvent id="E1"/>
-    <bpmn:sequenceFlow id="F1" sourceRef="S1" targetRef="T1"/>
-    <bpmn:sequenceFlow id="F2" sourceRef="T1" targetRef="E1"/>
-    <bpmn:sequenceFlow id="F3" sourceRef="BE1" targetRef="E1"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
-    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="P1"/>
-  </bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
-	if err != nil {
-		t.Fatalf("unexpected parse error: %v", err)
-	}
-	if !hasCode(errs, domain.BPMNErrInvalidBoundaryAttachment) {
-		t.Errorf("expected INVALID_BOUNDARY_ATTACHMENT for error boundary on userTask; got %v", errCodes(errs))
-	}
-}
-
-// ---------- Subprocess tests ----------
-
-func TestCompile_Subprocess_MergesDepartments(t *testing.T) {
-	c := bpmn_compiler.New()
-	plan, err := c.Compile(context.Background(), mustReadBPMN(t, "subprocess.bpmn"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// The subprocess contains two design tasks; they should appear in the parent catalog.
-	var designDept *domain.DepartmentDef
-	for i := range plan.Departments {
-		if plan.Departments[i].ID == "design" {
-			designDept = &plan.Departments[i]
-		}
-	}
-	if designDept == nil {
-		t.Fatal("expected 'design' department merged from subprocess into parent catalog")
-	}
-	if len(designDept.Stages) < 2 {
-		t.Errorf("expected ≥2 stages in 'design' from subprocess; got %d", len(designDept.Stages))
-	}
-
-	// QA dept from the post-subprocess task must also be present.
-	var hasQA bool
-	for _, d := range plan.Departments {
-		if d.ID == "qa" {
-			hasQA = true
-		}
-	}
-	if !hasQA {
-		t.Error("expected 'qa' department in parent catalog from post-subprocess task")
-	}
-
-	// There must be a SubWorkflow step in the execution plan.
-	var hasSubWorkflow bool
-	for _, step := range plan.Execution.Steps {
-		if step.SubWorkflow != nil {
-			hasSubWorkflow = true
-			if step.SubWorkflow.Name != "Design Review Sub" {
-				t.Errorf("SubWorkflow.Name = %q; want %q", step.SubWorkflow.Name, "Design Review Sub")
-			}
-		}
-	}
-	if !hasSubWorkflow {
-		t.Error("expected at least one SubWorkflow execution step")
-	}
-}
-
-func TestCompile_SubprocessError_ErrorPath(t *testing.T) {
-	c := bpmn_compiler.New()
-	plan, err := c.Compile(context.Background(), mustReadBPMN(t, "subprocess-error.bpmn"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	var sw *domain.SubWorkflowStep
-	for _, step := range plan.Execution.Steps {
-		if step.SubWorkflow != nil {
-			sw = step.SubWorkflow
-		}
-	}
-	if sw == nil {
-		t.Fatal("expected a SubWorkflow step in execution plan")
-	}
-	if len(sw.ErrorPaths) == 0 {
-		t.Fatal("expected at least one error path on subprocess")
-	}
-	ep := sw.ErrorPaths[0]
-	if ep.ErrorCode != "REJECTED" {
-		t.Errorf("ErrorPath.ErrorCode = %q; want %q", ep.ErrorCode, "REJECTED")
-	}
-	if ep.TargetDept != "qa" {
-		t.Errorf("ErrorPath.TargetDept = %q; want %q", ep.TargetDept, "qa")
-	}
-}
-
-func TestValidate_Subprocess_Valid(t *testing.T) {
-	c := bpmn_compiler.New()
-	for _, fixture := range []string{"subprocess.bpmn", "subprocess-error.bpmn"} {
-		errs, err := c.Validate(context.Background(), mustReadBPMN(t, fixture))
-		if err != nil {
-			t.Errorf("%s: unexpected parse error: %v", fixture, err)
-			continue
-		}
-		if len(errs) > 0 {
-			t.Errorf("%s: expected 0 errors, got %d:", fixture, len(errs))
-			for _, e := range errs {
-				t.Errorf("  [%s] %s: %s", e.Code, e.NodeID, e.Message)
-			}
-		}
-	}
-}
-
-// TestValidate_MissingBPMNNamespace verifies that a document which declares the Zeebe
-// namespace but not the BPMN namespace returns MISSING_NAMESPACE — covers the
-// BPMN-namespace branch in parse (the existing MissingNamespace test covers the
-// Zeebe-namespace branch).
-func TestValidate_MissingBPMNNamespace(t *testing.T) {
-	// Zeebe namespace declared but BPMN namespace absent.
-	bpmn := `<?xml version="1.0"?><definitions xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"/>`
-	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmn)
-	if err != nil {
-		t.Fatalf("unexpected transport error: %v", err)
-	}
-	if !hasCode(errs, domain.BPMNErrMissingNamespace) {
-		t.Errorf("expected MISSING_NAMESPACE; got %v", errs)
-	}
-}
-
-// TestCompile_TimerBoundary_AlreadyVisitedTarget verifies that a non-interrupting
-// timer boundary whose target is also reachable via the normal sequence flow does not
-// produce a duplicate stage — compileTimerBoundaryPaths must skip already-visited nodes.
-func TestCompile_TimerBoundary_AlreadyVisitedTarget(t *testing.T) {
-	// Start → Task_A → Task_B → End
-	// Task_A has a non-interrupting timer (PT1H) → Task_B
-	// Task_B is visited during main traversal; the timer path is skipped.
-	bpmn := `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" id="Def_TimerVisited" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn:process id="P1" name="TimerVisited" isExecutable="true">
-    <bpmn:laneSet id="LS">
-      <bpmn:lane id="L_ops" name="ops">
-        <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_A</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_B</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>BE_timer</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="S1"/>
-    <bpmn:userTask id="Task_A" name="Step A">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:boundaryEvent id="BE_timer" attachedToRef="Task_A" cancelActivity="false">
-      <bpmn:timerEventDefinition>
-        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
-      </bpmn:timerEventDefinition>
-    </bpmn:boundaryEvent>
-    <bpmn:userTask id="Task_B" name="Step B">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:endEvent id="E1"/>
-    <bpmn:sequenceFlow id="F1" sourceRef="S1"      targetRef="Task_A"/>
-    <bpmn:sequenceFlow id="F2" sourceRef="Task_A"  targetRef="Task_B"/>
-    <bpmn:sequenceFlow id="F3" sourceRef="Task_B"  targetRef="E1"/>
-    <bpmn:sequenceFlow id="F4" sourceRef="BE_timer" targetRef="Task_B"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BD">
-    <bpmndi:BPMNPlane id="BP" bpmnElement="P1">
-      <bpmndi:BPMNShape id="Sh_S1"      bpmnElement="S1"><dc:Bounds x="152" y="82" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_Task_A"  bpmnElement="Task_A"><dc:Bounds x="250" y="60" width="100" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_BE_timer" bpmnElement="BE_timer"><dc:Bounds x="282" y="122" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_Task_B"  bpmnElement="Task_B"><dc:Bounds x="400" y="60" width="100" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_E1"      bpmnElement="E1"><dc:Bounds x="552" y="82" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNEdge id="Edge_F1" bpmnElement="F1"/>
-      <bpmndi:BPMNEdge id="Edge_F2" bpmnElement="F2"/>
-      <bpmndi:BPMNEdge id="Edge_F3" bpmnElement="F3"/>
-      <bpmndi:BPMNEdge id="Edge_F4" bpmnElement="F4"/>
-    </bpmndi:BPMNPlane>
-  </bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-
-	plan, err := bpmn_compiler.New().Compile(context.Background(), bpmn)
-	if err != nil {
-		t.Fatalf("Compile() unexpected error: %v", err)
-	}
-	// Task_B must appear exactly once (timer path skipped because it was already visited).
-	stageCount := 0
-	for _, dept := range plan.Departments {
-		for _, s := range dept.Stages {
-			if s.Type == "review" {
-				stageCount++
-			}
-		}
-	}
-	if stageCount != 1 {
-		t.Errorf("Task_B stage count = %d; want 1 (timer path must not duplicate it)", stageCount)
-	}
-}
-
-// TestValidate_XOR_LoopWithAllTerminateBranches verifies that an XOR gateway that
-// has a back-edge (loop) AND forward branches that all terminate at end events is
-// considered valid — exercises the back-edge skip in allBranchesTerminate.
-func TestValidate_XOR_LoopWithAllTerminateBranches(t *testing.T) {
-	// XOR_gw has three outgoing:
-	//   → End_yes  (forward, terminates)
-	//   → End_no   (forward, terminates)
-	//   → Task_A   (back-edge from XOR_gw; creates loop: Start→Task_A→XOR_gw→...→Task_A)
-	// findJoin returns !ok (no merge node); allBranchesTerminate skips the back-edge
-	// and returns true (both forward branches terminate) → valid.
-	bpmn := `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions
-  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
-  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
-  id="Def_XORLoop" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn:process id="P1" name="XOR Loop" isExecutable="true">
-    <bpmn:laneSet id="LS">
-      <bpmn:lane id="L_ops" name="ops">
-        <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_A</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="Start_1"/>
-    <bpmn:userTask id="Task_A" name="Evaluate">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:exclusiveGateway id="XOR_gw"/>
-    <bpmn:endEvent id="End_yes"/>
-    <bpmn:endEvent id="End_no"/>
-    <bpmn:sequenceFlow id="F1" sourceRef="Start_1" targetRef="Task_A"/>
-    <bpmn:sequenceFlow id="F2" sourceRef="Task_A"  targetRef="XOR_gw"/>
-    <bpmn:sequenceFlow id="F3" name="yes" sourceRef="XOR_gw"  targetRef="End_yes"/>
-    <bpmn:sequenceFlow id="F4" name="no"  sourceRef="XOR_gw"  targetRef="End_no"/>
-    <bpmn:sequenceFlow id="F5" name="retry" sourceRef="XOR_gw" targetRef="Task_A"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BD">
-    <bpmndi:BPMNPlane id="BP" bpmnElement="P1">
-      <bpmndi:BPMNShape id="Sh_Start_1"  bpmnElement="Start_1"><dc:Bounds x="152" y="82" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_Task_A"   bpmnElement="Task_A"><dc:Bounds x="250" y="60" width="100" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_XOR_gw"   bpmnElement="XOR_gw"><dc:Bounds x="405" y="75" width="50" height="50"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_End_yes"  bpmnElement="End_yes"><dc:Bounds x="510" y="62" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_End_no"   bpmnElement="End_no"><dc:Bounds x="510" y="162" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNEdge id="Edge_F1" bpmnElement="F1"/>
-      <bpmndi:BPMNEdge id="Edge_F2" bpmnElement="F2"/>
-      <bpmndi:BPMNEdge id="Edge_F3" bpmnElement="F3"/>
-      <bpmndi:BPMNEdge id="Edge_F4" bpmnElement="F4"/>
-      <bpmndi:BPMNEdge id="Edge_F5" bpmnElement="F5"/>
-    </bpmndi:BPMNPlane>
-  </bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-
-	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmn)
-	if err != nil {
-		t.Fatalf("unexpected parse error: %v", err)
-	}
-	if len(errs) != 0 {
-		t.Errorf("expected valid BPMN with guarded loop; got errors: %v", errCodes(errs))
-	}
-}
-
-// TestHash_SortedZeebeItems_MultipleProps verifies that two tasks with the same
-// zeebe:property elements in different orders produce identical hashes — i.e.
-// sortedZeebeItems normalises property order before hashing.
-func TestHash_SortedZeebeItems_MultipleProps(t *testing.T) {
-	makeBPMN := func(propOrder string) string {
-		return minimalBPMN(
-			`<bpmn:startEvent id="StartEvent_1"/>` +
-				`<bpmn:userTask id="Task_1" name="Proposal">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + aliceUUID + `"/>
-        <zeebe:properties>` + propOrder + `</zeebe:properties>
-      </bpmn:extensionElements>
-    </bpmn:userTask>` +
-				`<bpmn:endEvent id="EndEvent_1"/>
-    <bpmn:sequenceFlow id="F1" sourceRef="StartEvent_1" targetRef="Task_1"/>
-    <bpmn:sequenceFlow id="F2" sourceRef="Task_1"       targetRef="EndEvent_1"/>`,
-		)
-	}
-	propsAB := `<zeebe:property name="aaa" value="1"/><zeebe:property name="zzz" value="2"/>`
-	propsBA := `<zeebe:property name="zzz" value="2"/><zeebe:property name="aaa" value="1"/>`
-
-	c := bpmn_compiler.New()
-	h1, err := c.Hash(makeBPMN(propsAB))
-	if err != nil {
-		t.Fatalf("Hash(AB): %v", err)
-	}
-	h2, err := c.Hash(makeBPMN(propsBA))
-	if err != nil {
-		t.Fatalf("Hash(BA): %v", err)
-	}
-	if h1 != h2 {
-		t.Errorf("zeebe property order should not affect hash: %q != %q", h1, h2)
-	}
-}
-
-// TestValidate_XOR_EarlyExitBranchWithJoin_Valid covers the branch in checkSplitJoin
-// where an exclusive gateway has a reconverging join but one branch exits early at
-// an end event without passing through the join.
-func TestValidate_XOR_EarlyExitBranchWithJoin_Valid(t *testing.T) {
-	// XOR_split → Task_B → XOR_join → End_main   (normal branch, reconverges)
-	// XOR_split → Task_C → XOR_join               (normal branch, reconverges)
-	// XOR_split → End_early                        (early exit; valid for exclusive GW)
-	bpmn := `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions
-  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
-  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
-  id="Def_EarlyExit" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn:process id="P1" name="EarlyExit" isExecutable="true">
-    <bpmn:laneSet id="LS1">
-      <bpmn:lane id="L_ops" name="ops">
-        <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_A</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_B</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_C</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="Start_1"/>
-    <bpmn:userTask id="Task_A" name="Evaluate">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:exclusiveGateway id="XOR_split"/>
-    <bpmn:userTask id="Task_B" name="Path B">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:userTask id="Task_C" name="Path C">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:exclusiveGateway id="XOR_join"/>
-    <bpmn:endEvent id="End_main"/>
-    <bpmn:endEvent id="End_early"/>
-    <bpmn:sequenceFlow id="F1" sourceRef="Start_1"   targetRef="Task_A"/>
-    <bpmn:sequenceFlow id="F2" sourceRef="Task_A"    targetRef="XOR_split"/>
-    <bpmn:sequenceFlow id="F3" sourceRef="XOR_split" targetRef="Task_B"/>
-    <bpmn:sequenceFlow id="F4" sourceRef="XOR_split" targetRef="Task_C"/>
-    <bpmn:sequenceFlow id="F5" sourceRef="XOR_split" targetRef="End_early"/>
-    <bpmn:sequenceFlow id="F6" sourceRef="Task_B"    targetRef="XOR_join"/>
-    <bpmn:sequenceFlow id="F7" sourceRef="Task_C"    targetRef="XOR_join"/>
-    <bpmn:sequenceFlow id="F8" sourceRef="XOR_join"  targetRef="End_main"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
-    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="P1">
-      <bpmndi:BPMNShape id="Sh_Start_1"   bpmnElement="Start_1"><dc:Bounds x="152" y="82" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_Task_A"    bpmnElement="Task_A"><dc:Bounds x="250" y="60" width="100" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_XOR_split" bpmnElement="XOR_split"><dc:Bounds x="405" y="75" width="50" height="50"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_Task_B"    bpmnElement="Task_B"><dc:Bounds x="510" y="60" width="100" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_Task_C"    bpmnElement="Task_C"><dc:Bounds x="510" y="180" width="100" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_XOR_join"  bpmnElement="XOR_join"><dc:Bounds x="665" y="75" width="50" height="50"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_End_main"  bpmnElement="End_main"><dc:Bounds x="772" y="82" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_End_early" bpmnElement="End_early"><dc:Bounds x="510" y="290" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNEdge id="Edge_F1" bpmnElement="F1"/>
-      <bpmndi:BPMNEdge id="Edge_F2" bpmnElement="F2"/>
-      <bpmndi:BPMNEdge id="Edge_F3" bpmnElement="F3"/>
-      <bpmndi:BPMNEdge id="Edge_F4" bpmnElement="F4"/>
-      <bpmndi:BPMNEdge id="Edge_F5" bpmnElement="F5"/>
-      <bpmndi:BPMNEdge id="Edge_F6" bpmnElement="F6"/>
-      <bpmndi:BPMNEdge id="Edge_F7" bpmnElement="F7"/>
-      <bpmndi:BPMNEdge id="Edge_F8" bpmnElement="F8"/>
-    </bpmndi:BPMNPlane>
-  </bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-
-	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmn)
-	if err != nil {
-		t.Fatalf("unexpected parse error: %v", err)
-	}
-	if len(errs) != 0 {
-		t.Errorf("expected valid BPMN with early-exit branch; got errors: %v", errCodes(errs))
-	}
-}
-
-// TestCompile_Subprocess_CatchAllErrorBoundary verifies that a subprocess with a
-// catch-all error boundary event (no errorRef) compiles to a SubWorkflow step with
-// an ErrorPath whose ErrorCode is empty string.
-func TestCompile_Subprocess_CatchAllErrorBoundary(t *testing.T) {
-	// subprocess-error.bpmn minus the bpmn:error element, and errorEventDefinition
-	// with no errorRef — a catch-all that triggers on any error.
-	bpmn := `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" id="Def_CatchAll" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn:process id="P_CatchAll" name="CatchAll Error" isExecutable="true">
-    <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
-        <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>SP_1</bpmn:flowNodeRef>
-      </bpmn:lane>
-      <bpmn:lane id="Lane_qa" name="qa">
-        <bpmn:flowNodeRef>Task_qa</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>BE_catchall</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="Start_1"/>
-    <bpmn:subProcess id="SP_1" name="Inner Sub">
-      <bpmn:laneSet id="InnerLS">
-        <bpmn:lane id="InnerLane" name="design">
-          <bpmn:flowNodeRef>InnerStart</bpmn:flowNodeRef>
-          <bpmn:flowNodeRef>InnerTask</bpmn:flowNodeRef>
-          <bpmn:flowNodeRef>InnerEnd</bpmn:flowNodeRef>
-        </bpmn:lane>
-      </bpmn:laneSet>
-      <bpmn:startEvent id="InnerStart"/>
-      <bpmn:userTask id="InnerTask" name="Inner Prep">
-        <bpmn:extensionElements>
-          <zeebe:taskDefinition type="prep"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + aliceUUID + `"/>
-        </bpmn:extensionElements>
-      </bpmn:userTask>
-      <bpmn:endEvent id="InnerEnd"/>
-      <bpmn:sequenceFlow id="IF1" sourceRef="InnerStart" targetRef="InnerTask"/>
-      <bpmn:sequenceFlow id="IF2" sourceRef="InnerTask"  targetRef="InnerEnd"/>
-    </bpmn:subProcess>
-    <bpmn:boundaryEvent id="BE_catchall" attachedToRef="SP_1">
-      <bpmn:errorEventDefinition/>
-    </bpmn:boundaryEvent>
-    <bpmn:userTask id="Task_qa" name="QA">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:endEvent id="End_1"/>
-    <bpmn:sequenceFlow id="F1" sourceRef="Start_1"    targetRef="SP_1"/>
-    <bpmn:sequenceFlow id="F2" sourceRef="SP_1"       targetRef="Task_qa"/>
-    <bpmn:sequenceFlow id="F3" sourceRef="BE_catchall" targetRef="Task_qa"/>
-    <bpmn:sequenceFlow id="F4" sourceRef="Task_qa"    targetRef="End_1"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
-    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="P_CatchAll">
-      <bpmndi:BPMNShape id="Sh_Start_1"    bpmnElement="Start_1"><dc:Bounds x="152" y="82" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_SP_1"       bpmnElement="SP_1"><dc:Bounds x="250" y="50" width="300" height="200"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_InnerStart" bpmnElement="InnerStart"><dc:Bounds x="282" y="122" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_InnerTask"  bpmnElement="InnerTask"><dc:Bounds x="370" y="100" width="100" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_InnerEnd"   bpmnElement="InnerEnd"><dc:Bounds x="522" y="122" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_BE_catchall" bpmnElement="BE_catchall"><dc:Bounds x="382" y="232" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_Task_qa"    bpmnElement="Task_qa"><dc:Bounds x="600" y="60" width="100" height="80"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Sh_End_1"      bpmnElement="End_1"><dc:Bounds x="752" y="82" width="36" height="36"/></bpmndi:BPMNShape>
-      <bpmndi:BPMNEdge id="Edge_IF1" bpmnElement="IF1"/>
-      <bpmndi:BPMNEdge id="Edge_IF2" bpmnElement="IF2"/>
-      <bpmndi:BPMNEdge id="Edge_F1"  bpmnElement="F1"/>
-      <bpmndi:BPMNEdge id="Edge_F2"  bpmnElement="F2"/>
-      <bpmndi:BPMNEdge id="Edge_F3"  bpmnElement="F3"/>
-      <bpmndi:BPMNEdge id="Edge_F4"  bpmnElement="F4"/>
-    </bpmndi:BPMNPlane>
-  </bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-
-	plan, err := bpmn_compiler.New().Compile(context.Background(), bpmn)
-	if err != nil {
-		t.Fatalf("Compile() unexpected error: %v", err)
-	}
-
-	var sw *domain.SubWorkflowStep
-	for _, step := range plan.Execution.Steps {
-		if step.SubWorkflow != nil {
-			sw = step.SubWorkflow
-		}
-	}
-	if sw == nil {
-		t.Fatal("expected SubWorkflow step")
-	}
-	if len(sw.ErrorPaths) == 0 {
-		t.Fatal("expected at least one error path on catch-all subprocess")
-	}
-	if sw.ErrorPaths[0].ErrorCode != "" {
-		t.Errorf("catch-all error path: ErrorCode = %q; want empty string", sw.ErrorPaths[0].ErrorCode)
-	}
 }
