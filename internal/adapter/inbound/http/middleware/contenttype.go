@@ -18,7 +18,7 @@ func RequireJSONContentType() gin.HandlerFunc {
 			return
 		}
 		ct := c.GetHeader("Content-Type")
-		if i := strings.IndexByte(ct, ';'); i >= 0 { // drop ";charset=..."
+		if i := strings.IndexByte(ct, ';'); i >= 0 {
 			ct = ct[:i]
 		}
 		if strings.TrimSpace(ct) != "application/json" {

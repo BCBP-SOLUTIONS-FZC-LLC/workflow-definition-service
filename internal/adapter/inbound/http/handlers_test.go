@@ -40,7 +40,6 @@ func TestSwaggerInitializerHandler(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
 		t.Errorf("content-type = %q, want application/javascript", ct)
 	}
-	// Verify the URL was updated from the gin-swagger default "doc.json".
 	if !strings.Contains(w.Body.String(), "/api/openapi.yaml") {
 		t.Error("swagger initializer must reference /api/openapi.yaml, not doc.json")
 	}

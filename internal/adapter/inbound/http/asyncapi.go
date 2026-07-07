@@ -244,7 +244,6 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 
 	w.WriteString(`<main class="content">`)
 
-	// Info
 	w.WriteString(`<div class="section" id="info">`)
 	w.WriteString(`<div class="section-title">Info</div>`)
 	if s.Info.Desc != "" {

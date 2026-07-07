@@ -22,8 +22,7 @@ const serviceMigrationsTable = "wf_definition_migrations"
 //
 // The migrate.Runner.Logger field is intentionally left unset: it requires
 // platform-pgcommon's internal port.Logger (unexported Field type) which the
-// service's port.Logger cannot satisfy (see CLAUDE.md §27). We log start/finish
-// here instead.
+// service's port.Logger cannot satisfy. We log start/finish here instead.
 func runMigrations(ctx context.Context, dsn string, log port.Logger) error {
 	log.Info("running migrations", nil)
 
@@ -32,7 +31,6 @@ func runMigrations(ctx context.Context, dsn string, log port.Logger) error {
 		return fmt.Errorf("outbox schema: %w", err)
 	}
 
-	// 2. Service domain migrations (embedded FS, dedicated tracking table).
 	domain := &migrate.Runner{
 		FS:              migrations.FS,
 		DSN:             dsn,

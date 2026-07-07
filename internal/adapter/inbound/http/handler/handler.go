@@ -59,7 +59,6 @@ type Services struct {
 	Drafts     draftSvc
 	Versions   versionSvc
 	Validation validationSvc
-	// Membership drives the internal event-ingest endpoint (POST /internal/events).
 	Membership membershipRevoker
 	Log        port.Logger
 }

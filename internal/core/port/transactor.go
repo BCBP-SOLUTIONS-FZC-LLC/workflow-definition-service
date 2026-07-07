@@ -9,7 +9,6 @@ type Transactor interface {
 	RunInTx(ctx context.Context, fn func(ctx context.Context) error) error
 	// RunInTxWithRetry runs fn under SERIALIZABLE isolation and automatically
 	// retries on serialization failures (40001) / deadlocks (40P01) with
-	// exponential backoff. Used by the publish/create/clone paths where a
-	// read-then-write (version-number / plan-quota count) must be race-free.
+	// exponential backoff.
 	RunInTxWithRetry(ctx context.Context, fn func(ctx context.Context) error) error
 }
