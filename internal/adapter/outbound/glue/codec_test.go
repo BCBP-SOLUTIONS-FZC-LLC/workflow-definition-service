@@ -11,7 +11,7 @@ import (
 )
 
 func TestCodec_Encode_StubMode(t *testing.T) {
-	codec := NewCodec(aws.Config{}, "workflow-template-events", true, "")
+	codec := NewCodec(aws.Config{}, "workflow-template-events", true, "", 0)
 	payload := []byte(`{"workflow_id":"123"}`)
 
 	encoded, err := codec.Encode(context.Background(), "WorkflowTemplatePublished", payload)
@@ -25,7 +25,7 @@ func TestCodec_Encode_StubMode(t *testing.T) {
 }
 
 func TestCodec_Encode_WithCachedSchema(t *testing.T) {
-	codec := NewCodec(aws.Config{}, "workflow-template-events", false, "")
+	codec := NewCodec(aws.Config{}, "workflow-template-events", false, "", 0)
 	payload := []byte(`{"workflow_id":"123"}`)
 
 	mockUUID := uuid.New()

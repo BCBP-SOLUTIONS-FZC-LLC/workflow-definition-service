@@ -16,8 +16,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-const idempotencyTTL = 24 * time.Hour
-
 type cachedResp struct {
 	Status   int    `json:"status"`
 	Body     []byte `json:"body"`
@@ -56,7 +54,7 @@ func hashBody(b []byte) string {
 //
 // If the cache is nil (dev/test) or the header is absent, the handler runs
 // as-is with no idempotency enforcement.
-func WithIdempotency(cache port.CacheStore, log port.Logger, h gin.HandlerFunc) gin.HandlerFunc {
+func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, h gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := c.GetHeader("Idempotency-Key")
 		if key == "" || cache == nil {
@@ -74,7 +72,7 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, h gin.HandlerFunc) 
 			if log != nil {
 				log.Warn("idempotency: failed to read request body, bypassing idempotency protection", map[string]any{
 					"tenant_id": rc.TenantID,
-					"path":      c.FullPath(),
+					"path":      c.Request.URL.Path,
 				})
 			}
 			h(c)
@@ -82,8 +80,10 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, h gin.HandlerFunc) 
 		}
 		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-		// Key is scoped to tenant + route + client-supplied key to prevent cross-endpoint collisions.
-		cacheKey := "idem:" + rc.TenantID + ":" + c.FullPath() + ":" + key
+		// Key is scoped to tenant + method + actual path (IDs substituted) + client-supplied key.
+		// Method prevents DELETE and POST to the same path sharing a cache slot on key reuse.
+		// c.Request.URL.Path includes the concrete resource IDs, preventing cross-resource collisions.
+		cacheKey := "idem:" + rc.TenantID + ":" + c.Request.Method + ":" + c.Request.URL.Path + ":" + key
 		if replayed := replayIfCached(c, cache, cacheKey, incomingHash); replayed {
 			return
 		}
@@ -91,7 +91,7 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, h gin.HandlerFunc) 
 		rec := &bodyRecorder{ResponseWriter: c.Writer, buf: &bytes.Buffer{}}
 		c.Writer = rec
 		h(c)
-		storeIfSuccess(c, cache, log, cacheKey, incomingHash, rec)
+		storeIfSuccess(c, cache, log, cacheKey, incomingHash, ttl, rec)
 	}
 }
 
@@ -120,14 +120,14 @@ func replayIfCached(c *gin.Context, cache port.CacheStore, cacheKey, incomingHas
 	return true
 }
 
-func storeIfSuccess(c *gin.Context, cache port.CacheStore, log port.Logger, cacheKey, incomingHash string, rec *bodyRecorder) {
+func storeIfSuccess(c *gin.Context, cache port.CacheStore, log port.Logger, cacheKey, incomingHash string, ttl time.Duration, rec *bodyRecorder) {
 	status := rec.Status()
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
 		return
 	}
 	entry := cachedResp{Status: status, Body: rec.buf.Bytes(), BodyHash: incomingHash}
 	b, _ := json.Marshal(entry) // cachedResp contains only JSON-safe types; Marshal never errors
-	if err := cache.Set(c.Request.Context(), cacheKey, string(b), idempotencyTTL); err != nil {
+	if err := cache.Set(c.Request.Context(), cacheKey, string(b), ttl); err != nil {
 		if log != nil {
 			log.Warn("idempotency: failed to cache response", map[string]any{
 				"cache_key": cacheKey,

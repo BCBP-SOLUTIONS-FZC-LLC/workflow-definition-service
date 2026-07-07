@@ -50,10 +50,12 @@ func newApp(cfg *config.Config) (*app, error) {
 		tracingShutdown()
 		return nil, err
 	}
+	closeCache := func() { _ = redisClient.Close() }
 
 	publisher, err := newPublisher(cfg, log)
 	if err != nil {
 		pool.Close()
+		closeCache()
 		tracingShutdown()
 		return nil, err
 	}
@@ -61,6 +63,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	glueCodec, err := newGlueCodec(context.Background(), cfg)
 	if err != nil {
 		pool.Close()
+		closeCache()
 		tracingShutdown()
 		return nil, err
 	}
@@ -69,12 +72,13 @@ func newApp(cfg *config.Config) (*app, error) {
 	var executionSvc *outboundgrpc.ExecutionClient
 
 	if cfg.OrgMembershipBaseURL != "" {
-		membershipSvc = outboundhttp.NewMembershipClient(cfg.OrgMembershipBaseURL)
+		membershipSvc = outboundhttp.NewMembershipClient(cfg.OrgMembershipBaseURL, cfg.MembershipClientTimeout)
 	}
 	if cfg.ExecutionServiceAddr != "" {
 		executionSvc, err = outboundgrpc.NewExecutionClient(cfg.ExecutionServiceAddr, cfg.ExecutionClientTimeout)
 		if err != nil {
 			pool.Close()
+			closeCache()
 			tracingShutdown()
 			return nil, fmt.Errorf("execution client: %w", err)
 		}
@@ -89,6 +93,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	})
 	if err != nil {
 		pool.Close()
+		closeCache()
 		tracingShutdown()
 		return nil, fmt.Errorf("outbox runner: %w", err)
 	}

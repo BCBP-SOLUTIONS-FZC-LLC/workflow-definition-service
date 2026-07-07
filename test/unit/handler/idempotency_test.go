@@ -66,7 +66,7 @@ func newIdempotencyRouter(cache *fakeCache, h gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := newRouter(newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{}))
 	// Overlay a dedicated route that wraps h with idempotency middleware.
-	r.POST("/idempotency-test", handler.WithIdempotency(cache, nil, h))
+	r.POST("/idempotency-test", handler.WithIdempotency(cache, nil, 24*time.Hour, h))
 	return r
 }
 
@@ -92,7 +92,7 @@ func TestWithIdempotency_NilCache_PassThrough(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	r := newRouter(newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{}))
-	r.POST("/idempotency-test", handler.WithIdempotency(nil, nil, h))
+	r.POST("/idempotency-test", handler.WithIdempotency(nil, nil, 24*time.Hour, h))
 
 	httpReq := req(http.MethodPost, "/idempotency-test", nil)
 	httpReq.Header.Set("Idempotency-Key", "key-abc")
@@ -230,8 +230,8 @@ func TestWithIdempotency_PathScopedKey_IsolatedPerRoute(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	r := newRouter(newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{}))
-	r.POST("/route-a", handler.WithIdempotency(cache, nil, echoHandler(http.StatusCreated, gin.H{"r": "a"})))
-	r.POST("/route-b", handler.WithIdempotency(cache, nil, echoHandler(http.StatusCreated, gin.H{"r": "b"})))
+	r.POST("/route-a", handler.WithIdempotency(cache, nil, 24*time.Hour, echoHandler(http.StatusCreated, gin.H{"r": "a"})))
+	r.POST("/route-b", handler.WithIdempotency(cache, nil, 24*time.Hour, echoHandler(http.StatusCreated, gin.H{"r": "b"})))
 
 	for _, path := range []string{"/route-a", "/route-b"} {
 		httpReq := req(http.MethodPost, path, map[string]string{"x": "1"})
@@ -329,7 +329,7 @@ func TestWithIdempotency_NoRequestContext_PassThrough(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New() // no ProtectedMiddlewares
-	r.POST("/bare", handler.WithIdempotency(&fakeCache{}, nil, h))
+	r.POST("/bare", handler.WithIdempotency(&fakeCache{}, nil, 24*time.Hour, h))
 
 	httpReq, _ := http.NewRequest(http.MethodPost, "/bare", nil)
 	httpReq.Header.Set("Idempotency-Key", "any-key")
@@ -355,7 +355,7 @@ func TestWithIdempotency_DrainBodyError_PassThrough(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	r := newRouter(newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{}))
-	r.POST("/drain-test", handler.WithIdempotency(cache, logger, h))
+	r.POST("/drain-test", handler.WithIdempotency(cache, logger, 24*time.Hour, h))
 
 	httpReq := req(http.MethodPost, "/drain-test", nil)
 	httpReq.Body = io.NopCloser(errReader{})
@@ -384,7 +384,7 @@ func TestWithIdempotency_CacheSetFails_LogsWarning(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	r := newRouter(newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{}))
-	r.POST("/set-warn-test", handler.WithIdempotency(cache, logger, h))
+	r.POST("/set-warn-test", handler.WithIdempotency(cache, logger, 24*time.Hour, h))
 
 	httpReq := req(http.MethodPost, "/set-warn-test", nil)
 	httpReq.Header.Set("Idempotency-Key", "warn-key")

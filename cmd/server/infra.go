@@ -60,7 +60,7 @@ func newCacheStore(ctx context.Context, cfg *config.Config) (port.CacheStore, *r
 		Password:     cfg.ValkeyPassword,
 		DialTimeout:  cfg.ValkeyDialTimeout,
 		ReadTimeout:  cfg.ValkeyReadTimeout,
-		WriteTimeout: cfg.ValkeyReadTimeout,
+		WriteTimeout: cfg.ValkeyWriteTimeout,
 	})
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, nil, fmt.Errorf("valkey ping: %w", err)
@@ -93,5 +93,5 @@ func newGlueCodec(ctx context.Context, cfg *config.Config) (port.GlueCodec, erro
 			return nil, fmt.Errorf("load aws config for glue: %w", err)
 		}
 	}
-	return gluecodec.NewCodec(awsCfg, cfg.GlueRegistryName, cfg.AWSUseStub, cfg.AWSEndpointURL), nil
+	return gluecodec.NewCodec(awsCfg, cfg.GlueRegistryName, cfg.AWSUseStub, cfg.AWSEndpointURL, cfg.GlueSchemaCacheTTL), nil
 }

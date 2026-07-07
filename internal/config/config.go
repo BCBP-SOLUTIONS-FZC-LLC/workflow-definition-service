@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -36,20 +37,22 @@ type Config struct {
 	// may not be ready. Startup-only — not used for runtime reconnection.
 	DatabaseFallbackURL string
 
-	ValkeyAddr        string
-	ValkeyPassword    string
-	ValkeyDialTimeout time.Duration
-	ValkeyReadTimeout time.Duration
+	ValkeyAddr         string
+	ValkeyPassword     string
+	ValkeyDialTimeout  time.Duration
+	ValkeyReadTimeout  time.Duration
+	ValkeyWriteTimeout time.Duration
 	// CacheCompiledPlanTTL bounds the gRPC GetCompiledWorkflow compiled-plan cache
 	// (key wf:plan:<tenant>:<version>); entries are also deleted on state change.
 	CacheCompiledPlanTTL time.Duration
+	IdempotencyTTL       time.Duration
 
-	AWSUseStub       bool
-	AWSRegion        string
-	SNSTopicARN      string
-	AWSEndpointURL   string
-	GlueRegistryName string
-	GlueRegistryARN  string
+	AWSUseStub         bool
+	AWSRegion          string
+	SNSTopicARN        string
+	AWSEndpointURL     string
+	GlueRegistryName   string
+	GlueSchemaCacheTTL time.Duration
 
 	OutboxPollInterval time.Duration
 	OutboxBatchSize    int
@@ -59,9 +62,10 @@ type Config struct {
 	// (local/dev); NetworkPolicy/mesh remains the primary control.
 	InternalAPIToken string
 
-	OrgMembershipBaseURL   string
-	ExecutionServiceAddr   string
-	ExecutionClientTimeout time.Duration
+	OrgMembershipBaseURL    string
+	MembershipClientTimeout time.Duration
+	ExecutionServiceAddr    string
+	ExecutionClientTimeout  time.Duration
 }
 
 func Load() (*Config, error) {
@@ -91,23 +95,26 @@ func Load() (*Config, error) {
 		ValkeyPassword:       getEnvOrDefault("VALKEY_PASSWORD", ""),
 		ValkeyDialTimeout:    getEnvDurationOrDefault("VALKEY_DIAL_TIMEOUT", 2*time.Second),
 		ValkeyReadTimeout:    getEnvDurationOrDefault("VALKEY_READ_TIMEOUT", 1*time.Second),
+		ValkeyWriteTimeout:   getEnvDurationOrDefault("VALKEY_WRITE_TIMEOUT", 1*time.Second),
 		CacheCompiledPlanTTL: getEnvDurationOrDefault("CACHE_COMPILED_PLAN_TTL", time.Hour),
+		IdempotencyTTL:       getEnvDurationOrDefault("IDEMPOTENCY_TTL", 24*time.Hour),
 
-		AWSUseStub:       getEnvBoolOrDefault("AWS_USE_STUB", true),
-		AWSRegion:        getEnvOrDefault("AWS_REGION", "us-east-1"),
-		SNSTopicARN:      getEnvOrDefault("SNS_TOPIC_ARN", ""),
-		AWSEndpointURL:   getEnvOrDefault("AWS_ENDPOINT_URL", ""),
-		GlueRegistryName: getEnvOrDefault("GLUE_REGISTRY_NAME", ""),
-		GlueRegistryARN:  getEnvOrDefault("GLUE_REGISTRY_ARN", ""),
+		AWSUseStub:         getEnvBoolOrDefault("AWS_USE_STUB", true),
+		AWSRegion:          getEnvOrDefault("AWS_REGION", "us-east-1"),
+		SNSTopicARN:        getEnvOrDefault("SNS_TOPIC_ARN", ""),
+		AWSEndpointURL:     getEnvOrDefault("AWS_ENDPOINT_URL", ""),
+		GlueRegistryName:   getEnvOrDefault("GLUE_REGISTRY_NAME", ""),
+		GlueSchemaCacheTTL: getEnvDurationOrDefault("GLUE_SCHEMA_CACHE_TTL", 5*time.Minute),
 
 		OutboxPollInterval: getEnvDurationOrDefault("OUTBOX_POLL_INTERVAL", 500*time.Millisecond),
 		OutboxBatchSize:    getEnvIntOrDefault("OUTBOX_BATCH_SIZE", 50),
 
 		InternalAPIToken: getEnvOrDefault("INTERNAL_API_TOKEN", ""),
 
-		OrgMembershipBaseURL:   getEnvOrDefault("ORG_MEMBERSHIP_BASE_URL", ""),
-		ExecutionServiceAddr:   getEnvOrDefault("EXECUTION_SERVICE_ADDR", ""),
-		ExecutionClientTimeout: getEnvDurationOrDefault("EXECUTION_CLIENT_TIMEOUT", 5*time.Second),
+		OrgMembershipBaseURL:    getEnvOrDefault("ORG_MEMBERSHIP_BASE_URL", ""),
+		MembershipClientTimeout: getEnvDurationOrDefault("MEMBERSHIP_CLIENT_TIMEOUT", 10*time.Second),
+		ExecutionServiceAddr:    getEnvOrDefault("EXECUTION_SERVICE_ADDR", ""),
+		ExecutionClientTimeout:  getEnvDurationOrDefault("EXECUTION_CLIENT_TIMEOUT", 5*time.Second),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -121,15 +128,42 @@ func (c *Config) validate() error {
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
 	}
+	if c.HTTPPort < 1 || c.HTTPPort > 65535 {
+		return fmt.Errorf("HTTP_PORT must be in [1, 65535]")
+	}
+	if c.GRPCPort < 1 || c.GRPCPort > 65535 {
+		return fmt.Errorf("GRPC_PORT must be in [1, 65535]")
+	}
+	if c.PGMaxConns <= 0 {
+		return fmt.Errorf("PG_MAX_CONNS must be > 0")
+	}
+	if c.PGMinConns < 0 {
+		return fmt.Errorf("PG_MIN_CONNS must be >= 0")
+	}
+	if c.PGMinConns > c.PGMaxConns {
+		return fmt.Errorf("PG_MIN_CONNS must be <= PG_MAX_CONNS")
+	}
+	if c.OTELTracesSamplerRatio < 0.0 || c.OTELTracesSamplerRatio > 1.0 {
+		return fmt.Errorf("OTEL_TRACES_SAMPLER_RATIO must be in [0.0, 1.0]")
+	}
+	if c.OutboxBatchSize <= 0 {
+		return fmt.Errorf("OUTBOX_BATCH_SIZE must be > 0")
+	}
+	if c.OutboxPollInterval <= 0 {
+		return fmt.Errorf("OUTBOX_POLL_INTERVAL must be > 0")
+	}
+	if c.ExecutionClientTimeout <= 0 {
+		return fmt.Errorf("EXECUTION_CLIENT_TIMEOUT must be > 0")
+	}
+	if c.AppEnv == "prod" && c.InternalAPIToken == "" {
+		return fmt.Errorf("INTERNAL_API_TOKEN is required in prod environment")
+	}
 	if !c.AWSUseStub {
 		if c.SNSTopicARN == "" {
 			return fmt.Errorf("SNS_TOPIC_ARN is required when AWS_USE_STUB=false")
 		}
 		if c.GlueRegistryName == "" {
 			return fmt.Errorf("GLUE_REGISTRY_NAME is required when AWS_USE_STUB=false")
-		}
-		if c.GlueRegistryARN == "" {
-			return fmt.Errorf("GLUE_REGISTRY_ARN is required when AWS_USE_STUB=false")
 		}
 		if c.AppEnv != "dev" {
 			if c.OrgMembershipBaseURL == "" {
@@ -177,7 +211,11 @@ func getEnvBoolOrDefault(key string, fallback bool) bool {
 	if v == "" {
 		return fallback
 	}
-	return v == "true" || v == "1"
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return fallback
+	}
+	return b
 }
 
 func getEnvFloat64OrDefault(key string, fallback float64) float64 {

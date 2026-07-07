@@ -16,7 +16,7 @@ import (
 )
 
 func TestMembershipClient_New(t *testing.T) {
-	c := httpadapter.NewMembershipClient("http://example.com")
+	c := httpadapter.NewMembershipClient("http://example.com", 10*time.Second)
 	if c == nil {
 		t.Fatal("expected non-nil client")
 	}
@@ -181,7 +181,7 @@ func TestMembershipClient_CheckEligibility(t *testing.T) {
 				defer srv.Close()
 			}
 
-			client := httpadapter.NewMembershipClient(srv.URL)
+			client := httpadapter.NewMembershipClient(srv.URL, 10*time.Second)
 			ctx := context.Background()
 			if tt.makeCtx != nil {
 				ctx = tt.makeCtx(t)

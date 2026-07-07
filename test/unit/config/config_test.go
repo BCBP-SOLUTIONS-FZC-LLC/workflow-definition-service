@@ -17,7 +17,7 @@ func TestLoad_Success(t *testing.T) {
 		"PG_SLOW_QUERY_THRESHOLD_MS", "VALKEY_ADDR", "VALKEY_PASSWORD",
 		"AWS_USE_STUB", "AWS_REGION", "SNS_TOPIC_ARN",
 		"OUTBOX_POLL_INTERVAL", "OUTBOX_BATCH_SIZE", "ORG_MEMBERSHIP_BASE_URL",
-		"EXECUTION_SERVICE_ADDR", "GLUE_REGISTRY_NAME", "GLUE_REGISTRY_ARN",
+		"EXECUTION_SERVICE_ADDR", "GLUE_REGISTRY_NAME",
 	}
 	for _, k := range keysToBackup {
 		envBackup[k] = os.Getenv(k)
@@ -54,7 +54,6 @@ func TestLoad_Success(t *testing.T) {
 	_ = os.Setenv("ORG_MEMBERSHIP_BASE_URL", "http://org")
 	_ = os.Setenv("EXECUTION_SERVICE_ADDR", "execution:9090")
 	_ = os.Setenv("GLUE_REGISTRY_NAME", "workflow-template-events")
-	_ = os.Setenv("GLUE_REGISTRY_ARN", "arn:aws:glue:us-east-1:123456789012:registry/workflow-template-events")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -127,16 +126,16 @@ func TestLoad_Success(t *testing.T) {
 	if cfg.GlueRegistryName != "workflow-template-events" {
 		t.Errorf("GlueRegistryName = %q, want workflow-template-events", cfg.GlueRegistryName)
 	}
-	if cfg.GlueRegistryARN != "arn:aws:glue:us-east-1:123456789012:registry/workflow-template-events" {
-		t.Errorf("GlueRegistryARN = %q, want arn:aws:glue:us-east-1:123456789012:registry/workflow-template-events", cfg.GlueRegistryARN)
-	}
 }
 
 func TestLoad_ValidationFailures(t *testing.T) {
 	keysToBackup := []string{
 		"DATABASE_URL", "AWS_USE_STUB", "SNS_TOPIC_ARN", "APP_ENV",
 		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_ADDR",
-		"GLUE_REGISTRY_NAME", "GLUE_REGISTRY_ARN",
+		"GLUE_REGISTRY_NAME", "INTERNAL_API_TOKEN",
+		"HTTP_PORT", "GRPC_PORT", "PG_MIN_CONNS", "PG_MAX_CONNS",
+		"OTEL_TRACES_SAMPLER_RATIO", "OUTBOX_BATCH_SIZE",
+		"OUTBOX_POLL_INTERVAL", "EXECUTION_CLIENT_TIMEOUT",
 	}
 	envBackup := make(map[string]string)
 	for _, k := range keysToBackup {
@@ -168,7 +167,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
 				"SNS_TOPIC_ARN":      "",
 				"GLUE_REGISTRY_NAME": "workflow-template-events",
-				"GLUE_REGISTRY_ARN":  "arn:aws:glue:us-east-1:123456789012:registry/workflow-template-events",
 			},
 			wantErr: true,
 		},
@@ -187,7 +185,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production",
 				"ORG_MEMBERSHIP_BASE_URL": "", "EXECUTION_SERVICE_ADDR": "execution:9090",
 				"GLUE_REGISTRY_NAME": "workflow-template-events",
-				"GLUE_REGISTRY_ARN":  "arn:aws:glue:us-east-1:123456789012:registry/workflow-template-events",
 			},
 			wantErr: true,
 		},
@@ -198,7 +195,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production",
 				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_ADDR": "",
 				"GLUE_REGISTRY_NAME": "workflow-template-events",
-				"GLUE_REGISTRY_ARN":  "arn:aws:glue:us-east-1:123456789012:registry/workflow-template-events",
 			},
 			wantErr: true,
 		},
@@ -209,7 +205,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "dev",
 				"ORG_MEMBERSHIP_BASE_URL": "", "EXECUTION_SERVICE_ADDR": "",
 				"GLUE_REGISTRY_NAME": "workflow-template-events",
-				"GLUE_REGISTRY_ARN":  "arn:aws:glue:us-east-1:123456789012:registry/workflow-template-events",
 			},
 			wantErr: false,
 		},
@@ -219,18 +214,78 @@ func TestLoad_ValidationFailures(t *testing.T) {
 				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
 				"SNS_TOPIC_ARN":      "arn:aws:sns:topic",
 				"GLUE_REGISTRY_NAME": "",
-				"GLUE_REGISTRY_ARN":  "arn:aws:glue:us-east-1:123456789012:registry/workflow-template-events",
 			},
 			wantErr: true,
 		},
 		{
-			name: "missing glue registry arn when aws stub is false",
+			name: "missing internal api token in prod",
 			env: map[string]string{
-				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
-				"SNS_TOPIC_ARN":      "arn:aws:sns:topic",
-				"GLUE_REGISTRY_NAME": "workflow-template-events",
-				"GLUE_REGISTRY_ARN":  "",
+				"DATABASE_URL": "postgres://localhost", "APP_ENV": "prod",
+				"INTERNAL_API_TOKEN": "",
 			},
+			wantErr: true,
+		},
+		{
+			name: "valid in prod with internal api token set",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost", "APP_ENV": "prod",
+				"INTERNAL_API_TOKEN": "secret-token",
+			},
+			wantErr: false,
+		},
+		{
+			name:    "http port below range",
+			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "HTTP_PORT": "0"},
+			wantErr: true,
+		},
+		{
+			name:    "http port above range",
+			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "HTTP_PORT": "65536"},
+			wantErr: true,
+		},
+		{
+			name:    "grpc port above range",
+			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "GRPC_PORT": "65536"},
+			wantErr: true,
+		},
+		{
+			name:    "pg max conns zero",
+			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "PG_MAX_CONNS": "0", "PG_MIN_CONNS": "0"},
+			wantErr: true,
+		},
+		{
+			name:    "pg min conns negative",
+			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "PG_MIN_CONNS": "-1", "PG_MAX_CONNS": "10"},
+			wantErr: true,
+		},
+		{
+			name:    "pg min conns exceeds max conns",
+			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "PG_MIN_CONNS": "20", "PG_MAX_CONNS": "10"},
+			wantErr: true,
+		},
+		{
+			name:    "otel sampler ratio above 1",
+			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "OTEL_TRACES_SAMPLER_RATIO": "1.5"},
+			wantErr: true,
+		},
+		{
+			name:    "otel sampler ratio below 0",
+			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "OTEL_TRACES_SAMPLER_RATIO": "-0.1"},
+			wantErr: true,
+		},
+		{
+			name:    "outbox batch size zero",
+			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "OUTBOX_BATCH_SIZE": "0"},
+			wantErr: true,
+		},
+		{
+			name:    "outbox poll interval zero",
+			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "OUTBOX_POLL_INTERVAL": "0s"},
+			wantErr: true,
+		},
+		{
+			name:    "execution client timeout zero",
+			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "EXECUTION_CLIENT_TIMEOUT": "0s"},
 			wantErr: true,
 		},
 	}
@@ -339,8 +394,8 @@ func TestLoad_InvalidValues_FallBackToDefaults(t *testing.T) {
 	if cfg.HTTPPort != 8080 {
 		t.Errorf("HTTPPort fallback = %d, want 8080", cfg.HTTPPort)
 	}
-	if cfg.OTELExporterInsecure {
-		t.Errorf("OTELExporterInsecure fallback = %t, want false", cfg.OTELExporterInsecure)
+	if !cfg.OTELExporterInsecure {
+		t.Errorf("OTELExporterInsecure fallback = %t, want true", cfg.OTELExporterInsecure)
 	}
 	if cfg.OTELTracesSamplerRatio != 1.0 {
 		t.Errorf("OTELTracesSamplerRatio fallback = %f, want 1.0", cfg.OTELTracesSamplerRatio)

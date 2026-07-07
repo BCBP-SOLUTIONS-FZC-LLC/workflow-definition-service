@@ -31,7 +31,7 @@ type Codec struct {
 	cacheTTL     time.Duration
 }
 
-func NewCodec(cfg aws.Config, registryName string, useStub bool, customEndpoint string) *Codec {
+func NewCodec(cfg aws.Config, registryName string, useStub bool, customEndpoint string, cacheTTL time.Duration) *Codec {
 	var client *glue.Client
 	if !useStub {
 		client = glue.NewFromConfig(cfg, func(o *glue.Options) {
@@ -40,12 +40,15 @@ func NewCodec(cfg aws.Config, registryName string, useStub bool, customEndpoint 
 			}
 		})
 	}
+	if cacheTTL <= 0 {
+		cacheTTL = 5 * time.Minute
+	}
 	return &Codec{
 		client:       client,
 		registryName: registryName,
 		useStub:      useStub,
 		cache:        make(map[string]cacheEntry),
-		cacheTTL:     5 * time.Minute,
+		cacheTTL:     cacheTTL,
 	}
 }
 

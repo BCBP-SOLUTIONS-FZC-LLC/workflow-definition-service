@@ -21,10 +21,10 @@ type MembershipClient struct {
 	client  *http.Client
 }
 
-func NewMembershipClient(baseURL string) *MembershipClient {
+func NewMembershipClient(baseURL string, timeout time.Duration) *MembershipClient {
 	return &MembershipClient{
 		baseURL: baseURL,
-		client:  &http.Client{Timeout: 10 * time.Second},
+		client:  &http.Client{Timeout: timeout},
 	}
 }
 

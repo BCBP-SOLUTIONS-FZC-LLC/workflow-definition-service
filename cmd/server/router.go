@@ -60,6 +60,7 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 	// handler injects the RLS GUC from the request envelope's tenant_id.
 	internal := r.Group("/internal")
 	internal.Use(httpmiddleware.RequireInternalToken(cfg.InternalAPIToken))
+	internal.Use(httpmiddleware.InjectGUCSet(log))
 	internal.POST("/events", h.HandleInternalEvent)
 
 	api := r.Group("/api/v1")
@@ -71,7 +72,7 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 	api.Use(httpmiddleware.RequireJSONContentType())
 
 	idem := func(fn gin.HandlerFunc) gin.HandlerFunc {
-		return handler.WithIdempotency(cache, log, fn)
+		return handler.WithIdempotency(cache, log, cfg.IdempotencyTTL, fn)
 	}
 
 	wf := api.Group("/workflows")

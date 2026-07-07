@@ -45,7 +45,7 @@ When `HandleMembershipRevoked` finishes marking template versions `is_valid=fals
 
 Cache key: `"idem:" + tenantID + ":" + routePath + ":" + Idempotency-Key` (tenant- and route-scoped).
 
-- Only `2xx` responses are cached (24 h TTL) along with a SHA-256 hash of the raw request body.
+- Only `2xx` responses are cached (TTL `IDEMPOTENCY_TTL`, env `IDEMPOTENCY_TTL`, default `24h`) along with a SHA-256 hash of the raw request body.
 - On replay: matching hash → replay cached response; mismatched hash → 409 `IDEMPOTENCY_KEY_REPLAY`.
 - Transparent when header is absent.
 
@@ -65,7 +65,9 @@ Test patterns:
 
 ## Compiled-Plan Cache (Valkey)
 
-`GetCompiledWorkflow` gRPC lazily reads/populates `wf:plan:<tenant>:<version>` in Valkey (fail-open; TTL `CACHE_COMPILED_PLAN_TTL`, default 1 h).
+`GetCompiledWorkflow` gRPC lazily reads/populates `wf:plan:<tenant>:<version>` in Valkey (fail-open; TTL `CACHE_COMPILED_PLAN_TTL`, env `CACHE_COMPILED_PLAN_TTL`, default 1 h).
+
+The Glue schema registry codec caches the schema version ID in-memory (TTL `GLUE_SCHEMA_CACHE_TTL`, env `GLUE_SCHEMA_CACHE_TTL`, default `5m`). Wired through `Config.GlueSchemaCacheTTL` → `gluecodec.NewCodec(..., cacheTTL)`.
 
 - **Invalidated on:** `Archive` (status change) and `SetInvalid` membership path (is_valid change)
 - **Not invalidated on:** Publish/promote (these don't change a cached version's fields)
