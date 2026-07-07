@@ -2,10 +2,13 @@
 INSERT INTO workflow (id, tenant_id, created_by_user_id, business_key, name, description, active_version_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7);
 
--- name: GetWorkflowByID :one
-SELECT id, tenant_id, created_by_user_id, business_key, name, description, active_version_id, created_at, updated_at, record_version
-FROM workflow
-WHERE tenant_id = $1 AND id = $2;
+-- name: GetWorkflowByIDWithVersionNumber :one
+SELECT w.id, w.tenant_id, w.created_by_user_id, w.business_key, w.name,
+       w.description, w.active_version_id, w.created_at, w.updated_at, w.record_version,
+       wv.version_number AS active_version_number
+FROM workflow w
+LEFT JOIN workflow_version wv ON wv.id = w.active_version_id
+WHERE w.tenant_id = $1 AND w.id = $2;
 
 -- name: GetWorkflowByBusinessKey :one
 SELECT id, tenant_id, created_by_user_id, business_key, name, description, active_version_id, created_at, updated_at, record_version

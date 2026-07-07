@@ -43,14 +43,26 @@ func (r *WorkflowRepo) GetByID(
 ) (*domain.Workflow, error) {
 	var result *domain.Workflow
 	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		row, err := db.New(dbtx).GetWorkflowByID(ctx, db.GetWorkflowByIDParams{
+		row, err := db.New(dbtx).GetWorkflowByIDWithVersionNumber(ctx, db.GetWorkflowByIDWithVersionNumberParams{
 			TenantID: tenantID,
 			ID:       id,
 		})
 		if err != nil {
 			return mapErr(err)
 		}
-		result = workflowFromDB(row)
+		result = workflowFromDB(db.Workflow{
+			ID:              row.ID,
+			TenantID:        row.TenantID,
+			CreatedByUserID: row.CreatedByUserID,
+			BusinessKey:     row.BusinessKey,
+			Name:            row.Name,
+			Description:     row.Description,
+			ActiveVersionID: row.ActiveVersionID,
+			CreatedAt:       row.CreatedAt,
+			UpdatedAt:       row.UpdatedAt,
+			RecordVersion:   row.RecordVersion,
+		})
+		result.ActiveVersionNumber = fromPgtypeInt4(row.ActiveVersionNumber)
 		return nil
 	})
 	return result, err
