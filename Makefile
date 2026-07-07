@@ -12,7 +12,7 @@ BUF_VERSION          := v1.50.0
 MOCKGEN_VERSION      := v0.6.0
 GOLANGCI_VERSION     := v2.12.2
 GOVULNCHECK_VERSION  := v1.1.4
-GOARCHLINT_VERSION   := latest
+GOARCHLINT_VERSION   := v1.4.0
 HADOLINT_VERSION     := v2.12.0
 TRIVY_VERSION        := 0.71.2
 
@@ -65,7 +65,7 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/grpc:75 \
 
 .PHONY: all tools tools-integration generate generate-proto generate-sqlc mock \
         build migrate test test-integration \
-        cover cover-func cover-html cover-check cover-check-pkg \
+        cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
         fix check \
         docs-serve docs-build \
@@ -163,6 +163,9 @@ build:
 migrate:
 	go run ./cmd/server migrate
 
+## dev: Run the server locally (requires .env to be populated).
+dev:
+	go run ./cmd/server
 
 ## test: Run unit tests with race detector and coverage (internal + test/unit)
 test:
@@ -198,6 +201,11 @@ cover:
 cover-func:
 	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
 	@go tool cover -func=$(COVER_PROFILE)
+
+## cover-gaps: Show uncovered and partially-covered functions (run 'make test' first)
+cover-gaps:
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+	@./scripts/uncovered.sh $(COVER_PROFILE)
 
 ## cover-html: Open HTML coverage report in the browser (run 'make test' first)
 cover-html:
@@ -265,9 +273,9 @@ check:
 	@echo "==> gofmt"
 	@files=$$(gofmt -l cmd/ internal/ test/); if [ -n "$$files" ]; then echo "gofmt violations (run 'make fix'):"; echo "$$files"; exit 1; fi
 	@echo "==> lint"
-	$(GOLANGCI) run ./...
+	$(GOLANGCI) run ./cmd/... ./internal/... ./test/...
 	@echo "==> go vet"
-	go vet ./...
+	go vet ./cmd/... ./internal/...
 	@echo "==> arch-lint"
 	$(MAKE) arch-lint
 	@echo "==> test + coverage gate"
@@ -283,11 +291,11 @@ arch-lint:
 
 ## lint: Run golangci-lint (read-only; exits non-zero on violations)
 lint:
-	$(GOLANGCI) run ./...
+	$(GOLANGCI) run ./cmd/... ./internal/... ./test/...
 
 ## lint-fix: Run golangci-lint with auto-fix
 lint-fix:
-	$(GOLANGCI) run --fix ./...
+	$(GOLANGCI) run --fix ./cmd/... ./internal/... ./test/...
 
 ## vuln: Run govulncheck to detect known vulnerabilities in dependencies
 vuln:

@@ -21,6 +21,7 @@ jobs:
   coverage:
     name: Coverage Gate (≥ 95%)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: validate
     steps:
       - uses: actions/checkout@v6
@@ -57,6 +58,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [validate, coverage]
     steps:
       - uses: actions/checkout@v6
@@ -75,6 +77,10 @@ jobs:
           git config --global credential.helper store
           echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
           chmod 600 ~/.git-credentials
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated
 
       - name: Download modules
         run: go mod download
@@ -97,6 +103,7 @@ jobs:
   release:
     name: GitHub Release
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     needs: build

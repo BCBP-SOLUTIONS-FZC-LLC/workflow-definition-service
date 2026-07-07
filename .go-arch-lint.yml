@@ -8,6 +8,7 @@ workdir: .
 
 exclude:
   - ".claude"
+  - ".design"
   - "platform-libs"
   - "vendor"
   - "test"
