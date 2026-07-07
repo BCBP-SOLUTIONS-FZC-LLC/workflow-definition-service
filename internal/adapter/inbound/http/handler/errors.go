@@ -37,23 +37,24 @@ const (
 	CodePayloadTooLarge      ErrCode = "PAYLOAD_TOO_LARGE"
 	CodeUnsupportedMediaType ErrCode = "UNSUPPORTED_MEDIA_TYPE"
 	CodeInternal             ErrCode = "INTERNAL_ERROR"
+	CodeInvalidInput         ErrCode = "INVALID_INPUT"
 )
 
-type InvalidParam struct {
+type invalidParam struct {
 	Name   string  `json:"name"`
 	Reason string  `json:"reason"`
 	Code   ErrCode `json:"code,omitempty"`
 }
 
-// ProblemDetails is the RFC-9457 error envelope returned on all non-2xx responses.
-type ProblemDetails struct {
+// problemDetails is the RFC-9457 error envelope returned on all non-2xx responses.
+type problemDetails struct {
 	Type          string         `json:"type"`
 	Title         string         `json:"title"`
 	Status        int            `json:"status"`
 	Detail        string         `json:"detail"`
 	Instance      string         `json:"instance"`
 	Code          ErrCode        `json:"code"`
-	InvalidParams []InvalidParam `json:"invalid_params,omitempty"`
+	InvalidParams []invalidParam `json:"invalid_params,omitempty"`
 }
 
 const errBase = "https://api.workflow.platform/errors/"
@@ -94,14 +95,15 @@ var codeTitles = map[ErrCode]string{
 	CodePayloadTooLarge:      "Payload Too Large",
 	CodeUnsupportedMediaType: "Unsupported Media Type",
 	CodeInternal:             "Internal Server Error",
+	CodeInvalidInput:         "Invalid Input",
 }
 
-func writeProblem(c *gin.Context, status int, code ErrCode, detail string, params []InvalidParam) {
+func writeProblem(c *gin.Context, status int, code ErrCode, detail string, params []invalidParam) {
 	typeURI, ok := problemTypes[status]
 	if !ok {
 		typeURI = errBase + "internal-error"
 	}
-	c.JSON(status, ProblemDetails{
+	c.JSON(status, problemDetails{
 		Type:          typeURI,
 		Title:         codeTitles[code],
 		Status:        status,
@@ -154,7 +156,7 @@ func errResponse(c *gin.Context, log port.Logger, err error) {
 // mapErr converts a domain/infrastructure error into its HTTP status, error code,
 // detail message, and optional invalid-params list. Extracted so the mapping can be
 // tested independently of the Gin context.
-func mapErr(err error) (status int, code ErrCode, detail string, params []InvalidParam) {
+func mapErr(err error) (status int, code ErrCode, detail string, params []invalidParam) {
 	var valErr *domain.ValidationFailedError
 	switch {
 	case errors.Is(err, domain.ErrNotFound), errors.Is(err, pgx.ErrNoRows):
@@ -189,9 +191,9 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []Invali
 	case errors.Is(err, domain.ErrAssigneeIneligible):
 		return http.StatusUnprocessableEntity, CodeAssigneeIneligible, err.Error(), nil
 	case errors.As(err, &valErr):
-		p := make([]InvalidParam, len(valErr.Errors))
+		p := make([]invalidParam, len(valErr.Errors))
 		for i, e := range valErr.Errors {
-			p[i] = InvalidParam{Name: e.NodeID, Reason: e.Message, Code: ErrCode(e.Code)}
+			p[i] = invalidParam{Name: e.NodeID, Reason: e.Message, Code: ErrCode(e.Code)}
 		}
 		return http.StatusUnprocessableEntity, CodeBPMNValidation,
 			"BPMN semantic or structural validation failed.", p

@@ -41,11 +41,11 @@ func newTestCtx(path string) (*gin.Context, *httptest.ResponseRecorder) {
 	return c, w
 }
 
-func decodeProblem(t *testing.T, body []byte) ProblemDetails {
+func decodeProblem(t *testing.T, body []byte) problemDetails {
 	t.Helper()
-	var p ProblemDetails
+	var p problemDetails
 	if err := json.Unmarshal(body, &p); err != nil {
-		t.Fatalf("failed to decode ProblemDetails: %v\nbody: %s", err, body)
+		t.Fatalf("failed to decode problemDetails: %v\nbody: %s", err, body)
 	}
 	return p
 }

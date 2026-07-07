@@ -131,10 +131,25 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 		return
 	}
 
+	var invalids []invalidParam
+	if len(req.Key) > 255 {
+		invalids = append(invalids, invalidParam{Name: "key", Reason: "must not exceed 255 characters"})
+	}
+	if len(req.Name) > 255 {
+		invalids = append(invalids, invalidParam{Name: "name", Reason: "must not exceed 255 characters"})
+	}
+	if len(req.Description) > 2000 {
+		invalids = append(invalids, invalidParam{Name: "description", Reason: "must not exceed 2000 characters"})
+	}
+	if len(invalids) > 0 {
+		writeProblem(c, http.StatusUnprocessableEntity, CodeInvalidInput, "request fields exceed maximum length", invalids)
+		return
+	}
+
 	wf, version, err := h.workflows.Create(
 		c.Request.Context(),
 		tenantID, userID,
-		req.Key, req.Name, req.Description, req.BPMNXML, c.GetHeader("x-plan"),
+		req.Key, req.Name, req.Description, req.BPMNXML, normalizePlanTier(c.GetHeader("x-plan")),
 	)
 	if err != nil {
 		h.logForbiddenXML(c, err)
@@ -201,4 +216,16 @@ func (h *Handler) ArchiveWorkflow(c *gin.Context) {
 		"status":      "ARCHIVED",
 		"message":     "Workflow archived successfully",
 	})
+}
+
+// normalizePlanTier maps unrecognised x-plan header values to "starter" so the
+// quota service always receives a canonical tier string.
+// TODO: return 400 for unknown plan once membership service can validate plan tier.
+func normalizePlanTier(plan string) string {
+	switch plan {
+	case "starter", "pro", "enterprise":
+		return plan
+	default:
+		return "starter"
+	}
 }

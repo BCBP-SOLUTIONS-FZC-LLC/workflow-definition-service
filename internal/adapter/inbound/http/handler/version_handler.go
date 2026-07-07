@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"mime"
 	"net/http"
 	"time"
 
@@ -189,6 +190,18 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 		return
 	}
 
+	var invalids []invalidParam
+	if len(req.NewKey) > 255 {
+		invalids = append(invalids, invalidParam{Name: "new_key", Reason: "must not exceed 255 characters"})
+	}
+	if len(req.NewName) > 255 {
+		invalids = append(invalids, invalidParam{Name: "new_name", Reason: "must not exceed 255 characters"})
+	}
+	if len(invalids) > 0 {
+		writeProblem(c, http.StatusUnprocessableEntity, CodeInvalidInput, "request fields exceed maximum length", invalids)
+		return
+	}
+
 	wf, version, err := h.versions.Clone(c.Request.Context(), tenantID, userID, workflowID, versionID, c.GetHeader("x-plan"), service.CloneReq{
 		NewKey:         req.NewKey,
 		NewName:        req.NewName,
@@ -260,7 +273,7 @@ func (h *Handler) ExportBPMN(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
 	c.Data(http.StatusOK, "application/xml; charset=utf-8", []byte(bpmnXML))
 }
 
