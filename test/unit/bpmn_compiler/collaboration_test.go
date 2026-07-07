@@ -177,6 +177,106 @@ func TestValidate_Collaboration_MessageFlowToFlowNode(t *testing.T) {
 	}
 }
 
+func TestValidate_Collaboration_MessageFlowUnresolvableName_Warns(t *testing.T) {
+	// messageFlow has no name, no messageRef, and neither connected node carries
+	// a messageRef either — ResolveMessageFlowName returns "", which should warn
+	// (not error) since the flow/source/target refs are otherwise all valid.
+	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:collaboration id="Collab_1">
+    <bpmn:participant id="P_a" processRef="Proc_a"/>
+    <bpmn:participant id="P_b" processRef="Proc_b"/>
+    <bpmn:messageFlow id="MF_1" sourceRef="S_a" targetRef="S_b"/>
+  </bpmn:collaboration>
+  <bpmn:process id="Proc_a" name="A" isExecutable="true">
+    <bpmn:laneSet id="LS_a"><bpmn:lane id="L_a" name="l"><bpmn:flowNodeRef>S_a</bpmn:flowNodeRef><bpmn:flowNodeRef>E_a</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:startEvent id="S_a"><bpmn:outgoing>F_a</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:endEvent id="E_a"><bpmn:incoming>F_a</bpmn:incoming></bpmn:endEvent>
+    <bpmn:sequenceFlow id="F_a" sourceRef="S_a" targetRef="E_a"/>
+  </bpmn:process>
+  <bpmn:process id="Proc_b" name="B" isExecutable="true">
+    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:flowNodeRef>S_b</bpmn:flowNodeRef><bpmn:flowNodeRef>E_b</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:startEvent id="S_b"><bpmn:outgoing>F_b</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:endEvent id="E_b"><bpmn:incoming>F_b</bpmn:incoming></bpmn:endEvent>
+    <bpmn:sequenceFlow id="F_b" sourceRef="S_b" targetRef="E_b"/>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1"><bpmndi:BPMNPlane id="P_1" bpmnElement="Collab_1"/></bpmndi:BPMNDiagram>
+</bpmn:definitions>`
+
+	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	var found bool
+	for _, e := range errs {
+		if e.Code == domain.BPMNErrMissingMessageDefinition && e.Severity == domain.SeverityWarning {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a warning-severity MISSING_MESSAGE_DEFINITION for unresolvable message flow name; got %v", errCodes(errs))
+	}
+}
+
+func TestValidate_Collaboration_MessageFlowNameViaConnectedNode_NoWarn(t *testing.T) {
+	// messageFlow itself has no name/messageRef, but the target boundary event's
+	// messageEventDefinition resolves it — should not warn.
+	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_1" name="notify"/>
+  <bpmn:collaboration id="Collab_1">
+    <bpmn:participant id="P_a" processRef="Proc_a"/>
+    <bpmn:participant id="P_b" processRef="Proc_b"/>
+    <bpmn:messageFlow id="MF_1" sourceRef="S_a" targetRef="BE_b"/>
+  </bpmn:collaboration>
+  <bpmn:process id="Proc_a" name="A" isExecutable="true">
+    <bpmn:laneSet id="LS_a"><bpmn:lane id="L_a" name="l"><bpmn:flowNodeRef>S_a</bpmn:flowNodeRef><bpmn:flowNodeRef>E_a</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:startEvent id="S_a"><bpmn:outgoing>F_a</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:endEvent id="E_a"><bpmn:incoming>F_a</bpmn:incoming></bpmn:endEvent>
+    <bpmn:sequenceFlow id="F_a" sourceRef="S_a" targetRef="E_a"/>
+  </bpmn:process>
+  <bpmn:process id="Proc_b" name="B" isExecutable="true">
+    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l">
+      <bpmn:flowNodeRef>S_b</bpmn:flowNodeRef>
+      <bpmn:flowNodeRef>T_b</bpmn:flowNodeRef>
+      <bpmn:flowNodeRef>E_b</bpmn:flowNodeRef>
+    </bpmn:lane></bpmn:laneSet>
+    <bpmn:startEvent id="S_b"><bpmn:outgoing>F_b1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:userTask id="T_b" name="Task">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="l" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>F_b1</bpmn:incoming>
+      <bpmn:outgoing>F_b2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="BE_b" attachedToRef="T_b">
+      <bpmn:messageEventDefinition messageRef="Msg_1"/>
+    </bpmn:boundaryEvent>
+    <bpmn:endEvent id="E_b"><bpmn:incoming>F_b2</bpmn:incoming></bpmn:endEvent>
+    <bpmn:sequenceFlow id="F_b1" sourceRef="S_b" targetRef="T_b"/>
+    <bpmn:sequenceFlow id="F_b2" sourceRef="T_b" targetRef="E_b"/>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1"><bpmndi:BPMNPlane id="P_1" bpmnElement="Collab_1"/></bpmndi:BPMNDiagram>
+</bpmn:definitions>`
+
+	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if hasCode(errs, domain.BPMNErrMissingMessageDefinition) {
+		t.Errorf("expected no MISSING_MESSAGE_DEFINITION when name resolves via connected node; got %v", errCodes(errs))
+	}
+}
+
 func TestValidate_NonExecutableProcess_NoTaskExtensionErrors(t *testing.T) {
 	// A non-executable pool's tasks are NOT required to have taskDefinition/assignmentDefinition.
 	bpmnXML := minimalCollabBPMN(collabExtBody, collabMainLanes, collabMainBody)
@@ -292,7 +392,7 @@ func TestValidate_SendTask_NotInLane_Error(t *testing.T) {
 	}
 }
 
-func TestValidate_SendTask_MissingTaskDef_Error(t *testing.T) {
+func TestValidate_SendTask_NoTaskDefRequired(t *testing.T) {
 	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions
   xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -322,8 +422,8 @@ func TestValidate_SendTask_MissingTaskDef_Error(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
 	}
-	if !hasCode(errs, domain.BPMNErrMissingTaskDefinition) {
-		t.Errorf("expected MISSING_TASK_DEFINITION for sendTask with no taskDef; got %v", errCodes(errs))
+	if hasCode(errs, domain.BPMNErrMissingTaskDefinition) {
+		t.Errorf("sendTask without taskDef should not produce MISSING_TASK_DEFINITION; got %v", errCodes(errs))
 	}
 }
 
@@ -748,7 +848,8 @@ func TestCompileCollaboration_QualifiesParallelAndExclusiveSteps(t *testing.T) {
 	for _, step := range reviewer.Execution.Steps {
 		if len(step.Parallel) > 0 {
 			hasParallel = true
-			for _, id := range step.Parallel {
+			for _, branch := range step.Parallel {
+				id := branch.DeptID
 				if len(id) < len("Reviewer/") || id[:len("Reviewer/")] != "Reviewer/" {
 					t.Errorf("parallel dept %q not qualified", id)
 				}
@@ -972,6 +1073,152 @@ func TestCompileCollaboration_QualifiesSubworkflowErrorTimerPaths(t *testing.T) 
 	}
 }
 
+// messageBoundaryUserTaskBPMN: two-pool collaboration where a message flow
+// targets a message boundary event (messageRef lives on the boundary event's
+// messageEventDefinition, not on the messageFlow itself — the real-world
+// authoring pattern) attached to a plain userTask. The boundary's escape path
+// leads to a task in a different lane that is otherwise unreachable, mirroring
+// subworkflowCollabBPMN's timer-boundary escalation shape but for a message
+// boundary. Exercises ResolveMessageFlowName (MessageDef.Name/TargetPlan),
+// StageDef.BoundaryMessage, MessageBoundaryHandler continuation compilation,
+// and qualifyPlanDepts BoundaryMessage.TargetDept.
+const messageBoundaryUserTaskBPMN = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_mb" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_mb" name="mb-trigger"/>
+  <bpmn:collaboration id="Collab_mb">
+    <bpmn:participant id="P_iss_mb"  name="Issuer"    processRef="Proc_iss_mb"/>
+    <bpmn:participant id="P_proc_mb" name="Processor" processRef="Proc_proc_mb"/>
+    <bpmn:messageFlow id="MF_mb" sourceRef="Task_iss_mb" targetRef="BE_msg_prep_mb"/>
+  </bpmn:collaboration>
+  <bpmn:process id="Proc_iss_mb" name="Issuer">
+    <bpmn:laneSet id="LS_iss_mb">
+      <bpmn:lane id="Lane_iss_mb" name="client">
+        <bpmn:flowNodeRef>Start_iss_mb</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_iss_mb</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_iss_mb</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_iss_mb"><bpmn:outgoing>FIS1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:userTask id="Task_iss_mb" name="Issue">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="client" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>FIS1</bpmn:incoming><bpmn:outgoing>FIS2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="End_iss_mb"><bpmn:incoming>FIS2</bpmn:incoming></bpmn:endEvent>
+    <bpmn:sequenceFlow id="FIS1" sourceRef="Start_iss_mb" targetRef="Task_iss_mb"/>
+    <bpmn:sequenceFlow id="FIS2" sourceRef="Task_iss_mb"  targetRef="End_iss_mb"/>
+  </bpmn:process>
+  <bpmn:process id="Proc_proc_mb" name="Processor">
+    <bpmn:laneSet id="LS_proc_mb">
+      <bpmn:lane id="Lane_ops_mb" name="ops">
+        <bpmn:flowNodeRef>Start_proc_mb</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_prep_mb</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_proc_mb</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_esc_mb" name="escalation">
+        <bpmn:flowNodeRef>Task_escalate_mb</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_esc_mb</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_proc_mb"><bpmn:outgoing>FP1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:userTask id="Task_prep_mb" name="Prep">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>FP1</bpmn:incoming><bpmn:outgoing>FP2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="BE_msg_prep_mb" attachedToRef="Task_prep_mb" cancelActivity="false">
+      <bpmn:messageEventDefinition id="MED_mb" messageRef="Msg_mb"/>
+      <bpmn:outgoing>FP_bm</bpmn:outgoing>
+    </bpmn:boundaryEvent>
+    <bpmn:userTask id="Task_escalate_mb" name="Escalate">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="escalation" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>FP_bm</bpmn:incoming><bpmn:outgoing>FP3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="End_proc_mb"><bpmn:incoming>FP2b</bpmn:incoming></bpmn:endEvent>
+    <bpmn:endEvent id="End_esc_mb"><bpmn:incoming>FP3</bpmn:incoming></bpmn:endEvent>
+    <bpmn:sequenceFlow id="FP1"  sourceRef="Start_proc_mb"  targetRef="Task_prep_mb"/>
+    <bpmn:sequenceFlow id="FP2b" sourceRef="Task_prep_mb"   targetRef="End_proc_mb"/>
+    <bpmn:sequenceFlow id="FP_bm" sourceRef="BE_msg_prep_mb" targetRef="Task_escalate_mb"/>
+    <bpmn:sequenceFlow id="FP3"  sourceRef="Task_escalate_mb" targetRef="End_esc_mb"/>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BD_mb"><bpmndi:BPMNPlane id="BP_mb" bpmnElement="Collab_mb"/></bpmndi:BPMNDiagram>
+</bpmn:definitions>`
+
+func TestCompileCollaboration_MessageBoundaryOnUserTask(t *testing.T) {
+	collab, err := bpmn_compiler.New().CompileCollaboration(context.Background(), messageBoundaryUserTaskBPMN)
+	if err != nil {
+		t.Fatalf("CompileCollaboration() error: %v", err)
+	}
+
+	// Finding 1: MessageDef.Name/TargetPlan must resolve even though the
+	// messageFlow targets a boundary event and carries neither name nor
+	// messageRef itself — the messageRef lives on the boundary event.
+	if len(collab.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(collab.Messages))
+	}
+	if collab.Messages[0].Name != "mb-trigger" {
+		t.Errorf("Messages[0].Name = %q, want mb-trigger", collab.Messages[0].Name)
+	}
+	if collab.Messages[0].TargetPlan != "Processor" {
+		t.Errorf("Messages[0].TargetPlan = %q, want Processor", collab.Messages[0].TargetPlan)
+	}
+
+	var processor *domain.CompiledPlan
+	for _, p := range collab.Plans {
+		if p.Name == "Processor" {
+			processor = p
+		}
+	}
+	if processor == nil {
+		t.Fatal("expected Processor plan in collaboration")
+	}
+
+	// Finding 2: StageDef.BoundaryMessage must be populated on Task_prep_mb's
+	// stage, with a qualified TargetDept pointing at the escalation lane.
+	var foundBM bool
+	for _, d := range processor.Departments {
+		for _, stage := range d.Stages {
+			if stage.BoundaryMessage != nil {
+				foundBM = true
+				if stage.BoundaryMessage.MessageName != "mb-trigger" {
+					t.Errorf("BoundaryMessage.MessageName = %q, want mb-trigger", stage.BoundaryMessage.MessageName)
+				}
+				if stage.BoundaryMessage.TargetDept != "Processor/escalation" {
+					t.Errorf("BoundaryMessage.TargetDept = %q, want Processor/escalation", stage.BoundaryMessage.TargetDept)
+				}
+			}
+		}
+	}
+	if !foundBM {
+		t.Error("expected a stage with populated BoundaryMessage")
+	}
+
+	// The escalation continuation (Task_escalate_mb) is otherwise unreachable
+	// except via the message boundary escape path — it must still be compiled.
+	var foundEscalate bool
+	for _, d := range processor.Departments {
+		for _, stage := range d.Stages {
+			if stage.NodeID == "Task_escalate_mb" {
+				foundEscalate = true
+			}
+		}
+	}
+	if !foundEscalate {
+		t.Error("expected Task_escalate_mb to be compiled via the message boundary continuation")
+	}
+}
+
 func TestCompileCollaboration_ParseError(t *testing.T) {
 	_, err := bpmn_compiler.New().CompileCollaboration(context.Background(), "not xml at all <<<")
 	if err == nil {
@@ -982,7 +1229,7 @@ func TestCompileCollaboration_ParseError(t *testing.T) {
 	}
 }
 
-func TestValidate_ReceiveTask_MissingTaskDef_Error(t *testing.T) {
+func TestValidate_ReceiveTask_NoTaskDefRequired(t *testing.T) {
 	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions
   xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -1012,8 +1259,8 @@ func TestValidate_ReceiveTask_MissingTaskDef_Error(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
 	}
-	if !hasCode(errs, domain.BPMNErrMissingTaskDefinition) {
-		t.Errorf("expected MISSING_TASK_DEFINITION for receiveTask with no taskDef; got %v", errCodes(errs))
+	if hasCode(errs, domain.BPMNErrMissingTaskDefinition) {
+		t.Errorf("receiveTask without taskDef should not produce MISSING_TASK_DEFINITION; got %v", errCodes(errs))
 	}
 }
 
@@ -1209,11 +1456,11 @@ func TestCompileCollaboration_ParticipantWithoutMatchingProcess(t *testing.T) {
 	}
 }
 
-// TestValidate_InclusiveGateway_SplitJoin_Valid verifies that an inclusive gateway
-// split with a matching join is considered structurally valid — exercises the
-// inclusiveGateway iteration in buildGraph, validateDanglingNodes, and
-// validateGatewayMatching.
-func TestValidate_InclusiveGateway_SplitJoin_Valid(t *testing.T) {
+// TestValidate_InclusiveGateway_SplitJoin_Unsupported verifies that an inclusive
+// gateway produces UNSUPPORTED_ELEMENT (Tier 2). The gateway is parsed and
+// graph-validated correctly, but has no compile handler and is listed in
+// unsupportedBPMNElems to prevent silent incorrect output.
+func TestValidate_InclusiveGateway_SplitJoin_Unsupported(t *testing.T) {
 	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions
   xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -1283,8 +1530,8 @@ func TestValidate_InclusiveGateway_SplitJoin_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
 	}
-	if len(errs) != 0 {
-		t.Errorf("expected 0 errors for valid inclusive gateway BPMN; got %v", errCodes(errs))
+	if !hasCode(errs, domain.BPMNErrUnsupportedElement) {
+		t.Errorf("expected UNSUPPORTED_ELEMENT for inclusive gateway; got %v", errCodes(errs))
 	}
 }
 

@@ -33,6 +33,7 @@ type versionResp struct {
 	Status           domain.VersionStatus  `json:"status"`
 	VersionNumber    *int32                `json:"version_number,omitempty"`
 	BPMNXML          string                `json:"bpmn_xml"`
+	ModuleBPMNXMLs   []string              `json:"module_bpmn_xmls"`
 	ArtifactHash     string                `json:"artifact_hash,omitempty"`
 	IsValid          bool                  `json:"is_valid"`
 	ValidationErrors []validationErrorItem `json:"validation_errors,omitempty"`
@@ -45,12 +46,17 @@ type versionResp struct {
 }
 
 func toVersionResp(v *domain.WorkflowVersion) versionResp {
+	modules := v.ModuleBPMNXMLs
+	if modules == nil {
+		modules = []string{}
+	}
 	r := versionResp{
 		ID:              v.ID,
 		WorkflowID:      v.WorkflowID,
 		Status:          v.Status,
 		VersionNumber:   v.VersionNumber,
 		BPMNXML:         v.BPMNXML,
+		ModuleBPMNXMLs:  modules,
 		ArtifactHash:    v.ArtifactHash,
 		IsValid:         v.IsValid,
 		CreatedByUserID: v.CreatedByUserID,

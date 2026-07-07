@@ -10,7 +10,6 @@ type ExclusiveGatewayHandler struct{}
 func (ExclusiveGatewayHandler) NodeType() bpmncore.FlowNodeType {
 	return bpmncore.NodeTypeExclusiveGateway
 }
-func (ExclusiveGatewayHandler) GatewayKind() string { return "exclusive" }
 
 func (ExclusiveGatewayHandler) Validate(_ string, _ *bpmncore.BPMNProcess, _ *bpmncore.Graph, _ *bpmncore.BPMNDefinitions, _ map[string]bpmncore.StageTypeHandler, _ map[bpmncore.FlowNodeType]bpmncore.ElementHandler) []domain.BPMNValidationError {
 	return nil

@@ -146,12 +146,12 @@ func (f *fakeVersionSvc) Diff(ctx context.Context, tenantID, workflowID, baseVer
 }
 
 type fakeValidationSvc struct {
-	validate func(context.Context, string) (bool, []domain.BPMNValidationError, error)
+	validate func(context.Context, string, []string) (bool, []domain.BPMNValidationError, error)
 }
 
-func (f *fakeValidationSvc) Validate(ctx context.Context, bpmnXML string) (bool, []domain.BPMNValidationError, error) {
+func (f *fakeValidationSvc) Validate(ctx context.Context, bpmnXML string, moduleXMLs []string) (bool, []domain.BPMNValidationError, error) {
 	if f.validate != nil {
-		return f.validate(ctx, bpmnXML)
+		return f.validate(ctx, bpmnXML, moduleXMLs)
 	}
 	return true, nil, nil
 }

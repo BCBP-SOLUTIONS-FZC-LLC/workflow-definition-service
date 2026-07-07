@@ -10,14 +10,30 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 )
 
+func copySlice[T any](s []T) []T {
+	c := make([]T, len(s))
+	copy(c, s)
+	return c
+}
+
 func canonicalHash(proc *bpmncore.BPMNProcess) (string, error) {
 	clone := *proc
-	cloneTasks := make([]bpmncore.BPMNUserTask, len(proc.UserTasks))
-	copy(cloneTasks, proc.UserTasks)
-	cloneFlows := make([]bpmncore.BPMNSequenceFlow, len(proc.SequenceFlows))
-	copy(cloneFlows, proc.SequenceFlows)
-	clone.UserTasks = cloneTasks
-	clone.SequenceFlows = cloneFlows
+	clone.UserTasks = copySlice(proc.UserTasks)
+	clone.GenericTasks = copySlice(proc.GenericTasks)
+	clone.SendTasks = copySlice(proc.SendTasks)
+	clone.ReceiveTasks = copySlice(proc.ReceiveTasks)
+	clone.StartEvents = copySlice(proc.StartEvents)
+	clone.EndEvents = copySlice(proc.EndEvents)
+	clone.ParallelGateways = copySlice(proc.ParallelGateways)
+	clone.ExclusiveGateways = copySlice(proc.ExclusiveGateways)
+	clone.InclusiveGateways = copySlice(proc.InclusiveGateways)
+	clone.SequenceFlows = copySlice(proc.SequenceFlows)
+	clone.BoundaryEvents = copySlice(proc.BoundaryEvents)
+	clone.CallActivities = copySlice(proc.CallActivities)
+	clone.DataStoreRefs = copySlice(proc.DataStoreRefs)
+	// SubProcesses are nested structs with their own slice fields; shallow copy is sufficient
+	// since canonicalHash does not mutate sub-process internals.
+	clone.SubProcesses = copySlice(proc.SubProcesses)
 
 	for i := range clone.UserTasks {
 		clone.UserTasks[i].ExtensionElements.ZeebeProps.Items = sortedZeebeItems(

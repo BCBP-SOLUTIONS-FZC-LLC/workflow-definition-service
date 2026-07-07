@@ -14,7 +14,7 @@ func TestValidateCounts_MultipleEndEventsAllowed(t *testing.T) {
 		StartEvents: []bpmncore.BPMNEvent{{ID: "S1"}},
 		EndEvents:   []bpmncore.BPMNEvent{{ID: "E1"}, {ID: "E2"}, {ID: "E3"}},
 	}
-	errs := validator.ValidateCounts(proc)
+	errs := validator.ValidateCounts(proc, "")
 	if hasCodeIn(errs, domain.BPMNErrMultipleEndEvents) {
 		t.Errorf("multiple end events should be valid; got MULTIPLE_END_EVENTS error")
 	}
@@ -30,7 +30,7 @@ func TestValidateCounts_LaneLimitExceeded(t *testing.T) {
 		EndEvents:   []bpmncore.BPMNEvent{{ID: "E1"}},
 		LaneSet:     bpmncore.BPMNLaneSet{Lanes: lanes},
 	}
-	errs := validator.ValidateCounts(proc)
+	errs := validator.ValidateCounts(proc, "")
 	if !hasCodeIn(errs, domain.BPMNErrLaneLimitExceeded) {
 		t.Errorf("expected LANE_LIMIT_EXCEEDED; got %v", errCodesOf(errs))
 	}
@@ -43,7 +43,7 @@ func TestValidateCounts_TaskLimitExceeded(t *testing.T) {
 		EndEvents:   []bpmncore.BPMNEvent{{ID: "E1"}},
 		UserTasks:   tasks,
 	}
-	errs := validator.ValidateCounts(proc)
+	errs := validator.ValidateCounts(proc, "")
 	if !hasCodeIn(errs, domain.BPMNErrTaskLimitExceeded) {
 		t.Errorf("expected TASK_LIMIT_EXCEEDED; got %v", errCodesOf(errs))
 	}
@@ -79,8 +79,6 @@ func TestValidateSeqFlowRefs_InvalidTargetRef(t *testing.T) {
 	}
 }
 
-// validateTaskExtensions / new-style struct-field validation
-
 func TestValidateTaskExtensions_MissingTaskDefinition(t *testing.T) {
 	proc := &bpmncore.BPMNProcess{
 		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{
@@ -98,7 +96,7 @@ func TestValidateTaskExtensions_MissingTaskDefinition(t *testing.T) {
 	}
 }
 
-func TestValidateTaskExtensions_InvalidTaskDefinitionType(t *testing.T) {
+func TestValidateTaskExtensions_UnknownStageType(t *testing.T) {
 	proc := &bpmncore.BPMNProcess{
 		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{
 			{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}},
@@ -111,8 +109,14 @@ func TestValidateTaskExtensions_InvalidTaskDefinitionType(t *testing.T) {
 		},
 	}
 	errs := validator.ValidateTaskExtensions(proc, defaultStageTypes())
-	if !hasCodeIn(errs, domain.BPMNErrInvalidTaskDefinitionType) {
-		t.Errorf("expected INVALID_TASK_DEFINITION_TYPE; got %v", errCodesOf(errs))
+	if !hasCodeIn(errs, domain.BPMNWarnUnknownStageType) {
+		t.Errorf("expected UNKNOWN_STAGE_TYPE warning; got %v", errCodesOf(errs))
+	}
+	// Must be a warning, not an error.
+	for _, e := range errs {
+		if e.Code == domain.BPMNWarnUnknownStageType && e.Severity != domain.SeverityWarning {
+			t.Errorf("expected warning severity for UNKNOWN_STAGE_TYPE, got %q", e.Severity)
+		}
 	}
 }
 
@@ -205,31 +209,6 @@ func TestBuildLaneRefSet(t *testing.T) {
 	}
 	if _, ok := refs["ghost"]; ok {
 		t.Error("ghost should not be in lane ref set")
-	}
-}
-
-func TestValidateRequiresComment_Invalid(t *testing.T) {
-	ext := bpmncore.BPMNExtensionElements{
-		ZeebeProps: bpmncore.BPMNZeebeProperties{Items: []bpmncore.ZeebeProperty{
-			{Name: "requires_comment", Value: "maybe"},
-		}},
-	}
-	errs := validator.ValidateRequiresComment("T1", ext)
-	if len(errs) == 0 {
-		t.Error("expected error for invalid requires_comment value")
-	}
-}
-
-func TestValidateRequiresComment_Valid(t *testing.T) {
-	for _, val := range []string{"true", "false"} {
-		ext := bpmncore.BPMNExtensionElements{
-			ZeebeProps: bpmncore.BPMNZeebeProperties{Items: []bpmncore.ZeebeProperty{
-				{Name: "requires_comment", Value: val},
-			}},
-		}
-		if errs := validator.ValidateRequiresComment("T1", ext); len(errs) != 0 {
-			t.Errorf("requires_comment=%q should be valid; got %v", val, errs)
-		}
 	}
 }
 
@@ -408,7 +387,7 @@ func TestValidateDanglingNodes_StartNoOutgoing(t *testing.T) {
 		Outgoing: map[string][]string{},
 		Incoming: map[string][]string{},
 	}
-	errs := validator.ValidateDanglingNodes(proc, g)
+	errs := validator.ValidateDanglingNodes(proc, g, "")
 	if !hasCodeIn(errs, domain.BPMNErrDanglingNode) {
 		t.Errorf("expected DANGLING_NODE for start event with no outgoing; got %v", errCodesOf(errs))
 	}
@@ -422,7 +401,7 @@ func TestValidateDanglingNodes_EndNoIncoming(t *testing.T) {
 		Outgoing: map[string][]string{},
 		Incoming: map[string][]string{},
 	}
-	errs := validator.ValidateDanglingNodes(proc, g)
+	errs := validator.ValidateDanglingNodes(proc, g, "")
 	if !hasCodeIn(errs, domain.BPMNErrDanglingNode) {
 		t.Errorf("expected DANGLING_NODE for end event with no incoming; got %v", errCodesOf(errs))
 	}
@@ -433,7 +412,7 @@ func TestValidateDanglingNodes_EndNoIncoming(t *testing.T) {
 func TestValidateReachability_NoStartEvent(t *testing.T) {
 	proc := &bpmncore.BPMNProcess{}
 	g := &bpmncore.Graph{NodeIDs: map[string]struct{}{"T1": {}}}
-	errs := validator.ValidateReachability(proc, g)
+	errs := validator.ValidateReachability(proc, g, "")
 	if len(errs) != 0 {
 		t.Errorf("expected empty errs when no start event; got %v", errs)
 	}
@@ -445,7 +424,7 @@ func TestValidateReachability_UnreachableNode(t *testing.T) {
 		NodeIDs:  map[string]struct{}{"S1": {}, "orphan": {}},
 		Outgoing: map[string][]string{"S1": {}},
 	}
-	errs := validator.ValidateReachability(proc, g)
+	errs := validator.ValidateReachability(proc, g, "")
 	if !hasCodeIn(errs, domain.BPMNErrUnreachableNode) {
 		t.Errorf("expected UNREACHABLE_NODE; got %v", errCodesOf(errs))
 	}
@@ -457,7 +436,7 @@ func TestValidateReachability_AllReachable(t *testing.T) {
 		NodeIDs:  map[string]struct{}{"S1": {}, "T1": {}, "E1": {}},
 		Outgoing: map[string][]string{"S1": {"T1"}, "T1": {"E1"}},
 	}
-	if errs := validator.ValidateReachability(proc, g); len(errs) != 0 {
+	if errs := validator.ValidateReachability(proc, g, ""); len(errs) != 0 {
 		t.Errorf("expected no errors when all nodes reachable; got %v", errs)
 	}
 }

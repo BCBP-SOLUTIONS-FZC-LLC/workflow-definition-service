@@ -20,7 +20,7 @@ ParseBPMN ─▶ validate ─▶ compile ─▶ Hash
 
 - **Parse** (`bpmn_compiler/parser.go`) — rejects `DOCTYPE`/entity declarations (XXE & billion-laughs), caps the token stream, requires the `bpmn` and `zeebe` namespaces (`MISSING_NAMESPACE`), unmarshals into the typed model, and scans for unsupported elements (`REJECTED_ELEMENT`).
 - **Validate** (`bpmn_compiler/validator/validator.go`) — runs every rule below over the *forward graph* (all edges minus DFS-classified back-edges). Returns `[]BPMNValidationError`; the service maps a non-empty list to **HTTP 422** with `is_valid: false`.
-- **Compile** (`bpmn_compiler/bpmncore/compile.go` + `element/`) — walks the forward graph to emit departments, stages, and execution steps (sequential / parallel / exclusive, plus error paths for guarded subprocesses). Each BPMN node type is handled by a dedicated `ElementHandler` in `element/`.
+- **Compile** (`bpmn_compiler/bpmncore/compile.go` + `element/`) — walks the forward graph to emit departments, stages, and execution steps (sequential / parallel / exclusive, plus error paths for guarded subprocesses). Each BPMN node type is handled by a dedicated `ElementHandler` in `element/`. Non-executable participants are compiled as `Ignored: true` plans included in `CompiledCollaboration` for routing reference; the Execution Service skips them as entry points.
 - **Hash** (`bpmn_compiler/hasher.go`) — canonical SHA-256 of the normalized process (Zeebe extension elements sorted) for the `artifact_hash` / structural-divergence check.
 
 ## Validation Rules
@@ -44,18 +44,42 @@ ParseBPMN ─▶ validate ─▶ compile ─▶ Hash
 | Boundary event attached to a legal host node type | `INVALID_BOUNDARY_ATTACHMENT` |
 | `<bpmndi:BPMNDiagram>` element present | `MISSING_DIAGRAM` |
 | Every node and sequence flow has a corresponding diagram shape/edge | `MISSING_DIAGRAM_SHAPE` |
+| `callActivity` has `<zeebe:calledElement processId="…"/>` and the `processId` resolves to a process in the same definitions | `UNRESOLVED_CALLED_ELEMENT` |
+| `<bpmn:subProcess>` does not contain a nested `<bpmn:subProcess>` | `NESTED_SUBPROCESS_NOT_SUPPORTED` |
 
-### Metadata (per `<bpmn:userTask>`)
+**DANGLING_NODE exceptions:** A `<bpmn:boundaryEvent>` with `messageEventDefinition` and zero outgoing sequence flows is **valid** — it is treated as a terminal interrupt (the message fires, the host activity is cancelled, and no continuation step is emitted); no `DANGLING_NODE` error is raised. Timer and error boundary events with zero outgoing flows continue to emit `DANGLING_NODE`.
+
+A `callActivity` or `subProcess` with no incoming sequence flow is **valid** when it is the only entry node in a process with no explicit `<bpmn:startEvent>` (implicit root). It is exempt from the `DANGLING_NODE` no-incoming check. The compiler identifies the implicit root via `FindImplicitStart`: a single node with no incoming and at least one outgoing sequence flow in a process that has no `startEvent`.
+
+### Metadata — userTask
 
 | Rule | Error code |
 | --- | --- |
 | `zeebe:taskDefinition` present | `MISSING_TASK_DEFINITION` |
-| `taskDefinition.type` matches a registered `StageTypeHandler` | `INVALID_TASK_DEFINITION_TYPE` |
+| `taskDefinition.type` matches a registered `StageTypeHandler` | `UNKNOWN_STAGE_TYPE` *(warning — compilation continues)*; `INVALID_TASK_DEFINITION_TYPE` is deprecated |
 | Task appears in exactly one lane via `<bpmn:flowNodeRef>` | `TASK_NOT_IN_LANE` |
 | `zeebe:assignmentDefinition` present | `MISSING_ASSIGNMENT_DEFINITION` |
 | `candidateGroups` present, ≤ 256 chars | `CANDIDATE_GROUPS_EMPTY` |
 | `candidateUsers` is a single valid UUID v7 | `INVALID_CANDIDATE_USER` |
-| `requires_comment` (optional) parses as bool | `INVALID_ZEEBE_PROPERTY` |
+
+### Metadata — sendTask / receiveTask
+
+| Rule | Error code |
+| --- | --- |
+| Task appears in exactly one lane via `<bpmn:flowNodeRef>` | `TASK_NOT_IN_LANE` |
+| `zeebe:assignmentDefinition` — optional; when present, same `candidateGroups`/`candidateUsers` rules as userTask apply | `CANDIDATE_GROUPS_EMPTY` / `INVALID_CANDIDATE_USER` |
+| `messageRef` references a declared `<bpmn:message>` (structural rule) | `MISSING_MESSAGE_DEFINITION` |
+
+### Metadata — callActivity (module / called process)
+
+| Rule | Error code |
+| --- | --- |
+| `<zeebe:calledElement processId="…"/>` present and `processId` resolves to a supplied module process | `UNRESOLVED_CALLED_ELEMENT` |
+| Called process has at least one `startEvent` | `NO_START_EVENT` (anchored on the callActivity node ID) |
+| Called process has no lanes AND callActivity ioMapping has neither a `dept_id` input nor a `target="Depts"` input containing a valid JSON object mapping lane names to dept IDs | `MISSING_DEPT_INPUT_FOR_MODULE` |
+| Timer boundary event attached to a `callActivity` | `INVALID_BOUNDARY_ATTACHMENT` |
+
+Note: error boundary events on `callActivity` pass validation but are rejected at compile time. Message boundary events on `callActivity` are fully supported — they pass validation and compile to `ExecutionStep.message_paths` on the flattened step.
 
 ### Sequence flow conditions
 
@@ -70,6 +94,13 @@ ParseBPMN ─▶ validate ─▶ compile ─▶ Hash
 | Timer duration is valid ISO 8601 or Go duration | `INVALID_SLA_DURATION` |
 | At most one timer boundary per task | (structural: `DANGLING_NODE` / `UNREACHABLE_NODE`) |
 
+### Message boundary events
+
+| Rule | Outcome |
+| --- | --- |
+| `messageEventDefinition` with zero outgoing sequence flows | Valid — treated as terminal interrupt; no error emitted (see DANGLING_NODE exception above) |
+| Message boundary event's message name cannot be resolved from `<bpmn:message>` definitions or collaboration message flows targeting the event's ID | `MISSING_MESSAGE_DEFINITION` *(warning — compilation continues with empty correlation key hint)* |
+
 ### Topological — guarded loops
 
 Cycles are not rejected outright; rework/revert loops are allowed when *guarded* (see CLAUDE.md decision for the full algorithm):
@@ -77,9 +108,21 @@ Cycles are not rejected outright; rework/revert loops are allowed when *guarded*
 | Rule | Error code |
 | --- | --- |
 | Every back-edge originates at a diverging exclusive gateway that keeps a forward exit | `UNGUARDED_LOOP` |
+| Exception: `receiveTask` and external participant nodes may be back-edge targets without a preceding XOR gateway (they are externally guarded by the inbound message / external system) | — |
 | Every multi-node strongly-connected component has a guarded exit | `CYCLE_DETECTED` |
 
 Back-edges are classified once via DFS from the start event (`classifyBackEdges`). A guarded loop compiles to an `exclusive` step whose revert branches carry `revert_to_dept` / `revert_to_stage`.
+
+### Warnings
+
+These codes are emitted with `IsWarning: true`. The compiler still returns a compiled plan; HTTP callers receive `is_valid: true` alongside a non-empty `warnings` list.
+
+| Code | Trigger |
+| --- | --- |
+| `UNKNOWN_STAGE_TYPE` | `taskDefinition.type` does not match a registered `StageTypeHandler` — compilation continues with the raw type string |
+| `INVALID_ZEEBE_PROPERTY` | A `target="Depts"` input in `zeebe:ioMapping` is present but its source is not valid JSON or is not a `map[string]string` — the module uses its lane names as-is |
+| `MISSING_MESSAGE_DEFINITION` | A message boundary event's message name cannot be resolved from either the `<bpmn:message>` definitions or the collaboration's message flows targeting that boundary event's ID — emitted per event; compilation continues with an empty correlation key hint |
+| `MISSING_MESSAGE_DEFINITION` | *(collaboration-level)* A `<bpmn:messageFlow>`'s name cannot be resolved via any of the fallback paths in §Message Flow Name Resolution (docs/bpmn-spec.md) — emitted per flow; `MessageDef.Name` compiles to `""` |
 
 ## Department Derivation
 
@@ -103,7 +146,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 
 `REJECTED_ELEMENT`, `MISSING_NAMESPACE`,
 `MISSING_TASK_DEFINITION`, `MISSING_ASSIGNMENT_DEFINITION`,
-`INVALID_TASK_DEFINITION_TYPE`, `TASK_NOT_IN_LANE`,
+`UNKNOWN_STAGE_TYPE` *(warning)*, `INVALID_TASK_DEFINITION_TYPE` *(deprecated)*, `TASK_NOT_IN_LANE`,
 `CANDIDATE_GROUPS_EMPTY`, `INVALID_CANDIDATE_USER`,
 `INVALID_CONDITION_EXPRESSION`, `INVALID_SLA_DURATION`,
 `INVALID_ZEEBE_PROPERTY`,
@@ -114,7 +157,10 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 `DANGLING_NODE`, `UNREACHABLE_NODE`,
 `CYCLE_DETECTED`, `UNGUARDED_LOOP`,
 `MAX_DEPTH_EXCEEDED`, `UNMATCHED_GATEWAY`,
-`INVALID_SEQUENCE_FLOW_REF`, `MULTIPLE_PROCESSES`.
+`INVALID_SEQUENCE_FLOW_REF`, `MULTIPLE_PROCESSES`,
+`UNRESOLVED_CALLED_ELEMENT`, `NESTED_SUBPROCESS_NOT_SUPPORTED`,
+`MISSING_DEPT_INPUT_FOR_MODULE`, `INVALID_BOUNDARY_ATTACHMENT`,
+`MISSING_DIAGRAM`, `MISSING_DIAGRAM_SHAPE`, `UNSUPPORTED_ELEMENT`.
 
 !!! note "Unparseable documents"
     Documents that fail XML parsing (bad XML, `DOCTYPE`/entity injection, token-cap exceeded) return **400 `INVALID_BPMN_XML`** — not a BPMN validation code. Forbidden `DOCTYPE`/entity additionally triggers an internal security log with client IP and tenant ID; the client sees only the generic 400.

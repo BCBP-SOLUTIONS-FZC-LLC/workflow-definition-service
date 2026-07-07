@@ -2,7 +2,6 @@ package validator
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/google/uuid"
 
@@ -22,7 +21,6 @@ func ValidateTaskExtensions(proc *bpmncore.BPMNProcess, stageTypes map[string]bp
 		errs = append(errs, ValidateTaskDef(t.ID, t.ExtensionElements, stageTypes)...)
 		errs = append(errs, ValidateAssignmentDef(t.ID, t.ExtensionElements)...)
 		errs = append(errs, ValidateLaneMembership(t.ID, laneRefs)...)
-		errs = append(errs, ValidateRequiresComment(t.ID, t.ExtensionElements)...)
 	}
 	return errs
 }
@@ -33,10 +31,21 @@ func ValidateTaskDef(taskID string, ext bpmncore.BPMNExtensionElements, stageTyp
 			"task is missing a <zeebe:taskDefinition> extension element")
 	}
 	if _, ok := stageTypes[ext.TaskDefinition.Type]; !ok {
-		return AppendErr(nil, domain.BPMNErrInvalidTaskDefinitionType, taskID,
-			fmt.Sprintf("taskDefinition type %q is not a registered stage type", ext.TaskDefinition.Type))
+		// Unknown stage types are not rejected: IAM owns role/department definitions
+		// and may introduce types unknown to this service. Emit a warning and continue.
+		return AppendWarn(nil, domain.BPMNWarnUnknownStageType, taskID,
+			fmt.Sprintf("taskDefinition type %q is not a defined stage class in the workflow engine", ext.TaskDefinition.Type))
 	}
 	return nil
+}
+
+// ValidateOptionalAssignment validates candidateGroups/candidateUsers only when
+// zeebe:assignmentDefinition is present. For sendTask/receiveTask assignment is optional.
+func ValidateOptionalAssignment(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
+	if ext.AssignmentDefinition == nil {
+		return nil
+	}
+	return ValidateAssignmentDef(taskID, ext)
 }
 
 func ValidateAssignmentDef(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
@@ -66,22 +75,14 @@ func validateCandidateUser(taskID, candidateUsers string) []domain.BPMNValidatio
 }
 
 func ValidateLaneMembership(taskID string, laneRefs map[string]struct{}) []domain.BPMNValidationError {
+	// When no lanes are defined (e.g. inner subprocess without a laneSet) all
+	// tasks are implicitly in scope — skip the check entirely.
+	if len(laneRefs) == 0 {
+		return nil
+	}
 	if _, ok := laneRefs[taskID]; !ok {
 		return AppendErr(nil, domain.BPMNErrTaskNotInLane, taskID,
 			"task is not listed in any lane's flowNodeRef list")
-	}
-	return nil
-}
-
-func ValidateRequiresComment(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
-	for _, p := range ext.ZeebeProps.Items {
-		if p.Name == "requires_comment" {
-			if _, err := strconv.ParseBool(p.Value); err != nil {
-				return AppendErr(nil, domain.BPMNErrMissingTaskDefinition, taskID,
-					fmt.Sprintf("invalid requires_comment %q: must be true or false", p.Value))
-			}
-			return nil
-		}
 	}
 	return nil
 }

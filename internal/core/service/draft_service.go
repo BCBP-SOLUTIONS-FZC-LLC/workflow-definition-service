@@ -44,10 +44,11 @@ func NewDraftService(d DraftDeps) *DraftService {
 }
 
 type UpdateDraftReq struct {
-	Name          *string
-	Description   *string
-	BPMNXML       *string
-	RecordVersion int64 // optimistic-lock token (0 = unchecked); see GAP-1
+	Name           *string
+	Description    *string
+	BPMNXML        *string
+	ModuleBPMNXMLs *[]string // nil = no change; &[]string{} = clear all modules
+	RecordVersion  int64     // optimistic-lock token (0 = unchecked)
 }
 
 const errGetDraft = "get draft: %w"
@@ -87,6 +88,7 @@ func (s *DraftService) Init(
 		TenantID:        tenantID,
 		Status:          domain.VersionStatusDraft,
 		BPMNXML:         active.BPMNXML,
+		ModuleBPMNXMLs:  active.ModuleBPMNXMLs,
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
@@ -109,7 +111,7 @@ func (s *DraftService) Update(
 ) (*domain.WorkflowVersion, error) {
 	// Fail-open when Cache is not configured (dev/test environments).
 	if s.cache != nil {
-		lockKey := fmt.Sprintf("draft-lock:%s", workflowID)
+		lockKey := fmt.Sprintf("draft-lock:%s:%s", tenantID, workflowID)
 		acquired, err := s.cache.SetNX(ctx, lockKey, "1", 30*time.Second)
 		if err != nil {
 			return nil, fmt.Errorf("acquire draft lock: %w", err)
@@ -142,6 +144,13 @@ func (s *DraftService) Update(
 		draft.CompiledPlanJSON = nil
 		draft.ArtifactHash = ""
 		draft.IsValid = true
+	}
+
+	if req.ModuleBPMNXMLs != nil {
+		draft.ModuleBPMNXMLs = *req.ModuleBPMNXMLs
+		// Modules changed — cached plan is stale.
+		draft.CompiledPlanJSON = nil
+		draft.ArtifactHash = ""
 	}
 
 	if err := s.runUpdateTx(ctx, tenantID, workflowID, draft, req); err != nil {

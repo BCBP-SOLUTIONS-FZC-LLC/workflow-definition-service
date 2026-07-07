@@ -10,9 +10,27 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// ValidateBoundaryEvents validates all boundary events on a process.
-// Called from the process-level Validate() rather than per-element dispatch because
-// boundary events are aggregated (one timer per host check requires seeing all at once).
+// ValidateMessageBoundaryNames warns when a message boundary event's name cannot
+// be resolved from either defs.Messages or collaboration message flows.
+// An unresolvable name produces an empty correlation key at runtime.
+func ValidateMessageBoundaryNames(proc *bpmncore.BPMNProcess, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	for _, be := range proc.BoundaryEvents {
+		if be.Message == nil {
+			continue
+		}
+		name := bpmncore.ResolveMessageName(be.Message.MessageRef, defs)
+		if name == "" {
+			name = bpmncore.ResolveMessageFlowTarget(be.ID, defs)
+		}
+		if name == "" {
+			errs = AppendWarn(errs, domain.BPMNErrMissingMessageDefinition, be.ID,
+				fmt.Sprintf("message boundary event has no resolvable message name; declare a <bpmn:message> or add a messageFlow targeting %q", be.ID))
+		}
+	}
+	return errs
+}
+
 func ValidateBoundaryEvents(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain.BPMNValidationError {
 	timerCountByHost := make(map[string]int)
 	var errs []domain.BPMNValidationError
@@ -40,13 +58,24 @@ func ValidateBoundaryEvents(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []dom
 func validateBoundaryEventDef(be bpmncore.BPMNBoundaryEvent) (errs []domain.BPMNValidationError, skip bool) {
 	hasTimer := be.Timer != nil
 	hasError := be.Error != nil
-	if hasTimer && hasError {
-		return AppendErr(nil, domain.BPMNErrInvalidBoundaryAttachment, be.ID,
-			"boundary event must have exactly one event definition (timer or error), not both"), true
+	hasMessage := be.Message != nil
+	count := 0
+	if hasTimer {
+		count++
 	}
-	if !hasTimer && !hasError {
+	if hasError {
+		count++
+	}
+	if hasMessage {
+		count++
+	}
+	if count > 1 {
+		return AppendErr(nil, domain.BPMNErrInvalidBoundaryAttachment, be.ID,
+			"boundary event must have exactly one event definition (timer, error, or message), not multiple"), true
+	}
+	if count == 0 {
 		return AppendErr(nil, domain.BPMNErrMissingTaskDefinition, be.ID,
-			"boundary event has no event definition; must be a timer or error boundary event"), true
+			"boundary event has no event definition; must be a timer, error, or message boundary event"), true
 	}
 	return nil, false
 }
@@ -66,15 +95,16 @@ func validateTimerBoundary(be bpmncore.BPMNBoundaryEvent, timerCountByHost map[s
 }
 
 func validateErrorBoundary(be bpmncore.BPMNBoundaryEvent, g *bpmncore.Graph) []domain.BPMNValidationError {
-	if g.NodeType[be.AttachedToRef] != bpmncore.NodeTypeSubProcess {
+	t := g.NodeType[be.AttachedToRef]
+	if t != bpmncore.NodeTypeSubProcess && t != bpmncore.NodeTypeCallActivity {
 		return AppendErr(nil, domain.BPMNErrInvalidBoundaryAttachment, be.ID,
-			fmt.Sprintf("error boundary event can only be attached to a subProcess, not to node %q", be.AttachedToRef))
+			fmt.Sprintf("error boundary event can only be attached to a subProcess or callActivity, not to node %q", be.AttachedToRef))
 	}
 	return nil
 }
 
-// iso8601DurationRe matches ISO 8601 periods with day/time components only.
-var iso8601DurationRe = regexp.MustCompile(`^P(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$`)
+// iso8601DurationRe matches ISO 8601 periods: week-only form (PnW) or day/time form.
+var iso8601DurationRe = regexp.MustCompile(`^P(\d+W|(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?)$`)
 
 // IsValidDuration accepts Go duration syntax or ISO 8601 period with day/time components.
 func IsValidDuration(s string) bool {

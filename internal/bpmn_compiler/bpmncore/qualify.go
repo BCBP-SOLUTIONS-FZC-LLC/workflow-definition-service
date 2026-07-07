@@ -15,6 +15,9 @@ func QualifyPlanDepts(plan *domain.CompiledPlan, prefix string) {
 			if bt := plan.Departments[i].Stages[j].BoundaryTimer; bt != nil {
 				bt.TargetDept = rename(bt.TargetDept)
 			}
+			if bm := plan.Departments[i].Stages[j].BoundaryMessage; bm != nil {
+				bm.TargetDept = rename(bm.TargetDept)
+			}
 		}
 	}
 	QualifySteps(plan.Execution.Steps, rename)
@@ -26,7 +29,8 @@ func QualifySteps(steps []domain.ExecutionStep, rename func(string) string) {
 			steps[i].Sequential[j] = rename(steps[i].Sequential[j])
 		}
 		for j := range steps[i].Parallel {
-			steps[i].Parallel[j] = rename(steps[i].Parallel[j])
+			steps[i].Parallel[j].DeptID = rename(steps[i].Parallel[j].DeptID)
+			QualifySteps(steps[i].Parallel[j].Steps, rename)
 		}
 		for j := range steps[i].Exclusive {
 			steps[i].Exclusive[j].Target = rename(steps[i].Exclusive[j].Target)
@@ -40,6 +44,12 @@ func QualifySteps(steps []domain.ExecutionStep, rename func(string) string) {
 			for j := range sw.TimerPaths {
 				sw.TimerPaths[j].TargetDept = rename(sw.TimerPaths[j].TargetDept)
 			}
+			for j := range sw.MessagePaths {
+				sw.MessagePaths[j].TargetDept = rename(sw.MessagePaths[j].TargetDept)
+			}
+		}
+		for j := range steps[i].MessagePaths {
+			steps[i].MessagePaths[j].TargetDept = rename(steps[i].MessagePaths[j].TargetDept)
 		}
 	}
 }

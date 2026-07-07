@@ -9,10 +9,11 @@ import (
 )
 
 type updateDraftReq struct {
-	Name          *string `json:"name"`
-	Description   *string `json:"description"`
-	BPMNXML       *string `json:"bpmn_xml"`
-	RecordVersion int64   `json:"record_version"`
+	Name           *string  `json:"name"`
+	Description    *string  `json:"description"`
+	BPMNXML        *string  `json:"bpmn_xml"`
+	ModuleBPMNXMLs []string `json:"module_bpmn_xmls"`
+	RecordVersion  int64    `json:"record_version"`
 }
 
 func (h *Handler) GetDraft(c *gin.Context) {
@@ -78,11 +79,16 @@ func (h *Handler) UpdateDraft(c *gin.Context) {
 		return
 	}
 
+	var moduleBPMNs *[]string
+	if req.ModuleBPMNXMLs != nil {
+		moduleBPMNs = &req.ModuleBPMNXMLs
+	}
 	draft, err := h.drafts.Update(c.Request.Context(), tenantID, userID, workflowID, service.UpdateDraftReq{
-		Name:          req.Name,
-		Description:   req.Description,
-		BPMNXML:       req.BPMNXML,
-		RecordVersion: req.RecordVersion,
+		Name:           req.Name,
+		Description:    req.Description,
+		BPMNXML:        req.BPMNXML,
+		ModuleBPMNXMLs: moduleBPMNs,
+		RecordVersion:  req.RecordVersion,
 	})
 	if err != nil {
 		errResponse(c, h.log, err)

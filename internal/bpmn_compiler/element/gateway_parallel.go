@@ -10,7 +10,6 @@ type ParallelGatewayHandler struct{}
 func (ParallelGatewayHandler) NodeType() bpmncore.FlowNodeType {
 	return bpmncore.NodeTypeParallelGateway
 }
-func (ParallelGatewayHandler) GatewayKind() string { return "parallel" }
 
 func (ParallelGatewayHandler) Validate(_ string, _ *bpmncore.BPMNProcess, _ *bpmncore.Graph, _ *bpmncore.BPMNDefinitions, _ map[string]bpmncore.StageTypeHandler, _ map[bpmncore.FlowNodeType]bpmncore.ElementHandler) []domain.BPMNValidationError {
 	return nil

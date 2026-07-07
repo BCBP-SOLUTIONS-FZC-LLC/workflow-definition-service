@@ -119,7 +119,7 @@ func TestParse_ValidMinimal(t *testing.T) {
 }
 
 func TestScanRejected_RejectedElement(t *testing.T) {
-	// serviceTask is Tier 3 (REJECTED_ELEMENT); subProcess is now Tier 1 (no error).
+	// serviceTask is Tier 3 (REJECTED_ELEMENT); subProcess is Tier 1 (no error).
 	xmlData := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
   <bpmn:process id="P1">
@@ -141,8 +141,10 @@ func TestScanRejected_RejectedElement(t *testing.T) {
 	}
 }
 
-func TestScanRejected_InclusiveGatewayIsSupported(t *testing.T) {
-	// inclusiveGateway was promoted from Tier 2 (UNSUPPORTED_ELEMENT) to Tier 1 (supported).
+func TestScanRejected_InclusiveGatewayIsUnsupported(t *testing.T) {
+	// inclusiveGateway is Tier 2 (UNSUPPORTED_ELEMENT): parsed and graph-validated
+	// but not yet compileable. Listing in unsupportedBPMNElems produces a clear
+	// error rather than silently producing an incorrect execution plan.
 	xmlData := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
   <bpmn:process id="P1">
@@ -151,8 +153,8 @@ func TestScanRejected_InclusiveGatewayIsSupported(t *testing.T) {
   </bpmn:process>
 </bpmn:definitions>`
 	errs := scanRejected(xmlData)
-	if hasCodeIn(errs, domain.BPMNErrUnsupportedElement) {
-		t.Fatalf("inclusiveGateway must not produce UNSUPPORTED_ELEMENT; got %v", errCodesOf(errs))
+	if !hasCodeIn(errs, domain.BPMNErrUnsupportedElement) {
+		t.Fatalf("inclusiveGateway must produce UNSUPPORTED_ELEMENT; got %v", errCodesOf(errs))
 	}
 }
 

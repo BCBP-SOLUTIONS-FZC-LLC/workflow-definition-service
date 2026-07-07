@@ -40,26 +40,38 @@ var errForbiddenXML = errors.New("forbidden XML construct")
 // supported. A denylist avoids rejecting benign standard elements like
 // <bpmn:incoming> / <bpmn:outgoing>. encoding/xml silently drops unknown
 // elements during unmarshal, so the raw token scan is the only place to catch them.
-var rejectedBPMNElems = map[string]struct{}{
-	// Tasks
-	"serviceTask": {}, "scriptTask": {}, "businessRuleTask": {},
-	"transaction": {}, "adHocSubProcess": {},
-	// Gateways
-	"complexGateway": {},
-	// Event definitions (any boundary/intermediate/end with these definitions)
-	"terminateEventDefinition": {}, "compensateEventDefinition": {},
-	"cancelEventDefinition": {}, "escalationEventDefinition": {},
-	"conditionalEventDefinition": {}, "linkEventDefinition": {},
-	// Loop markers
-	"standardLoopCharacteristics": {},
-	// Collaboration / data (conversation and choreography are not multi-pool collaboration)
-	"conversation": {}, "choreography": {},
-	"dataObject": {}, "dataStore": {}, "dataObjectReference": {}, "dataStoreReference": {},
-	// callActivity (Tier 2 callActivity-as-subprocess is tracked separately, not via callActivity element)
-	"callActivity": {},
-}
+var rejectedBPMNElems map[string]struct{}
 
-var unsupportedBPMNElems = map[string]struct{}{}
+// unsupportedBPMNElems is the Tier 2 denylist: parsed but not yet compiled.
+// Elements listed here produce UNSUPPORTED_ELEMENT errors.
+var unsupportedBPMNElems map[string]struct{}
+
+func init() {
+	rejectedBPMNElems = map[string]struct{}{
+		// Tasks
+		"serviceTask": {}, "scriptTask": {}, "businessRuleTask": {},
+		"transaction": {}, "adHocSubProcess": {},
+		// Gateways
+		"complexGateway": {},
+		// Event definitions (any boundary/intermediate/end with these definitions)
+		"terminateEventDefinition": {}, "compensateEventDefinition": {},
+		"cancelEventDefinition": {}, "escalationEventDefinition": {},
+		"conditionalEventDefinition": {}, "linkEventDefinition": {},
+		// Loop markers
+		"standardLoopCharacteristics": {},
+		// Collaboration (conversation and choreography are not multi-pool collaboration)
+		"conversation": {}, "choreography": {},
+		// dataObject variants are rejected outright; only dataStoreReference is parsed,
+		// into BPMNProcess.DataStoreRefs and collected into CompiledPlan.VisualElements.
+		"dataObject": {}, "dataObjectReference": {},
+	}
+	// Inclusive gateways are parsed and graph-validated but have no compile handler.
+	// Listing here produces a clear UNSUPPORTED_ELEMENT error rather than silently
+	// producing an incorrect execution plan.
+	unsupportedBPMNElems = map[string]struct{}{
+		"inclusiveGateway": {},
+	}
+}
 
 func parse(ctx context.Context, xmlData string) (*bpmncore.BPMNDefinitions, error) {
 	if err := securityScan(xmlData); err != nil {
@@ -167,5 +179,31 @@ func unmarshal(xmlData string) (*bpmncore.BPMNDefinitions, error) {
 	if err := dec.Decode(&defs); err != nil {
 		return nil, fmt.Errorf("XML decode: %w", err)
 	}
+	// Promote generic <task> elements to userTask so all downstream code
+	// (validator, compiler, graph builder) handles them uniformly.
+	// Strip sequence flows with empty sourceRef or targetRef — defensive cleanup;
+	// incomplete flows carry no semantic content but would cause spurious INVALID_SEQUENCE_FLOW_REF errors.
+	for i := range defs.Processes {
+		p := &defs.Processes[i]
+		p.UserTasks = append(p.UserTasks, p.GenericTasks...)
+		p.GenericTasks = nil
+		p.SequenceFlows = stripEmptyRefFlows(p.SequenceFlows)
+		for j := range p.SubProcesses {
+			sp := &p.SubProcesses[j]
+			sp.UserTasks = append(sp.UserTasks, sp.GenericTasks...)
+			sp.GenericTasks = nil
+			sp.SequenceFlows = stripEmptyRefFlows(sp.SequenceFlows)
+		}
+	}
 	return &defs, nil
+}
+
+func stripEmptyRefFlows(flows []bpmncore.BPMNSequenceFlow) []bpmncore.BPMNSequenceFlow {
+	out := flows[:0:len(flows)]
+	for _, f := range flows {
+		if f.SourceRef != "" && f.TargetRef != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }

@@ -7,7 +7,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// ValidateCollaboration validates a <bpmn:collaboration> element.
 func ValidateCollaboration(collab *bpmncore.BPMNCollaboration, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	if collab == nil {
 		return nil
@@ -36,6 +35,10 @@ func ValidateCollaboration(collab *bpmncore.BPMNCollaboration, defs *bpmncore.BP
 			errs = AppendErr(errs, domain.BPMNErrUnmatchedMessageFlow, mf.ID,
 				fmt.Sprintf("messageFlow targetRef %q does not reference a known participant or flow node", mf.TargetRef))
 		}
+		if bpmncore.ResolveMessageFlowName(&mf, defs) == "" {
+			errs = AppendWarn(errs, domain.BPMNErrMissingMessageDefinition, mf.ID,
+				"message flow has no resolvable name; the Execution Service cannot correlate this message — declare a <bpmn:message> and reference it via messageRef on the flow or the connected send/receive task/boundary event")
+		}
 	}
 	return errs
 }
@@ -61,6 +64,15 @@ func collabReachableIDs(collab *bpmncore.BPMNCollaboration, defs *bpmncore.BPMND
 		}
 		for _, e := range proc.EndEvents {
 			ids[e.ID] = struct{}{}
+		}
+		for _, sp := range proc.SubProcesses {
+			ids[sp.ID] = struct{}{}
+		}
+		for _, ca := range proc.CallActivities {
+			ids[ca.ID] = struct{}{}
+		}
+		for _, be := range proc.BoundaryEvents {
+			ids[be.ID] = struct{}{}
 		}
 	}
 	return ids

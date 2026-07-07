@@ -7,9 +7,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// ValidateDiagramCompleteness checks that a BPMNDiagram element is present and that
-// every flow node and sequence flow has a corresponding BPMNShape or BPMNEdge in it,
-// including inner subprocess nodes.
 func ValidateDiagramCompleteness(proc *bpmncore.BPMNProcess, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	if len(defs.Diagrams) == 0 {
 		return AppendErr(nil, domain.BPMNErrMissingDiagram, "",
@@ -81,6 +78,9 @@ func checkProcessShapes(proc *bpmncore.BPMNProcess, shapeSet, edgeSet map[string
 	}
 	for _, sp := range proc.SubProcesses {
 		requireShape(sp.ID)
+	}
+	for _, ca := range proc.CallActivities {
+		requireShape(ca.ID)
 	}
 	for _, be := range proc.BoundaryEvents {
 		requireShape(be.ID)

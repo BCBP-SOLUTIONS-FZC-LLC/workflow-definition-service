@@ -15,7 +15,7 @@ import (
 
 func TestValidateBPMN_Valid(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{
-		validate: func(_ context.Context, bpmnXML string) (bool, []domain.BPMNValidationError, error) {
+		validate: func(_ context.Context, bpmnXML string, _ []string) (bool, []domain.BPMNValidationError, error) {
 			assert.Equal(t, "<definitions/>", bpmnXML)
 			return true, nil, nil
 		},
@@ -28,16 +28,16 @@ func TestValidateBPMN_Valid(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.Equal(t, true, resp["is_valid"])
-	errs := resp["errors"].([]any)
-	assert.Empty(t, errs)
+	issues := resp["issues"].([]any)
+	assert.Empty(t, issues)
 }
 
 func TestValidateBPMN_Invalid(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{
-		validate: func(_ context.Context, _ string) (bool, []domain.BPMNValidationError, error) {
+		validate: func(_ context.Context, _ string, _ []string) (bool, []domain.BPMNValidationError, error) {
 			return false, []domain.BPMNValidationError{
-				{Code: domain.BPMNErrNoStartEvent, NodeID: "node-1", Message: "missing start event"},
-				{Code: domain.BPMNErrCycleDetected, NodeID: "node-2", Message: "cycle detected"},
+				{Code: domain.BPMNErrNoStartEvent, NodeID: "node-1", Message: "missing start event", Severity: domain.SeverityError},
+				{Code: domain.BPMNErrCycleDetected, NodeID: "node-2", Message: "cycle detected", Severity: domain.SeverityError},
 			}, nil
 		},
 	})
@@ -49,11 +49,35 @@ func TestValidateBPMN_Invalid(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.Equal(t, false, resp["is_valid"])
-	errs := resp["errors"].([]any)
-	assert.Len(t, errs, 2)
-	first := errs[0].(map[string]any)
+	issues := resp["issues"].([]any)
+	assert.Len(t, issues, 2)
+	first := issues[0].(map[string]any)
 	assert.Equal(t, "node-1", first["node_id"])
 	assert.Equal(t, string(domain.BPMNErrNoStartEvent), first["code"])
+	assert.Equal(t, string(domain.SeverityError), first["severity"])
+}
+
+func TestValidateBPMN_ValidWithWarnings(t *testing.T) {
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{
+		validate: func(_ context.Context, _ string, _ []string) (bool, []domain.BPMNValidationError, error) {
+			return true, []domain.BPMNValidationError{
+				{Code: domain.BPMNWarnUnknownStageType, NodeID: "Task_audit", Message: "unknown stage type", Severity: domain.SeverityWarning},
+			}, nil
+		},
+	})
+
+	body := map[string]any{"bpmn_xml": "<definitions/>"}
+	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/validate", body))
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, true, resp["is_valid"])
+	issues := resp["issues"].([]any)
+	require.Len(t, issues, 1)
+	first := issues[0].(map[string]any)
+	assert.Equal(t, string(domain.BPMNWarnUnknownStageType), first["code"])
+	assert.Equal(t, string(domain.SeverityWarning), first["severity"])
 }
 
 func TestValidateBPMN_BindError(t *testing.T) {
@@ -68,7 +92,7 @@ func TestValidateBPMN_BindError(t *testing.T) {
 
 func TestValidateBPMN_ServiceError(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{
-		validate: func(_ context.Context, _ string) (bool, []domain.BPMNValidationError, error) {
+		validate: func(_ context.Context, _ string, _ []string) (bool, []domain.BPMNValidationError, error) {
 			return false, nil, errors.New("parse failure")
 		},
 	})

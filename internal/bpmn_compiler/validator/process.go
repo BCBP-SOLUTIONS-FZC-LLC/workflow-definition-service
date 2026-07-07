@@ -7,12 +7,16 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-func ValidateCounts(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
+func ValidateCounts(proc *bpmncore.BPMNProcess, implicitStart string) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 
 	switch n := len(proc.StartEvents); {
 	case n == 0:
-		errs = AppendErr(errs, domain.BPMNErrNoStartEvent, "", "process has no start event")
+		// If there is a natural root node (no incoming sequence flows) the
+		// process is triggered by a message from another pool — don't error.
+		if implicitStart == "" {
+			errs = AppendErr(errs, domain.BPMNErrNoStartEvent, "", "process has no start event")
+		}
 	case n > 1:
 		for _, e := range proc.StartEvents[1:] {
 			errs = AppendErr(errs, domain.BPMNErrMultipleStartEvents, e.ID,
@@ -20,7 +24,7 @@ func ValidateCounts(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
 		}
 	}
 
-	if len(proc.EndEvents) == 0 {
+	if len(proc.EndEvents) == 0 && implicitStart == "" {
 		errs = AppendErr(errs, domain.BPMNErrNoEndEvent, "", "process has no end event")
 	}
 
@@ -39,6 +43,17 @@ func ValidateCounts(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
 	return errs
 }
 
+func ValidateNoNestedSubProcess(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	for _, sp := range proc.SubProcesses {
+		for _, nested := range sp.SubProcesses {
+			errs = AppendErr(errs, domain.BPMNErrNestedSubProcessNotSupported, nested.ID,
+				fmt.Sprintf("subProcess %q contains a nested subProcess %q which is not supported", sp.ID, nested.ID))
+		}
+	}
+	return errs
+}
+
 func ValidateSeqFlowRefs(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, sf := range proc.SequenceFlows {
@@ -54,17 +69,20 @@ func ValidateSeqFlowRefs(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain
 	return errs
 }
 
-func ValidateDanglingNodes(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain.BPMNValidationError {
+// ValidateDanglingNodes checks that all flow nodes are properly connected.
+// implicitStart is exempted from the "no incoming sequence flow" check because
+// it is intentionally triggered by a message flow rather than a sequence flow.
+func ValidateDanglingNodes(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, implicitStart string) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 
 	for _, t := range proc.UserTasks {
-		errs = append(errs, CheckDangling(t.ID, g)...)
+		errs = append(errs, checkDanglingWithImplicit(t.ID, g, implicitStart)...)
 	}
 	for _, t := range proc.SendTasks {
-		errs = append(errs, CheckDangling(t.ID, g)...)
+		errs = append(errs, checkDanglingWithImplicit(t.ID, g, implicitStart)...)
 	}
 	for _, t := range proc.ReceiveTasks {
-		errs = append(errs, CheckDangling(t.ID, g)...)
+		errs = append(errs, checkDanglingWithImplicit(t.ID, g, implicitStart)...)
 	}
 	for _, gw := range proc.ParallelGateways {
 		errs = append(errs, CheckDangling(gw.ID, g)...)
@@ -76,7 +94,10 @@ func ValidateDanglingNodes(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []doma
 		errs = append(errs, CheckDangling(gw.ID, g)...)
 	}
 	for _, sp := range proc.SubProcesses {
-		errs = append(errs, CheckDangling(sp.ID, g)...)
+		errs = append(errs, checkDanglingWithImplicit(sp.ID, g, implicitStart)...)
+	}
+	for _, ca := range proc.CallActivities {
+		errs = append(errs, checkDanglingWithImplicit(ca.ID, g, implicitStart)...)
 	}
 	errs = append(errs, checkEventDangling(proc, g)...)
 	return errs
@@ -97,7 +118,7 @@ func checkEventDangling(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain.
 		}
 	}
 	for _, be := range proc.BoundaryEvents {
-		if len(g.Outgoing[be.ID]) == 0 {
+		if len(g.Outgoing[be.ID]) == 0 && be.Message == nil {
 			errs = AppendErr(errs, domain.BPMNErrDanglingNode, be.ID,
 				"boundary event has no outgoing sequence flow")
 		}
@@ -106,8 +127,12 @@ func checkEventDangling(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain.
 }
 
 func CheckDangling(id string, g *bpmncore.Graph) []domain.BPMNValidationError {
+	return checkDanglingWithImplicit(id, g, "")
+}
+
+func checkDanglingWithImplicit(id string, g *bpmncore.Graph, implicitStart string) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
-	if len(g.Incoming[id]) == 0 {
+	if id != implicitStart && len(g.Incoming[id]) == 0 {
 		errs = AppendErr(errs, domain.BPMNErrDanglingNode, id, "node has no incoming sequence flow")
 	}
 	if len(g.Outgoing[id]) == 0 {

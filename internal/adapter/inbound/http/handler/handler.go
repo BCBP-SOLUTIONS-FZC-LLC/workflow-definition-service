@@ -42,7 +42,7 @@ type versionSvc interface {
 }
 
 type validationSvc interface {
-	Validate(ctx context.Context, bpmnXML string) (bool, []domain.BPMNValidationError, error)
+	Validate(ctx context.Context, bpmnXML string, moduleXMLs []string) (bool, []domain.BPMNValidationError, error)
 }
 
 type Handler struct {

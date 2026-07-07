@@ -2,28 +2,31 @@
 INSERT INTO workflow_version (
     id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
     artifact_hash, version_number, published_at, created_by_user_id,
-    is_valid, validation_errors_json
+    is_valid, validation_errors_json, module_bpmn_xmls
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
 
 -- name: GetWorkflowVersionByID :one
 SELECT id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
        artifact_hash, version_number, published_at, created_by_user_id,
-       is_valid, validation_errors_json, created_at, updated_at, record_version
+       is_valid, validation_errors_json, created_at, updated_at, record_version,
+       module_bpmn_xmls
 FROM workflow_version
 WHERE tenant_id = $1 AND id = $2;
 
 -- name: GetDraftVersion :one
 SELECT id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
        artifact_hash, version_number, published_at, created_by_user_id,
-       is_valid, validation_errors_json, created_at, updated_at, record_version
+       is_valid, validation_errors_json, created_at, updated_at, record_version,
+       module_bpmn_xmls
 FROM workflow_version
 WHERE tenant_id = $1 AND workflow_id = $2 AND status = 'DRAFT';
 
 -- name: ListVersionsByWorkflow :many
 SELECT id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
        artifact_hash, version_number, published_at, created_by_user_id,
-       is_valid, validation_errors_json, created_at, updated_at, record_version
+       is_valid, validation_errors_json, created_at, updated_at, record_version,
+       module_bpmn_xmls
 FROM workflow_version
 WHERE tenant_id = $1 AND workflow_id = $2
 ORDER BY created_at DESC
@@ -42,7 +45,8 @@ SET bpmn_xml               = $3,
     compiled_plan_json      = $4,
     artifact_hash           = $5,
     is_valid                = $6,
-    validation_errors_json  = $7
+    validation_errors_json  = $7,
+    module_bpmn_xmls        = $9
 WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT' AND record_version = $8;
 
 -- name: PublishVersion :execresult

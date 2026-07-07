@@ -14,10 +14,14 @@ const (
 	NodeTypeExclusiveGateway FlowNodeType = "exclusiveGateway"
 	NodeTypeInclusiveGateway FlowNodeType = "inclusiveGateway"
 	NodeTypeSubProcess       FlowNodeType = "subProcess"
-	// NodeTypeBoundaryEvent is registered so sequence flows originating from
-	// boundary events pass validateSeqFlowRefs. Boundary events have no incoming
-	// sequence flow and are excluded from dangling-node and reachability checks.
-	NodeTypeBoundaryEvent FlowNodeType = "boundaryEvent"
+	// NodeTypeBoundaryEvent is the fallback type for unrecognised boundary events.
+	// Timer, error, and message boundary events use the specific subtypes below.
+	NodeTypeBoundaryEvent        FlowNodeType = "boundaryEvent"
+	NodeTypeTimerBoundaryEvent   FlowNodeType = "timerBoundaryEvent"
+	NodeTypeErrorBoundaryEvent   FlowNodeType = "errorBoundaryEvent"
+	NodeTypeMessageBoundaryEvent FlowNodeType = "messageBoundaryEvent"
+	NodeTypeExternalParticipant  FlowNodeType = "externalParticipant"
+	NodeTypeCallActivity         FlowNodeType = "callActivity"
 )
 
 type BPMNDefinitions struct {
@@ -48,21 +52,30 @@ type BPMNEdge struct {
 }
 
 type BPMNProcess struct {
-	ID                string              `xml:"id,attr"`
-	Name              string              `xml:"name,attr"`
-	IsExecutable      bool                `xml:"isExecutable,attr"`
-	LaneSet           BPMNLaneSet         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL laneSet"`
-	UserTasks         []BPMNUserTask      `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL userTask"`
-	SendTasks         []BPMNSendTask      `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL sendTask"`
-	ReceiveTasks      []BPMNReceiveTask   `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL receiveTask"`
-	StartEvents       []BPMNEvent         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL startEvent"`
-	EndEvents         []BPMNEvent         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL endEvent"`
-	ParallelGateways  []BPMNGateway       `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL parallelGateway"`
-	ExclusiveGateways []BPMNGateway       `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL exclusiveGateway"`
-	InclusiveGateways []BPMNGateway       `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL inclusiveGateway"`
-	SequenceFlows     []BPMNSequenceFlow  `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL sequenceFlow"`
-	BoundaryEvents    []BPMNBoundaryEvent `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL boundaryEvent"`
-	SubProcesses      []BPMNSubProcess    `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL subProcess"`
+	ID                string                `xml:"id,attr"`
+	Name              string                `xml:"name,attr"`
+	IsExecutable      bool                  `xml:"isExecutable,attr"`
+	ExtensionElements BPMNExtensionElements `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL extensionElements"`
+	LaneSet           BPMNLaneSet           `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL laneSet"`
+	UserTasks         []BPMNUserTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL userTask"`
+	GenericTasks      []BPMNUserTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL task"`
+	SendTasks         []BPMNSendTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL sendTask"`
+	ReceiveTasks      []BPMNReceiveTask     `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL receiveTask"`
+	StartEvents       []BPMNEvent           `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL startEvent"`
+	EndEvents         []BPMNEvent           `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL endEvent"`
+	ParallelGateways  []BPMNGateway         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL parallelGateway"`
+	ExclusiveGateways []BPMNGateway         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL exclusiveGateway"`
+	InclusiveGateways []BPMNGateway         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL inclusiveGateway"`
+	SequenceFlows     []BPMNSequenceFlow    `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL sequenceFlow"`
+	BoundaryEvents    []BPMNBoundaryEvent   `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL boundaryEvent"`
+	SubProcesses      []BPMNSubProcess      `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL subProcess"`
+	CallActivities    []BPMNCallActivity    `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL callActivity"`
+	DataStoreRefs     []BPMNDataStoreRef    `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL dataStoreReference"`
+}
+
+type BPMNDataStoreRef struct {
+	ID   string `xml:"id,attr"`
+	Name string `xml:"name,attr"`
 }
 
 type BPMNCollaboration struct {
@@ -91,11 +104,17 @@ type BPMNMessage struct {
 }
 
 type BPMNBoundaryEvent struct {
-	ID             string        `xml:"id,attr"`
-	AttachedToRef  string        `xml:"attachedToRef,attr"`
-	CancelActivity string        `xml:"cancelActivity,attr"`
-	Timer          *BPMNTimerDef `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL timerEventDefinition"`
-	Error          *BPMNErrorDef `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL errorEventDefinition"`
+	ID             string               `xml:"id,attr"`
+	AttachedToRef  string               `xml:"attachedToRef,attr"`
+	CancelActivity string               `xml:"cancelActivity,attr"`
+	Timer          *BPMNTimerDef        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL timerEventDefinition"`
+	Error          *BPMNErrorDef        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL errorEventDefinition"`
+	Message        *BPMNMessageEventDef `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL messageEventDefinition"`
+}
+
+type BPMNMessageEventDef struct {
+	ID         string `xml:"id,attr"`
+	MessageRef string `xml:"messageRef,attr"`
 }
 
 type BPMNTimerDef struct {
@@ -107,19 +126,22 @@ type BPMNErrorDef struct {
 }
 
 type BPMNSubProcess struct {
-	ID                string              `xml:"id,attr"`
-	Name              string              `xml:"name,attr"`
-	LaneSet           BPMNLaneSet         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL laneSet"`
-	UserTasks         []BPMNUserTask      `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL userTask"`
-	SendTasks         []BPMNSendTask      `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL sendTask"`
-	ReceiveTasks      []BPMNReceiveTask   `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL receiveTask"`
-	StartEvents       []BPMNEvent         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL startEvent"`
-	EndEvents         []BPMNEvent         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL endEvent"`
-	ParallelGateways  []BPMNGateway       `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL parallelGateway"`
-	ExclusiveGateways []BPMNGateway       `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL exclusiveGateway"`
-	InclusiveGateways []BPMNGateway       `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL inclusiveGateway"`
-	SequenceFlows     []BPMNSequenceFlow  `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL sequenceFlow"`
-	BoundaryEvents    []BPMNBoundaryEvent `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL boundaryEvent"`
+	ID                string                `xml:"id,attr"`
+	Name              string                `xml:"name,attr"`
+	ExtensionElements BPMNExtensionElements `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL extensionElements"`
+	LaneSet           BPMNLaneSet           `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL laneSet"`
+	UserTasks         []BPMNUserTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL userTask"`
+	GenericTasks      []BPMNUserTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL task"`
+	SendTasks         []BPMNSendTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL sendTask"`
+	ReceiveTasks      []BPMNReceiveTask     `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL receiveTask"`
+	StartEvents       []BPMNEvent           `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL startEvent"`
+	EndEvents         []BPMNEvent           `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL endEvent"`
+	ParallelGateways  []BPMNGateway         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL parallelGateway"`
+	ExclusiveGateways []BPMNGateway         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL exclusiveGateway"`
+	InclusiveGateways []BPMNGateway         `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL inclusiveGateway"`
+	SequenceFlows     []BPMNSequenceFlow    `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL sequenceFlow"`
+	BoundaryEvents    []BPMNBoundaryEvent   `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL boundaryEvent"`
+	SubProcesses      []BPMNSubProcess      `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL subProcess"`
 }
 
 type BPMNError struct {
@@ -132,9 +154,10 @@ type BPMNLaneSet struct {
 }
 
 type BPMNLane struct {
-	ID           string   `xml:"id,attr"`
-	Name         string   `xml:"name,attr"`
-	FlowNodeRefs []string `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL flowNodeRef"`
+	ID                string                `xml:"id,attr"`
+	Name              string                `xml:"name,attr"`
+	ExtensionElements BPMNExtensionElements `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL extensionElements"`
+	FlowNodeRefs      []string              `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL flowNodeRef"`
 }
 
 type BPMNUserTask struct {
@@ -146,12 +169,14 @@ type BPMNUserTask struct {
 type BPMNSendTask struct {
 	ID                string                `xml:"id,attr"`
 	Name              string                `xml:"name,attr"`
+	MessageRef        string                `xml:"messageRef,attr"`
 	ExtensionElements BPMNExtensionElements `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL extensionElements"`
 }
 
 type BPMNReceiveTask struct {
 	ID                string                `xml:"id,attr"`
 	Name              string                `xml:"name,attr"`
+	MessageRef        string                `xml:"messageRef,attr"`
 	ExtensionElements BPMNExtensionElements `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL extensionElements"`
 }
 
@@ -173,10 +198,42 @@ type BPMNSequenceFlow struct {
 	ExtensionElements   BPMNExtensionElements `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL extensionElements"`
 }
 
+type BPMNCallActivity struct {
+	ID                string                `xml:"id,attr"`
+	Name              string                `xml:"name,attr"`
+	Incoming          []string              `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL incoming"`
+	Outgoing          []string              `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL outgoing"`
+	ExtensionElements BPMNExtensionElements `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL extensionElements"`
+}
+
 type BPMNExtensionElements struct {
 	TaskDefinition       *ZeebeTaskDefinition       `xml:"http://camunda.org/schema/zeebe/1.0 taskDefinition"`
 	AssignmentDefinition *ZeebeAssignmentDefinition `xml:"http://camunda.org/schema/zeebe/1.0 assignmentDefinition"`
 	ZeebeProps           BPMNZeebeProperties        `xml:"http://camunda.org/schema/zeebe/1.0 properties"`
+	ZeebeCalledElement   *ZeebeCalledElement        `xml:"http://camunda.org/schema/zeebe/1.0 calledElement"`
+	IOMapping            *ZeebeIOMapping            `xml:"http://camunda.org/schema/zeebe/1.0 ioMapping"`
+	TaskSchedule         *ZeebeTaskSchedule         `xml:"http://camunda.org/schema/zeebe/1.0 taskSchedule"`
+	ZeebeUserTask        *struct{}                  `xml:"http://camunda.org/schema/zeebe/1.0 userTask"`
+}
+
+type ZeebeTaskSchedule struct {
+	DueDate      string `xml:"dueDate,attr"`
+	FollowUpDate string `xml:"followUpDate,attr"`
+}
+
+type ZeebeIOMapping struct {
+	Inputs  []ZeebeIOVar `xml:"http://camunda.org/schema/zeebe/1.0 input"`
+	Outputs []ZeebeIOVar `xml:"http://camunda.org/schema/zeebe/1.0 output"`
+}
+
+type ZeebeIOVar struct {
+	Source string `xml:"source,attr"`
+	Target string `xml:"target,attr"`
+}
+
+type ZeebeCalledElement struct {
+	ProcessID                  string `xml:"processId,attr"`
+	PropagateAllChildVariables bool   `xml:"propagateAllChildVariables,attr"`
 }
 
 type ZeebeTaskDefinition struct {
@@ -197,6 +254,10 @@ type ZeebeProperty struct {
 	Value string `xml:"value,attr"`
 }
 
+func IsBoundaryEventType(t FlowNodeType) bool {
+	return t == NodeTypeBoundaryEvent || t == NodeTypeTimerBoundaryEvent || t == NodeTypeErrorBoundaryEvent || t == NodeTypeMessageBoundaryEvent
+}
+
 func PropsMap(ext BPMNExtensionElements) map[string]string {
 	m := make(map[string]string, len(ext.ZeebeProps.Items))
 	for _, p := range ext.ZeebeProps.Items {
@@ -210,7 +271,7 @@ func SubProcToProcess(sp *BPMNSubProcess) *BPMNProcess {
 		ID:                sp.ID,
 		Name:              sp.Name,
 		LaneSet:           sp.LaneSet,
-		UserTasks:         sp.UserTasks,
+		UserTasks:         append(sp.UserTasks, sp.GenericTasks...),
 		SendTasks:         sp.SendTasks,
 		ReceiveTasks:      sp.ReceiveTasks,
 		StartEvents:       sp.StartEvents,

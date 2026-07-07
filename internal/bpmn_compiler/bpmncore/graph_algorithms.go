@@ -7,25 +7,17 @@ package bpmncore
 func ClassifyBackEdges(g *Graph, start string) map[[2]string]bool {
 	backEdges := make(map[[2]string]bool)
 	onStack := make(map[string]bool)
-	visited := make(map[string]bool)
-
-	var visit func(v string)
-	visit = func(v string) {
-		visited[v] = true
-		onStack[v] = true
-		for _, w := range g.Outgoing[v] {
-			if onStack[w] {
-				backEdges[[2]string{v, w}] = true
-				continue
+	IterativeDFS(g, start, DFSVisitor{
+		OnEnter: func(v string) bool { onStack[v] = true; return true },
+		OnEdge: func(from, to string, alreadySeen bool) bool {
+			if onStack[to] {
+				backEdges[[2]string{from, to}] = true
+				return false
 			}
-			if !visited[w] {
-				visit(w)
-			}
-		}
-		onStack[v] = false
-	}
-
-	visit(start)
+			return !alreadySeen
+		},
+		OnExit: func(v string) { onStack[v] = false },
+	})
 	return backEdges
 }
 
@@ -89,7 +81,8 @@ func (r *tarjanRunner) strongconnect(g *Graph, v string) {
 	}
 }
 
-// computes strongly connected components of g using Tarjan's algorithm.
+// TarjanSCC computes strongly connected components of g using Tarjan's algorithm.
+// TODO: convert strongconnect to iterative DFS to eliminate call-stack overflow risk on large graphs.
 func TarjanSCC(g *Graph) [][]string {
 	r := &tarjanRunner{nodeStates: make(map[string]*sccState, len(g.NodeIDs))}
 	for id := range g.NodeIDs {

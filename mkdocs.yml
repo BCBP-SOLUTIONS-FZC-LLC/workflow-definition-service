@@ -32,9 +32,13 @@ nav:
   - Development:
     - Architecture: architecture.md
     - BPMN Validation & Compilation: bpmn-validation.md
+    - BPMN Workflow Specification: bpmn-spec.md
     - Coding Standards: standards.md
     - Style Guide: coding_style_rules.md
     - Testing: testing.md
+  - Workflow Design:
+    - BPMN Designer Guide: bpmn-designer-guide.md
+    - UI Enrichment Guide: ui-enrichment-guide.md
   - API Reference:
     - REST API: api.md
     - gRPC API: grpc.md

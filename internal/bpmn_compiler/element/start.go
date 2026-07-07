@@ -8,7 +8,6 @@ import (
 type StartEventHandler struct{}
 
 func (StartEventHandler) NodeType() bpmncore.FlowNodeType { return bpmncore.NodeTypeStartEvent }
-func (StartEventHandler) EventKind() string               { return "start" }
 
 func (StartEventHandler) Validate(_ string, _ *bpmncore.BPMNProcess, _ *bpmncore.Graph, _ *bpmncore.BPMNDefinitions, _ map[string]bpmncore.StageTypeHandler, _ map[bpmncore.FlowNodeType]bpmncore.ElementHandler) []domain.BPMNValidationError {
 	return nil

@@ -25,7 +25,7 @@ func problemCode(t *testing.T, body []byte) string {
 
 // Unparseable BPMN posted to /validate must surface as 400 INVALID_BPMN_XML, not 500.
 func TestValidateBPMN_Malformed_400(t *testing.T) {
-	val := &fakeValidationSvc{validate: func(context.Context, string) (bool, []domain.BPMNValidationError, error) {
+	val := &fakeValidationSvc{validate: func(context.Context, string, []string) (bool, []domain.BPMNValidationError, error) {
 		return false, nil, fmt.Errorf("validate bpmn: %w: XML decode: unexpected EOF", domain.ErrMalformedBPMN)
 	}}
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, val)
@@ -40,7 +40,7 @@ func TestValidateBPMN_Malformed_400(t *testing.T) {
 // INVALID_BPMN_XML to the client (detection is not disclosed); the security log
 // is driven off domain.ErrForbiddenXML in the chain.
 func TestValidateBPMN_ForbiddenXML_400_Generic(t *testing.T) {
-	val := &fakeValidationSvc{validate: func(context.Context, string) (bool, []domain.BPMNValidationError, error) {
+	val := &fakeValidationSvc{validate: func(context.Context, string, []string) (bool, []domain.BPMNValidationError, error) {
 		return false, nil, fmt.Errorf("validate bpmn: %w: %w: DOCTYPE detected",
 			domain.ErrMalformedBPMN, domain.ErrForbiddenXML)
 	}}
@@ -83,10 +83,10 @@ func TestCreateWorkflow_BPMNStatusMapping(t *testing.T) {
 // The /validate response must carry every validation error, not just the first —
 // the handler emits one array element per error.
 func TestValidateBPMN_AllErrorsInResponse(t *testing.T) {
-	val := &fakeValidationSvc{validate: func(context.Context, string) (bool, []domain.BPMNValidationError, error) {
+	val := &fakeValidationSvc{validate: func(context.Context, string, []string) (bool, []domain.BPMNValidationError, error) {
 		return false, []domain.BPMNValidationError{
-			{Code: domain.BPMNErrCandidateGroupsEmpty, NodeID: "Task_1", Message: "missing role"},
-			{Code: domain.BPMNErrUnmatchedGateway, NodeID: "GW_1", Message: "no matching join"},
+			{Code: domain.BPMNErrCandidateGroupsEmpty, NodeID: "Task_1", Message: "missing role", Severity: domain.SeverityError},
+			{Code: domain.BPMNErrUnmatchedGateway, NodeID: "GW_1", Message: "no matching join", Severity: domain.SeverityError},
 		}, nil
 	}}
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, val)
@@ -97,17 +97,18 @@ func TestValidateBPMN_AllErrorsInResponse(t *testing.T) {
 
 	var body struct {
 		IsValid bool `json:"is_valid"`
-		Errors  []struct {
-			NodeID  string `json:"node_id"`
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"errors"`
+		Issues  []struct {
+			NodeID   string `json:"node_id"`
+			Code     string `json:"code"`
+			Message  string `json:"message"`
+			Severity string `json:"severity"`
+		} `json:"issues"`
 	}
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.False(t, body.IsValid)
 
-	codes := make([]string, len(body.Errors))
-	for i, e := range body.Errors {
+	codes := make([]string, len(body.Issues))
+	for i, e := range body.Issues {
 		codes[i] = e.Code
 	}
 	assert.ElementsMatch(t, []string{"CANDIDATE_GROUPS_EMPTY", "UNMATCHED_GATEWAY"}, codes)

@@ -8,18 +8,23 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// MaxPathDepth is exported for white-box tests.
+// exported for white-box tests.
 const MaxPathDepth = 2000
 
 const maxPathDepth = MaxPathDepth
 
-// ValidateReachability is exported for white-box tests.
-func ValidateReachability(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain.BPMNValidationError {
-	if len(proc.StartEvents) == 0 {
+func ValidateReachability(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, implicitStart string) []domain.BPMNValidationError {
+	startID := ""
+	if len(proc.StartEvents) > 0 {
+		startID = proc.StartEvents[0].ID
+	} else if implicitStart != "" {
+		startID = implicitStart
+	}
+	if startID == "" {
 		return nil
 	}
 	visited := make(map[string]bool)
-	bpmncore.MarkReachable(proc.StartEvents[0].ID, g, visited)
+	bpmncore.MarkReachable(startID, g, visited)
 
 	for _, be := range proc.BoundaryEvents {
 		bpmncore.MarkReachable(be.ID, g, visited)
@@ -27,7 +32,7 @@ func ValidateReachability(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domai
 
 	var errs []domain.BPMNValidationError
 	for id := range g.NodeIDs {
-		if g.NodeType[id] == bpmncore.NodeTypeBoundaryEvent {
+		if bpmncore.IsBoundaryEventType(g.NodeType[id]) {
 			continue
 		}
 		if !visited[id] {
@@ -38,8 +43,6 @@ func ValidateReachability(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domai
 	return errs
 }
 
-// ValidateLoops permits guarded rework loops and rejects unguarded ones.
-// Exported for white-box tests.
 func ValidateLoops(g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 
@@ -50,14 +53,29 @@ func ValidateLoops(g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPM
 				"self-loop is not allowed; model a loop via an exclusive gateway")
 			continue
 		}
-		if g.NodeType[src] != bpmncore.NodeTypeExclusiveGateway {
+		switch g.NodeType[src] {
+		case bpmncore.NodeTypeExclusiveGateway:
+			if _, ok := bpmncore.FirstForward(src, g, backEdges); !ok {
+				errs = AppendErr(errs, domain.BPMNErrUnguardedLoop, src,
+					"exclusive gateway has no forward exit branch; loop cannot terminate")
+			}
+		case bpmncore.NodeTypeReceiveTask:
+			// A receive task as a loop-back source is externally guarded: the
+			// process only continues when an inbound message is received. This is
+			// a valid rework pattern in multi-pool BPMN (e.g. "wait for missing
+			// docs, then retry").
+		case bpmncore.NodeTypeExternalParticipant:
+			// An external participant node is a synthetic bridge for an ignored pool.
+			// The loop is guarded by the external system — it only continues when
+			// the external participant sends a message back.
+		case bpmncore.NodeTypeStartEvent, bpmncore.NodeTypeEndEvent,
+			bpmncore.NodeTypeUserTask, bpmncore.NodeTypeSendTask,
+			bpmncore.NodeTypeParallelGateway, bpmncore.NodeTypeInclusiveGateway,
+			bpmncore.NodeTypeSubProcess, bpmncore.NodeTypeCallActivity,
+			bpmncore.NodeTypeBoundaryEvent, bpmncore.NodeTypeTimerBoundaryEvent,
+			bpmncore.NodeTypeErrorBoundaryEvent, bpmncore.NodeTypeMessageBoundaryEvent:
 			errs = AppendErr(errs, domain.BPMNErrUnguardedLoop, src,
 				"back-edge (revert flow) must originate at an exclusive gateway")
-			continue
-		}
-		if _, ok := bpmncore.FirstForward(src, g, backEdges); !ok {
-			errs = AppendErr(errs, domain.BPMNErrUnguardedLoop, src,
-				"exclusive gateway has no forward exit branch; loop cannot terminate")
 		}
 	}
 
@@ -79,7 +97,26 @@ func sccHasGuardedExit(scc []string, g *bpmncore.Graph) bool {
 		inSCC[n] = true
 	}
 	for _, n := range scc {
-		if g.NodeType[n] != bpmncore.NodeTypeExclusiveGateway {
+		switch g.NodeType[n] {
+		case bpmncore.NodeTypeExclusiveGateway,
+			bpmncore.NodeTypeInclusiveGateway,
+			bpmncore.NodeTypeParallelGateway:
+			// Any gateway with at least one branch leaving the cycle is a
+			// sufficient guard — the process can exit the loop on that branch.
+		case bpmncore.NodeTypeReceiveTask:
+			// A receive task in the SCC guards the loop via an external message
+			// trigger; the cycle can only continue when a message arrives, and
+			// any branch out of the SCC counts as an exit.
+		case bpmncore.NodeTypeExternalParticipant:
+			// A synthetic external participant bridge in the SCC means the cycle
+			// crosses an ignored pool boundary. The external system guards the
+			// loop — it only resumes when a message is sent back to this process.
+			return true
+		case bpmncore.NodeTypeStartEvent, bpmncore.NodeTypeEndEvent,
+			bpmncore.NodeTypeUserTask, bpmncore.NodeTypeSendTask,
+			bpmncore.NodeTypeSubProcess, bpmncore.NodeTypeCallActivity,
+			bpmncore.NodeTypeBoundaryEvent, bpmncore.NodeTypeTimerBoundaryEvent,
+			bpmncore.NodeTypeErrorBoundaryEvent, bpmncore.NodeTypeMessageBoundaryEvent:
 			continue
 		}
 		for _, next := range g.Outgoing[n] {
@@ -91,39 +128,35 @@ func sccHasGuardedExit(scc []string, g *bpmncore.Graph) bool {
 	return false
 }
 
-// ValidateMaxDepth checks that the longest forward path does not exceed MaxPathDepth.
-// Exported for white-box tests.
 func ValidateMaxDepth(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
 	if len(proc.StartEvents) == 0 {
 		return nil
 	}
 	memo := make(map[string]int)
-	var longest func(node string) int
-	longest = func(node string) int {
-		if d, ok := memo[node]; ok {
-			return d
-		}
-		memo[node] = 1
-		best := 1
-		for _, next := range g.Outgoing[node] {
-			if backEdges[[2]string{node, next}] {
-				continue
+	bpmncore.IterativeDFS(g, proc.StartEvents[0].ID, bpmncore.DFSVisitor{
+		OnEdge: func(from, to string, _ bool) bool {
+			return !backEdges[[2]string{from, to}]
+		},
+		OnExit: func(v string) {
+			best := 1
+			for _, next := range g.Outgoing[v] {
+				if backEdges[[2]string{v, next}] {
+					continue
+				}
+				if d := 1 + memo[next]; d > best {
+					best = d
+				}
 			}
-			if d := 1 + longest(next); d > best {
-				best = d
-			}
-		}
-		memo[node] = best
-		return best
-	}
-	if longest(proc.StartEvents[0].ID) > maxPathDepth {
+			memo[v] = best
+		},
+	})
+	if memo[proc.StartEvents[0].ID] > maxPathDepth {
 		return AppendErr(nil, domain.BPMNErrMaxDepthExceeded, proc.StartEvents[0].ID,
 			fmt.Sprintf("workflow path exceeds the maximum depth of %d nodes", maxPathDepth))
 	}
 	return nil
 }
 
-// ValidateGatewayMatching is exported for white-box tests.
 func ValidateGatewayMatching(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, gw := range proc.ParallelGateways {
@@ -144,7 +177,7 @@ func checkSplitJoin(gwID, kind string, g *bpmncore.Graph, backEdges map[[2]strin
 	}
 	joinID, ok := bpmncore.FindJoin(gwID, g, backEdges)
 	if !ok {
-		if kind == "exclusive" && allBranchesTerminate(gwID, g, backEdges) {
+		if allBranchesTerminate(gwID, g, backEdges) {
 			return nil
 		}
 		return AppendErr(nil, domain.BPMNErrUnmatchedGateway, gwID,
@@ -157,7 +190,7 @@ func checkSplitJoin(gwID, kind string, g *bpmncore.Graph, backEdges map[[2]strin
 		if bpmncore.ForwardReaches(branch, joinID, g, backEdges) {
 			continue
 		}
-		if kind == "exclusive" && branchTerminatesAtEndEvent(branch, g, backEdges) {
+		if branchTerminatesAtEndEvent(branch, g, backEdges) {
 			continue
 		}
 		return AppendErr(nil, domain.BPMNErrUnmatchedGateway, gwID,
@@ -179,27 +212,19 @@ func allBranchesTerminate(gwID string, g *bpmncore.Graph, backEdges map[[2]strin
 }
 
 func branchTerminatesAtEndEvent(start string, g *bpmncore.Graph, backEdges map[[2]string]bool) bool {
-	visited := make(map[string]bool)
-	var walk func(node string) bool
-	walk = func(node string) bool {
-		if visited[node] {
-			return false
-		}
-		visited[node] = true
-		if g.NodeType[node] == bpmncore.NodeTypeEndEvent {
-			return true
-		}
-		for _, next := range g.Outgoing[node] {
-			if backEdges[[2]string{node, next}] {
-				continue
+	found := false
+	bpmncore.IterativeDFS(g, start, bpmncore.DFSVisitor{
+		OnEnter: func(v string) bool {
+			if g.NodeType[v] == bpmncore.NodeTypeEndEvent {
+				found = true
 			}
-			if walk(next) {
-				return true
-			}
-		}
-		return false
-	}
-	return walk(start)
+			return !found
+		},
+		OnEdge: func(from, to string, _ bool) bool {
+			return !backEdges[[2]string{from, to}] && !found
+		},
+	})
+	return found
 }
 
 func forwardOutCount(node string, g *bpmncore.Graph, backEdges map[[2]string]bool) int {
@@ -212,7 +237,6 @@ func forwardOutCount(node string, g *bpmncore.Graph, backEdges map[[2]string]boo
 	return n
 }
 
-// ValidateConditionExprs is exported for white-box tests.
 func ValidateConditionExprs(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, sf := range proc.SequenceFlows {

@@ -117,39 +117,43 @@ func (s *VersionService) Publish(
 		wfPublishTotal.WithLabelValues(outcomeLabel(err)).Inc()
 		wfPublishLatency.Observe(time.Since(start).Seconds())
 	}()
-	draft, compiledJSON, artifactHash, versionNumber, assignees, businessKey, err :=
+	draft, compiledJSON, artifactHash, assignees, businessKey, err :=
 		s.publishPreFlight(ctx, tenantID, workflowID, versionID, forcePublishStructural)
 	if err != nil {
 		return nil, err
 	}
 
-	env, err := buildEnvelope(ctx, s.glueCodec, domain.EventTypeTemplatePublished, tenantID.String(),
-		"workflows/"+workflowID.String()+"/versions/"+versionID.String(),
-		userID.String(),
-		domain.TemplatePublishedPayload{
-			WorkflowID:    workflowID.String(),
-			WorkflowKey:   businessKey,
-			VersionID:     versionID.String(),
-			VersionNumber: versionNumber,
-			ArtifactHash:  artifactHash,
-			PublishedBy:   userID.String(),
-		})
-	if err != nil {
-		return nil, fmt.Errorf("build publish event: %w", err)
-	}
-
-	txIn := publishTxInput{
-		tenantID:      tenantID,
-		workflowID:    workflowID,
-		versionID:     versionID,
-		versionNumber: versionNumber,
-		compiledJSON:  compiledJSON,
-		artifactHash:  artifactHash,
-		assignees:     assignees,
-		env:           env,
-	}
+	var versionNumber int32
 	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
-		return s.runPublishTx(ctx, txIn)
+		n, err := s.versions.NextVersionNumber(ctx, tenantID, workflowID)
+		if err != nil {
+			return fmt.Errorf("next version number: %w", err)
+		}
+		versionNumber = n
+		env, err := buildEnvelope(ctx, s.glueCodec, domain.EventTypeTemplatePublished, tenantID.String(),
+			"workflows/"+workflowID.String()+"/versions/"+versionID.String(),
+			userID.String(),
+			domain.TemplatePublishedPayload{
+				WorkflowID:    workflowID.String(),
+				WorkflowKey:   businessKey,
+				VersionID:     versionID.String(),
+				VersionNumber: versionNumber,
+				ArtifactHash:  artifactHash,
+				PublishedBy:   userID.String(),
+			})
+		if err != nil {
+			return fmt.Errorf("build publish event: %w", err)
+		}
+		return s.runPublishTx(ctx, publishTxInput{
+			tenantID:      tenantID,
+			workflowID:    workflowID,
+			versionID:     versionID,
+			versionNumber: versionNumber,
+			compiledJSON:  compiledJSON,
+			artifactHash:  artifactHash,
+			assignees:     assignees,
+			env:           env,
+		})
 	}); err != nil {
 		return nil, fmt.Errorf("publish version: %w", err)
 	}
@@ -208,6 +212,7 @@ func (s *VersionService) Clone(
 		TenantID:        tenantID,
 		Status:          domain.VersionStatusDraft,
 		BPMNXML:         source.BPMNXML,
+		ModuleBPMNXMLs:  source.ModuleBPMNXMLs,
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
@@ -369,7 +374,11 @@ func (s *VersionService) resolvePlan(
 			return &plan, nil
 		}
 	}
-	return s.compiler.Compile(ctx, v.BPMNXML)
+	bundled, err := s.compiler.Bundle(v.BPMNXML, v.ModuleBPMNXMLs)
+	if err != nil {
+		return nil, fmt.Errorf("bundle modules: %w", err)
+	}
+	return s.compiler.Compile(ctx, bundled)
 }
 
 func versionLabel(v *domain.WorkflowVersion) string {

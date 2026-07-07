@@ -77,6 +77,13 @@ func toPgtypeTimestamp(t *time.Time) pgtype.Timestamp {
 	return pgtype.Timestamp{Time: *t, Valid: true}
 }
 
+func coalesceStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 func toNullableJSONB(s *string) json.RawMessage {
 	if s == nil || *s == "" {
 		return nil
@@ -140,6 +147,7 @@ func workflowVersionFromDB(row db.WorkflowVersion) *domain.WorkflowVersion {
 		CreatedAt:            fromPgtypeTimestamp(row.CreatedAt),
 		UpdatedAt:            fromPgtypeTimestamp(row.UpdatedAt),
 		RecordVersion:        row.RecordVersion,
+		ModuleBPMNXMLs:       row.ModuleBpmnXmls,
 	}
 }
 

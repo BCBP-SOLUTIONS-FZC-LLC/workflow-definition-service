@@ -21,7 +21,9 @@ type PlanCompiler interface {
 	Compile(ctx context.Context, bpmnXML string) (*domain.CompiledPlan, error)
 	CompileCollaboration(ctx context.Context, bpmnXML string) (*domain.CompiledCollaboration, error)
 	Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error)
-	Hash(bpmnXML string) (string, error)
+	Hash(ctx context.Context, bpmnXML string) (string, error)
+	// Bundle merges module BPMNs into mainXML before compile/validate.
+	Bundle(mainXML string, moduleXMLs []string) (string, error)
 }
 
 type Authorizer interface {

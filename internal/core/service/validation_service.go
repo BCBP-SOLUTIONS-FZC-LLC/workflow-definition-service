@@ -29,14 +29,28 @@ func NewValidationService(d ValidationDeps) *ValidationService {
 func (s *ValidationService) Validate(
 	ctx context.Context,
 	bpmnXML string,
+	moduleXMLs []string,
 ) (isValid bool, errs []domain.BPMNValidationError, err error) {
-	validationErrs, err := s.compiler.Validate(ctx, bpmnXML)
+	bundled, err := s.compiler.Bundle(bpmnXML, moduleXMLs)
+	if err != nil {
+		return false, nil, fmt.Errorf("bundle modules: %w", err)
+	}
+	validationErrs, err := s.compiler.Validate(ctx, bundled)
 	if err != nil {
 		return false, nil, fmt.Errorf("validate bpmn: %w", err)
 	}
-	if len(validationErrs) > 0 {
+	if hasBlockingError(validationErrs) {
 		wfValidationFailuresTotal.Inc()
 		return false, validationErrs, nil
 	}
-	return true, nil, nil
+	return true, validationErrs, nil
+}
+
+func hasBlockingError(errs []domain.BPMNValidationError) bool {
+	for _, e := range errs {
+		if e.Severity == domain.SeverityError {
+			return true
+		}
+	}
+	return false
 }

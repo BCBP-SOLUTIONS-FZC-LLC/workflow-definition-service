@@ -318,7 +318,7 @@ func TestBuildStageDef_AllStageTypes(t *testing.T) {
 				"role":             "preparer",
 				"default_user_ids": aliceUUID,
 			})
-			stage, err := bpmncore.BuildStageDef(task, defaultStageTypes(), &bpmncore.BPMNProcess{})
+			stage, err := bpmncore.BuildStageDef(task, defaultStageTypes(), &bpmncore.BPMNProcess{}, nil)
 			if err != nil {
 				t.Fatalf("BuildStageDef() error: %v", err)
 			}
@@ -339,12 +339,12 @@ func TestBuildStageDef_OptionalFields(t *testing.T) {
 		"default_user_ids": aliceUUID,
 		"requires_comment": "true",
 	})
-	stage, err := bpmncore.BuildStageDef(task, defaultStageTypes(), &bpmncore.BPMNProcess{})
+	stage, err := bpmncore.BuildStageDef(task, defaultStageTypes(), &bpmncore.BPMNProcess{}, nil)
 	if err != nil {
 		t.Fatalf("BuildStageDef() error: %v", err)
 	}
-	if !stage.RequiresComment {
-		t.Error("RequiresComment = false, want true")
+	if stage.Extras["requires_comment"] != "true" {
+		t.Errorf("Extras[requires_comment] = %q, want true", stage.Extras["requires_comment"])
 	}
 	if len(stage.DefaultAssignees) != 1 {
 		t.Errorf("DefaultAssignees len = %d, want 1", len(stage.DefaultAssignees))
@@ -357,12 +357,9 @@ func TestBuildStageDef_AbsentOptionalFields(t *testing.T) {
 		"role":             "preparer",
 		"default_user_ids": aliceUUID,
 	})
-	stage, err := bpmncore.BuildStageDef(task, defaultStageTypes(), &bpmncore.BPMNProcess{})
+	stage, err := bpmncore.BuildStageDef(task, defaultStageTypes(), &bpmncore.BPMNProcess{}, nil)
 	if err != nil {
 		t.Fatalf("BuildStageDef() error: %v", err)
-	}
-	if stage.RequiresComment {
-		t.Error("RequiresComment = true, want false")
 	}
 	if stage.BoundaryTimer != nil {
 		t.Errorf("BoundaryTimer = %v, want nil", stage.BoundaryTimer)
@@ -374,9 +371,15 @@ func TestBuildStageDef_UnknownStageType(t *testing.T) {
 		"stage_type": "audit",
 		"role":       "preparer",
 	})
-	_, err := bpmncore.BuildStageDef(task, defaultStageTypes(), &bpmncore.BPMNProcess{})
-	if err == nil {
-		t.Error("BuildStageDef() with unknown stage_type should return error")
+	stage, err := bpmncore.BuildStageDef(task, defaultStageTypes(), &bpmncore.BPMNProcess{}, nil)
+	if err != nil {
+		t.Fatalf("BuildStageDef() unexpected error for unknown stage type: %v", err)
+	}
+	if stage.Type != "audit" {
+		t.Errorf("expected Type=%q, got %q", "audit", stage.Type)
+	}
+	if stage.EngineNote == "" {
+		t.Error("expected non-empty EngineNote for unknown stage type")
 	}
 }
 
@@ -633,12 +636,9 @@ func TestAddToSeqBuf_Dedup(t *testing.T) {
 func TestTraverseNode_AlreadyVisited(t *testing.T) {
 	g := &bpmncore.Graph{NodeType: map[string]bpmncore.FlowNodeType{}}
 	state := bpmncore.NewCompileState(&bpmncore.BPMNProcess{}, g, nil, nil, nil, defaultStageTypes(), element.DefaultElementHandlers(), nil)
-	// Mark T1 as visited by traversing an end event (no-op) and then check manually.
-	// We use IsVisited after manually causing a visit via HandleGateway passthrough.
-	// Simpler: just call TraverseNode on a node with no handler — it visits and returns nil.
-	g.NodeType["T1"] = bpmncore.NodeTypeStartEvent // no handler → no-op
+	g.NodeType["T1"] = bpmncore.NodeTypeStartEvent
 	_ = state.TraverseNode("T1")
-	err := state.TraverseNode("T1") // second call should be no-op
+	err := state.TraverseNode("T1")
 	if err != nil {
 		t.Errorf("TraverseNode() on already-visited node should return nil, got %v", err)
 	}
@@ -660,8 +660,10 @@ func TestTraverseBranches_DeadEndBeforeJoin(t *testing.T) {
 	if err != nil {
 		t.Errorf("TraverseBranches() with dead-end branch should not error, got %v", err)
 	}
-	if len(depts) != 0 {
-		t.Errorf("expected empty depts for dead-end branch, got %v", depts)
+	// Dead-end branch still produces one ParallelBranch entry (with empty DeptID
+	// and no steps) so the caller can see the branch exists in the execution plan.
+	if len(depts) != 1 || depts[0].DeptID != "" || len(depts[0].Steps) != 0 {
+		t.Errorf("expected one empty branch for dead-end, got %v", depts)
 	}
 }
 
@@ -731,5 +733,33 @@ func taskWithProps(props map[string]string) *bpmncore.BPMNUserTask {
 			AssignmentDefinition: assignDef,
 			ZeebeProps:           bpmncore.BPMNZeebeProperties{Items: items},
 		},
+	}
+}
+
+func TestStepsHaveCallPool(t *testing.T) {
+	if stepsHaveCallPool(nil) {
+		t.Error("nil steps: expected false")
+	}
+	if stepsHaveCallPool([]domain.ExecutionStep{{Sequential: []string{"dept"}}}) {
+		t.Error("no call pool anywhere: expected false")
+	}
+	if !stepsHaveCallPool([]domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "other"}}}) {
+		t.Error("top-level call pool: expected true")
+	}
+	nestedInParallel := []domain.ExecutionStep{{
+		Parallel: []domain.ParallelBranch{{
+			Steps: []domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "other"}}},
+		}},
+	}}
+	if !stepsHaveCallPool(nestedInParallel) {
+		t.Error("call pool nested in parallel branch: expected true")
+	}
+	nestedInSubWorkflow := []domain.ExecutionStep{{
+		SubWorkflow: &domain.SubWorkflowStep{
+			Plan: domain.ExecutionPlan{Steps: []domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "other"}}}},
+		},
+	}}
+	if !stepsHaveCallPool(nestedInSubWorkflow) {
+		t.Error("call pool nested in sub_workflow: expected true")
 	}
 }

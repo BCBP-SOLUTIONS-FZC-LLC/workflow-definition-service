@@ -7,13 +7,15 @@ import (
 )
 
 type validateBPMNReq struct {
-	BPMNXML string `json:"bpmn_xml" binding:"required"`
+	BPMNXML        string   `json:"bpmn_xml" binding:"required"`
+	ModuleBPMNXMLs []string `json:"module_bpmn_xmls"`
 }
 
-type bpmnErrorResp struct {
-	NodeID  string `json:"node_id"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
+type bpmnIssueResp struct {
+	NodeID   string `json:"node_id"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	Severity string `json:"severity"`
 }
 
 func (h *Handler) ValidateBPMN(c *gin.Context) {
@@ -28,24 +30,25 @@ func (h *Handler) ValidateBPMN(c *gin.Context) {
 		return
 	}
 
-	isValid, errs, err := h.validation.Validate(c.Request.Context(), req.BPMNXML)
+	isValid, errs, err := h.validation.Validate(c.Request.Context(), req.BPMNXML, req.ModuleBPMNXMLs)
 	if err != nil {
 		h.logForbiddenXML(c, err)
 		errResponse(c, h.log, err)
 		return
 	}
 
-	errResps := make([]bpmnErrorResp, len(errs))
+	issues := make([]bpmnIssueResp, len(errs))
 	for i, e := range errs {
-		errResps[i] = bpmnErrorResp{
-			NodeID:  e.NodeID,
-			Code:    string(e.Code),
-			Message: e.Message,
+		issues[i] = bpmnIssueResp{
+			NodeID:   e.NodeID,
+			Code:     string(e.Code),
+			Message:  e.Message,
+			Severity: string(e.Severity),
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"is_valid": isValid,
-		"errors":   errResps,
+		"issues":   issues,
 	})
 }

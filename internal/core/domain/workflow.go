@@ -44,8 +44,9 @@ type WorkflowVersion struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	// RecordVersion is the optimistic-lock token bumped by the DB trigger on
-	// every real update; supplied by clients on draft update (GAP-1).
-	RecordVersion int64
+	// every real update; supplied by clients on draft update.
+	RecordVersion  int64
+	ModuleBPMNXMLs []string // one entry per called-process BPMN; empty for most workflows
 }
 
 type NodeAssignee struct {

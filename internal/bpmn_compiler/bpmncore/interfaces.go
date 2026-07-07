@@ -14,21 +14,6 @@ type ElementHandler interface {
 	Compile(nodeID string, cs *CompileState) error
 }
 
-type EventHandler interface {
-	ElementHandler
-	EventKind() string // "start" | "end" | "boundary"
-}
-
-type ActivityHandler interface {
-	ElementHandler
-	ActivityKind() string // "userTask" | "subProcess"
-}
-
-type GatewayHandler interface {
-	ElementHandler
-	GatewayKind() string // "exclusive" | "parallel" | "inclusive"
-}
-
 // Custom stage types are registered via WithStageType on the Compiler.
 type StageTypeHandler interface {
 	ID() string           // taskDefinition type attribute value: "prep", "review", "approve"

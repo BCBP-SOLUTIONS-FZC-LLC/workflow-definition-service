@@ -36,42 +36,55 @@ var (
 type BPMNErrorCode string
 
 const (
-	BPMNErrRejectedElement             BPMNErrorCode = "REJECTED_ELEMENT"
-	BPMNErrUnsupportedElement          BPMNErrorCode = "UNSUPPORTED_ELEMENT"
-	BPMNErrMissingNamespace            BPMNErrorCode = "MISSING_NAMESPACE"
-	BPMNErrMissingTaskDefinition       BPMNErrorCode = "MISSING_TASK_DEFINITION"
-	BPMNErrMissingAssignmentDefinition BPMNErrorCode = "MISSING_ASSIGNMENT_DEFINITION"
-	BPMNErrInvalidTaskDefinitionType   BPMNErrorCode = "INVALID_TASK_DEFINITION_TYPE"
-	BPMNErrTaskNotInLane               BPMNErrorCode = "TASK_NOT_IN_LANE"
-	BPMNErrCandidateGroupsEmpty        BPMNErrorCode = "CANDIDATE_GROUPS_EMPTY"
-	BPMNErrInvalidCandidateUser        BPMNErrorCode = "INVALID_CANDIDATE_USER"
-	BPMNErrInvalidSLADuration          BPMNErrorCode = "INVALID_SLA_DURATION"
-	BPMNErrInvalidConditionExpression  BPMNErrorCode = "INVALID_CONDITION_EXPRESSION"
-	BPMNErrMissingMessageDefinition    BPMNErrorCode = "MISSING_MESSAGE_DEFINITION"
-	BPMNErrUnmatchedMessageFlow        BPMNErrorCode = "UNMATCHED_MESSAGE_FLOW"
-	BPMNErrTaskLimitExceeded           BPMNErrorCode = "TASK_LIMIT_EXCEEDED"
-	BPMNErrLaneLimitExceeded           BPMNErrorCode = "LANE_LIMIT_EXCEEDED"
-	BPMNErrMultipleStartEvents         BPMNErrorCode = "MULTIPLE_START_EVENTS"
-	BPMNErrMultipleEndEvents           BPMNErrorCode = "MULTIPLE_END_EVENTS"
-	BPMNErrNoStartEvent                BPMNErrorCode = "NO_START_EVENT"
-	BPMNErrNoEndEvent                  BPMNErrorCode = "NO_END_EVENT"
-	BPMNErrDanglingNode                BPMNErrorCode = "DANGLING_NODE"
-	BPMNErrUnreachableNode             BPMNErrorCode = "UNREACHABLE_NODE"
-	BPMNErrCycleDetected               BPMNErrorCode = "CYCLE_DETECTED"
-	BPMNErrUnguardedLoop               BPMNErrorCode = "UNGUARDED_LOOP"
-	BPMNErrMaxDepthExceeded            BPMNErrorCode = "MAX_DEPTH_EXCEEDED"
-	BPMNErrUnmatchedGateway            BPMNErrorCode = "UNMATCHED_GATEWAY"
-	BPMNErrInvalidSequenceFlowRef      BPMNErrorCode = "INVALID_SEQUENCE_FLOW_REF"
-	BPMNErrMultipleProcesses           BPMNErrorCode = "MULTIPLE_PROCESSES"
-	BPMNErrInvalidBoundaryAttachment   BPMNErrorCode = "INVALID_BOUNDARY_ATTACHMENT"
-	BPMNErrMissingDiagram              BPMNErrorCode = "MISSING_DIAGRAM"
-	BPMNErrMissingDiagramShape         BPMNErrorCode = "MISSING_DIAGRAM_SHAPE"
+	BPMNErrRejectedElement              BPMNErrorCode = "REJECTED_ELEMENT"
+	BPMNErrUnsupportedElement           BPMNErrorCode = "UNSUPPORTED_ELEMENT"
+	BPMNErrMissingNamespace             BPMNErrorCode = "MISSING_NAMESPACE"
+	BPMNErrMissingTaskDefinition        BPMNErrorCode = "MISSING_TASK_DEFINITION"
+	BPMNErrMissingAssignmentDefinition  BPMNErrorCode = "MISSING_ASSIGNMENT_DEFINITION"
+	BPMNErrInvalidTaskDefinitionType    BPMNErrorCode = "INVALID_TASK_DEFINITION_TYPE"
+	BPMNWarnUnknownStageType            BPMNErrorCode = "UNKNOWN_STAGE_TYPE"
+	BPMNErrTaskNotInLane                BPMNErrorCode = "TASK_NOT_IN_LANE"
+	BPMNErrCandidateGroupsEmpty         BPMNErrorCode = "CANDIDATE_GROUPS_EMPTY"
+	BPMNErrInvalidCandidateUser         BPMNErrorCode = "INVALID_CANDIDATE_USER"
+	BPMNErrInvalidSLADuration           BPMNErrorCode = "INVALID_SLA_DURATION"
+	BPMNErrInvalidConditionExpression   BPMNErrorCode = "INVALID_CONDITION_EXPRESSION"
+	BPMNErrMissingMessageDefinition     BPMNErrorCode = "MISSING_MESSAGE_DEFINITION"
+	BPMNErrUnmatchedMessageFlow         BPMNErrorCode = "UNMATCHED_MESSAGE_FLOW"
+	BPMNErrTaskLimitExceeded            BPMNErrorCode = "TASK_LIMIT_EXCEEDED"
+	BPMNErrLaneLimitExceeded            BPMNErrorCode = "LANE_LIMIT_EXCEEDED"
+	BPMNErrMultipleStartEvents          BPMNErrorCode = "MULTIPLE_START_EVENTS"
+	BPMNErrMultipleEndEvents            BPMNErrorCode = "MULTIPLE_END_EVENTS"
+	BPMNErrNoStartEvent                 BPMNErrorCode = "NO_START_EVENT"
+	BPMNErrNoEndEvent                   BPMNErrorCode = "NO_END_EVENT"
+	BPMNErrDanglingNode                 BPMNErrorCode = "DANGLING_NODE"
+	BPMNErrUnreachableNode              BPMNErrorCode = "UNREACHABLE_NODE"
+	BPMNErrCycleDetected                BPMNErrorCode = "CYCLE_DETECTED"
+	BPMNErrUnguardedLoop                BPMNErrorCode = "UNGUARDED_LOOP"
+	BPMNErrMaxDepthExceeded             BPMNErrorCode = "MAX_DEPTH_EXCEEDED"
+	BPMNErrUnmatchedGateway             BPMNErrorCode = "UNMATCHED_GATEWAY"
+	BPMNErrInvalidSequenceFlowRef       BPMNErrorCode = "INVALID_SEQUENCE_FLOW_REF"
+	BPMNErrMultipleProcesses            BPMNErrorCode = "MULTIPLE_PROCESSES"
+	BPMNErrInvalidBoundaryAttachment    BPMNErrorCode = "INVALID_BOUNDARY_ATTACHMENT"
+	BPMNErrMissingDiagram               BPMNErrorCode = "MISSING_DIAGRAM"
+	BPMNErrMissingDiagramShape          BPMNErrorCode = "MISSING_DIAGRAM_SHAPE"
+	BPMNErrInvalidZeebeProperty         BPMNErrorCode = "INVALID_ZEEBE_PROPERTY"
+	BPMNErrUnresolvedCalledElement      BPMNErrorCode = "UNRESOLVED_CALLED_ELEMENT"
+	BPMNErrNestedSubProcessNotSupported BPMNErrorCode = "NESTED_SUBPROCESS_NOT_SUPPORTED"
+	BPMNErrMissingDeptInputForModule    BPMNErrorCode = "MISSING_DEPT_INPUT_FOR_MODULE"
+)
+
+type BPMNValidationSeverity string
+
+const (
+	SeverityError   BPMNValidationSeverity = "error"
+	SeverityWarning BPMNValidationSeverity = "warning"
 )
 
 type BPMNValidationError struct {
-	Code    BPMNErrorCode
-	NodeID  string
-	Message string
+	Code     BPMNErrorCode
+	NodeID   string
+	Message  string
+	Severity BPMNValidationSeverity
 }
 
 func (e *BPMNValidationError) Error() string {

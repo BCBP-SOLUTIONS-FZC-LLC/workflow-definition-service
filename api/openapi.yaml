@@ -199,22 +199,47 @@ components:
 
     StageDef:
       type: object
-      required: [type, activity, role, default_assignees]
+      required: [type, activity, role]
       properties:
         type:
           type: string
-          enum: [prep, review, approve]
-          description: "IAM authorization tier for this stage. Sourced from zeebe:taskDefinition type on the BPMN userTask."
+          description: >
+            Stage type sourced from zeebe:taskDefinition on the BPMN element.
+            Built-in values: prep, review, approve (userTask); send_task, receive_task (sendTask/receiveTask).
+            Unknown types are forwarded as passthrough with engine_note set.
         activity:            { type: string }
         role:
           type: string
           description: "IAM role level name passed as '?level=<role>' to the Org & Membership eligibility endpoint at publish time. Sourced from zeebe:assignmentDefinition candidateGroups."
         default_assignees:
           type: array
+          nullable: true
           items: { type: string, format: uuid }
           minItems: 1
-          description: "Default assignee UUID(s). Sourced from zeebe:assignmentDefinition candidateUsers."
-        requires_comment:    { type: boolean, default: false }
+          description: "Default assignee UUID(s). Sourced from zeebe:assignmentDefinition candidateUsers. Omitted when assignment is not set — optional for send_task/receive_task stage types."
+        is_zeebe_user_task:
+          type: boolean
+          description: "true when the userTask carries a bare <zeebe:userTask/> marker extension element (no taskDefinition/assignmentDefinition required in that case). Omitted (false) otherwise."
+        node_id:
+          type: string
+          description: "Stable BPMN element ID (e.g. 'Activity_0abc123'). Suitable for machine-addressable routing."
+        due_date:
+          type: string
+          nullable: true
+          description: "FEEL expression or ISO 8601 datetime for the task due date. Sourced from zeebe:taskSchedule dueDate. Absent when not set in BPMN."
+        follow_up_date:
+          type: string
+          nullable: true
+          description: "FEEL expression or ISO 8601 datetime for the task follow-up date. Sourced from zeebe:taskSchedule followUpDate. Absent when not set in BPMN."
+        extras:
+          type: object
+          nullable: true
+          additionalProperties: { type: string }
+          description: "Forward of every zeebe:property from the BPMN task, unmodified — the compiler does not special-case any property name. Also carries 'message' for send_task/receive_task stage types."
+        engine_note:
+          type: string
+          nullable: true
+          description: "Advisory note set when stage type is not a registered engine class (IAM-owned passthrough). Absent for known types."
         boundary_timer:
           type: object
           nullable: true
@@ -222,12 +247,18 @@ components:
           properties:
             duration:     { type: string, description: "ISO 8601 duration (e.g. 'PT48H', 'P3D')." }
             interrupting: { type: boolean, description: "true = task cancelled on fire; false = escalation runs concurrently." }
+            target_dept:  { type: string, nullable: true, description: "Department key to route the escalation path to, if set." }
+        boundary_message:
+          allOf: [{ $ref: '#/components/schemas/MessagePath' }]
+          nullable: true
+          description: "Correlation info from a message boundary event on the task. Null when no message boundary is attached."
       example:
         type: prep
         activity: PrepActivity
+        node_id: Activity_0abc123
         role: preparator
         default_assignees: [550e8400-e29b-41d4-a716-446655440000]
-        requires_comment: false
+        extras: { requires_comment: "false" }
         boundary_timer: { duration: "PT24H", interrupting: false }
 
     DepartmentDef:
@@ -238,6 +269,14 @@ components:
           type: string
           description: "Department identifier from the BPMN lane name. Sourced from the lane name attribute; format is owned by the Profile Service."
         label:  { type: string }
+        ignore:
+          type: boolean
+          description: "true when the lane carries a <zeebe:property name=\"ignore\" value=\"true\"/> extension — marks an ignored-pool lane. Omitted (false) otherwise."
+        props:
+          type: object
+          nullable: true
+          additionalProperties: { type: string }
+          description: "Arbitrary key/value pairs forwarded from <zeebe:properties> on the lane element."
         stages:
           type: array
           items: { $ref: '#/components/schemas/StageDef' }
@@ -249,17 +288,17 @@ components:
             activity: PrepActivity
             role: bd-agent
             default_assignees: [018e1f2a-0000-7000-8000-000000000001]
-            requires_comment: false
+            extras: { requires_comment: "false" }
           - type: review
             activity: ReviewActivity
             role: tender-manager
             default_assignees: [018e1f2a-0000-7000-8000-000000000002]
-            requires_comment: true
+            extras: { requires_comment: "true" }
           - type: approve
             activity: ApproveActivity
             role: tender-director
             default_assignees: [018e1f2a-0000-7000-8000-000000000003]
-            requires_comment: true
+            extras: { requires_comment: "true" }
 
     ExecutionStep:
       type: object
@@ -269,40 +308,161 @@ components:
           items: { type: string }
         parallel:
           type: array
-          items: { type: string }
+          description: "Each entry is a parallel branch with its own sequential execution steps."
+          items:
+            $ref: '#/components/schemas/ParallelBranch'
         exclusive:
           type: array
           items:
-            oneOf:
-              - type: string
-              - type: object
-                required: [target, condition_expression]
+            type: object
+            required: [condition_expression]
+            properties:
+              target:
+                type: string
+                description: >
+                  Destination department for a forward branch. Omitted when the branch
+                  terminates the workflow (see terminates) or on a revert branch.
+              target_stage:  { type: string }
+              target_node_id:
+                type: string
+                description: "Stable BPMN element ID of the forward target. Use this for machine routing instead of target_name."
+              target_name:
+                type: string
+                description: >
+                  BPMN element name of the target node. Present when target_stage is
+                  "sub_workflow" (disambiguates multiple subworkflows in the same dept)
+                  or empty (task has no zeebe:taskDefinition).
+              condition_expression: { type: string }
+              terminates:
+                type: boolean
+                description: "True when this forward branch leads directly to an end event."
+              revert_to_dept:
+                type: string
+                description: >
+                  Set on a guarded-loop revert branch (a back-edge from this exclusive gateway):
+                  the department to revert to. Present instead of a populated target.
+              revert_to_stage:
+                type: string
+                description: "Set with revert_to_dept: the stage level to revert to."
+              revert_to_node_id:
+                type: string
+                description: "Stable BPMN element ID of the revert target. Use for machine routing."
+              revert_to_name:
+                type: string
+                description: >
+                  BPMN element name of the revert target. Present when revert_to_stage
+                  is "sub_workflow" or empty, same rules as target_name.
+        sub_workflow:
+          $ref: '#/components/schemas/SubWorkflowStep'
+          nullable: true
+        call_pool:
+          type: object
+          nullable: true
+          description: "Present when this step hands control to another compiled pool (Temporal child workflow). Only emitted by the main pool."
+          required: [pool]
+          properties:
+            pool: { type: string, description: "Name of the target CompiledPlan." }
+        io_mapping:
+          type: object
+          nullable: true
+          description: "Variable input/output declarations for a callActivity step. Attached to the first step of a flattened callActivity. The Execution Service uses this to pass variables when creating child workflows. dept_id is compiler-internal and is NOT emitted here."
+          properties:
+            inputs:
+              type: array
+              items:
+                type: object
+                required: [source, target]
                 properties:
-                  target:
-                    type: string
-                    description: >
-                      Destination department for a forward branch. Empty string when the branch
-                      terminates the workflow (routes straight to the end event), and empty on a revert
-                      branch (which routes via revert_to_dept/revert_to_stage instead).
-                  condition_expression: { type: string }
-                  revert_to_dept:
-                    type: string
-                    description: >
-                      Set on a guarded-loop revert branch (a back-edge from this exclusive gateway):
-                      the department to revert to. Present instead of a populated target.
-                  revert_to_stage:
-                    type: string
-                    enum: [prep, review, approve]
-                    description: "Set with revert_to_dept: the stage level (prep, review, or approve) to revert to."
+                  source: { type: string, description: "FEEL expression or literal variable name from the caller's context." }
+                  target: { type: string, description: "Variable name in the called process context." }
+            outputs:
+              type: array
+              items:
+                type: object
+                required: [source, target]
+                properties:
+                  source: { type: string }
+                  target: { type: string }
+        extras:
+          type: object
+          nullable: true
+          additionalProperties: { type: string }
+          description: "Forward of unknown zeebe:properties from a callActivity element. Attached to the first step of a flattened callActivity."
+        message_paths:
+          type: array
+          nullable: true
+          items: { $ref: '#/components/schemas/MessagePath' }
+          description: "Message boundary events attached to a callActivity, flattened into its first step."
       example:
         sequential: [design, planning, construction]
 
+    ParallelBranch:
+      type: object
+      required: [dept, steps]
+      properties:
+        dept:
+          type: string
+          description: "Lead department ID for this branch (qualified with plan name prefix)."
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/ExecutionStep' }
+
+    SubWorkflowStep:
+      type: object
+      required: [name, plan]
+      properties:
+        node_id:     { type: string, description: "Stable BPMN element ID of the subProcess element." }
+        name:        { type: string }
+        plan:
+          type: object
+          properties:
+            steps:
+              type: array
+              items: { $ref: '#/components/schemas/ExecutionStep' }
+        error_paths:
+          type: array
+          items: { $ref: '#/components/schemas/ErrorPath' }
+        timer_paths:
+          type: array
+          items: { $ref: '#/components/schemas/TimerPath' }
+        message_paths:
+          type: array
+          items: { $ref: '#/components/schemas/MessagePath' }
+          description: "From message boundary events attached to the subProcess."
+
+    ErrorPath:
+      type: object
+      required: [short_circuit]
+      properties:
+        error_code:   { type: string, nullable: true, description: "BPMN error code that triggers this path. Empty means catch-all." }
+        short_circuit: { type: boolean, description: "true = bypass remaining stages and route directly to target_dept." }
+        target_dept:  { type: string, nullable: true, description: "Department to route to on this error path." }
+
+    TimerPath:
+      type: object
+      required: [duration, interrupting]
+      properties:
+        duration:     { type: string, description: "ISO 8601 duration string." }
+        interrupting: { type: boolean, description: "true = task cancelled on fire; false = escalation runs concurrently." }
+        target_dept:  { type: string, nullable: true, description: "Department to route to on this timer path." }
+
+    MessagePath:
+      type: object
+      required: [message_name, interrupting]
+      properties:
+        message_name: { type: string, description: "Resolved message name used for runtime correlation. May be empty if the source BPMN's message flow/messageRef could not be resolved (see MISSING_MESSAGE_DEFINITION warning)." }
+        interrupting: { type: boolean, description: "true = host activity cancelled on fire; false = escalation runs concurrently." }
+        target_dept:  { type: string, nullable: true, description: "Department to route to on this message path, if set." }
+
     CompiledPlan:
       type: object
-      required: [name, task_queue, departments, execution]
+      required: [name, departments, execution]
       properties:
         name:        { type: string }
-        task_queue:  { type: string }
+        task_queue:  { type: string, description: "Temporal task queue. Omitted for ignored pools." }
+        ignored:
+          type: boolean
+          description: "True when this pool was marked ignore=true in the BPMN. Consumers decide how to handle it."
         departments:
           type: array
           items: { $ref: '#/components/schemas/DepartmentDef' }
@@ -312,6 +472,11 @@ components:
             steps:
               type: array
               items: { $ref: '#/components/schemas/ExecutionStep' }
+        visual_elements:
+          type: array
+          nullable: true
+          description: "Visual-only BPMN elements (e.g. dataStoreReference) that carry no execution semantics. Informational only."
+          items: { $ref: '#/components/schemas/VisualElementDef' }
       example:
         name: Tender Document Review Process
         task_queue: wf-queue-default
@@ -319,13 +484,13 @@ components:
           - id: Tender
             label: Tender
             stages:
-              - { type: prep,    activity: PrepActivity,    role: bd-agent,       default_assignees: [018e1f2a-0000-7000-8000-000000000001], requires_comment: false }
-              - { type: review,  activity: ReviewActivity,  role: tender-manager, default_assignees: [018e1f2a-0000-7000-8000-000000000002], requires_comment: true }
-              - { type: approve, activity: ApproveActivity, role: tender-director, default_assignees: [018e1f2a-0000-7000-8000-000000000003], requires_comment: true }
+              - { type: prep,    activity: PrepActivity,    role: bd-agent,       default_assignees: [018e1f2a-0000-7000-8000-000000000001], extras: { requires_comment: "false" } }
+              - { type: review,  activity: ReviewActivity,  role: tender-manager, default_assignees: [018e1f2a-0000-7000-8000-000000000002], extras: { requires_comment: "true" } }
+              - { type: approve, activity: ApproveActivity, role: tender-director, default_assignees: [018e1f2a-0000-7000-8000-000000000003], extras: { requires_comment: "true" } }
           - id: Engineering
             label: Engineering
             stages:
-              - { type: prep,    activity: PrepActivity,    role: lead-engineer,  default_assignees: [018e1f2a-0000-7000-8000-000000000010], requires_comment: false, boundary_timer: { duration: "PT48H", interrupting: false } }
+              - { type: prep,    activity: PrepActivity,    role: lead-engineer,  default_assignees: [018e1f2a-0000-7000-8000-000000000010], extras: { requires_comment: "false" }, boundary_timer: { duration: "PT48H", interrupting: false } }
         execution:
           steps:
             - sequential: [Tender, Engineering]
@@ -339,7 +504,7 @@ components:
       example:
         description: "Step 1 changed from sequential to parallel"
         before: { sequential: [design, planning] }
-        after:  { parallel:   [design, planning] }
+        after:  { parallel: [{dept: design, steps: []}, {dept: planning, steps: []}] }
 
     ProblemDetails:
       type: object
@@ -385,71 +550,97 @@ components:
         instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222"
         code: "NOT_FOUND"
 
+    VisualElementDef:
+      type: object
+      required: [kind, id]
+      properties:
+        kind: { type: string, description: "Element type tag (e.g. dataStoreReference)." }
+        id:   { type: string, description: "BPMN element ID." }
+        name: { type: string, nullable: true, description: "Display name, if set on the element." }
+
+    BpmnValidationSeverity:
+      type: string
+      description: "Severity of a BPMN validation issue. error = compilation blocked; warning = advisory only, compilation succeeds."
+      enum: [error, warning]
+
     BpmnErrorCode:
       type: string
-      description: Machine-readable BPMN validation error code.
+      description: Machine-readable BPMN validation issue code.
       enum:
         - REJECTED_ELEMENT              # Element on the Tier-3 parser denylist
+        - UNSUPPORTED_ELEMENT           # Element type recognised but not supported by this service
         - MISSING_NAMESPACE             # Required bpmn or zeebe namespace missing
-        - MISSING_TASK_DEFINITION       # zeebe:taskDefinition absent on a userTask
+        - MISSING_TASK_DEFINITION       # zeebe:taskDefinition absent on a userTask; also raised for a boundary event with no event definition (timer/error/message)
         - MISSING_ASSIGNMENT_DEFINITION # zeebe:assignmentDefinition absent on a userTask
-        - INVALID_TASK_DEFINITION_TYPE  # taskDefinition.type not in the registered StageTypeHandler set
+        - INVALID_TASK_DEFINITION_TYPE  # deprecated: superseded by UNKNOWN_STAGE_TYPE (warning)
+        - UNKNOWN_STAGE_TYPE            # taskDefinition.type not in the registered StageTypeHandler set; warning severity — compilation continues with passthrough StageDef
         - TASK_NOT_IN_LANE              # userTask not listed in any lane via flowNodeRef
         - CANDIDATE_GROUPS_EMPTY        # candidateGroups absent or exceeds 256 chars
-        - INVALID_CANDIDATE_USER        # candidateUsers is not a valid UUID v7
+        - INVALID_CANDIDATE_USER        # candidateUsers is not a valid UUID (any version)
         - INVALID_CONDITION_EXPRESSION  # conditionExpression exceeds 4096 chars
         - INVALID_SLA_DURATION          # timer boundary duration is not valid ISO 8601 or Go duration
-        - INVALID_ZEEBE_PROPERTY        # requires_comment is not a parseable boolean
-        - MISSING_MESSAGE_DEFINITION    # messageRef references an undeclared bpmn:message
+        - INVALID_ZEEBE_PROPERTY        # warning severity — zeebe:ioMapping target="Depts" input source is not valid JSON / map[string]string
+        - MISSING_MESSAGE_DEFINITION    # error severity when a messageFlow's messageRef references an undeclared bpmn:message; warning severity when a message boundary event's or collaboration messageFlow's name cannot be resolved at all
         - UNMATCHED_MESSAGE_FLOW        # message flow source/target does not reference a known element
         - TASK_LIMIT_EXCEEDED           # userTask count > 1000
         - LANE_LIMIT_EXCEEDED           # lane count > 100
         - MULTIPLE_START_EVENTS         # more than one startEvent in the process
-        - MULTIPLE_END_EVENTS           # multiple endEvents where none are guarded
+        - MULTIPLE_END_EVENTS           # deprecated: not currently raised by the compiler (multiple end events are valid)
         - NO_START_EVENT                # process has no startEvent
         - NO_END_EVENT                  # process has no endEvent
         - DANGLING_NODE                 # node has no incoming or outgoing sequence flow
         - UNREACHABLE_NODE              # node not reachable from startEvent via DFS
         - CYCLE_DETECTED                # Tarjan SCC found a strongly-connected component without a guarded exit
-        - UNGUARDED_LOOP                # back-edge originates at a gateway with no forward exit
+        - UNGUARDED_LOOP                # a back-edge is a self-loop, originates at an exclusive gateway with no forward exit, or originates at a node type that may not source a back-edge
         - UNMATCHED_GATEWAY             # split gateway has no reachable matching join gateway
         - INVALID_SEQUENCE_FLOW_REF     # sequenceFlow references unknown sourceRef or targetRef
         - MULTIPLE_PROCESSES            # more than one bpmn:process without a wrapping collaboration
         - MAX_DEPTH_EXCEEDED            # longest forward path exceeds 2000 nodes
+        - INVALID_BOUNDARY_ATTACHMENT   # more than one event definition on a boundary event, more than one timer boundary on the same host, an error boundary attached to a host other than subProcess/callActivity, or an unknown errorRef
+        - MISSING_DIAGRAM               # bpmndi:BPMNDiagram section absent
+        - MISSING_DIAGRAM_SHAPE         # a flow node has no corresponding BPMNShape in the diagram
+        - UNRESOLVED_CALLED_ELEMENT     # callActivity missing zeebe:calledElement or processId not found in same document
+        - NESTED_SUBPROCESS_NOT_SUPPORTED # subProcess nested inside another subProcess
+        - MISSING_DEPT_INPUT_FOR_MODULE # called process has no lanes and no dept_id input mapping was provided
 
     BpmnValidationFailure:
       type: object
-      description: Returned on 422 for any BPMN semantic or structural rejection.
+      description: >
+        Returned by POST /validate. is_valid is false when any issue has severity "error";
+        true when all issues are warnings (compilation would succeed). The issues array is
+        empty on a fully valid document.
       properties:
         is_valid:
           type: boolean
           example: false
-        errors:
+        issues:
           type: array
-          minItems: 1
           items:
             type: object
-            required: [code, message]
+            required: [code, message, severity]
             properties:
-              code:    { $ref: '#/components/schemas/BpmnErrorCode' }
+              code:     { $ref: '#/components/schemas/BpmnErrorCode' }
+              severity: { $ref: '#/components/schemas/BpmnValidationSeverity' }
               node_id:
                 type: string
                 nullable: true
-                description: BPMN element ID that caused the error, if applicable.
+                description: BPMN element ID that caused the issue, if applicable.
                 example: Task_design_prep
               message:
                 type: string
-                description: Human-readable description of the failure.
+                description: Human-readable description of the issue.
                 example: "userTask is missing zeebe:taskDefinition"
       example:
         is_valid: false
-        errors:
+        issues:
           - code: MISSING_TASK_DEFINITION
+            severity: error
             node_id: Task_design_prep
             message: "userTask is missing zeebe:taskDefinition"
-          - code: UNMATCHED_GATEWAY
-            node_id: Gateway_Split
-            message: "Parallel split gateway has no reachable matching join gateway"
+          - code: UNKNOWN_STAGE_TYPE
+            severity: warning
+            node_id: Task_audit_check
+            message: "taskDefinition type \"audit\" is not a defined stage class in the workflow engine"
 
     StructuralDivergenceError:
       type: object
@@ -745,7 +936,11 @@ paths:
                   maxLength: 5242880
                   description: Raw BPMN 2.0 XML. Max 5 MB. Must declare bpmn and zeebe namespaces.
                   example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
-                  
+                module_bpmn_xmls:
+                  type: array
+                  items:
+                    type: string
+                  description: Optional called-process BPMNs to bundle with the main BPMN before validation.
       responses:
         "200":
           description: BPMN validation results (valid status and potential errors list).
@@ -876,6 +1071,7 @@ paths:
                     items: { $ref: '#/components/schemas/ValidationError' }
                     nullable: true
                   bpmn_xml:           { type: string }
+                  module_bpmn_xmls:   { type: array, items: { type: string }, description: "Called-process BPMNs attached to this version. Empty array if none." }
                   artifact_hash:      { type: string, nullable: true, description: "SHA-256 of the BPMN XML at publish time. Absent on DRAFT versions." }
                   compiled_plan_json: { $ref: '#/components/schemas/CompiledPlan' }
                   created_by_user_id: { type: string, format: uuid }
@@ -973,6 +1169,13 @@ paths:
                   minLength: 50
                   maxLength: 5242880
                   description: Updated BPMN 2.0 XML. Max 5 MB. Must declare bpmn and zeebe namespaces.
+                module_bpmn_xmls:
+                  type: array
+                  items:
+                    type: string
+                  description: >
+                    Called-process BPMNs to bundle with the main BPMN at compile/validate time.
+                    Omit the key to leave existing modules unchanged; send an empty array to clear all modules.
                 record_version:
                   type: integer
                   format: int64
@@ -1139,6 +1342,7 @@ paths:
                     items: { $ref: '#/components/schemas/ValidationError' }
                     nullable: true
                   bpmn_xml:           { type: string }
+                  module_bpmn_xmls:   { type: array, items: { type: string }, description: "Called-process BPMNs attached to this version. Empty array if none." }
                   artifact_hash:      { type: string, nullable: true, description: "SHA-256 of the BPMN XML at publish time. Absent on DRAFT versions." }
                   compiled_plan_json: { $ref: '#/components/schemas/CompiledPlan' }
                   created_by_user_id: { type: string, format: uuid }

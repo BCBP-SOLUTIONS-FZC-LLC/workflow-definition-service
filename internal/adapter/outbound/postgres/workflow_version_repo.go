@@ -38,6 +38,7 @@ func (r *WorkflowVersionRepo) Create(ctx context.Context, v *domain.WorkflowVers
 			CreatedByUserID:      v.CreatedByUserID,
 			IsValid:              v.IsValid,
 			ValidationErrorsJson: toNullableJSONB(v.ValidationErrorsJSON),
+			ModuleBpmnXmls:       coalesceStrings(v.ModuleBPMNXMLs),
 		}))
 	})
 }
@@ -133,6 +134,7 @@ func (r *WorkflowVersionRepo) UpdateDraft(ctx context.Context, v *domain.Workflo
 			IsValid:              v.IsValid,
 			ValidationErrorsJson: toNullableJSONB(v.ValidationErrorsJSON),
 			RecordVersion:        v.RecordVersion,
+			ModuleBpmnXmls:       coalesceStrings(v.ModuleBPMNXMLs),
 		})
 		if err != nil {
 			return mapErr(err)

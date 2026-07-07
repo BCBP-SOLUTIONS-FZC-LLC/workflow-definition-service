@@ -1,6 +1,7 @@
 package bpmn_compiler
 
 import (
+	"context"
 	"testing"
 )
 
@@ -41,7 +42,7 @@ func TestCompiler_Hash(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := New()
-			h, err := c.Hash(tt.bpmn)
+			h, err := c.Hash(context.Background(), tt.bpmn)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -56,7 +57,7 @@ func TestCompiler_Hash(t *testing.T) {
 			}
 
 			// determinism: same input must always produce the same hash
-			h2, err := c.Hash(tt.bpmn)
+			h2, err := c.Hash(context.Background(), tt.bpmn)
 			if err != nil {
 				t.Fatalf("second Hash() error: %v", err)
 			}
