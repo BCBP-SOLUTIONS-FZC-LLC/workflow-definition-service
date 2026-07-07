@@ -22,14 +22,6 @@ func (s *VersionService) HandleMembershipRevoked(
 	eventID, tenantID, userID uuid.UUID,
 	departmentID string,
 ) error {
-	isNew, err := s.processedEvents.RecordIfNew(ctx, eventID, "membership-wf-q", "DepartmentMembershipRevoked")
-	if err != nil {
-		return fmt.Errorf("record processed event: %w", err)
-	}
-	if !isNew {
-		return nil
-	}
-
 	assignees, err := s.assignees.ListByUser(ctx, tenantID, userID)
 	if err != nil {
 		return fmt.Errorf("list assignees: %w", err)
@@ -49,8 +41,23 @@ func (s *VersionService) HandleMembershipRevoked(
 		}
 	}
 
-	if err := s.execution.PauseUserTasks(ctx, tenantID, userID); err != nil {
-		return fmt.Errorf("pause user tasks: %w", err)
+	if s.execution != nil {
+		if err := s.execution.PauseUserTasks(ctx, tenantID, userID); err != nil {
+			return fmt.Errorf("pause user tasks: %w", err)
+		}
+	}
+
+	// Record as processed after all side effects complete. Moving this after the
+	// work ensures a transient PauseUserTasks failure causes the consumer to retry
+	// rather than silently skip on the next delivery (at-least-once guarantee).
+	// Both invalidateVersion and PauseUserTasks are idempotent, so re-running on
+	// concurrent delivery is safe.
+	isNew, err := s.processedEvents.RecordIfNew(ctx, eventID, "membership-wf-q", "DepartmentMembershipRevoked")
+	if err != nil {
+		return fmt.Errorf("record processed event: %w", err)
+	}
+	if !isNew {
+		return nil
 	}
 
 	s.log.Info("membership revoked handled", map[string]any{
