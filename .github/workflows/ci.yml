@@ -160,7 +160,7 @@ jobs:
 
       - name: Architecture lint (import direction)
         run: |
-          go install github.com/fe3dback/go-arch-lint@v1.4.0
+          go install github.com/fe3dback/go-arch-lint@v1.15.0
           go-arch-lint check --project-path .
 
       - name: Vulnerability check
