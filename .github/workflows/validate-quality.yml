@@ -1,0 +1,90 @@
+name: Validate Quality
+
+# Reusable workflow — called by ci.yml and release.yml. Static/quality checks
+# only (fmt, tidy, vet, lint, vuln, Dockerfile pin). Self-contained: generates
+# its own proto/sqlc/mocks rather than consuming a sibling job's artifact, so
+# it works standalone from release.yml (which has no separate `generate` job).
+# See validate-test.yml for the test/coverage/arch-lint counterpart.
+
+"on":
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to check out (leave empty to use the caller ref)'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+  GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      - name: Configure private module access
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: .github/scripts/configure-private-module-access.sh
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        id: cache-tools
+        with:
+          path: .tools
+          key: ${{ runner.os }}-go-tools-sqlc-v1.31.1-mockgen-v0.6.0
+
+      - name: Generate proto, sqlc, and mocks
+        run: .github/scripts/generate-code.sh
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Format check
+        run: .github/scripts/format-check.sh
+
+      - name: Tidy check
+        run: .github/scripts/tidy-check.sh
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+          args: --timeout=5m
+
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./internal/... ./cmd/...
+
+      - name: Dockerfile base-image pin check
+        run: .github/scripts/dockerfile-pin-check.sh

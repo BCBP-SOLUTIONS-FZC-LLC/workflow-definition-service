@@ -5,13 +5,19 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
   GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  IMAGE_NAME: ghcr.io/bcbp-solutions-fzc-llc/workflow-definition-service
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
 
@@ -22,6 +28,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       - uses: actions/setup-go@v6
         with:
@@ -32,10 +39,9 @@ jobs:
             go.mod
 
       - name: Configure private module access
-        run: |
-          git config --global credential.helper store
-          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
-          chmod 600 ~/.git-credentials
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: .github/scripts/configure-private-module-access.sh
 
       - uses: bufbuild/buf-setup-action@v1
         with:
@@ -48,23 +54,8 @@ jobs:
           path: .tools
           key: ${{ runner.os }}-go-tools-sqlc-v1.31.1-mockgen-v0.6.0
 
-      - name: Install sqlc and mockgen
-        if: steps.cache-tools.outputs.cache-hit != 'true'
-        run: |
-          GOBIN=$PWD/.tools go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
-          GOBIN=$PWD/.tools go install go.uber.org/mock/mockgen@v0.6.0
-
       - name: Generate proto, sqlc, and mocks
-        run: |
-          buf generate
-          .tools/sqlc generate
-          mkdir -p internal/core/port/mocks
-          .tools/mockgen -source=internal/core/port/repository.go  -destination=internal/core/port/mocks/repository_mock.go  -package=mocks
-          .tools/mockgen -source=internal/core/port/publisher.go   -destination=internal/core/port/mocks/publisher_mock.go   -package=mocks
-          .tools/mockgen -source=internal/core/port/cache.go       -destination=internal/core/port/mocks/cache_mock.go       -package=mocks
-          .tools/mockgen -source=internal/core/port/services.go    -destination=internal/core/port/mocks/services_mock.go    -package=mocks
-          .tools/mockgen -source=internal/core/port/transactor.go  -destination=internal/core/port/mocks/transactor_mock.go  -package=mocks
-          .tools/mockgen -source=internal/core/port/glue.go        -destination=internal/core/port/mocks/glue_mock.go        -package=mocks
+        run: .github/scripts/generate-code.sh
 
       - uses: actions/upload-artifact@v4
         with:
@@ -83,6 +74,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       - uses: actions/setup-go@v6
         with:
@@ -93,10 +85,9 @@ jobs:
             go.mod
 
       - name: Configure private module access
-        run: |
-          git config --global credential.helper store
-          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
-          chmod 600 ~/.git-credentials
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: .github/scripts/configure-private-module-access.sh
 
       - uses: actions/download-artifact@v4
         with:
@@ -108,139 +99,19 @@ jobs:
       - run: go build -o /dev/null ./cmd/server
       - run: go build -tags=integration -o /dev/null ./cmd/server
 
-  # vet runs format, tidy-drift, vet, and vulnerability checks.
-  # Branch protection requires the "vet" job name — checks are inline since
-  # validate.yml is self-contained (generates its own code) and incompatible
-  # with the pre-generated artifact pattern used here.
-  vet:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [generate]
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
+  # validate-quality/validate-test are reusable workflows (also called by
+  # release.yml) — self-contained, each generates its own proto/sqlc/mocks
+  # rather than consuming the `generate` job's artifact. See the comment at
+  # the top of validate-quality.yml/validate-test.yml for why.
+  validate-quality:
+    name: Quality
+    uses: ./.github/workflows/validate-quality.yml
+    secrets: inherit
 
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            go.mod
-
-      - name: Configure private module access
-        run: |
-          git config --global credential.helper store
-          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
-          chmod 600 ~/.git-credentials
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: generated
-
-      - name: Download modules
-        run: go mod download
-
-      - name: Format check
-        run: |
-          files=$(gofmt -l .)
-          if [ -n "$files" ]; then
-            echo "gofmt violations:"
-            echo "$files"
-            exit 1
-          fi
-
-      - name: Tidy check
-        run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum
-
-      - run: go vet ./...
-
-      - name: Architecture lint (import direction)
-        run: |
-          go install github.com/fe3dback/go-arch-lint@v1.15.0
-          go-arch-lint check --project-path .
-
-      - name: Vulnerability check
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./internal/... ./cmd/...
-
-  Test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [generate]
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            go.mod
-
-      - name: Configure private module access
-        run: |
-          git config --global credential.helper store
-          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
-          chmod 600 ~/.git-credentials
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: generated
-
-      - name: Download modules
-        run: go mod download
-
-      - name: Unit Tests & Coverage
-        run: |
-          mkdir -p .coverage
-          EXCLUDE='/postgres/db$\|/postgres$\|/mocks$\|/glue$\|/inbound/http$'
-          go test -race -count=1 \
-            -coverpkg=$(go list ./internal/... ./cmd/... | grep -v "$EXCLUDE" | tr '\n' ',' | sed 's/,$//') \
-            -coverprofile=.coverage/coverage.out -covermode=atomic \
-            ./internal/... ./test/unit/...
-          grep -v '/postgres/db/\|/postgres/\|/mocks/\|/glue/\|/service/noop_logger.go\|/inbound/http/asyncapi.go\|/inbound/http/swagger' .coverage/coverage.out > .coverage/coverage.out.filtered && mv .coverage/coverage.out.filtered .coverage/coverage.out
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-unit
-          path: .coverage/coverage.out
-
-  coverage:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [Test]
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: coverage-unit
-          path: .coverage
-
-      - run: go tool cover -func=.coverage/coverage.out | tail -1
-
-      # Global floor: 95%. Per-package floors enforced via make cover-check-pkg (mirrors Makefile COVER_PKG_FLOORS).
-      - name: Enforce per-package coverage floors
-        run: make cover-check-pkg
-
-      - name: Enforce global coverage threshold (≥ 95%)
-        run: |
-          pct=$(go tool cover -func=.coverage/coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
-          echo "Total coverage: ${pct}%"
-          awk -v p="$pct" 'BEGIN { if (p+0 < 95) { print "FAIL: " p "% is below the 95% threshold"; exit 1 } else { print "PASS: " p "%" } }'
+  validate-test:
+    name: Test
+    uses: ./.github/workflows/validate-test.yml
+    secrets: inherit
 
   Iint:
     runs-on: ubuntu-latest
@@ -256,6 +127,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       - uses: actions/setup-go@v6
         with:
@@ -266,10 +138,10 @@ jobs:
             go.mod
 
       - name: Configure private module access
-        run: |
-          git config --global credential.helper store
-          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
-          chmod 600 ~/.git-credentials
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: .github/scripts/configure-private-module-access.sh
+
       - uses: actions/download-artifact@v4
         with:
           name: generated
@@ -285,67 +157,17 @@ jobs:
           key: docker-${{ hashFiles('.github/docker-image-versions') }}
 
       - name: Load or pull testcontainers images
-        run: |
-          if [ "${{ steps.docker-cache.outputs.cache-hit }}" = "true" ]; then
-            docker load < /tmp/docker-images.tar.gz
-          else
-            docker pull postgres:18-alpine
-            docker pull localstack/localstack:3
-            docker pull valkey/valkey:8-alpine
-            docker save postgres:18-alpine localstack/localstack:3 valkey/valkey:8-alpine \
-              | gzip > /tmp/docker-images.tar.gz
-          fi
+        env:
+          DOCKER_CACHE_HIT: ${{ steps.docker-cache.outputs.cache-hit }}
+        run: .github/scripts/pull-test-images.sh
 
       - name: Integration Tests & Coverage
-        run: |
-          mkdir -p .coverage
-          EXCLUDE='/postgres/db$\|/postgres$\|/mocks$\|/glue$\|/inbound/http$'
-          go test -race -count=1 -tags integration \
-            -coverpkg=$(go list ./internal/... | grep -v "$EXCLUDE" | tr '\n' ',' | sed 's/,$//') \
-            -coverprofile=.coverage/coverage-integration.out \
-            -covermode=atomic \
-            ./test/integration/... ./test/e2e/...
-          grep -v '/postgres/db/\|/postgres/\|/mocks/\|/glue/\|/service/noop_logger.go\|/inbound/http/asyncapi.go\|/inbound/http/swagger' \
-            .coverage/coverage-integration.out > .coverage/coverage-integration.out.filtered \
-            && mv .coverage/coverage-integration.out.filtered .coverage/coverage-integration.out
-          go tool cover -func=.coverage/coverage-integration.out | tail -1
+        run: .github/scripts/run-integration-tests.sh
 
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-integration
           path: .coverage/coverage-integration.out
-
-  lint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [generate]
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            go.mod
-
-      - name: Configure private module access
-        run: |
-          git config --global credential.helper store
-          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
-          chmod 600 ~/.git-credentials
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: generated
-
-      - uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.12.2
-          args: --timeout=5m
 
   lint-dockerfile:
     name: Lint Dockerfile
@@ -355,6 +177,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       - uses: hadolint/hadolint-action@v3.1.0
         with:
@@ -370,6 +193,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -389,6 +213,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Negative-path check — exits non-zero on missing required env vars
+        run: .github/scripts/docker-negative-path-check.sh "workflow-definition-service:${{ github.sha }}"
+
   trivy-cve-scan:
     name: Trivy CVE scan
     runs-on: ubuntu-latest
@@ -398,10 +225,23 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       - uses: actions/download-artifact@v4
         with:
           name: generated
+
+      - name: Compute cache date
+        id: date
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Trivy DB cache
+        uses: actions/cache@v4
+        with:
+          path: .trivy-cache
+          key: trivy-db-${{ runner.os }}-${{ steps.date.outputs.date }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
 
       - uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -413,12 +253,13 @@ jobs:
           vuln-type: os,library
           severity: HIGH,CRITICAL
           skip-dirs: vendor,platform-libs,.design
+          cache-dir: .trivy-cache
 
   smoke-tests:
     name: Smoke tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [Test, Iint]
+    needs: [validate-test, Iint]
     env:
       GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
       GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
@@ -455,6 +296,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       - uses: actions/setup-go@v6
         with:
@@ -465,10 +307,9 @@ jobs:
             go.mod
 
       - name: Configure private module access
-        run: |
-          git config --global credential.helper store
-          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
-          chmod 600 ~/.git-credentials
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: .github/scripts/configure-private-module-access.sh
 
       - uses: actions/download-artifact@v4
         with:
@@ -481,27 +322,7 @@ jobs:
         run: go run ./cmd/server migrate
 
       - name: Start stubs and service
-        run: |
-          go run ./cmd/stub/membership &
-          go run ./cmd/stub/execution &
-          go run ./cmd/server &
-          DEADLINE=$((SECONDS + 60))
-          until curl -sf -X POST http://localhost:8081/control \
-              -H 'Content-Type: application/json' -d '{"eligible":true}' &>/dev/null; do
-            [ "$SECONDS" -ge "$DEADLINE" ] && { echo "Timed out waiting for membership stub"; exit 1; }
-            sleep 1
-          done
-          DEADLINE=$((SECONDS + 60))
-          until curl -sf -X POST http://localhost:9092/control \
-              -H 'Content-Type: application/json' -d '{"has_active":false}' &>/dev/null; do
-            [ "$SECONDS" -ge "$DEADLINE" ] && { echo "Timed out waiting for execution stub"; exit 1; }
-            sleep 1
-          done
-          DEADLINE=$((SECONDS + 60))
-          until curl -sf http://localhost:8080/healthz &>/dev/null; do
-            [ "$SECONDS" -ge "$DEADLINE" ] && { echo "Timed out waiting for server"; exit 1; }
-            sleep 1
-          done
+        run: .github/scripts/wait-for-smoke-stack.sh
 
       - name: Smoke test
         run: bash scripts/smoke-test.sh
@@ -509,7 +330,111 @@ jobs:
   push-image-ghcr:
     name: Push image → GHCR
     runs-on: ubuntu-latest
-    needs: build-image-cache
-    if: false  # enabled once GHCR credentials are configured
+    timeout-minutes: 20
+    needs: [validate-test, validate-quality, Iint, trivy-cve-scan, smoke-tests]
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # Cosign keyless signing (Sigstore OIDC) — no AWS involved
     steps:
-      - run: echo "Registry push not yet configured"
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          provenance: true
+          sbom: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: BUILD_VERSION=${{ github.sha }}
+          secrets: go_private_token=${{ secrets.GO_PRIVATE_TOKEN }}
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign and verify image (Cosign keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          .github/scripts/cosign-sign-verify.sh \
+            "^https://github.com/${{ github.repository }}/\.github/workflows/ci\.yml@refs/heads/main$"
+
+  pr-summary:
+    name: PR summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always() && github.event_name == 'pull_request'
+    needs: [generate, Build, validate-quality, validate-test, Iint, lint-dockerfile, build-image-cache, trivy-cve-scan, smoke-tests]
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-unit
+          path: .coverage
+        continue-on-error: true
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Compute coverage percentage
+        id: cov
+        run: |
+          if [ -f .coverage/coverage.out ]; then
+            pct=$(go tool cover -func=.coverage/coverage.out | tail -1 | awk '{print $3}')
+          else
+            pct="n/a"
+          fi
+          echo "pct=$pct" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/github-script@v7
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+          COVERAGE_PCT: ${{ steps.cov.outputs.pct }}
+        with:
+          script: |
+            const prSummary = require('./.github/scripts/pr-summary.js');
+            await prSummary({ github, context });

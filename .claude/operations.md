@@ -28,19 +28,27 @@ Never add a `replace` directive pointing to `./platform-libs/` — that director
 
 | Workflow | Trigger | Jobs |
 |---|---|---|
-| `ci.yml` | push/PR to main | generate → (Build, vet, Test, coverage, Iint, lint) parallel |
-| `validate.yml` | reusable | fmt, tidy, vet, lint, govulncheck, unit tests |
-| `release.yml` | push `v*` tags | generate → validate → Build → gh release |
+| `ci.yml` | push/PR to main | generate → (Build, validate-quality, validate-test, Iint, trivy, smoke) parallel → GHCR push (`sha-<short>`/branch tags) + Cosign sign (push only) → PR summary comment (PR only) |
+| `validate-quality.yml` | reusable (called by `ci.yml` and `release.yml`) | self-contained generate, fmt, tidy, vet, lint, govulncheck, Dockerfile pin check |
+| `validate-test.yml` | reusable (called by `ci.yml` and `release.yml`) | self-contained generate, arch-lint, event-schema `extract --check`, unit tests + coverage (95% global + per-package floors) |
+| `release.yml` | push `v*` tags | validate-quality + validate-test → build (binary) → docker (semver-tagged image + Cosign sign) → gh release |
+| `schema-registry.yml` | push to main / release / PR (paths: `api/asyncapi.yaml`, `internal/eventschema/*.json`) | validate → diff-vs-registry → register (staging on push, production on release; both AWS-gated) |
+| `schema-prune.yml` | monthly cron (staging dry-run) + manual dispatch | reports/archives orphaned Glue schema versions (AWS-gated) |
+| `schema-health-quarterly.yml` | quarterly cron | read-only lifecycle + version-accumulation report to Step Summary |
+| `freeze-watchdog.yml` | every 4h | alerts if `SCHEMA_FREEZE` environment variable is stale (no AWS needed) |
+| `changelog-check.yml` | PR touching `internal/`, `api/`, `cmd/` | fails unless `CHANGELOG.md` was also updated |
 
-Branch protection required checks: `generate`, `Build`, `vet`, `Test`, `coverage`, `Iint`, `lint`.
+Branch protection required checks: `generate`, `Build`, `validate-quality`, `validate-test`, `Iint`.
 
-The `vet` job now includes an **architecture lint** step (`go-arch-lint check --project-path .`) that enforces the Clean Architecture import direction rules from `.go-arch-lint.yml`.
+`validate-quality.yml` and `validate-test.yml` are each fully self-contained (they generate their own proto/sqlc/mocks rather than downloading `ci.yml`'s `generate` artifact) so they can also run standalone from `release.yml`, which has no separate `generate` job. This means `ci.yml`'s own code generation runs twice per CI run (once in `generate` for `Build`/`Iint`/image jobs, once each inside the two reusable workflows) — a deliberate trade-off for a simpler, DRY-across-workflows structure, not an oversight.
+
+`validate-test.yml`'s **architecture lint** step (`go-arch-lint check --project-path .`) enforces the Clean Architecture import direction rules from `.go-arch-lint.yml`.
 
 **Local developer workflow:** run `make fix` (gofmt + golangci-lint --fix) before `make check`. `make check` is read-only — it reports violations rather than fixing them, mirroring CI. `make fix` auto-fixes what it can; remaining lint errors must be resolved manually before `make check` will pass.
 
 The `Iint` job runs real integration tests (testcontainers) in CI — Docker is available on `ubuntu-latest`.
 
-The `coverage` job enforces a unit-test-only threshold of **95%**. Generated packages (`postgres/db`, `mocks`) and the postgres repo adapter (`postgres/`) are excluded — they are integration-tested by `Iint`. The integration coverage profile is uploaded as a separate artifact but is not merged into the gate.
+`validate-test.yml` enforces a unit-test-only threshold of **95%** (global + per-package floors via `make cover-check-pkg`) inline — no separate downstream coverage-gate job. Generated packages (`postgres/db`, `mocks`) and the postgres repo adapter (`postgres/`) are excluded — they are integration-tested by `Iint`. The integration coverage profile is uploaded as a separate artifact but is not merged into the gate.
 
 ## Prometheus Metrics
 

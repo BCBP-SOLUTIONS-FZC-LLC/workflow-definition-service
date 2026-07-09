@@ -16,7 +16,7 @@
 #     --build-arg BUILD_VERSION=$(git describe --tags --always --dirty) \
 #     -t workflow-definition-service:$TAG .
 
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS builder
 
 ARG BUILD_VERSION=dev
 ENV CGO_ENABLED=0 \
@@ -49,7 +49,7 @@ RUN go build \
 
 # gcr.io/distroless/static-debian12: no shell, no libc, no package manager.
 # Runs as nonroot (uid 65532) by default.
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e30dbadd3efe1310db061a14da60299baff8450a17fe0ccc514a16639
 
 COPY --from=builder /build/bin/server /server
 

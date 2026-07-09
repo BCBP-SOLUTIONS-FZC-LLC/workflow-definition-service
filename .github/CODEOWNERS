@@ -20,6 +20,10 @@ db/migrations/                            @BCBP-SOLUTIONS-FZC-LLC/platform-engin
 # Proto definitions — gRPC contract changes affect Execution Service consumers
 proto/                                    @BCBP-SOLUTIONS-FZC-LLC/platform-engineers
 
+# Event contract — schema/lifecycle changes affect downstream consumers
+api/asyncapi.yaml                         @BCBP-SOLUTIONS-FZC-LLC/platform-engineers @BCBP-SOLUTIONS-FZC-LLC/platform-team
+internal/eventschema/                     @BCBP-SOLUTIONS-FZC-LLC/platform-engineers @BCBP-SOLUTIONS-FZC-LLC/platform-team
+
 # Security-sensitive files
 .github/SECURITY.md                       @BCBP-SOLUTIONS-FZC-LLC/platform-sre
 SECURITY.md                               @BCBP-SOLUTIONS-FZC-LLC/platform-sre

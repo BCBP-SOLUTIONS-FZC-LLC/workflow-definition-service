@@ -16,6 +16,7 @@ platform-libs/
 docs/
 *.md
 mkdocs.yml
+.claude/
 
 # Tests and scripts — not part of the server binary
 test/
