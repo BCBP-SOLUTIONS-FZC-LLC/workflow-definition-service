@@ -138,6 +138,7 @@ Detailed reference is in sub-documents — load the relevant one for your task:
 - **[.claude/api-and-events.md](api-and-events.md)** — HTTP/gRPC patterns, idempotency, events (#9, #10, #12–18)
 - **[.claude/bpmn-compiler.md](bpmn-compiler.md)** — BPMN parsing, validation, compilation (#20–25)
 - **[.claude/operations.md](operations.md)** — CI/CD, Prometheus metrics, OTel, MkDocs, platform-lib constraints (#26)
+- **[.claude/development-guide.md](development-guide.md)** — extension cookbook, troubleshooting, and the full HTTP error-code appendix
 
 ### Handler layer (#7 — always relevant)
 
