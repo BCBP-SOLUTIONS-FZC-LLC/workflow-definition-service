@@ -8,6 +8,7 @@ info:
     All identity and tenant context is injected by the Envoy API Gateway.
 servers:
   - url: http://localhost:8080
+    description: Local dev server (matches cmd/server's actual route mounts)
   - url: https://api.internal/definition/v1
     description: Envoy API Gateway (production)
 # All endpoints require a valid tenant context injected by the Envoy gateway.
