@@ -835,6 +835,22 @@ func TestValidate_MissingNamespace(t *testing.T) {
 	}
 }
 
+// TestValidate_MissingNamespace_Collaboration confirms the namespace check in
+// parse() runs as a raw-string scan before defs.Collaboration is ever
+// consulted, so a collaboration document missing the zeebe namespace hits the
+// same early MISSING_NAMESPACE return as a single-process one.
+func TestValidate_MissingNamespace_Collaboration(t *testing.T) {
+	c := New()
+	bpmnXML := `<?xml version="1.0"?><bpmn:definitions xmlns:bpmn="` + nsBPMN + `"><bpmn:collaboration id="Collab1"/></bpmn:definitions>`
+	errs, err := c.Validate(context.Background(), bpmnXML)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasCodeIn(errs, domain.BPMNErrMissingNamespace) {
+		t.Errorf("expected MISSING_NAMESPACE; got %v", errCodesOf(errs))
+	}
+}
+
 func TestValidate_ParseErrorPropagates(t *testing.T) {
 	c := New()
 	xmlData := `<?xml version="1.0"?><bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `"><unclosed>`
@@ -1012,6 +1028,78 @@ func TestCompile_BlockingValidationErrors(t *testing.T) {
 	}
 }
 
+// TestCompile_BpmnCoreCompileError covers the case where structural validation
+// passes but bpmncore.Compile still fails: a parallel gateway whose branches
+// each terminate independently at their own end event has no matching join.
+// checkSplitJoin treats "no join, but every branch terminates" as valid for
+// ANY gateway kind, but handleSplitNoJoin only tolerates a missing join for
+// exclusive gateways — a parallel split hits the "no matching join" error.
+// Compile() must propagate that as a plain wrapped error, not a
+// ValidationFailedError, since it happens after validation already passed.
+func TestCompile_BpmnCoreCompileError(t *testing.T) {
+	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="` + nsBPMN + `"
+  xmlns:bpmndi="` + nsBPMNDI + `"
+  xmlns:zeebe="` + nsZeebe + `"
+  id="D1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="P1" name="Test" isExecutable="true">
+    <bpmn:laneSet id="LS"><bpmn:lane id="L1" name="ops">
+      <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
+      <bpmn:flowNodeRef>T1</bpmn:flowNodeRef>
+      <bpmn:flowNodeRef>PGW</bpmn:flowNodeRef>
+      <bpmn:flowNodeRef>End1</bpmn:flowNodeRef>
+      <bpmn:flowNodeRef>End2</bpmn:flowNodeRef>
+    </bpmn:lane></bpmn:laneSet>
+    <bpmn:startEvent id="S1"><bpmn:outgoing>F1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:userTask id="T1" name="Task">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>F1</bpmn:incoming><bpmn:outgoing>F2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:parallelGateway id="PGW">
+      <bpmn:incoming>F2</bpmn:incoming><bpmn:outgoing>F3</bpmn:outgoing><bpmn:outgoing>F4</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:endEvent id="End1"><bpmn:incoming>F3</bpmn:incoming></bpmn:endEvent>
+    <bpmn:endEvent id="End2"><bpmn:incoming>F4</bpmn:incoming></bpmn:endEvent>
+    <bpmn:sequenceFlow id="F1" sourceRef="S1"  targetRef="T1"/>
+    <bpmn:sequenceFlow id="F2" sourceRef="T1"  targetRef="PGW"/>
+    <bpmn:sequenceFlow id="F3" sourceRef="PGW" targetRef="End1"/>
+    <bpmn:sequenceFlow id="F4" sourceRef="PGW" targetRef="End2"/>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BD">
+    <bpmndi:BPMNPlane id="BP" bpmnElement="P1">
+      <bpmndi:BPMNShape id="Sh_S1"   bpmnElement="S1"/>
+      <bpmndi:BPMNShape id="Sh_T1"   bpmnElement="T1"/>
+      <bpmndi:BPMNShape id="Sh_PGW"  bpmnElement="PGW"/>
+      <bpmndi:BPMNShape id="Sh_End1" bpmnElement="End1"/>
+      <bpmndi:BPMNShape id="Sh_End2" bpmnElement="End2"/>
+      <bpmndi:BPMNEdge id="Ed_F1" bpmnElement="F1"/>
+      <bpmndi:BPMNEdge id="Ed_F2" bpmnElement="F2"/>
+      <bpmndi:BPMNEdge id="Ed_F3" bpmnElement="F3"/>
+      <bpmndi:BPMNEdge id="Ed_F4" bpmnElement="F4"/>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`
+	c := New()
+
+	valErrs, valErr := c.Validate(context.Background(), bpmnXML)
+	if valErr != nil || len(valErrs) != 0 {
+		t.Fatalf("expected clean validation (the compile failure must occur post-validation); got err=%v errs=%v", valErr, errCodesOf(valErrs))
+	}
+
+	_, err := c.Compile(context.Background(), bpmnXML)
+	var vfe *domain.ValidationFailedError
+	if errors.As(err, &vfe) {
+		t.Fatalf("expected a plain wrapped compile error, not ValidationFailedError; got %v", vfe)
+	}
+	if err == nil {
+		t.Fatal("expected an error from bpmncore.Compile for an unmatched parallel split")
+	}
+}
+
 // ─── CompileCollaboration() additional branches ───────────────────────────
 
 func TestCompileCollaboration_ParseErrorPropagates(t *testing.T) {
@@ -1140,5 +1228,105 @@ func TestCompileCollaboration_SuccessWithMainProp(t *testing.T) {
 	}
 	if len(collab.Messages) != 1 || collab.Messages[0].Name != "trigger" {
 		t.Errorf("expected 1 message named trigger; got %+v", collab.Messages)
+	}
+}
+
+// fakeUserTaskHandler is a stand-in ElementHandler used only to verify that
+// WithElementHandler overrides the registry entry for its NodeType.
+type fakeUserTaskHandler struct{}
+
+func (fakeUserTaskHandler) NodeType() bpmncore.FlowNodeType { return bpmncore.NodeTypeUserTask }
+func (fakeUserTaskHandler) Validate(string, *bpmncore.BPMNProcess, *bpmncore.Graph, *bpmncore.BPMNDefinitions, map[string]bpmncore.StageTypeHandler, map[bpmncore.FlowNodeType]bpmncore.ElementHandler) []domain.BPMNValidationError {
+	return nil
+}
+func (fakeUserTaskHandler) Compile(string, *bpmncore.CompileState) error { return nil }
+
+func TestCompiler_WithElementHandler(t *testing.T) {
+	fake := fakeUserTaskHandler{}
+	c := NewCompiler(WithElementHandler(fake))
+	got, ok := c.elements[bpmncore.NodeTypeUserTask]
+	if !ok {
+		t.Fatal("expected NodeTypeUserTask handler to be registered")
+	}
+	if _, ok := got.(fakeUserTaskHandler); !ok {
+		t.Errorf("elements[NodeTypeUserTask] = %T, want fakeUserTaskHandler (WithElementHandler did not override the default)", got)
+	}
+}
+
+func TestStepsHaveCallPool_NestedParallel(t *testing.T) {
+	steps := []domain.ExecutionStep{
+		{
+			Parallel: []domain.ParallelBranch{
+				{DeptID: "a", Steps: []domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "Other"}}}},
+			},
+		},
+	}
+	if !stepsHaveCallPool(steps) {
+		t.Error("expected stepsHaveCallPool to detect a CallPool nested inside a parallel branch")
+	}
+}
+
+func TestStepsHaveCallPool_InSubWorkflow(t *testing.T) {
+	steps := []domain.ExecutionStep{
+		{
+			SubWorkflow: &domain.SubWorkflowStep{
+				Plan: domain.ExecutionPlan{
+					Steps: []domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "Other"}}},
+				},
+			},
+		},
+	}
+	if !stepsHaveCallPool(steps) {
+		t.Error("expected stepsHaveCallPool to detect a CallPool nested inside a SubWorkflow step")
+	}
+}
+
+// ─── resolveMainPlanName / collabImplicitStart / Hash ─────────────────────
+
+func TestResolveMainPlanName_WithMainZeebeProperty(t *testing.T) {
+	procs := []bpmncore.BPMNProcess{
+		{Name: "Pool_A"},
+		{
+			Name: "Pool_B",
+			ExtensionElements: bpmncore.BPMNExtensionElements{
+				ZeebeProps: bpmncore.BPMNZeebeProperties{
+					Items: []bpmncore.ZeebeProperty{{Name: "main", Value: "1"}},
+				},
+			},
+		},
+	}
+	if got := resolveMainPlanName(procs); got != "Pool_B" {
+		t.Errorf("resolveMainPlanName() = %q, want %q (explicit main=1 marker takes priority over process order)", got, "Pool_B")
+	}
+}
+
+func TestCollabImplicitStart_NoCollaboration(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{}
+	g := &bpmncore.Graph{
+		Outgoing: map[string][]string{"T1": {"T2"}},
+		Incoming: map[string][]string{"T2": {"T1"}},
+		NodeType: map[string]bpmncore.FlowNodeType{
+			"T1": bpmncore.NodeTypeUserTask,
+			"T2": bpmncore.NodeTypeUserTask,
+		},
+	}
+	defs := &bpmncore.BPMNDefinitions{}
+
+	got := collabImplicitStart(proc, g, defs, map[string]bool{})
+	if got != "T1" {
+		t.Errorf("collabImplicitStart() = %q, want %q (fall back to FindImplicitStart when Collaboration is nil)", got, "T1")
+	}
+}
+
+func TestHash_MultiProcessBPMN_ReturnsError(t *testing.T) {
+	bpmnXML := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
+  <bpmn:process id="P1" isExecutable="true"><bpmn:startEvent id="S1"/></bpmn:process>
+  <bpmn:process id="P2" isExecutable="true"><bpmn:startEvent id="S2"/></bpmn:process>
+</bpmn:definitions>`
+	c := New()
+	_, err := c.Hash(context.Background(), bpmnXML)
+	if err == nil {
+		t.Fatal("expected an error for a BPMN document with more than one process")
 	}
 }

@@ -417,6 +417,23 @@ func TestVersionService_Publish_WorkflowMismatch(t *testing.T) {
 	}
 }
 
+func TestVersionService_Publish_BundleError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	compiler := mocks.NewMockPlanCompiler(ctrl)
+	svc := service.NewVersionService(service.VersionDeps{Versions: vRepo, Compiler: compiler})
+
+	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
+		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft, BPMNXML: "<bad/>"}, nil)
+	compiler.EXPECT().Bundle("<bad/>", gomock.Any()).Return("", errors.New("malformed module BPMN"))
+
+	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestVersionService_Publish_CompileError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
@@ -941,6 +958,39 @@ func TestVersionService_Diff_FallsBackToCompile(t *testing.T) {
 		&domain.WorkflowVersion{ID: baseID, WorkflowID: wfID, BPMNXML: "<base/>"}, nil)
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>"}, nil)
+	compiler.EXPECT().Bundle("<base/>", gomock.Any()).Return("<base/>", nil)
+	compiler.EXPECT().Compile(gomock.Any(), "<base/>").Return(buildPlan("a"), nil)
+	compiler.EXPECT().Bundle("<target/>", gomock.Any()).Return("<target/>", nil)
+	compiler.EXPECT().Compile(gomock.Any(), "<target/>").Return(buildPlan("a"), nil)
+
+	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ChangeType != "METADATA_ONLY" {
+		t.Errorf("expected METADATA_ONLY, got %s", result.ChangeType)
+	}
+}
+
+// TestVersionService_Diff_UnmarshalFailureFallsBackToCompile covers resolvePlan's
+// other fallback trigger: CompiledPlanJSON is present (non-empty) but fails to
+// unmarshal, as opposed to TestVersionService_Diff_FallsBackToCompile's case of
+// CompiledPlanJSON being entirely absent. Both must fall through to
+// compiler.Bundle + compiler.Compile.
+func TestVersionService_Diff_UnmarshalFailureFallsBackToCompile(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	compiler := mocks.NewMockPlanCompiler(ctrl)
+	svc := service.NewVersionService(service.VersionDeps{Versions: vRepo, Compiler: compiler})
+
+	tenantID, wfID := uuid.New(), uuid.New()
+	baseID, targetID := uuid.New(), uuid.New()
+	garbage := "not valid json"
+
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, baseID).Return(
+		&domain.WorkflowVersion{ID: baseID, WorkflowID: wfID, BPMNXML: "<base/>", CompiledPlanJSON: &garbage}, nil)
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(
+		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>", CompiledPlanJSON: &garbage}, nil)
 	compiler.EXPECT().Bundle("<base/>", gomock.Any()).Return("<base/>", nil)
 	compiler.EXPECT().Compile(gomock.Any(), "<base/>").Return(buildPlan("a"), nil)
 	compiler.EXPECT().Bundle("<target/>", gomock.Any()).Return("<target/>", nil)

@@ -63,6 +63,19 @@ func TestValidationService_Validate_WarningsOnly(t *testing.T) {
 	}
 }
 
+func TestValidationService_Validate_BundleError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	compiler := mocks.NewMockPlanCompiler(ctrl)
+	svc := service.NewValidationService(service.ValidationDeps{Compiler: compiler})
+
+	compiler.EXPECT().Bundle(gomock.Any(), gomock.Any()).Return("", errors.New("malformed module BPMN"))
+
+	isValid, errs, err := svc.Validate(context.Background(), "<bpmn/>", []string{"<bad-module/>"})
+	if err == nil || isValid || errs != nil {
+		t.Fatalf("expected bundle error and isValid=false, got %v %v %v", isValid, errs, err)
+	}
+}
+
 func TestValidationService_Validate_CompilerError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
