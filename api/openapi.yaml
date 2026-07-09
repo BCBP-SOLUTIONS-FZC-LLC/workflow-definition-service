@@ -7,7 +7,9 @@ info:
     promote, validate, export, and diff BPMN-based workflow definitions.
     All identity and tenant context is injected by the Envoy API Gateway.
 servers:
+  - url: http://localhost:8080
   - url: https://api.internal/definition/v1
+    description: Envoy API Gateway (production)
 # All endpoints require a valid tenant context injected by the Envoy gateway.
 # Mutating endpoints (POST/PUT/DELETE) additionally require x-tenant-roles.
 security:
@@ -763,7 +765,7 @@ components:
 paths:
 
   # 3.1 / 3.2
-  /workflows:
+  /api/v1/workflows:
     get:
       operationId: listWorkflows
       summary: List tenant workflows
@@ -910,7 +912,7 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
 
   # must come before /workflows/{id} to avoid route shadowing
-  /workflows/validate:
+  /api/v1/workflows/validate:
     post:
       operationId: validateBpmn
       summary: Validate BPMN without persisting
@@ -966,7 +968,7 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.3
-  /workflows/{id}:
+  /api/v1/workflows/{id}:
     get:
       operationId: getWorkflow
       summary: Get workflow root and version history
@@ -1004,7 +1006,7 @@ paths:
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
 
-  /workflows/{id}/versions:
+  /api/v1/workflows/{id}/versions:
     get:
       operationId: listWorkflowVersions
       summary: Get paginated version history of a workflow
@@ -1040,7 +1042,7 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.5 / 3.9
-  /workflows/{id}/draft:
+  /api/v1/workflows/{id}/draft:
     get:
       operationId: getDraft
       summary: Get the active draft version detail for a workflow
@@ -1266,7 +1268,7 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.8
-  /workflows/{id}/archive:
+  /api/v1/workflows/{id}/archive:
     post:
       operationId: archiveWorkflow
       summary: Archive workflow — prevents new execution instances
@@ -1310,7 +1312,7 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   # 3.4
-  /workflows/{id}/versions/{version_id}:
+  /api/v1/workflows/{id}/versions/{version_id}:
     get:
       operationId: getVersion
       summary: Get version detail including BPMN XML and compiled DSL
@@ -1354,7 +1356,7 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.7
-  /workflows/{id}/versions/{version_id}/publish:
+  /api/v1/workflows/{id}/versions/{version_id}/publish:
     post:
       operationId: publishVersion
       summary: Compile and publish the active draft
@@ -1417,7 +1419,7 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   # 3.10
-  /workflows/{id}/versions/{version_id}/clone:
+  /api/v1/workflows/{id}/versions/{version_id}/clone:
     post:
       operationId: cloneVersion
       summary: Clone a published version into a new workflow key
@@ -1503,7 +1505,7 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.11
-  /workflows/{id}/versions/{version_id}/promote:
+  /api/v1/workflows/{id}/versions/{version_id}/promote:
     post:
       operationId: promoteVersion
       summary: Promote a published version to active (rollback / rollforward)
@@ -1552,7 +1554,7 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.13
-  /workflows/{id}/versions/{version_id}/export:
+  /api/v1/workflows/{id}/versions/{version_id}/export:
     get:
       operationId: exportBpmn
       summary: Download raw BPMN XML for a version
@@ -1580,7 +1582,7 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.14
-  /workflows/{id}/versions/{version_id}/diff/{target_version_id}:
+  /api/v1/workflows/{id}/versions/{version_id}/diff/{target_version_id}:
     get:
       operationId: getVersionDiff
       summary: Structural diff between two versions
