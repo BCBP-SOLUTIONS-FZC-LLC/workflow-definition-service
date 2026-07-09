@@ -3,7 +3,7 @@
 # Architecture import direction rules declared in .go-arch-lint.yml.
 set -euo pipefail
 
-GOARCHLINT_VERSION="v1.4.0"
+GOARCHLINT_VERSION="v1.15.0"
 
 if ! command -v go-arch-lint &>/dev/null; then
   echo "installing go-arch-lint ${GOARCHLINT_VERSION}"
