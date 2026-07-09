@@ -70,7 +70,8 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/grpc:75 \
         fix check \
         docs-serve docs-build \
         docker-up docker-down \
-        docker-build docker-lint docker-trivy docker-check \
+        docker-build docker-lint docker-trivy docker-check pin-base-images \
+        schema-pull extract-schemas schema-validate schema-diff schema-register schema-prune \
         clean help
 
 all: generate build
@@ -338,6 +339,74 @@ docker-trivy:
 ## docker-check: Run Dockerfile lint + dependency CVE scan (no image build required)
 docker-check: docker-lint docker-trivy
 	@echo "✓ all container checks passed"
+
+## pin-base-images: Resolve current digests for Dockerfile base images and pin them (writes .docker-digests)
+pin-base-images:
+	@GOLANG_DIGEST=$$(docker buildx imagetools inspect golang:1.26-alpine | awk '/^Digest:/{print $$2; exit}'); \
+	DISTROLESS_DIGEST=$$(docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot | awk '/^Digest:/{print $$2; exit}'); \
+	sed -i.bak "s|FROM golang:1.26-alpine.*AS builder|FROM golang:1.26-alpine@$$GOLANG_DIGEST AS builder|" Dockerfile; \
+	sed -i.bak "s|FROM gcr.io/distroless/static-debian12:nonroot.*|FROM gcr.io/distroless/static-debian12:nonroot@$$DISTROLESS_DIGEST|" Dockerfile; \
+	rm -f Dockerfile.bak; \
+	printf 'golang:1.26-alpine@%s\ngcr.io/distroless/static-debian12:nonroot@%s\n' "$$GOLANG_DIGEST" "$$DISTROLESS_DIGEST" > .docker-digests; \
+	echo "Pinned base images — see .docker-digests"
+
+
+# platform-schemagov — CI-time event schema governance (validate/register/prune).
+# CLI flags confirmed against iam-user-profile's working Makefile/CLAUDE.md —
+# see .claude/api-and-events.md. Do not reintroduce a --workspace flag; it
+# does not exist on this CLI.
+SCHEMA_GOV_IMAGE ?= ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov:0.4
+
+## schema-pull: Pull the platform-schemagov image
+schema-pull:
+	docker pull "$(SCHEMA_GOV_IMAGE)"
+
+## extract-schemas: Derive internal/eventschema/*.json from api/asyncapi.yaml
+extract-schemas:
+	docker run --rm -v "$(CURDIR)":/workspace "$(SCHEMA_GOV_IMAGE)" extract \
+	  --asyncapi   api/asyncapi.yaml \
+	  --schema-dir internal/eventschema
+
+## schema-validate: Run structural/lifecycle/drift checks against api/asyncapi.yaml + internal/eventschema (no AWS required)
+schema-validate: extract-schemas
+	docker run --rm -v "$(CURDIR)":/workspace "$(SCHEMA_GOV_IMAGE)" validate \
+	  --asyncapi   api/asyncapi.yaml \
+	  --schema-dir internal/eventschema
+
+## schema-diff: Diff two JSON Schema files — usage: make schema-diff CURRENT=<current.json> PROPOSED=<proposed.json> [SCHEMA_NAME=<name>]
+schema-diff:
+	@test -n "$(CURRENT)" && test -n "$(PROPOSED)" || { \
+	  echo "Usage: make schema-diff CURRENT=<current.json> PROPOSED=<proposed.json> [SCHEMA_NAME=<name>]"; \
+	  exit 1; \
+	}
+	docker run --rm -v "$(CURDIR)":/workspace "$(SCHEMA_GOV_IMAGE)" diff \
+	  --current     "$(CURRENT)" \
+	  --proposed    "$(PROPOSED)" \
+	  --schema-name "$(or $(SCHEMA_NAME),$(notdir $(basename $(PROPOSED))))"
+
+## schema-register: Register schemas in AWS Glue (requires AWS creds or LocalStack via AWS_ENDPOINT_URL)
+schema-register:
+	@test -n "$(GLUE_REGISTRY_NAME)" || { \
+	  echo "GLUE_REGISTRY_NAME is not set — add it to .env or pass on the command line"; \
+	  exit 1; \
+	}
+	docker run --rm -v "$(CURDIR)":/workspace \
+	  -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_ENDPOINT_URL \
+	  "$(SCHEMA_GOV_IMAGE)" register \
+	  --registry   "$(GLUE_REGISTRY_NAME)" \
+	  --schema-dir internal/eventschema
+
+## schema-prune: Report orphaned Glue schemas (set EXECUTE=true to actually delete)
+schema-prune:
+	@test -n "$(GLUE_REGISTRY_NAME)" || { \
+	  echo "GLUE_REGISTRY_NAME is not set — add it to .env or pass on the command line"; \
+	  exit 1; \
+	}
+	docker run --rm -v "$(CURDIR)":/workspace \
+	  -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_ENDPOINT_URL \
+	  "$(SCHEMA_GOV_IMAGE)" prune \
+	  --registry "$(GLUE_REGISTRY_NAME)" \
+	  $(if $(filter true,$(EXECUTE)),--execute,)
 
 
 ## docker-up: Start local infra (PostgreSQL + Valkey)

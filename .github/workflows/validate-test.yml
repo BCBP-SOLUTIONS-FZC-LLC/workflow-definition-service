@@ -1,0 +1,96 @@
+name: Validate Test
+
+# Reusable workflow — called by ci.yml and release.yml. Test/coverage/arch-lint
+# checks only. Self-contained: generates its own proto/sqlc/mocks rather than
+# consuming a sibling job's artifact, so it works standalone from release.yml
+# (which has no separate `generate` job). See validate-quality.yml for the
+# static-check counterpart (fmt/tidy/vet/lint/vuln/Dockerfile pin).
+
+"on":
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to check out (leave empty to use the caller ref)'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  packages: read   # pull ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+  GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      - name: Configure private module access
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: .github/scripts/configure-private-module-access.sh
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        id: cache-tools
+        with:
+          path: .tools
+          key: ${{ runner.os }}-go-tools-sqlc-v1.31.1-mockgen-v0.6.0
+
+      - name: Generate proto, sqlc, and mocks
+        run: .github/scripts/generate-code.sh
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Architecture lint (import direction)
+        run: .github/scripts/arch-lint.sh
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Event schema sync check
+        run: .github/scripts/schema-extract-check.sh
+
+      - name: Unit Tests & Coverage
+        run: .github/scripts/run-unit-tests.sh
+
+      - name: Enforce per-package coverage floors
+        run: make cover-check-pkg
+
+      - name: Enforce global coverage threshold (≥ 95%)
+        run: .github/scripts/coverage-gate.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-unit
+          path: .coverage/coverage.out
+          if-no-files-found: ignore

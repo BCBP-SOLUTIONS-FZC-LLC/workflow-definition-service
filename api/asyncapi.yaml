@@ -27,6 +27,11 @@ components:
     WorkflowTemplatePublished:
       name: WorkflowTemplatePublished
       title: Workflow template version published
+      x-lifecycle:
+        status: active
+      x-owner:
+        team: platform-engineers
+        slack: "#workflow-engine"
       payload:
         $ref: '#/components/schemas/WorkflowTemplatePublishedPayload'
 

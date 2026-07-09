@@ -4,6 +4,10 @@ name: Release
   push:
     tags: ['v*']
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -11,76 +15,56 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
   GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+  IMAGE_NAME: ghcr.io/bcbp-solutions-fzc-llc/workflow-definition-service
 
 jobs:
-  validate:
-    name: Validate
-    uses: ./.github/workflows/validate.yml
+  validate-quality:
+    name: Quality
+    uses: ./.github/workflows/validate-quality.yml
     secrets: inherit
 
-  coverage:
-    name: Coverage Gate (≥ 95%)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: validate
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Configure private module access
-        run: |
-          git config --global credential.helper store
-          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
-          chmod 600 ~/.git-credentials
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: coverage-unit
-          path: .coverage
-        continue-on-error: true   # artifact may not exist if validate skipped test
-
-      - name: Enforce coverage threshold (≥ 95%)
-        run: |
-          if [ ! -f .coverage/coverage.out ]; then
-            echo "No coverage artifact found — coverage gate skipped on validate-only run"
-            exit 0
-          fi
-          pct=$(go tool cover -func=.coverage/coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
-          echo "Total coverage: ${pct}%"
-          awk -v p="$pct" 'BEGIN { if (p+0 < 95) { print "FAIL: " p "% is below the 95% threshold"; exit 1 } else { print "PASS: " p "%" } }'
+  validate-test:
+    name: Test
+    uses: ./.github/workflows/validate-test.yml
+    secrets: inherit
 
   build:
     name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [validate, coverage]
+    needs: [validate-quality, validate-test]
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
           cache-dependency-path: |
             go.sum
             go.mod
 
       - name: Configure private module access
-        run: |
-          git config --global credential.helper store
-          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
-          chmod 600 ~/.git-credentials
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: .github/scripts/configure-private-module-access.sh
 
-      - uses: actions/download-artifact@v4
+      - uses: bufbuild/buf-setup-action@v1
         with:
-          name: generated
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        id: cache-tools
+        with:
+          path: .tools
+          key: ${{ runner.os }}-go-tools-sqlc-v1.31.1-mockgen-v0.6.0
+
+      - name: Generate proto, sqlc, and mocks
+        run: .github/scripts/generate-code.sh
 
       - name: Download modules
         run: go mod download
@@ -100,17 +84,90 @@ jobs:
           path: bin/server
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generated
+          path: |
+            gen/
+            internal/adapter/outbound/postgres/db/
+            internal/core/port/mocks/
+
+  docker:
+    name: Build and push versioned image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [validate-quality, validate-test, build]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # Cosign keyless signing (Sigstore OIDC) — no AWS involved
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          provenance: true
+          sbom: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: BUILD_VERSION=${{ github.ref_name }}
+          secrets: go_private_token=${{ secrets.GO_PRIVATE_TOKEN }}
+          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign and verify image (Cosign keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          .github/scripts/cosign-sign-verify.sh \
+            "^https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/.*$"
+
   release:
     name: GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
-    needs: build
+    needs: [build, docker]
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -118,28 +175,12 @@ jobs:
           path: bin
 
       - name: Extract CHANGELOG section for release notes
-        run: |
-          VERSION="${{ github.ref_name }}"
-          # Strip leading 'v' for CHANGELOG lookup (e.g. v1.2.3 → 1.2.3)
-          VER=${VERSION#v}
-          awk "/^## \\[${VER}\\]/,/^## \\[/" CHANGELOG.md \
-            | head -n -1 \
-            | tail -n +2 \
-            > release-notes.md
-          if [ ! -s release-notes.md ]; then
-            echo "No CHANGELOG entry found for ${VER} — using tag message as notes"
-          fi
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: .github/scripts/extract-release-notes.sh
 
       - name: Create GitHub release
-        run: |
-          NOTES_FLAG="--notes-from-tag"
-          if [ -s release-notes.md ]; then
-            NOTES_FLAG="--notes-file release-notes.md"
-          fi
-          gh release create "${{ github.ref_name }}" \
-            bin/server \
-            --title "${{ github.ref_name }}" \
-            $NOTES_FLAG \
-            --verify-tag
         env:
+          REF_NAME: ${{ github.ref_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/scripts/create-github-release.sh
