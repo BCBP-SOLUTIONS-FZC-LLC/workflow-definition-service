@@ -64,7 +64,7 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/grpc:75 \
                       internal/config:90
 
 .PHONY: all tools tools-integration generate generate-proto generate-sqlc mock \
-        build migrate test test-integration \
+        build migrate test test-integration test-ci merge-coverage \
         cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
         fix check \
@@ -173,10 +173,10 @@ test:
 	@mkdir -p $(COVERAGE_DIR)
 	go test -race -count=1 \
 	    -coverpkg=$$(go list ./internal/... ./cmd/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
-	    -coverprofile=$(COVER_PROFILE) -covermode=atomic \
+	    -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
 	    ./internal/... ./test/unit/...
-	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVER_PROFILE) > $(COVER_PROFILE).filtered && mv $(COVER_PROFILE).filtered $(COVER_PROFILE)
-	@go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print "total:", $$NF}'
+	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/unit.out > $(COVERAGE_DIR)/unit.out.filtered && mv $(COVERAGE_DIR)/unit.out.filtered $(COVERAGE_DIR)/unit.out
+	@go tool cover -func=$(COVERAGE_DIR)/unit.out | awk '/^total:/{print "total:", $$NF}'
 
 ## test-integration: Run integration tests — spins up containers via testcontainers-go (no make docker-up needed)
 test-integration:
@@ -187,37 +187,46 @@ test-integration:
 	TESTCONTAINERS_RYUK_DISABLED=true \
 	go test -race -count=1 -tags integration \
 	    -coverpkg=$$(go list ./internal/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
-	    -coverprofile=$(COVERAGE_DIR)/coverage-integration.out \
+	    -coverprofile=$(COVERAGE_DIR)/integration.out \
 	    -covermode=atomic \
 	    ./test/integration/... ./test/e2e/...
-	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/coverage-integration.out > $(COVERAGE_DIR)/coverage-integration.out.filtered && mv $(COVERAGE_DIR)/coverage-integration.out.filtered $(COVERAGE_DIR)/coverage-integration.out
-	@go tool cover -func=$(COVERAGE_DIR)/coverage-integration.out | tail -1
+	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/integration.out > $(COVERAGE_DIR)/integration.out.filtered && mv $(COVERAGE_DIR)/integration.out.filtered $(COVERAGE_DIR)/integration.out
+	@go tool cover -func=$(COVERAGE_DIR)/integration.out | tail -1
 
-## cover: Print total coverage from last test run (run 'make test' first)
-cover:
-	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+## merge-coverage: Merge unit + integration profiles into coverage.out (max-count-per-block strategy)
+merge-coverage:
+	@python3 scripts/merge_coverage.py $(COVERAGE_DIR)/unit.out $(COVERAGE_DIR)/integration.out > $(COVER_PROFILE)
+	@echo "✓ $(COVER_PROFILE) merged from unit + integration suites"
+
+## test-ci: Run unit + integration suites and merge coverage
+test-ci: test test-integration merge-coverage
 	@go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print "total:", $$NF}'
 
-## cover-func: Print per-function coverage breakdown (run 'make test' first)
+## cover: Print total coverage from last test run (run 'make test-ci' first)
+cover:
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
+	@go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print "total:", $$NF}'
+
+## cover-func: Print per-function coverage breakdown (run 'make test-ci' first)
 cover-func:
-	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
 	@go tool cover -func=$(COVER_PROFILE)
 
-## cover-gaps: Show uncovered and partially-covered functions (run 'make test' first)
+## cover-gaps: Show uncovered and partially-covered functions (run 'make test-ci' first)
 cover-gaps:
-	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
 	@./scripts/uncovered.sh $(COVER_PROFILE)
 
-## cover-html: Open HTML coverage report in the browser (run 'make test' first)
+## cover-html: Open HTML coverage report in the browser (run 'make test-ci' first)
 cover-html:
-	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
 	go tool cover -html=$(COVER_PROFILE) -o $(COVER_HTML)
 	@echo "✓ report: $(COVER_HTML)"
 	@open $(COVER_HTML) 2>/dev/null || xdg-open $(COVER_HTML) 2>/dev/null || true
 
-## cover-check-pkg: Per-package coverage gate — each package must meet its floor (run 'make test' first)
+## cover-check-pkg: Per-package coverage gate — each package must meet its floor (run 'make test-ci' first)
 cover-check-pkg:
-	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
 	@awk \
 	  -v module="$(MODULE)/" \
 	  -v floors="$(subst \,,$(COVER_PKG_FLOORS))" \
@@ -250,8 +259,8 @@ cover-check-pkg:
 	    exit fail \
 	  }' $(COVER_PROFILE)
 
-## cover-check: Global + per-package coverage gate (runs tests automatically)
-cover-check: test cover-check-pkg
+## cover-check: Global + per-package coverage gate (runs unit + integration tests automatically)
+cover-check: test-ci cover-check-pkg
 	@TOTAL=$$(go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print $$NF}' | tr -d '%'); \
 	echo "total: $${TOTAL}% (floor: $(COVER_THRESHOLD)%)"; \
 	if [ $$(echo "$${TOTAL} < $(COVER_THRESHOLD)" | bc -l) -eq 1 ]; then \
@@ -279,11 +288,8 @@ check:
 	go vet ./cmd/... ./internal/...
 	@echo "==> arch-lint"
 	$(MAKE) arch-lint
-	@echo "==> test + coverage gate"
-	$(MAKE) test
+	@echo "==> test-ci (unit + integration, merged coverage gate)"
 	$(MAKE) cover-check
-	@echo "==> integration tests"
-	$(MAKE) test-integration
 	@echo "✓ all checks passed"
 
 ## arch-lint: Enforce Clean Architecture import direction via go-arch-lint

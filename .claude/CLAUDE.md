@@ -57,6 +57,7 @@ go run ./cmd/server         # run locally (Swagger UI at /swagger/ in dev mode)
 make tools-integration      # docker pull postgres:18-alpine (one-time)
 make test                   # unit tests + race detector
 make test-integration       # integration tests (testcontainers)
+make test-ci                # unit + integration, merged coverage — what CI runs
 make cover-html             # open HTML coverage report
 
 # Code quality

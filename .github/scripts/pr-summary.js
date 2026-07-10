@@ -11,8 +11,7 @@ const MARKER = "<!-- ci-pr-summary -->";
 const JOB_LABELS = [
   ["generate", "Generate (buf/sqlc/mocks)"],
   ["validate-quality", "Code quality"],
-  ["validate-test", "Tests & race detector"],
-  ["Iint", "Integration tests"],
+  ["validate-test", "Tests & race detector (unit + integration)"],
   ["lint-dockerfile", "Dockerfile lint"],
   ["build-image-cache", "Image build (cache)"],
   ["trivy-cve-scan", "Trivy CVE scan"],

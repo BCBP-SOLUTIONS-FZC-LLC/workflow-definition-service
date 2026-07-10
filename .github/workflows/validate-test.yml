@@ -1,10 +1,11 @@
 name: Validate Test
 
-# Reusable workflow — called by ci.yml and release.yml. Test/coverage/arch-lint
-# checks only. Requires a sibling `generate` job to run first in the caller
-# workflow and upload a `generated` artifact (proto/sqlc/mocks), which this
-# workflow downloads rather than regenerating. See validate-quality.yml for
-# the static-check counterpart (fmt/tidy/vet/lint/vuln/Dockerfile pin).
+# Reusable workflow — called by ci.yml and release.yml. Unit + integration
+# tests (race + coverage, merged into one profile), arch-lint. Requires a
+# sibling `generate` job to run first in the caller workflow and upload a
+# `generated` artifact (proto/sqlc/mocks), which this workflow downloads
+# rather than regenerating. See validate-quality.yml for the static-check
+# counterpart (fmt/tidy/vet/lint/vuln/Dockerfile pin).
 
 "on":
   workflow_call:
@@ -28,7 +29,13 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+      DOCKER_HOST: unix:///var/run/docker.sock
+      AWS_ACCESS_KEY_ID: test # pragma: allowlist secret
+      AWS_SECRET_ACCESS_KEY: test # pragma: allowlist secret
+      AWS_EC2_METADATA_DISABLED: "true"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -69,8 +76,26 @@ jobs:
       - name: Event schema sync check
         run: .github/scripts/schema-extract-check.sh
 
-      - name: Unit Tests & Coverage
-        run: .github/scripts/run-unit-tests.sh
+      - name: Restore Docker image cache
+        id: docker-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/docker-images.tar.gz
+          key: docker-${{ hashFiles('.github/docker-image-versions') }}
+
+      - name: Load or pull testcontainers images
+        env:
+          DOCKER_CACHE_HIT: ${{ steps.docker-cache.outputs.cache-hit }}
+        run: .github/scripts/pull-test-images.sh
+
+      - name: Unit tests & coverage
+        run: make test
+
+      - name: Integration tests & coverage
+        run: make test-integration
+
+      - name: Merge unit + integration coverage
+        run: make merge-coverage
 
       - name: Enforce per-package coverage floors
         run: make cover-check-pkg
@@ -81,6 +106,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: coverage-unit
+          name: coverage
           path: .coverage/coverage.out
           if-no-files-found: ignore

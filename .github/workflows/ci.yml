@@ -1,5 +1,21 @@
 name: CI
 
+# Parallel flow:
+#
+#   generate ─────────┬──► validate-quality ────────────────────────────┐
+#                      ├──► validate-test ──────────┬──► smoke-tests ───┤
+#                      └──► build-image-cache ────┐  │                  ├──► pr-summary  (PR events only)
+#   lint-dockerfile ─────────────────────────────┴──► trivy-cve-scan ───┤   push-image-ghcr (push events only)
+#
+# validate-test now runs unit + integration tests (race + coverage, merged
+# into one profile) — no separate integration-test job, matching iam.
+# validate-test gates smoke-tests: fail fast, don't smoke-test a build that
+# already failed a correctness check.
+# lint-dockerfile + build-image-cache gate trivy-cve-scan: it scans the
+# actual built image (loaded from build-image-cache's GHA cache), not source.
+# pr-summary/push-image-ghcr both wait on every job above — they report/ship
+# the final result, so nothing before them can be skipped.
+#
 on:
   pull_request:
   push:
@@ -77,62 +93,6 @@ jobs:
     needs: [generate]
     uses: ./.github/workflows/validate-test.yml
     secrets: inherit
-
-  Iint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: [generate]
-    env:
-      TESTCONTAINERS_RYUK_DISABLED: "true"
-      DOCKER_HOST: unix:///var/run/docker.sock
-      AWS_ACCESS_KEY_ID: test # pragma: allowlist secret
-      AWS_SECRET_ACCESS_KEY: test # pragma: allowlist secret
-      AWS_EC2_METADATA_DISABLED: "true"
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            go.mod
-
-      - name: Configure private module access
-        env:
-          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
-        run: .github/scripts/configure-private-module-access.sh
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: generated
-
-      - name: Download modules
-        run: go mod download
-
-      - name: Restore Docker image cache
-        id: docker-cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/docker-images.tar.gz
-          key: docker-${{ hashFiles('.github/docker-image-versions') }}
-
-      - name: Load or pull testcontainers images
-        env:
-          DOCKER_CACHE_HIT: ${{ steps.docker-cache.outputs.cache-hit }}
-        run: .github/scripts/pull-test-images.sh
-
-      - name: Integration Tests & Coverage
-        run: .github/scripts/run-integration-tests.sh
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-integration
-          path: .coverage/coverage-integration.out
 
   lint-dockerfile:
     name: Lint Dockerfile
@@ -234,7 +194,7 @@ jobs:
     name: Smoke tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [validate-test, Iint]
+    needs: [validate-test]
     env:
       GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
       GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
@@ -306,7 +266,7 @@ jobs:
     name: Push image → GHCR
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [validate-test, validate-quality, Iint, trivy-cve-scan, smoke-tests]
+    needs: [validate-test, validate-quality, trivy-cve-scan, smoke-tests]
     if: github.event_name == 'push'
     permissions:
       contents: read
@@ -374,7 +334,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always() && github.event_name == 'pull_request'
-    needs: [generate, validate-quality, validate-test, Iint, lint-dockerfile, build-image-cache, trivy-cve-scan, smoke-tests]
+    needs: [generate, validate-quality, validate-test, lint-dockerfile, build-image-cache, trivy-cve-scan, smoke-tests]
     permissions:
       contents: read
       pull-requests: write
@@ -386,7 +346,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: coverage-unit
+          name: coverage
           path: .coverage
         continue-on-error: true
 
