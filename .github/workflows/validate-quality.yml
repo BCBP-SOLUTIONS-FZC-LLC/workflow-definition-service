@@ -1,10 +1,11 @@
 name: Validate Quality
 
 # Reusable workflow — called by ci.yml and release.yml. Static/quality checks
-# only (fmt, tidy, vet, lint, vuln, Dockerfile pin). Self-contained: generates
-# its own proto/sqlc/mocks rather than consuming a sibling job's artifact, so
-# it works standalone from release.yml (which has no separate `generate` job).
-# See validate-test.yml for the test/coverage/arch-lint counterpart.
+# only (fmt, tidy, vet, lint, vuln, Dockerfile pin). Requires a sibling
+# `generate` job to run first in the caller workflow and upload a `generated`
+# artifact (proto/sqlc/mocks), which this workflow downloads rather than
+# regenerating. See validate-test.yml for the test/coverage/arch-lint
+# counterpart.
 
 "on":
   workflow_call:
@@ -25,7 +26,7 @@ env:
 
 jobs:
   quality:
-    name: Quality
+    name: quality
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -48,19 +49,9 @@ jobs:
           GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
         run: .github/scripts/configure-private-module-access.sh
 
-      - uses: bufbuild/buf-setup-action@v1
+      - uses: actions/download-artifact@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Cache Go tools
-        uses: actions/cache@v4
-        id: cache-tools
-        with:
-          path: .tools
-          key: ${{ runner.os }}-go-tools-sqlc-v1.31.1-mockgen-v0.6.0
-
-      - name: Generate proto, sqlc, and mocks
-        run: .github/scripts/generate-code.sh
+          name: generated
 
       - name: Download modules
         run: go mod download

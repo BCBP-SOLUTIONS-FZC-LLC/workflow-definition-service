@@ -66,50 +66,15 @@ jobs:
             internal/core/port/mocks/
 
 
-  Build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [generate]
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            go.mod
-
-      - name: Configure private module access
-        env:
-          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
-        run: .github/scripts/configure-private-module-access.sh
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: generated
-
-      - name: Download modules
-        run: go mod download
-
-      - run: go build -o /dev/null ./cmd/server
-      - run: go build -tags=integration -o /dev/null ./cmd/server
-
-  # validate-quality/validate-test are reusable workflows (also called by
-  # release.yml) — self-contained, each generates its own proto/sqlc/mocks
-  # rather than consuming the `generate` job's artifact. See the comment at
-  # the top of validate-quality.yml/validate-test.yml for why.
   validate-quality:
-    name: Quality
+    name: Validate / Quality
+    needs: [generate]
     uses: ./.github/workflows/validate-quality.yml
     secrets: inherit
 
   validate-test:
-    name: Test
+    name: Validate / Test
+    needs: [generate]
     uses: ./.github/workflows/validate-test.yml
     secrets: inherit
 
@@ -188,7 +153,7 @@ jobs:
     name: Build image (cache)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [generate, lint-dockerfile]
+    needs: [generate]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -220,7 +185,7 @@ jobs:
     name: Trivy CVE scan
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [generate]
+    needs: [generate, lint-dockerfile, build-image-cache]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -230,6 +195,19 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generated
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Load image from cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: workflow-definition-service:${{ github.sha }}
+          build-args: BUILD_VERSION=${{ github.sha }}
+          secrets: go_private_token=${{ secrets.GO_PRIVATE_TOKEN }}
+          cache-from: type=gha
 
       - name: Compute cache date
         id: date
@@ -245,14 +223,11 @@ jobs:
 
       - uses: aquasecurity/trivy-action@v0.36.0
         with:
-          scan-type: fs
-          scan-ref: .
+          image-ref: workflow-definition-service:${{ github.sha }}
           format: table
           exit-code: '1'
           ignore-unfixed: true
-          vuln-type: os,library
           severity: HIGH,CRITICAL
-          skip-dirs: vendor,platform-libs,.design
           cache-dir: .trivy-cache
 
   smoke-tests:
@@ -399,7 +374,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always() && github.event_name == 'pull_request'
-    needs: [generate, Build, validate-quality, validate-test, Iint, lint-dockerfile, build-image-cache, trivy-cve-scan, smoke-tests]
+    needs: [generate, validate-quality, validate-test, Iint, lint-dockerfile, build-image-cache, trivy-cve-scan, smoke-tests]
     permissions:
       contents: read
       pull-requests: write

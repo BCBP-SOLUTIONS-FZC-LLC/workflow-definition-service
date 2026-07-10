@@ -19,21 +19,9 @@ env:
   IMAGE_NAME: ghcr.io/bcbp-solutions-fzc-llc/workflow-definition-service
 
 jobs:
-  validate-quality:
-    name: Quality
-    uses: ./.github/workflows/validate-quality.yml
-    secrets: inherit
-
-  validate-test:
-    name: Test
-    uses: ./.github/workflows/validate-test.yml
-    secrets: inherit
-
-  build:
-    name: Build
+  generate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [validate-quality, validate-test]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -67,6 +55,54 @@ jobs:
       - name: Generate proto, sqlc, and mocks
         run: .github/scripts/generate-code.sh
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generated
+          path: |
+            gen/
+            internal/adapter/outbound/postgres/db/
+            internal/core/port/mocks/
+
+  validate-quality:
+    name: Validate / Quality
+    needs: [generate]
+    uses: ./.github/workflows/validate-quality.yml
+    secrets: inherit
+
+  validate-test:
+    name: Validate / Test
+    needs: [generate]
+    uses: ./.github/workflows/validate-test.yml
+    secrets: inherit
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [generate, validate-quality, validate-test]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      - name: Configure private module access
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: .github/scripts/configure-private-module-access.sh
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated
+
       - name: Download modules
         run: go mod download
 
@@ -85,19 +121,11 @@ jobs:
           path: bin/server
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: generated
-          path: |
-            gen/
-            internal/adapter/outbound/postgres/db/
-            internal/core/port/mocks/
-
   docker:
     name: Build and push versioned image
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [validate-quality, validate-test, build]
+    needs: [generate, validate-quality, validate-test, build]
     permissions:
       contents: read
       packages: write

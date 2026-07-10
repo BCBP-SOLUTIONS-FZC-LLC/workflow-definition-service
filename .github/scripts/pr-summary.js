@@ -10,7 +10,6 @@ const MARKER = "<!-- ci-pr-summary -->";
 
 const JOB_LABELS = [
   ["generate", "Generate (buf/sqlc/mocks)"],
-  ["Build", "Build"],
   ["validate-quality", "Code quality"],
   ["validate-test", "Tests & race detector"],
   ["Iint", "Integration tests"],
