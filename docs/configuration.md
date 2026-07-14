@@ -46,8 +46,10 @@ Copy `.env.example` to `.env` for local development.
 | `VALKEY_ADDR` | No | `localhost:6379` | go-redis dial address |
 | `VALKEY_PASSWORD` | No | *(empty)* | Auth password; leave empty for local dev |
 | `VALKEY_DIAL_TIMEOUT` | No | `2s` | Timeout for establishing a new connection to Valkey |
-| `VALKEY_READ_TIMEOUT` | No | `1s` | Timeout for socket reads (also used as write timeout) |
+| `VALKEY_READ_TIMEOUT` | No | `1s` | Timeout for socket reads |
+| `VALKEY_WRITE_TIMEOUT` | No | `1s` | Timeout for socket writes |
 | `CACHE_COMPILED_PLAN_TTL` | No | `1h` | TTL for the gRPC `GetCompiledWorkflow` compiled-plan cache (`wf:plan:<tenant>:<version>`); entries are also deleted on archive / membership invalidation |
+| `IDEMPOTENCY_TTL` | No | `24h` | TTL for idempotency keys (`idem:<tenant>:<route>:<key>`) on HTTP mutations |
 
 ## AWS
 
@@ -57,16 +59,18 @@ Copy `.env.example` to `.env` for local development.
 | `AWS_REGION` | No | `us-east-1` | AWS region |
 | `AWS_ENDPOINT_URL` | No | *(empty)* | Custom endpoint URL (e.g. `http://localhost:4566` for LocalStack) |
 | `SNS_TOPIC_ARN` | When `AWS_USE_STUB=false` | — | SNS topic for `wf.template.events` |
-| `GLUE_REGISTRY_NAME` | When `AWS_USE_STUB=false` | — | AWS Glue Schema Registry name for event schema validation |
-| `GLUE_REGISTRY_ARN` | When `AWS_USE_STUB=false` | — | AWS Glue Schema Registry ARN |
+| `GLUE_REGISTRY_NAME` | When `AWS_USE_STUB=false` | — | AWS Glue Schema Registry name; resolved at runtime by the Glue codec when encoding/decoding events |
+| `GLUE_SCHEMA_CACHE_TTL` | No | `5m` | TTL for the in-process Glue schema cache |
 
+> `GLUE_REGISTRY_ARN` (present in `.env.example`) is **not** read by the running service — there is no corresponding field on `internal/config.Config`. It only scopes IAM policy for the `make schema-register`/`schema-prune` CI tooling. See [Schema Governance](schemagov.md).
+>
 > The service doesn't consume SQS in-process. Inbound events are delivered by the shared workflow-events consumer over HTTP to `POST /internal/events`.
 
 ## Internal endpoint
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `INTERNAL_API_TOKEN` | No | *(empty)* | When set, required as the `x-internal-token` header on `POST /internal/events`. Empty disables the check (local/dev); NetworkPolicy / mesh remains the primary control. |
+| `INTERNAL_API_TOKEN` | When `APP_ENV=prod` | *(empty)* | Required as the `x-internal-token` header on `POST /internal/events`. Empty disables the check outside `prod` (local/dev); NetworkPolicy / mesh remains the primary control either way. |
 
 ## Outbox relay
 
@@ -79,6 +83,7 @@ Copy `.env.example` to `.env` for local development.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `ORG_MEMBERSHIP_BASE_URL` | No | *(empty)* | Base URL of the Org & Membership Service for assignee eligibility checks |
-| `EXECUTION_SERVICE_ADDR` | No | *(empty)* | gRPC dial target for `CheckActiveInstances` (archive precondition guard) |
+| `ORG_MEMBERSHIP_BASE_URL` | When `APP_ENV != dev` | *(empty)* | Base URL of the Org & Membership Service for assignee eligibility checks |
+| `MEMBERSHIP_CLIENT_TIMEOUT` | No | `10s` | HTTP client timeout for the Org & Membership Service |
+| `EXECUTION_SERVICE_ADDR` | When `APP_ENV != dev` | *(empty)* | gRPC dial target for `CheckActiveInstances` (archive precondition guard) |
 | `EXECUTION_CLIENT_TIMEOUT` | No | `5s` | gRPC dial timeout for the Execution Service client |

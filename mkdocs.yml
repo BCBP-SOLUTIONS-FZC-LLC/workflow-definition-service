@@ -44,6 +44,8 @@ nav:
     - gRPC API: grpc.md
   - Operations:
     - Database: database.md
+    - Deployment: deployment.md
+    - Schema Governance: schemagov.md
   - Platform Libraries:
     - Events (SNS/SQS/Outbox): platform-events.md
     - Database Pool (pgcommon): platform-pgcommon.md

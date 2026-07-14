@@ -61,13 +61,16 @@ go env -w GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*
 # 2. Install dev tooling
 make tools
 
-# 3. Configure environment
-cp .env.example .env
+# 3. Configure environment and install the local pre-commit hook
+make setup
 
 # 4. Start local infra (PostgreSQL 18 + Valkey 8)
 make docker-up
 
-# 5. Start the server (schema migrations run automatically at startup; AWS stubs active by default)
+# 5. Apply schema migrations (outbox + domain) — the server does NOT migrate at boot
+make migrate
+
+# 6. Start the server (AWS stubs active by default)
 go run ./cmd/server
 ```
 
@@ -88,21 +91,29 @@ make help
 
 | Target | Description |
 | --- | --- |
-| `make tools` | Install sqlc, buf, mockgen, golangci-lint into `.tools/` |
+| `make setup` | Copy `.env.example` → `.env` and install the local `.githooks/pre-commit` hook (run once) |
+| `make install-hooks` | Reinstall the pre-commit hook after `.githooks/pre-commit` changes |
+| `make tools` | Install sqlc, buf, mockgen, golangci-lint, go-arch-lint into `.tools/` |
 | `make tools-integration` | Pre-pull Docker images used by integration tests (testcontainers-go) |
 | `make generate` | buf generate (proto) + sqlc generate (queries) |
 | `make mock` | Regenerate GoMock stubs for `core/port` interfaces |
 | `make build` | Compile binary to `bin/server` |
+| `make migrate` | Apply schema migrations (outbox + domain) and exit — not run at server boot |
 | `make test` | Unit tests with race detector and coverage (internal + test/unit) |
 | `make test-integration` | Integration tests (spins up Docker containers via testcontainers-go automatically; requires running Docker) |
 | `make cover` | Unit tests + coverage summary |
 | `make cover-html` | Open HTML coverage report |
 | `make cover-check` | Fail if coverage < 95% (postgres adapter + generated pkgs excluded) |
-| `make lint` | Run golangci-lint |
+| `make fmt-check` / `make lint` / `make arch-lint` | Formatting, lint, and Clean Architecture import-direction checks (read-only) |
+| `make fix` | Auto-fix formatting and lint issues |
+| `make check` | Full local CI pass: fmt + lint + vet + arch-lint + tests + coverage gate |
 | `make vuln` | Run govulncheck for known dependency vulnerabilities |
+| `make schema-validate` | Validate `internal/eventschema/*.json` against `api/asyncapi.yaml` (no AWS required) — see [Schema Governance](docs/schemagov.md) |
+| `make schema-register` / `make schema-prune` | Register/retire event schemas in AWS Glue Schema Registry |
+| `make docker-build` / `make docker-lint` / `make docker-trivy` | Build the container image, lint the Dockerfile, scan for CVEs |
 | `make docs-serve` | Live-reload docs at <http://localhost:8001> |
 | `make docs-build` | Build static MkDocs site to `site/` |
-| `make docker-up` | Start PostgreSQL + Valkey |
+| `make docker-up` | Start PostgreSQL + Valkey (+ LocalStack + PgBouncer) |
 | `make docker-down` | Stop infra |
 | `make clean` | Remove `bin/`, `gen/`, coverage, mock outputs |
 
@@ -133,6 +144,20 @@ db/
   queries/               ← sqlc query definitions (committed)
 docs/                    ← MkDocs pages
 ```
+
+---
+
+## Deployment
+
+A container image (`Dockerfile`, distroless nonroot runtime) and a Helm chart (`deploy/helm/`) ship the service to Kubernetes — Deployment/Service on ports `8080` (HTTP) / `9090` (gRPC), a migration Job that runs before every rollout (there is no auto-migration at server boot), HPA/PodDisruptionBudget sized for this service's own resource profile, NetworkPolicy, and a ServiceMonitor/PrometheusRule pair covering availability, error rate, latency, BPMN validation failure rate, publish latency, outbox delivery stalls, and RLS violations. `release.yml`'s `deploy-gate` job deploys, verifies, and health-gates every tagged release before it's published.
+
+See [Deployment](docs/deployment.md) for the full reference.
+
+## Schema Governance
+
+Outbound event contracts (`api/asyncapi.yaml` → `internal/eventschema/*.json`) are validated, diffed for breaking changes, and registered in AWS Glue Schema Registry via `platform-schemagov`, both locally (`make schema-validate`, `make schema-register`) and in CI (`schema-registry.yml`, `schema-prune.yml`, `schema-health-quarterly.yml`, `freeze-watchdog.yml`).
+
+See [Schema Governance](docs/schemagov.md) for the full reference.
 
 ---
 
