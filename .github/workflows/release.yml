@@ -126,6 +126,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [generate, validate-quality, validate-test, build]
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      version: ${{ steps.meta.outputs.version }}
     permissions:
       contents: read
       packages: write
@@ -185,13 +188,128 @@ jobs:
           .github/scripts/cosign-sign-verify.sh \
             "^https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/.*$"
 
+  # Post-deploy health gate — always runs; requires KUBECONFIG_B64 secret to be set.
+  # Deploys the image with Helm, waits for rollout, verifies the deployed digest
+  # matches what was pushed, then checks the error rate for 2 minutes.
+  # On failure, automatically rolls back and fails the release.
+  # Requires: KUBECONFIG_B64 secret, K8S_NAMESPACE var (optional, defaults to
+  # "workflow-app" per repos/design/LLD/definition_service.md §11.1), PROMETHEUS_URL
+  # var (optional). If KUBECONFIG_B64 is not configured this job fails immediately —
+  # set it before tagging releases.
+  deploy-gate:
+    name: Post-deploy health gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [build, docker]
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Verify KUBECONFIG_B64 is configured
+        run: |
+          if [ -z "${{ secrets.KUBECONFIG_B64 }}" ]; then
+            echo "::error::KUBECONFIG_B64 secret is not set. Configure the kubeconfig for the production cluster before tagging releases."
+            exit 1
+          fi
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+
+      - uses: azure/setup-helm@v4
+
+      # Deploy the just-published image via Helm so the gate is never a no-op,
+      # regardless of whether a GitOps controller is configured. The chart's
+      # pre-install/pre-upgrade migrate-job hook runs `/server migrate` before the
+      # Deployment rolls out (this service has no auto-migration at server boot).
+      - name: Deploy with Helm
+        env:
+          IMAGE_VERSION: ${{ needs.docker.outputs.version }}
+          K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'workflow-app' }}
+        run: |
+          helm upgrade workflow-definition-service ./deploy/helm \
+            --install \
+            --wait \
+            --timeout=5m \
+            --namespace="$K8S_NAMESPACE" \
+            --set image.tag="$IMAGE_VERSION" \
+            --atomic
+
+      # Verify the running image digest matches what was signed and published.
+      # Guards against a GitOps controller or deployment process substituting a
+      # different image after the Helm upgrade.
+      - name: Verify deployed image digest
+        env:
+          EXPECTED_DIGEST: ${{ needs.docker.outputs.digest }}
+          K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'workflow-app' }}
+        run: |
+          ACTUAL=$(kubectl get deployment workflow-definition-service \
+            --namespace="$K8S_NAMESPACE" \
+            -o jsonpath='{.spec.template.spec.containers[0].image}')
+          echo "Expected digest: ${EXPECTED_DIGEST}"
+          echo "Deployed image:  ${ACTUAL}"
+          if [[ "$ACTUAL" == *"@sha256:"* ]]; then
+            ACTUAL_DIGEST="${ACTUAL#*@}"
+            if [ "$ACTUAL_DIGEST" != "$EXPECTED_DIGEST" ]; then
+              echo "::error::Deployed image digest ${ACTUAL_DIGEST} does not match published digest ${EXPECTED_DIGEST} — potential supply-chain substitution."
+              exit 1
+            fi
+            echo "Digest verified: deployed image matches published artifact."
+          else
+            echo "::warning::Deployed image is not digest-pinned — cannot verify supply-chain integrity. Pin image digests in the Helm values."
+          fi
+
+      - name: Wait for rollout
+        env:
+          K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'workflow-app' }}
+        run: |
+          kubectl rollout status deployment/workflow-definition-service \
+            --namespace="$K8S_NAMESPACE" \
+            --timeout=5m
+
+      - name: Health gate — error rate < 1% for 2 minutes
+        env:
+          PROM_URL: ${{ vars.PROMETHEUS_URL }}
+          K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'workflow-app' }}
+        run: |
+          if [ -z "$PROM_URL" ]; then
+            echo "PROMETHEUS_URL not set — skipping error-rate check"
+            exit 0
+          fi
+          # status_class="5xx" matches the label emitted by platform-gincommon.
+          QUERY='sum(rate(http_requests_total{job=~".*workflow-definition-service.*",status_class="5xx"}[2m]))/sum(rate(http_requests_total{job=~".*workflow-definition-service.*"}[2m]))'
+          # Sleep AFTER confirming Prometheus is configured so the 2-minute window
+          # only runs when there is actually something to measure.
+          sleep 120
+          RATE=$(curl -sf "${PROM_URL}/api/v1/query" \
+            --data-urlencode "query=${QUERY}" | jq -r '.data.result[0].value[1] // "0"')
+          echo "5xx rate: ${RATE}"
+          if awk "BEGIN{exit !($RATE > 0.01)}"; then
+            echo "ERROR: 5xx rate ${RATE} exceeds 1% threshold — rolling back"
+            # Use helm rollback so Helm's release history stays consistent.
+            # kubectl rollout undo bypasses the Helm state machine and leaves
+            # subsequent helm upgrade calls working from the wrong baseline.
+            helm rollback workflow-definition-service \
+              --namespace="$K8S_NAMESPACE" \
+              --wait
+            exit 1
+          fi
+          echo "Health gate passed — 5xx rate ${RATE} is below 1%"
+
   release:
     name: GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
-    needs: [build, docker]
+    # deploy-gate must succeed — a skipped/failed gate means the release was never
+    # deployed to production and downstream consumers must not pin the tag.
+    needs: [build, docker, deploy-gate]
+    if: needs.build.result == 'success' && needs.docker.result == 'success' && needs.deploy-gate.result == 'success'
     steps:
       - uses: actions/checkout@v6
         with:

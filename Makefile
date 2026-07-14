@@ -67,7 +67,8 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/grpc:75 \
         build migrate test test-integration test-ci merge-coverage \
         cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
-        fix check \
+        tidy fmt-check fix check \
+        setup install-hooks \
         docs-serve docs-build \
         docker-up docker-down \
         docker-build docker-lint docker-trivy docker-check pin-base-images \
@@ -270,6 +271,14 @@ cover-check: test-ci cover-check-pkg
 	fi
 
 
+## tidy: Run go mod tidy
+tidy:
+	go mod tidy
+
+## fmt-check: Verify gofmt formatting (read-only; exits non-zero on violations)
+fmt-check:
+	@files=$$(gofmt -l cmd/ internal/ test/); if [ -n "$$files" ]; then echo "gofmt violations (run 'make fix'):"; echo "$$files"; exit 1; fi
+
 ## fix: Auto-fix formatting (gofmt) and lint issues (golangci-lint --fix)
 fix:
 	@echo "==> gofmt (auto-fix)"
@@ -281,7 +290,7 @@ fix:
 ## check: Verify formatting/lint (read-only), run vet, tests, and coverage gate — full local CI pass
 check:
 	@echo "==> gofmt"
-	@files=$$(gofmt -l cmd/ internal/ test/); if [ -n "$$files" ]; then echo "gofmt violations (run 'make fix'):"; echo "$$files"; exit 1; fi
+	@$(MAKE) fmt-check
 	@echo "==> lint"
 	$(GOLANGCI) run ./cmd/... ./internal/... ./test/...
 	@echo "==> go vet"
@@ -414,6 +423,21 @@ schema-prune:
 	  --registry "$(GLUE_REGISTRY_NAME)" \
 	  $(if $(filter true,$(EXECUTE)),--execute,)
 
+
+## setup: First-time onboarding — copy .env.example → .env and install git hooks
+setup:
+	@test -f .env || cp .env.example .env
+	@mkdir -p .git/hooks
+	@cp .githooks/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "✓ Environment ready (.env) and git hooks installed"
+
+## install-hooks: (Re)install the local pre-commit hook — run after .githooks/pre-commit changes
+install-hooks:
+	@mkdir -p .git/hooks
+	@cp .githooks/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "✓ Installed git hooks"
 
 ## docker-up: Start local infra (PostgreSQL + Valkey)
 docker-up:

@@ -43,7 +43,7 @@ go mod vendor
 # First-time setup
 export GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*  # required before go get / mod tidy
 make tools                  # install sqlc, buf, mockgen, golangci-lint, go-arch-lint
-cp .env.example .env
+make setup                  # copy .env.example → .env and install .githooks/pre-commit
 make docker-up              # start PostgreSQL + Valkey + LocalStack + PgBouncer
 make migrate                # apply schema (outbox + domain) — NOT run at server boot
 

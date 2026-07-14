@@ -1,0 +1,34 @@
+workflow-definition-service {{ .Chart.Version }} deployed.
+
+━━ REQUIRED ACTIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{{ if not .Values.existingSecret -}}
+⚠  Credentials are stored in Helm release history (base64, not encrypted).
+   Migrate to External Secrets Operator or AWS Secrets Manager CSI:
+     existingSecret: "workflow-definition-service-secrets"
+   Then remove secretValues from your values file.
+
+{{ end -}}
+{{ if not .Values.networkPolicy.enabled -}}
+⚠  networkPolicy.enabled is false. The /metrics endpoint is unauthenticated
+   and reachable by any pod in the cluster. Enable in production:
+     networkPolicy.enabled: true
+   Ensure the ingress controller namespace label matches:
+     ingressControllerNamespaceSelector: {{ .Values.networkPolicy.ingressControllerNamespaceSelector | toJson }}
+
+{{ end -}}
+{{ if .Values.ingress.enabled -}}
+⚠  Ingress is enabled. The /metrics endpoint will be exposed externally
+   unless you restrict it via a NetworkPolicy or an ingress annotation.
+   Recommended: networkPolicy.enabled=true restricts /metrics to the
+   Prometheus namespace only.
+
+{{ end -}}
+━━ VERIFY DEPLOYMENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  kubectl rollout status deployment/{{ include "workflow-definition-service.fullname" . }} -n {{ .Release.Namespace }}
+  kubectl get pods -l {{ include "workflow-definition-service.selectorLabels" . | replace ": " "=" | replace "\n" "," }}
+
+Readiness: https://{{ if .Values.ingress.hosts }}{{ (first .Values.ingress.hosts).host }}{{ else }}<host>{{ end }}/readyz
+Metrics:   (cluster-internal only) http://<pod-ip>:{{ .Values.service.ports.http }}/metrics
+gRPC:      <pod-ip>:{{ .Values.service.ports.grpc }} (GetCompiledWorkflow — Execution Service only)

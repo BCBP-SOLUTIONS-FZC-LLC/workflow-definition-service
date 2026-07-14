@@ -1,0 +1,16 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "workflow-definition-service.fullname" . }}
+  labels:
+    {{- include "workflow-definition-service.labels" . | nindent 4 }}
+spec:
+  # At replicaCount/minReplicas: 2 (LLD §11.1), minAvailable: 1 allows exactly one
+  # pod to be evicted at a time during voluntary disruptions (node drains, rolling
+  # updates) without ever taking the service to zero replicas.
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "workflow-definition-service.selectorLabels" . | nindent 6 }}
+{{- end }}

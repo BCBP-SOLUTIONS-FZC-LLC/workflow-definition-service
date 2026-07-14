@@ -1,0 +1,259 @@
+replicaCount: 2 # base HA replica count — repos/design/LLD/definition_service.md §11.1
+
+image:
+  repository: ghcr.io/bcbp-solutions-fzc-llc/workflow-definition-service
+  pullPolicy: IfNotPresent
+  tag: ""
+
+serviceAccount:
+  create: true
+  # Annotations added to the ServiceAccount — use for IRSA on EKS:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/workflow-definition-service-role
+  # When IRSA is configured, remove AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
+  # from envFromSecret / secretValues and rely on the pod's ambient IAM role instead.
+  annotations: {}
+
+service:
+  type: ClusterIP
+  ports:
+    http: 8080  # REST/OpenAPI, /healthz, /readyz, /metrics
+    grpc: 9090  # GetCompiledWorkflow (called by the Execution Service)
+
+autoscaling:
+  enabled: true
+  minReplicas: 2    # repos/design/LLD/definition_service.md §11.1
+  maxReplicas: 8    # not specified in the LLD — judgment call, revisit with real usage data
+  targetCPUUtilizationPercentage: 70     # LLD §11.1
+  targetMemoryUtilizationPercentage: 80  # LLD §11.1
+  # targetRPSPerReplica: 500   # optional — requires deploy/monitoring/prometheus-adapter-rule.yaml
+                                # installed; unset by default until prometheus-adapter is confirmed live
+
+resources:
+  # repos/design/LLD/definition_service.md §11.1 — do not copy iam-user-profile's numbers,
+  # this service's LLD already specifies its own request/limit values.
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
+  limits:
+    cpu: "500m"
+    memory: "1024Mi"
+
+env:
+  APP_ENV: "prod"                                 # enables INTERNAL_API_TOKEN + ORG_MEMBERSHIP_BASE_URL + EXECUTION_SERVICE_ADDR validation (internal/config/config.go validate())
+  HTTP_PORT: "8080"
+  GRPC_PORT: "9090"
+  OTEL_SERVICE_NAME: "workflow-definition-svc"     # exact value from internal/config/config.go default
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""                  # e.g. otel-collector.observability:4317
+  OTEL_EXPORTER_OTLP_INSECURE: "false"
+  OTEL_TRACES_SAMPLER_RATIO: "1.0"                 # lower once trace volume in prod is known
+  PG_MAX_CONNS: "15"
+  PG_MIN_CONNS: "0"                                # 0 when PG_BOUNCER_MODE=true
+  PG_BOUNCER_MODE: "true"
+  PG_SLOW_QUERY_THRESHOLD_MS: "200"
+  CACHE_COMPILED_PLAN_TTL: "1h"
+  IDEMPOTENCY_TTL: "24h"
+  VALKEY_ADDR: ""                                  # cluster-internal Valkey address
+  VALKEY_DIAL_TIMEOUT: "2s"
+  VALKEY_READ_TIMEOUT: "1s"
+  VALKEY_WRITE_TIMEOUT: "1s"
+  AWS_USE_STUB: "false"                             # false in prod -> SNS_TOPIC_ARN + GLUE_REGISTRY_NAME become required
+  AWS_REGION: "us-east-1"
+  GLUE_REGISTRY_NAME: "workflow-template-events"
+  GLUE_SCHEMA_CACHE_TTL: "5m"
+  OUTBOX_POLL_INTERVAL: "500ms"
+  OUTBOX_BATCH_SIZE: "50"
+  ORG_MEMBERSHIP_BASE_URL: ""                      # in-cluster org-membership service URL — required when APP_ENV != dev
+  MEMBERSHIP_CLIENT_TIMEOUT: "10s"
+  EXECUTION_SERVICE_ADDR: ""                       # in-cluster execution-service:9091 — required when APP_ENV != dev
+  EXECUTION_CLIENT_TIMEOUT: "5s"
+
+envFromSecret:
+  - DATABASE_URL
+  - MIGRATION_DATABASE_URL   # direct-Postgres DSN; required whenever DATABASE_URL points at PgBouncer
+  - VALKEY_PASSWORD
+  - SNS_TOPIC_ARN
+  - INTERNAL_API_TOKEN       # required when APP_ENV=prod — pod crash-loops without it (config.validate())
+  # - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY — only if not using IRSA
+  # GLUE_REGISTRY_ARN intentionally NOT included: the running binary never reads it
+  # (no field on internal/config.Config) — only CI-time platform-schemagov tooling uses it.
+
+# existingSecret — preferred for production.
+# Set to the name of a pre-existing Kubernetes Secret whose keys match envFromSecret.
+# When set, the chart will NOT create a Secret resource; secretValues is ignored.
+# Use with External Secrets Operator, AWS Secrets Manager CSI, or Sealed Secrets:
+#   existingSecret: "workflow-definition-service-secrets"
+existingSecret: ""
+
+# rotationEpoch — used only when existingSecret is set.
+# Bump this value to trigger a rolling restart after an external secret is rotated:
+#   helm upgrade ... --set rotationEpoch=$(date +%s)
+rotationEpoch: "0"
+
+# Secret values — used ONLY when existingSecret is empty.
+# Pass via --set or a Helm secrets plugin (never commit real values).
+# Warning: Helm stores these in the release history Secret (base64, not encrypted).
+# In production, always prefer existingSecret over this map.
+secretValues:
+  DATABASE_URL: ""
+  MIGRATION_DATABASE_URL: ""
+  VALKEY_PASSWORD: ""
+  SNS_TOPIC_ARN: ""
+  INTERNAL_API_TOKEN: ""
+
+# migrationJob — runs `/server migrate` as a pre-install/pre-upgrade Helm hook before
+# the main Deployment rolls out. This service has NO auto-migration at server boot
+# (cmd/server/main.go special-cases `migrate` as a subcommand), unlike iam-user-profile.
+# Disable only if migrations are applied out-of-band by some other process.
+migrationJob:
+  enabled: true
+
+terminationGracePeriodSeconds: 60
+# cmd/server/app.go stopServers() runs sequentially: HTTP Shutdown(ctx) (bounded by a
+# single 30s context) -> grpcServer.GracefulStop() (NO context — unbounded, waits for
+# in-flight RPCs) -> outboxRelay.Stop() (NO context — platform-events defaults
+# DrainTimeout to ~30s) -> pool.DrainAndClose(ctx) (bounded by whatever remains of the
+# original 30s deadline). The 30s figure does not bound the whole sequence; 60s gives
+# real headroom above the worst reasonable case before Kubernetes SIGKILLs the pod.
+
+# podDisruptionBudget — ensures at least 1 pod survives voluntary disruptions
+# (node drains, cluster upgrades). At replicaCount/minReplicas: 2 (LLD §11.1),
+# minAvailable: 2 would block ALL voluntary disruptions — set to 1 so one pod can
+# always be evicted at a time.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# startupProbe covers a safety margin for cold start even though migrations run as a
+# separate pre-upgrade Helm hook Job (migrationJob above), not at server boot.
+# Once it passes, liveness and readiness take over. failureThreshold * periodSeconds
+# = 120 s maximum startup budget.
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 24   # 24 x 5s = 120s startup budget
+  timeoutSeconds: 3
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 0   # startupProbe handles the initial delay
+  periodSeconds: 15
+  failureThreshold: 3
+  timeoutSeconds: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz   # checks Postgres pool health + Valkey ping (cmd/server/handlers.go)
+    port: 8080
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  failureThreshold: 3
+  timeoutSeconds: 3
+
+# NetworkPolicy — enabled by default. Restricts traffic to the ingress controller /
+# gateway namespace (HTTP only) plus intra-namespace traffic (HTTP + gRPC, covers the
+# Execution Service calling GetCompiledWorkflow) and the monitoring namespace (/metrics).
+#
+# Envoy Gateway: data-plane Envoy proxy pods run in the same namespace as the
+# Gateway resource (not envoy-gateway-system, which is the control plane).
+# Set ingressControllerNamespaceSelector to the Gateway's namespace label and
+# ingressControllerPodSelector to the Envoy pod labels so the NetworkPolicy
+# allows only gateway traffic, not arbitrary pods in that namespace.
+networkPolicy:
+  enabled: true
+  # Namespace label selector for the ingress controller / Envoy Gateway data-plane.
+  ingressControllerNamespaceSelector:
+    kubernetes.io/metadata.name: envoy-gateway-system
+  # Optional pod label selector — combined with namespaceSelector (logical AND).
+  # Leave empty ({}) to allow all pods in the ingress controller namespace.
+  ingressControllerPodSelector: {}
+  metricsIngress:
+    enabled: true
+    # Namespace where Prometheus runs.
+    namespaceSelector:
+      kubernetes.io/metadata.name: monitoring
+    # Pod label selector for the Prometheus pod.
+    podSelector:
+      app.kubernetes.io/name: prometheus
+  # If the Execution Service (gRPC caller) lives in a different namespace than this
+  # release, add an ingress rule here restricted to port 9090.
+  additionalIngressRules: []
+  additionalEgressRules: []
+
+# ServiceMonitor — requires kube-prometheus-stack (monitoring.coreos.com/v1 CRD).
+# NOTE: PrometheusRule (alerting rules) is also gated on this flag — no scrape means
+# no metrics, which means all alerts stay permanently inactive.
+serviceMonitor:
+  enabled: true
+  interval: "30s"
+  scrapeTimeout: "10s"
+  # Labels added to the ServiceMonitor (must match your Prometheus operator's
+  # serviceMonitorSelector — typically: release: kube-prometheus-stack).
+  additionalLabels: {}
+  relabelings: []
+  # Restrict to this namespace; omit to match the release namespace.
+  namespaceSelector: {}
+
+# Ingress — disabled by default.
+# type: HTTPRoute  — Envoy Gateway / any Gateway API-compatible controller (recommended)
+# type: Ingress    — classic nginx / traefik Ingress controller
+ingress:
+  enabled: false
+  type: HTTPRoute
+
+  # ── Hosts (shared by both types) ─────────────────────────────────────────
+  hosts:
+    - host: workflow-definition-service.example.com
+      paths:
+        - path: /api/v1
+          # HTTPRoute types: PathPrefix | Exact
+          # Ingress types:   Prefix | Exact | ImplementationSpecific
+          pathType: PathPrefix
+
+  # ── Gateway API (type: HTTPRoute) ────────────────────────────────────────
+  # Reference the Gateway resource that Envoy Gateway manages.
+  # The Gateway must be deployed separately (e.g. via the envoy-gateway Helm chart).
+  gateway:
+    name: ""              # required — name of the Gateway resource
+    namespace: ""         # optional — defaults to the release namespace
+    sectionName: ""       # optional — target a specific listener (e.g. "https")
+
+  # Envoy Gateway SecurityPolicy — CORS and gateway-level rate limiting.
+  # Requires gateway.envoyproxy.io/v1alpha1 CRD (Envoy Gateway v0.6+).
+  securityPolicy:
+    enabled: false
+    cors:
+      enabled: false
+      allowOrigins: []
+        # - "https://app.example.com"
+      allowMethods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      # X-Tenant-ID / X-User-ID are deliberately NOT listed here: they are injected
+      # by the Envoy Gateway's ext_authz filter after JWT validation the browser client never sets them
+      # directly, so they must never be CORS-allow-listed as if it did.
+      allowHeaders:
+        - Authorization
+        - Content-Type
+        - X-Idempotency-Key
+      maxAge: "86400"
+    rateLimit:
+      enabled: false
+      requestsPerUnit: 1000
+      unit: Second          # Second | Minute | Hour
+
+  className: ""
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls: []
+  #  - secretName: workflow-definition-service-tls
+  #    hosts:
+  #      - workflow-definition-service.example.com
