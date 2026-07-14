@@ -4,8 +4,8 @@ name: CI
 #
 #   generate ─────────┬──► validate-quality ──────────────────────────────────┐
 #                      ├──► validate-test ──────────┬──► smoke-tests ─────────┤
-#                      └──► build-image-cache ────┐  │                        ├──► pr-summary  (PR events only)
-#                           lint-dockerfile ─────┴┴──► trivy-cve-scan ────────┤   push-image-ghcr (push events only)
+#                      ├──► build-image-cache ────┐  │                        ├──► pr-summary  (PR events only)
+#                      └──► lint-dockerfile ─────┴┴──► trivy-cve-scan ────────┤   push-image-ghcr (push events only)
 #
 # validate-test now runs unit + integration tests (race + coverage, merged
 # into one profile) — no separate integration-test job, matching iam.
@@ -100,6 +100,7 @@ jobs:
     name: Lint Dockerfile
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    needs: [generate]
     steps:
       - uses: actions/checkout@v6
         with:
