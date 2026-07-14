@@ -2,17 +2,19 @@ name: CI
 
 # Parallel flow:
 #
-#   generate ─────────┬──► validate-quality ────────────────────────────┐
-#                      ├──► validate-test ──────────┬──► smoke-tests ───┤
-#                      └──► build-image-cache ────┐  │                  ├──► pr-summary  (PR events only)
-#   lint-dockerfile ─────────────────────────────┴──► trivy-cve-scan ───┤   push-image-ghcr (push events only)
+#   generate ─────────┬──► validate-quality ──────────────────────────────────┐
+#                      ├──► validate-test ──────────┬──► smoke-tests ─────────┤
+#                      └──► build-image-cache ────┐  │                        ├──► pr-summary  (PR events only)
+#                           lint-dockerfile ─────┴┴──► trivy-cve-scan ────────┤   push-image-ghcr (push events only)
 #
 # validate-test now runs unit + integration tests (race + coverage, merged
 # into one profile) — no separate integration-test job, matching iam.
 # validate-test gates smoke-tests: fail fast, don't smoke-test a build that
 # already failed a correctness check.
-# lint-dockerfile + build-image-cache gate trivy-cve-scan: it scans the
-# actual built image (loaded from build-image-cache's GHA cache), not source.
+# lint-dockerfile + build-image-cache also gate smoke-tests, not just
+# trivy-cve-scan: a commit is never smoke-tested green while the Dockerfile
+# itself fails to lint or the image fails to build — the same commit is what
+# eventually ships as a container.
 # pr-summary/push-image-ghcr both wait on every job above — they report/ship
 # the final result, so nothing before them can be skipped.
 #
@@ -194,7 +196,7 @@ jobs:
     name: Smoke tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [validate-test]
+    needs: [validate-test, lint-dockerfile, build-image-cache]
     env:
       GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
       GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*

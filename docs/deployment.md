@@ -77,14 +77,20 @@ Two mutually exclusive modes, selected by whether `existingSecret` is set:
 
 ### Observability
 
-`serviceMonitor.enabled: true` scrapes `/metrics` every 30s. The `PrometheusRule` template (and its static twin at `deploy/monitoring/app-alerts.yml`, for setups that read plain rule files instead of the CRD) alert on:
+`serviceMonitor.enabled: true` scrapes `/metrics` every 30s. Every alert in the `PrometheusRule` template (and its static twin at `deploy/monitoring/app-alerts.yml`, for setups that read plain rule files instead of the CRD) has been verified against a metric actually emitted by this service's own code or one of its vendored platform libraries — not assumed from documentation. They alert on:
 
 - **Availability** — no healthy scrape target for 2 minutes; replica count below the HA floor.
-- **HTTP errors/latency** — 5xx ratio and p99 latency, warning and critical thresholds.
-- **BPMN validation failure rate** — `wf_validation_failures_total` / `wf_submissions_total` over 30%, a signal that something upstream (a canvas modeler change, a bad template) is producing structurally invalid diagrams at an unusual rate.
-- **Publish latency** — p95 of `wf_publish_latency_seconds` (compile + DB transaction combined) exceeding 2s.
-- **Outbox delivery stalls** — any increase in `outbox_dead_letters_total`, meaning events exhausted their retry budget and need operator attention.
-- **Row-level security violations** — a missing/invalid tenant GUC on a pool connection, and any blocked cross-tenant row access (paged immediately — this one should never fire under normal operation).
+- **HTTP errors/latency** — 5xx ratio and p99 latency (`http_requests_total`/`http_request_duration_seconds`), warning and critical thresholds.
+- **`GetCompiledWorkflow` error rate/latency** — scoped separately from the blended gRPC rate, since this is the one RPC the Execution Service depends on synchronously.
+- **BPMN validation failure rate** — sustained activity on `wf_validation_failures_total` (emitted only by the standalone `/validate` endpoint — `WorkflowService.Create`'s inline validation doesn't touch this counter, so this is deliberately not framed as a ratio against submissions).
+- **Publish latency and retry exhaustion** — p95 of `wf_publish_latency_seconds` (compile + DB transaction combined) exceeding 2s, and any increase in `pgcommon_retry_exhausted_total` (a transaction — e.g. the `SERIALIZABLE` publish path — giving up under contention).
+- **Outbox health** — delivery stalls (`outbox_dead_letters_total`), a growing backlog (`outbox_pending_total`), and relay-internal infra errors (`outbox_poll_errors_total`, `outbox_mark_published_errors_total`).
+- **Internal event ingest failures** — a sustained rate of `bad_payload`/`error` results on `POST /internal/events`, signalling either consumer contract drift or a downstream call failure.
+- **Postgres query error rate** — `pgcommon_query_total{status="error"}`.
+- **Panics** — any increase in `http_panic_total`/`grpc_panic_total`, paged immediately; should never fire under normal operation.
+- **Compiled-plan cache hit ratio** (informational) — an efficiency signal on `wf_cache_hits_total`/`wf_cache_misses_total`, not an incident trigger.
+
+**Row-level security violation alerting is intentionally not implemented.** There is no `rls_violations_total` metric anywhere in this service or in `platform-pgcommon` — the `rls_violation_log` table (`db/migrations/000009_rls_violation_log.up.sql`) is populated by DB triggers, not application code, and nothing in this repo currently exports it to Prometheus. Building that would require a small custom exporter (e.g. a `postgres_exporter` custom query); flagged here as a known gap rather than shipped as a dead alert.
 
 `deploy/monitoring/prometheus-adapter-rule.yaml` is the companion ConfigMap that exposes `http_requests_per_second` to the Kubernetes Custom Metrics API, for clusters that want the optional RPS-based HPA metric mentioned above.
 
