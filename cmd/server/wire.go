@@ -12,6 +12,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/grpccommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgmetrics"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -43,6 +44,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		tracingShutdown()
 		return nil, err
 	}
+	prometheus.MustRegister(pgmetrics.NewPoolStatsCollector(pool, cfg.OTELServiceName))
 
 	cache, redisClient, err := newCacheStore(context.Background(), cfg)
 	if err != nil {

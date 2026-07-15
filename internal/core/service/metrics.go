@@ -41,6 +41,12 @@ var (
 		Help:    "End-to-end latency of PublishVersion (compile + DB tx).",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
 	})
+
+	wfCompileDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "wf_compile_duration_seconds",
+		Help:    "Duration of BPMN compiler.Compile calls (DSL generation from validated BPMN XML).",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+	})
 )
 
 func outcomeLabel(err error) string {

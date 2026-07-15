@@ -378,7 +378,10 @@ func (s *VersionService) resolvePlan(
 	if err != nil {
 		return nil, fmt.Errorf("bundle modules: %w", err)
 	}
-	return s.compiler.Compile(ctx, bundled)
+	compileStart := time.Now()
+	plan, err := s.compiler.Compile(ctx, bundled)
+	wfCompileDuration.Observe(time.Since(compileStart).Seconds())
+	return plan, err
 }
 
 func versionLabel(v *domain.WorkflowVersion) string {

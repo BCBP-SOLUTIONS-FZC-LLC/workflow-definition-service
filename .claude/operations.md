@@ -64,14 +64,17 @@ Key metrics emitted by the service:
 | `wf_publish_latency_seconds` | Histogram | — | End-to-end publish latency (compile + DB tx) |
 | `wf_clone_total` | CounterVec | `status` | Clone attempts |
 | `wf_promote_total` | CounterVec | `status` | Promote attempts |
+| `wf_compile_duration_seconds` | Histogram | — | Duration of `compiler.Compile` only, isolated from DB-tx time. Observed at `publishPreFlight` (Publish) and `resolvePlan` (Diff/Export fallback-recompile). `Promote` never compiles; `ValidationService.Validate` calls the separate `compiler.Validate`, not `Compile`. |
 | `wf_validation_failures_total` | Counter | — | BPMN validate calls with at least one error |
 | `internal_events_ingest_total` | CounterVec | `event_type`, `result` | Internal event ingestion (ok/bad_payload/error) |
 | `wf_cache_hits_total` | Counter | — | gRPC compiled-plan cache hits |
 | `wf_cache_misses_total` | Counter | — | gRPC compiled-plan cache misses |
 
-Outcome labels use `outcomeLabel(err)` helper: `"ok"` when err is nil, `"error"` otherwise.
+Outcome labels use `outcomeLabel(err)` helper: `"ok"` when err is nil, `"err"` otherwise.
 
-Metrics are served at `GET /metrics` (Prometheus scrape endpoint, no auth).
+DB connection-pool gauges (`pgmetrics.PoolStatsCollector`, registered in `cmd/server/wire.go` against the live pool): `pgcommon_pool_total_conns`, `pgcommon_pool_idle_conns`, `pgcommon_pool_acquired_conns`, `pgcommon_pool_max_conns`, `pgcommon_pool_constructing_conns`, `pgcommon_pool_empty_acquire_total` — all labelled with a constant `service` label.
+
+Metrics are served at `GET /metrics` (Prometheus scrape endpoint, no auth — access control is enforced by network policy/ingress at deploy time, not the app).
 
 ## OTel Tracing
 

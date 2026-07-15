@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
 	"github.com/google/uuid"
@@ -42,7 +43,9 @@ func (s *VersionService) publishPreFlight(
 	if err != nil {
 		return nil, "", "", nil, "", fmt.Errorf("bundle modules: %w", err)
 	}
+	compileStart := time.Now()
 	plan, err := s.compiler.Compile(ctx, bundled)
+	wfCompileDuration.Observe(time.Since(compileStart).Seconds())
 	if err != nil {
 		return nil, "", "", nil, "", fmt.Errorf("compile bpmn: %w", err)
 	}
