@@ -869,8 +869,8 @@ paths:
                 bpmn_xml:
                   type: string
                   minLength: 50
-                  maxLength: 5242880
-                  description: Raw BPMN 2.0 XML string. Max 5 MB (5,242,880 chars). Must declare bpmn and zeebe namespaces.
+                  maxLength: 10485760
+                  description: Raw BPMN 2.0 XML string. Max 10 MB (10,485,760 chars). Must declare bpmn and zeebe namespaces.
                   example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
       responses:
         "201":
@@ -905,7 +905,12 @@ paths:
                 instance: "/workflows"
                 code: "DUPLICATE_BUSINESS_KEY"
         "413":
-          description: Payload exceeds 5 MB limit.
+          description: Payload exceeds 10 MB limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "415":
+          description: Content-Type is not application/json.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -936,8 +941,8 @@ paths:
                 bpmn_xml:
                   type: string
                   minLength: 50
-                  maxLength: 5242880
-                  description: Raw BPMN 2.0 XML. Max 5 MB. Must declare bpmn and zeebe namespaces.
+                  maxLength: 10485760
+                  description: Raw BPMN 2.0 XML. Max 10 MB. Must declare bpmn and zeebe namespaces.
                   example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
                 module_bpmn_xmls:
                   type: array
@@ -957,7 +962,7 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "413":
-          description: Payload exceeds 5 MB limit.
+          description: Payload exceeds 10 MB limit.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1170,8 +1175,8 @@ paths:
                 bpmn_xml:
                   type: string
                   minLength: 50
-                  maxLength: 5242880
-                  description: Updated BPMN 2.0 XML. Max 5 MB. Must declare bpmn and zeebe namespaces.
+                  maxLength: 10485760
+                  description: Updated BPMN 2.0 XML. Max 10 MB. Must declare bpmn and zeebe namespaces.
                 module_bpmn_xmls:
                   type: array
                   items:
@@ -1223,7 +1228,12 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "413":
-          description: Payload exceeds 5 MB limit.
+          description: Payload exceeds 10 MB limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "415":
+          description: Content-Type is not application/json.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
