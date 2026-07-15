@@ -1,0 +1,353 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "workflow-definition-service.fullname" . }}
+  labels:
+    {{- include "workflow-definition-service.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: workflow_definition_service_availability
+      rules:
+        - alert: WorkflowDefinitionServiceDown
+          expr: |
+            absent(up{job={{ include "workflow-definition-service.fullname" . | quote }}} == 1)
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: workflow-definition-service has no healthy instances
+            description: >-
+              No workflow-definition-service pods have been scraped as healthy for 2 minutes.
+              Check pod readiness: kubectl get pods -l app.kubernetes.io/name=workflow-definition-service
+
+        - alert: WorkflowDefinitionServiceReplicasMissing
+          expr: |
+            sum(up{job={{ include "workflow-definition-service.fullname" . | quote }}}) < 2
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: workflow-definition-service running below minimum replica count
+            description: >-
+              Fewer than 2 replicas are healthy. The PDB requires minAvailable=1;
+              a further disruption could take the service to zero.
+              Current healthy count: {{ "{{ $value }}" }}.
+
+    - name: workflow_definition_service_errors
+      rules:
+        - alert: WorkflowDefinitionServiceHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{job={{ include "workflow-definition-service.fullname" . | quote }}, status_class="5xx"}[5m]))
+              /
+            sum(rate(http_requests_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m]))
+            > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: workflow-definition-service 5xx error rate above 5%
+            description: >-
+              {{ "{{ $value | humanizePercentage }}" }} of requests are returning 5xx errors
+              over the last 5 minutes. Investigate recent deployments, dependency
+              health (Postgres, Valkey, SNS), and application logs.
+
+        - alert: WorkflowDefinitionServiceCriticalErrorRate
+          expr: |
+            sum(rate(http_requests_total{job={{ include "workflow-definition-service.fullname" . | quote }}, status_class="5xx"}[5m]))
+              /
+            sum(rate(http_requests_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m]))
+            > 0.20
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: workflow-definition-service 5xx error rate above 20%
+            description: >-
+              {{ "{{ $value | humanizePercentage }}" }} of requests are returning 5xx errors.
+              This exceeds the critical threshold. Escalate immediately — the service
+              is severely degraded.
+
+    - name: workflow_definition_service_latency
+      rules:
+        - alert: WorkflowDefinitionServiceHighLatency
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le) (
+                rate(http_request_duration_seconds_bucket{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m])
+              )
+            ) > 2.0
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: workflow-definition-service p99 latency above 2s
+            description: >-
+              The p99 request duration is {{ "{{ $value | humanizeDuration }}" }}, exceeding
+              the 2s SLO threshold. Check slow-query logs (PG_SLOW_QUERY_THRESHOLD_MS)
+              and Valkey response times.
+
+        - alert: WorkflowDefinitionServiceCriticalLatency
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le) (
+                rate(http_request_duration_seconds_bucket{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m])
+              )
+            ) > 25.0
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: workflow-definition-service p99 latency above 25s — approaching timeout
+            description: >-
+              The p99 request duration is {{ "{{ $value | humanizeDuration }}" }}, approaching
+              application-level timeouts. Immediate investigation required.
+
+    # the one RPC the Execution Service depends on
+    # synchronously; scoped separately from the blended gRPC-wide rate above since
+    # it's this service's single most latency-sensitive path.
+    - name: workflow_definition_service_grpc
+      rules:
+        - alert: WorkflowDefinitionServiceGetCompiledWorkflowHighErrorRate
+          expr: |
+            sum(rate(grpc_server_handled_total{job={{ include "workflow-definition-service.fullname" . | quote }}, method=~".*GetCompiledWorkflow.*", status_class="5xx"}[5m]))
+              /
+            sum(rate(grpc_server_handled_total{job={{ include "workflow-definition-service.fullname" . | quote }}, method=~".*GetCompiledWorkflow.*"}[5m]))
+            > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: GetCompiledWorkflow error rate above 5%
+            description: >-
+              {{ "{{ $value | humanizePercentage }}" }} of GetCompiledWorkflow calls are
+              failing over the last 5 minutes. The Execution Service depends on this RPC
+              synchronously — check Postgres/Valkey health and recent deployments.
+
+        - alert: WorkflowDefinitionServiceGetCompiledWorkflowHighLatency
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le) (
+                rate(grpc_server_handling_seconds_bucket{job={{ include "workflow-definition-service.fullname" . | quote }}, method=~".*GetCompiledWorkflow.*"}[5m])
+              )
+            ) > 1.0
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: GetCompiledWorkflow p99 latency above 1s
+            description: >-
+              The p99 GetCompiledWorkflow duration is {{ "{{ $value | humanizeDuration }}" }}.
+              This is a cache-backed lookup (CACHE_COMPILED_PLAN_TTL) — sustained high
+              latency usually means a cold cache under load or a slow DB fallback path.
+              Check wf_cache_hits_total vs wf_cache_misses_total.
+
+    - name: workflow_definition_service_validation
+      rules:
+        - alert: WorkflowDefinitionServiceHighValidationFailureRate
+          expr: |
+            sum(rate(wf_validation_failures_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[10m])) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: Elevated BPMN validation failure rate on /validate
+            description: >-
+              wf_validation_failures_total is only incremented by the standalone
+              POST /api/v1/workflows/validate endpoint (WorkflowService.Create validates
+              inline and does not touch this counter, so this is not a "% of submissions"
+              ratio). Sustained validation failures usually mean an upstream canvas-modeler
+              change or a bad template is producing structurally invalid diagrams.
+
+    - name: workflow_definition_service_publish
+      rules:
+        - alert: WorkflowDefinitionServicePublishLatencyDegraded
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (
+                rate(wf_publish_latency_seconds_bucket{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m])
+              )
+            ) > 2.0
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: Slow publish execution
+            description: >-
+              95th percentile of PublishVersion (compile + DB tx combined) is exceeding
+              2.0 seconds.
+
+        - alert: WorkflowDefinitionServicePublishRetryExhausted
+          expr: |
+            increase(pgcommon_retry_exhausted_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m]) > 0
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: A database transaction exhausted its retry budget
+            description: >-
+              pgcommon_retry_exhausted_total increased — a transaction (e.g. the
+              SERIALIZABLE publish transaction) hit deadlock/serialization contention
+              repeatedly and gave up without committing. Reason: {{ "{{ $labels.reason }}" }}.
+              The caller received an error; check for a burst of concurrent publishes
+              against the same workflow.
+
+    - name: workflow_definition_service_outbox
+      rules:
+        - alert: WorkflowDefinitionServiceOutboxRelayDeliveryStalled
+          expr: |
+            rate(outbox_dead_letters_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m]) > 0
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: Outbox relay delivery stalled
+            description: >-
+              Outbox events have exhausted their maximum retries and been moved to
+              the dead-letter table (platform-events outbox_dead_letters_total).
+              Immediate operator intervention is required to inspect outbox_dead_letters.
+
+        - alert: WorkflowDefinitionServiceOutboxBacklogGrowing
+          expr: |
+            outbox_pending_total{job={{ include "workflow-definition-service.fullname" . | quote }}} > 100
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: Outbox relay backlog is growing
+            description: >-
+              outbox_pending_total has stayed above 100 for 15 minutes — the relay may be
+              falling behind SNS or stalling before events reach the dead-letter threshold.
+              Current pending count: {{ "{{ $value }}" }}.
+
+        - alert: WorkflowDefinitionServiceOutboxPollErrors
+          expr: |
+            increase(outbox_poll_errors_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m]) > 0
+          for: 1m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: Outbox relay poll cycle is failing
+            description: >-
+              outbox_poll_errors_total increased — the relay's ClaimBatch DB query is
+              failing, not just individual publishes. Check Postgres connectivity.
+
+        - alert: WorkflowDefinitionServiceOutboxMarkPublishedErrors
+          expr: |
+            increase(outbox_mark_published_errors_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m]) > 0
+          for: 1m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: Outbox relay failed to mark events published after SNS delivery
+            description: >-
+              outbox_mark_published_errors_total increased — SNS delivery succeeded but
+              the follow-up DB write failed, which risks duplicate delivery on the next
+              poll cycle. Check Postgres connectivity.
+
+    - name: workflow_definition_service_internal_events
+      rules:
+        - alert: WorkflowDefinitionServiceInternalEventIngestFailures
+          expr: |
+            sum(increase(internal_events_ingest_total{job={{ include "workflow-definition-service.fullname" . | quote }}, result=~"bad_payload|error"}[15m])) > 5
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: POST /internal/events is rejecting or failing on inbound events
+            description: >-
+              More than 5 bad_payload/error results on /internal/events in 15 minutes —
+              either the shared workflow-events consumer's envelope contract has drifted,
+              or the downstream HandleMembershipRevoked call is failing.
+
+    - name: workflow_definition_service_database
+      rules:
+        - alert: WorkflowDefinitionServiceDBErrorRate
+          expr: |
+            sum(rate(pgcommon_query_total{job={{ include "workflow-definition-service.fullname" . | quote }}, status="error"}[5m]))
+              /
+            sum(rate(pgcommon_query_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m]))
+            > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: Elevated Postgres query error rate
+            description: >-
+              {{ "{{ $value | humanizePercentage }}" }} of queries are erroring over the
+              last 5 minutes (pgcommon_query_total). Check Postgres/PgBouncer health.
+
+    - name: workflow_definition_service_panics
+      rules:
+        - alert: WorkflowDefinitionServiceHTTPPanic
+          expr: |
+            increase(http_panic_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: An HTTP handler panicked
+            description: >-
+              http_panic_total increased — a handler panic was recovered by
+              platform-gincommon's middleware. This should never happen; check logs
+              for the stack trace immediately.
+
+        - alert: WorkflowDefinitionServiceGRPCPanic
+          expr: |
+            increase(grpc_panic_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: A gRPC handler panicked
+            description: >-
+              grpc_panic_total increased — a gRPC handler panic was recovered by
+              platform-gincommon's grpccommon interceptor. This should never happen;
+              check logs for the stack trace immediately.
+
+    # Informational only: cache efficiency
+    - name: workflow_definition_service_cache
+      rules:
+        - alert: WorkflowDefinitionServiceLowCacheHitRatio
+          expr: |
+            sum(rate(wf_cache_misses_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[15m]))
+              /
+            (
+              sum(rate(wf_cache_hits_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[15m]))
+                +
+              sum(rate(wf_cache_misses_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[15m]))
+            )
+            > 0.5
+          for: 30m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: Compiled-plan cache hit ratio below 50%
+            description: >-
+              GetCompiledWorkflow's cache miss ratio is {{ "{{ $value | humanizePercentage }}" }}
+              over the last 15 minutes. Efficiency signal, not an incident — check
+              CACHE_COMPILED_PLAN_TTL and Valkey availability if this persists.
+{{- end }}

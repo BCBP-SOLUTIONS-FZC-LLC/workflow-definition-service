@@ -32,7 +32,7 @@ CI uses `GO_PRIVATE_TOKEN` (GitHub PAT with `repo:read` scope) — see the secre
 
 ```bash
 make tools                  # install sqlc, buf, mockgen, golangci-lint to .tools/
-cp .env.example .env        # fill in DATABASE_URL, VALKEY_URL, etc.
+make setup                  # copy .env.example → .env and install .githooks/pre-commit
 make docker-up              # start PostgreSQL on :5432, Valkey on :6379
 make migrate                # apply DB schema migrations (run once, before server start)
 make generate               # buf (proto → gen/) + sqlc (queries → postgres/db/)
@@ -40,6 +40,8 @@ make mock                   # regenerate GoMock stubs for port interfaces
 make build                  # compile bin/server
 go run ./cmd/server         # run locally
 ```
+
+`make setup` installs `.githooks/pre-commit`, which runs `make tidy`, `fmt-check`, `lint`, and `arch-lint` before every commit. Re-run `make install-hooks` any time `.githooks/pre-commit` itself changes (the installed copy in `.git/hooks/` is not auto-synced).
 
 ---
 

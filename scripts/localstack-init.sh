@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Executed automatically by LocalStack when the container is ready (ready.d hook).
 # Creates the SNS topic, SQS queues (with DLQs), and AWS Glue registry/schema used
-# by the definition service.
+# by the definition service. Schema definitions are read from internal/eventschema/
+# (mounted read-only at /eventschema) — the same files platform-schemagov validates
+# and registers in real Glue via `make schema-register`.
 set -euo pipefail
 
 AWS="awslocal"   # awslocal is pre-installed in localstack/localstack image
@@ -51,28 +53,13 @@ TOPIC_ARN=$($AWS sns create-topic --name wf-template-events --output text --quer
 echo "[localstack-init] creating AWS Glue Schema Registry: workflow-template-events"
 $AWS glue create-registry --registry-name workflow-template-events
 
-SCHEMA_PUB='{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "properties": {
-    "workflow_id":              { "type": "string", "format": "uuid" },
-    "workflow_key":             { "type": "string" },
-    "version_id":               { "type": "string", "format": "uuid" },
-    "version_number":           { "type": "integer" },
-    "artifact_hash":            { "type": "string" },
-    "published_by":             { "type": "string", "format": "uuid" },
-    "promoted_from_version_id": { "type": ["string", "null"], "format": "uuid" }
-  },
-  "required": ["workflow_id", "workflow_key", "version_id", "version_number", "artifact_hash", "published_by"]
-}'
-
 echo "[localstack-init] registering schema: WorkflowTemplatePublished"
 $AWS glue create-schema \
   --registry-id RegistryName=workflow-template-events \
   --schema-name WorkflowTemplatePublished \
   --data-format JSON \
   --compatibility BACKWARD \
-  --schema-definition "$SCHEMA_PUB"
+  --schema-definition "file:///eventschema/workflow_template_published.json"
 
 # Fan-out consumers — each gets its own DLQ and an SNS filter on event_type.
 # §9.1 Fan-out queue registry (see api/asyncapi.yaml for full topology).

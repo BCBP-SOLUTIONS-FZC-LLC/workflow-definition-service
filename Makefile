@@ -64,13 +64,15 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/grpc:75 \
                       internal/config:90
 
 .PHONY: all tools tools-integration generate generate-proto generate-sqlc mock \
-        build migrate test test-integration \
+        build migrate test test-integration test-ci merge-coverage \
         cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
-        fix check \
+        tidy fmt-check fix check \
+        setup install-hooks \
         docs-serve docs-build \
         docker-up docker-down \
-        docker-build docker-lint docker-trivy docker-check \
+        docker-build docker-lint docker-trivy docker-check pin-base-images \
+        schema-pull extract-schemas schema-validate schema-diff schema-register schema-prune \
         clean help
 
 all: generate build
@@ -172,10 +174,10 @@ test:
 	@mkdir -p $(COVERAGE_DIR)
 	go test -race -count=1 \
 	    -coverpkg=$$(go list ./internal/... ./cmd/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
-	    -coverprofile=$(COVER_PROFILE) -covermode=atomic \
+	    -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
 	    ./internal/... ./test/unit/...
-	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVER_PROFILE) > $(COVER_PROFILE).filtered && mv $(COVER_PROFILE).filtered $(COVER_PROFILE)
-	@go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print "total:", $$NF}'
+	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/unit.out > $(COVERAGE_DIR)/unit.out.filtered && mv $(COVERAGE_DIR)/unit.out.filtered $(COVERAGE_DIR)/unit.out
+	@go tool cover -func=$(COVERAGE_DIR)/unit.out | awk '/^total:/{print "total:", $$NF}'
 
 ## test-integration: Run integration tests — spins up containers via testcontainers-go (no make docker-up needed)
 test-integration:
@@ -186,37 +188,46 @@ test-integration:
 	TESTCONTAINERS_RYUK_DISABLED=true \
 	go test -race -count=1 -tags integration \
 	    -coverpkg=$$(go list ./internal/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
-	    -coverprofile=$(COVERAGE_DIR)/coverage-integration.out \
+	    -coverprofile=$(COVERAGE_DIR)/integration.out \
 	    -covermode=atomic \
 	    ./test/integration/... ./test/e2e/...
-	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/coverage-integration.out > $(COVERAGE_DIR)/coverage-integration.out.filtered && mv $(COVERAGE_DIR)/coverage-integration.out.filtered $(COVERAGE_DIR)/coverage-integration.out
-	@go tool cover -func=$(COVERAGE_DIR)/coverage-integration.out | tail -1
+	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/integration.out > $(COVERAGE_DIR)/integration.out.filtered && mv $(COVERAGE_DIR)/integration.out.filtered $(COVERAGE_DIR)/integration.out
+	@go tool cover -func=$(COVERAGE_DIR)/integration.out | tail -1
 
-## cover: Print total coverage from last test run (run 'make test' first)
-cover:
-	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+## merge-coverage: Merge unit + integration profiles into coverage.out (max-count-per-block strategy)
+merge-coverage:
+	@python3 scripts/merge_coverage.py $(COVERAGE_DIR)/unit.out $(COVERAGE_DIR)/integration.out > $(COVER_PROFILE)
+	@echo "✓ $(COVER_PROFILE) merged from unit + integration suites"
+
+## test-ci: Run unit + integration suites and merge coverage
+test-ci: test test-integration merge-coverage
 	@go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print "total:", $$NF}'
 
-## cover-func: Print per-function coverage breakdown (run 'make test' first)
+## cover: Print total coverage from last test run (run 'make test-ci' first)
+cover:
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
+	@go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print "total:", $$NF}'
+
+## cover-func: Print per-function coverage breakdown (run 'make test-ci' first)
 cover-func:
-	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
 	@go tool cover -func=$(COVER_PROFILE)
 
-## cover-gaps: Show uncovered and partially-covered functions (run 'make test' first)
+## cover-gaps: Show uncovered and partially-covered functions (run 'make test-ci' first)
 cover-gaps:
-	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
 	@./scripts/uncovered.sh $(COVER_PROFILE)
 
-## cover-html: Open HTML coverage report in the browser (run 'make test' first)
+## cover-html: Open HTML coverage report in the browser (run 'make test-ci' first)
 cover-html:
-	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
 	go tool cover -html=$(COVER_PROFILE) -o $(COVER_HTML)
 	@echo "✓ report: $(COVER_HTML)"
 	@open $(COVER_HTML) 2>/dev/null || xdg-open $(COVER_HTML) 2>/dev/null || true
 
-## cover-check-pkg: Per-package coverage gate — each package must meet its floor (run 'make test' first)
+## cover-check-pkg: Per-package coverage gate — each package must meet its floor (run 'make test-ci' first)
 cover-check-pkg:
-	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test' first"; exit 1; }
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
 	@awk \
 	  -v module="$(MODULE)/" \
 	  -v floors="$(subst \,,$(COVER_PKG_FLOORS))" \
@@ -249,8 +260,8 @@ cover-check-pkg:
 	    exit fail \
 	  }' $(COVER_PROFILE)
 
-## cover-check: Global + per-package coverage gate (runs tests automatically)
-cover-check: test cover-check-pkg
+## cover-check: Global + per-package coverage gate (runs unit + integration tests automatically)
+cover-check: test-ci cover-check-pkg
 	@TOTAL=$$(go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print $$NF}' | tr -d '%'); \
 	echo "total: $${TOTAL}% (floor: $(COVER_THRESHOLD)%)"; \
 	if [ $$(echo "$${TOTAL} < $(COVER_THRESHOLD)" | bc -l) -eq 1 ]; then \
@@ -259,6 +270,14 @@ cover-check: test cover-check-pkg
 		echo "✓ coverage ok"; \
 	fi
 
+
+## tidy: Run go mod tidy
+tidy:
+	go mod tidy
+
+## fmt-check: Verify gofmt formatting (read-only; exits non-zero on violations)
+fmt-check:
+	@files=$$(gofmt -l cmd/ internal/ test/); if [ -n "$$files" ]; then echo "gofmt violations (run 'make fix'):"; echo "$$files"; exit 1; fi
 
 ## fix: Auto-fix formatting (gofmt) and lint issues (golangci-lint --fix)
 fix:
@@ -271,18 +290,15 @@ fix:
 ## check: Verify formatting/lint (read-only), run vet, tests, and coverage gate — full local CI pass
 check:
 	@echo "==> gofmt"
-	@files=$$(gofmt -l cmd/ internal/ test/); if [ -n "$$files" ]; then echo "gofmt violations (run 'make fix'):"; echo "$$files"; exit 1; fi
+	@$(MAKE) fmt-check
 	@echo "==> lint"
 	$(GOLANGCI) run ./cmd/... ./internal/... ./test/...
 	@echo "==> go vet"
 	go vet ./cmd/... ./internal/...
 	@echo "==> arch-lint"
 	$(MAKE) arch-lint
-	@echo "==> test + coverage gate"
-	$(MAKE) test
+	@echo "==> test-ci (unit + integration, merged coverage gate)"
 	$(MAKE) cover-check
-	@echo "==> integration tests"
-	$(MAKE) test-integration
 	@echo "✓ all checks passed"
 
 ## arch-lint: Enforce Clean Architecture import direction via go-arch-lint
@@ -339,6 +355,89 @@ docker-trivy:
 docker-check: docker-lint docker-trivy
 	@echo "✓ all container checks passed"
 
+## pin-base-images: Resolve current digests for Dockerfile base images and pin them (writes .docker-digests)
+pin-base-images:
+	@GOLANG_DIGEST=$$(docker buildx imagetools inspect golang:1.26-alpine | awk '/^Digest:/{print $$2; exit}'); \
+	DISTROLESS_DIGEST=$$(docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot | awk '/^Digest:/{print $$2; exit}'); \
+	sed -i.bak "s|FROM golang:1.26-alpine.*AS builder|FROM golang:1.26-alpine@$$GOLANG_DIGEST AS builder|" Dockerfile; \
+	sed -i.bak "s|FROM gcr.io/distroless/static-debian12:nonroot.*|FROM gcr.io/distroless/static-debian12:nonroot@$$DISTROLESS_DIGEST|" Dockerfile; \
+	rm -f Dockerfile.bak; \
+	printf 'golang:1.26-alpine@%s\ngcr.io/distroless/static-debian12:nonroot@%s\n' "$$GOLANG_DIGEST" "$$DISTROLESS_DIGEST" > .docker-digests; \
+	echo "Pinned base images — see .docker-digests"
+
+
+# platform-schemagov — CI-time event schema governance (validate/register/prune).
+# CLI flags confirmed against iam-user-profile's working Makefile/CLAUDE.md —
+# see .claude/api-and-events.md. Do not reintroduce a --workspace flag; it
+# does not exist on this CLI.
+SCHEMA_GOV_IMAGE ?= ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov:0.4
+
+## schema-pull: Pull the platform-schemagov image
+schema-pull:
+	docker pull "$(SCHEMA_GOV_IMAGE)"
+
+## extract-schemas: Derive internal/eventschema/*.json from api/asyncapi.yaml
+extract-schemas:
+	docker run --rm -v "$(CURDIR)":/workspace "$(SCHEMA_GOV_IMAGE)" extract \
+	  --asyncapi   api/asyncapi.yaml \
+	  --schema-dir internal/eventschema
+
+## schema-validate: Run structural/lifecycle/drift checks against api/asyncapi.yaml + internal/eventschema (no AWS required)
+schema-validate: extract-schemas
+	docker run --rm -v "$(CURDIR)":/workspace "$(SCHEMA_GOV_IMAGE)" validate \
+	  --asyncapi   api/asyncapi.yaml \
+	  --schema-dir internal/eventschema
+
+## schema-diff: Diff two JSON Schema files — usage: make schema-diff CURRENT=<current.json> PROPOSED=<proposed.json> [SCHEMA_NAME=<name>]
+schema-diff:
+	@test -n "$(CURRENT)" && test -n "$(PROPOSED)" || { \
+	  echo "Usage: make schema-diff CURRENT=<current.json> PROPOSED=<proposed.json> [SCHEMA_NAME=<name>]"; \
+	  exit 1; \
+	}
+	docker run --rm -v "$(CURDIR)":/workspace "$(SCHEMA_GOV_IMAGE)" diff \
+	  --current     "$(CURRENT)" \
+	  --proposed    "$(PROPOSED)" \
+	  --schema-name "$(or $(SCHEMA_NAME),$(notdir $(basename $(PROPOSED))))"
+
+## schema-register: Register schemas in AWS Glue (requires AWS creds or LocalStack via AWS_ENDPOINT_URL)
+schema-register:
+	@test -n "$(GLUE_REGISTRY_NAME)" || { \
+	  echo "GLUE_REGISTRY_NAME is not set — add it to .env or pass on the command line"; \
+	  exit 1; \
+	}
+	docker run --rm -v "$(CURDIR)":/workspace \
+	  -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_ENDPOINT_URL \
+	  "$(SCHEMA_GOV_IMAGE)" register \
+	  --registry   "$(GLUE_REGISTRY_NAME)" \
+	  --schema-dir internal/eventschema
+
+## schema-prune: Report orphaned Glue schemas (set EXECUTE=true to actually delete)
+schema-prune:
+	@test -n "$(GLUE_REGISTRY_NAME)" || { \
+	  echo "GLUE_REGISTRY_NAME is not set — add it to .env or pass on the command line"; \
+	  exit 1; \
+	}
+	docker run --rm -v "$(CURDIR)":/workspace \
+	  -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_ENDPOINT_URL \
+	  "$(SCHEMA_GOV_IMAGE)" prune \
+	  --registry "$(GLUE_REGISTRY_NAME)" \
+	  $(if $(filter true,$(EXECUTE)),--execute,)
+
+
+## setup: First-time onboarding — copy .env.example → .env and install git hooks
+setup:
+	@test -f .env || cp .env.example .env
+	@mkdir -p .git/hooks
+	@cp .githooks/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "✓ Environment ready (.env) and git hooks installed"
+
+## install-hooks: (Re)install the local pre-commit hook — run after .githooks/pre-commit changes
+install-hooks:
+	@mkdir -p .git/hooks
+	@cp .githooks/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "✓ Installed git hooks"
 
 ## docker-up: Start local infra (PostgreSQL + Valkey)
 docker-up:

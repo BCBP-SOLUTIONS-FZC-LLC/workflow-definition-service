@@ -5,7 +5,8 @@
 ```bash
 make test                # unit tests + race detector
 make test-integration    # integration tests (requires running Docker daemon)
-make cover               # unit tests + per-package coverage summary
+make test-ci             # unit + integration, merged coverage
+make cover               # coverage summary from the last profile written
 make cover-html          # generates and opens HTML report
 ```
 
@@ -69,18 +70,18 @@ func TestMapping(t *testing.T) { t.Skip("covered by white-box tests in internal/
 
 ## Unit test coverage
 
-The CI `coverage` job enforces a **95% minimum** against the unit test profile only (`make test`). The coverage denominator **excludes** packages that are either generated or require a real database:
+The CI `validate-test.yml` job enforces a **95% minimum** against the merged unit + integration coverage profile (`make test-ci`). The coverage denominator **excludes** packages that are either generated or require a real database:
 
 | Excluded package | Reason |
 | --- | --- |
 | `internal/adapter/outbound/postgres/db/` | sqlc-generated code |
-| `internal/adapter/outbound/postgres/` | repo adapters require a real Postgres; covered by `Iint` job |
+| `internal/adapter/outbound/postgres/` | repo adapters require a real Postgres; covered by the integration suite |
 | `internal/core/port/mocks/` | GoMock-generated stubs |
 
-The CI `Test` job post-filters the coverage profile to enforce these exclusions before computing the percentage:
+`make test` and `make test-integration` each post-filter their own profile (`.coverage/unit.out`, `.coverage/integration.out`) to enforce these exclusions; `make merge-coverage` then combines both (max-count-per-block, via `scripts/merge_coverage.py`) into `.coverage/coverage.out` before the global gate runs:
 
 ```bash
-grep -v '/postgres/db/\|/postgres/\|/mocks/' .coverage/coverage.out > filtered.out
+grep -v '/postgres/db/\|/postgres/\|/mocks/' .coverage/unit.out > filtered.out
 ```
 
 We target 95%+ unit test coverage for all fully implemented components. This includes:
@@ -101,9 +102,9 @@ make tools-integration   # docker pull postgres:18-alpine (one-time)
 make test-integration    # spins containers up/down automatically
 ```
 
-Integration tests carry a `//go:build integration` build tag. The `make test` target runs only `./internal/... ./test/unit/...`; `make test-integration` runs `./test/integration/... ./test/e2e/...` with `-tags integration`. The CI `Iint` job does the same.
+Integration tests carry a `//go:build integration` build tag. The `make test` target runs only `./internal/... ./test/unit/...`; `make test-integration` runs `./test/integration/... ./test/e2e/...` with `-tags integration`. CI runs both in the same `validate-test.yml` `test` job (`make test-ci` — no separate integration-test job, matching iam's structure).
 
-The integration coverage profile is written to `.coverage/coverage-integration.out`.
+The integration coverage profile is written to `.coverage/integration.out`, then merged into `.coverage/coverage.out` alongside the unit profile (see "Unit test coverage" above).
 
 An example integration test:
 
@@ -149,7 +150,7 @@ The e2e tests are **distinct** from `scripts/smoke-test.sh`:
 
 | | `scripts/smoke-test.sh` | `test/e2e/` |
 | --- | --- | --- |
-| Trigger | Manual, developer pre-merge | Automated in CI (`Iint` job) |
+| Trigger | Manual, developer pre-merge | Automated in CI (`validate-test.yml`'s `test` job) |
 | Layer | Full HTTP + gRPC against live server | Service layer directly, no HTTP |
 | Scope | Route/response sanity | Business logic, RLS, event pipeline |
 

@@ -27,17 +27,28 @@ components:
     WorkflowTemplatePublished:
       name: WorkflowTemplatePublished
       title: Workflow template version published
+      x-lifecycle:
+        status: active
+      x-owner:
+        team: platform-engineers
+        slack: "#workflow-engine"
       payload:
-        $ref: '#/components/schemas/WorkflowTemplatePublishedPayload'
+        $ref: '#/components/schemas/WorkflowTemplatePublishedEnvelope'
 
   schemas:
     # Shared event envelope fields emitted by every outbox event.
     # The envelope is serialised by platform-events (v1.3+) with CloudEvents-aligned
     # JSON keys. Consumers receive a JSON object where these fields appear at the top
-    # level alongside `data`.
+    # level alongside `data`. Documentation/allOf-composition only — schema-gov's
+    # extract only governs schemas whose name ends in "Payload", so this schema is
+    # never itself extracted into internal/eventschema/.
     EventEnvelope:
       type: object
-      required: [id, source, tenant_id, trace_id, specversion, type, time]
+      # trace_id excluded: conditional on an active OTel span (buildEnvelope only
+      # calls WithTraceID when trace.SpanFromContext(ctx).SpanContext().IsValid()).
+      # subject/actor included: both call sites for this event always pass non-empty
+      # values (helpers.go buildEnvelope + version_service.go:133,276)
+      required: [id, type, subject, source, tenant_id, time, specversion, actor]
       properties:
         id:
           type: string
@@ -80,17 +91,22 @@ components:
           type: string
           description: Optional correlation ID for request tracing across services
 
-    WorkflowTemplatePublishedPayload:
+    WorkflowTemplatePublishedEnvelope:
       allOf:
         - $ref: '#/components/schemas/EventEnvelope'
         - type: object
           required: [data]
           properties:
             data:
-              $ref: '#/components/schemas/WorkflowPublishedData'
+              $ref: '#/components/schemas/WorkflowTemplatePublishedPayload'
 
-    WorkflowPublishedData:
+    # Flat, self-contained business-data schema — this is what schema-gov actually
+    # extracts/governs (matched by its "Payload" name suffix). Must stay flat: the
+    # extractor does not dereference $ref, so allOf/$ref composition here would
+    # produce a dangling reference in the extracted internal/eventschema/*.json file.
+    WorkflowTemplatePublishedPayload:
       type: object
+      additionalProperties: true
       required:
         - workflow_id
         - workflow_key
@@ -119,9 +135,8 @@ components:
           format: uuid
           description: User ID of the actor who triggered the publish
         promoted_from_version_id:
-          type: string
+          type: ["string", "null"]
           format: uuid
-          nullable: true
           description: >
             ID of the version that was previously active when this version
             was promoted. Null for the first publish of a workflow.

@@ -1,0 +1,104 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "workflow-definition-service.fullname" . }}
+  labels:
+    {{- include "workflow-definition-service.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "workflow-definition-service.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow HTTP API traffic from the ingress controller / gateway namespace.
+    # Envoy Gateway does not front the gRPC port — only HTTP is exposed here.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressControllerNamespaceSelector | nindent 14 }}
+          {{- with .Values.networkPolicy.ingressControllerPodSelector }}
+          podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+      ports:
+        - port: {{ .Values.service.ports.http }}
+          protocol: TCP
+
+    # Allow internal service-to-service traffic within the same namespace — both
+    # HTTP and gRPC (covers the Execution Service calling GetCompiledWorkflow).
+    - from:
+        - podSelector: {}
+      ports:
+        - port: {{ .Values.service.ports.http }}
+          protocol: TCP
+        - port: {{ .Values.service.ports.grpc }}
+          protocol: TCP
+
+    # Allow Prometheus to scrape /metrics — restricted to the monitoring namespace.
+    {{- if .Values.networkPolicy.metricsIngress.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.metricsIngress.namespaceSelector | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.metricsIngress.podSelector | nindent 14 }}
+      ports:
+        - port: {{ .Values.service.ports.http }}
+          protocol: TCP
+    {{- end }}
+
+    # If the Execution Service (gRPC caller) lives in a different namespace than
+    # this release, add a rule here restricted to the grpc port via
+    # networkPolicy.additionalIngressRules.
+    {{- with .Values.networkPolicy.additionalIngressRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+
+  egress:
+    # Allow DNS resolution (required for all outbound connections).
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # Allow HTTPS to AWS endpoints (SNS, Glue, STS).
+    - ports:
+        - port: 443
+          protocol: TCP
+
+    # Allow PostgreSQL (direct) and PgBouncer connections.
+    - ports:
+        - port: 5432
+          protocol: TCP
+        - port: 6432
+          protocol: TCP
+
+    # Allow Valkey (Redis-protocol) connections.
+    - ports:
+        - port: 6379
+          protocol: TCP
+
+    # Allow OTel OTLP gRPC to the collector.
+    - ports:
+        - port: 4317
+          protocol: TCP
+
+    # Allow calls to other in-cluster services within the same namespace — covers
+    # ORG_MEMBERSHIP_BASE_URL (HTTP) and EXECUTION_SERVICE_ADDR (gRPC), both
+    # outbound dependencies of this service. If either points at a different
+    # namespace, add a scoped rule via networkPolicy.additionalEgressRules instead
+    # of widening this one.
+    - to:
+        - podSelector: {}
+
+    {{- with .Values.networkPolicy.additionalEgressRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

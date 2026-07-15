@@ -43,7 +43,7 @@ go mod vendor
 # First-time setup
 export GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*  # required before go get / mod tidy
 make tools                  # install sqlc, buf, mockgen, golangci-lint, go-arch-lint
-cp .env.example .env
+make setup                  # copy .env.example → .env and install .githooks/pre-commit
 make docker-up              # start PostgreSQL + Valkey + LocalStack + PgBouncer
 make migrate                # apply schema (outbox + domain) — NOT run at server boot
 
@@ -57,6 +57,7 @@ go run ./cmd/server         # run locally (Swagger UI at /swagger/ in dev mode)
 make tools-integration      # docker pull postgres:18-alpine (one-time)
 make test                   # unit tests + race detector
 make test-integration       # integration tests (testcontainers)
+make test-ci                # unit + integration, merged coverage — what CI runs
 make cover-html             # open HTML coverage report
 
 # Code quality
@@ -138,6 +139,7 @@ Detailed reference is in sub-documents — load the relevant one for your task:
 - **[.claude/api-and-events.md](api-and-events.md)** — HTTP/gRPC patterns, idempotency, events (#9, #10, #12–18)
 - **[.claude/bpmn-compiler.md](bpmn-compiler.md)** — BPMN parsing, validation, compilation (#20–25)
 - **[.claude/operations.md](operations.md)** — CI/CD, Prometheus metrics, OTel, MkDocs, platform-lib constraints (#26)
+- **[.claude/development-guide.md](development-guide.md)** — extension cookbook, troubleshooting, and the full HTTP error-code appendix
 
 ### Handler layer (#7 — always relevant)
 
