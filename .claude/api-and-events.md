@@ -92,4 +92,4 @@ The `scripts/localstack-init.sh` bootstrap (used by `make docker-up` and integra
 
 ## Swagger UI
 
-`GET /swagger/*any` serves Swagger UI in `dev` mode only (gated by `cfg.AppEnv == "dev"`). The spec is served as a static file at `/swagger/openapi.yaml` from `api/openapi.yaml`. No Swaggo annotations are used — the existing OpenAPI spec is the single source of truth.
+`GET /swagger/*any` serves Swagger UI in `dev` mode only (gated by `cfg.AppEnv == "dev"`). The spec is served as a static file at `/api/openapi.yaml` from `docs/swagger/openapi.yaml`. No Swaggo annotations are used — the existing OpenAPI spec is the single source of truth.

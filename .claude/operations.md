@@ -80,20 +80,18 @@ Metrics are served at `GET /metrics` (Prometheus scrape endpoint, no auth — ac
 
 Configured via `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_TRACES_SAMPLER_RATIO`. Tracing is initialised by `platform-gincommon.InitTracingFromEnv()` in `cmd/server/app.go`. `buildEnvelope` stamps trace IDs only on traced requests (`trace.SpanFromContext(ctx).SpanContext().IsValid()`).
 
-## Documentation (MkDocs)
+## Documentation
 
-Docs live in `docs/` and are served via MkDocs (`make docs-serve`). The nav is declared in `mkdocs.yml`.
+No static-site generator — docs live directly in the repo. `docs/` holds only diagram sources (`docs/architecture/`), the served OpenAPI spec (`docs/swagger/`), and the two standalone workflow-design guides (`bpmn-designer-guide.md`, `ui-enrichment-guide.md`). Everything else lives in root `README.md`, `ARCHITECTURE.md`, and `CONTRIBUTING.md`.
 
-Keep docs in sync when making changes:
+Keep docs in sync when making changes — see the full table in [`CONTRIBUTING.md` § Documentation update checklist](../CONTRIBUTING.md#documentation-update-checklist):
 
 | Change type | Docs to update |
 |---|---|
-| New HTTP endpoint or field | `docs/api.md` |
-| New gRPC method | `docs/grpc.md` |
-| New config env var | `docs/configuration.md` |
-| New migration or schema change | `docs/database.md` |
-| Architecture / layer change | `docs/architecture.md` + `docs/architecture/*.mmd` |
-| Platform lib upgrade | `docs/platform-pgcommon.md`, `docs/platform-events.md`, or `docs/platform-gincommon.md` + this file |
-| New coding pattern or decision | `docs/standards.md` + numbered entry in `.claude/CLAUDE.md` + relevant sub-doc |
-
-After any significant feature PR, run `make docs-serve` and verify the affected pages render correctly before merging.
+| New HTTP endpoint or field | `README.md` § API Overview |
+| New gRPC method | `README.md` § API Overview |
+| New config env var | `ARCHITECTURE.md` § Configuration reference |
+| New migration or schema change | `README.md` § Database |
+| Architecture / layer change | `ARCHITECTURE.md` + `docs/architecture/mermaid/*.mmd` |
+| Platform lib upgrade | `ARCHITECTURE.md` § Platform Libraries + this file |
+| New coding pattern or decision | `CONTRIBUTING.md` § Coding Standards + numbered entry in `.claude/CLAUDE.md` + relevant sub-doc |

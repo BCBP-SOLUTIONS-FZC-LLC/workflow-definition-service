@@ -69,7 +69,6 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/grpc:75 \
         arch-lint lint lint-fix vuln \
         tidy fmt-check fix check \
         setup install-hooks \
-        docs-serve docs-build \
         docker-up docker-down \
         docker-build docker-lint docker-trivy docker-check pin-base-images \
         schema-pull extract-schemas schema-validate schema-diff schema-register schema-prune \
@@ -318,13 +317,6 @@ vuln:
 	$(GOVULNCHECK) ./...
 
 
-## docs-serve: Serve MkDocs locally at http://localhost:8001  (requires: brew install mkdocs)
-docs-serve:
-	mkdocs serve --dev-addr 0.0.0.0:8001
-
-## docs-build: Build static MkDocs site to site/
-docs-build:
-	mkdocs build
 
 
 IMAGE_TAG ?= local
@@ -453,7 +445,6 @@ docker-down:
 clean:
 	rm -rf $(BIN_DIR)
 	rm -rf $(COVERAGE_DIR)
-	rm -rf site/
 	rm -rf gen/
 	rm -rf internal/adapter/outbound/postgres/db/
 	rm -rf internal/core/port/mocks/

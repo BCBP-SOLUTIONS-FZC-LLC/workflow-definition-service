@@ -47,7 +47,7 @@ The compiler derives a userTask's department from the lane it appears in via `<b
 - Task not listed in any lane → `TASK_NOT_IN_LANE`
 - `validateGatewayMatching` requires every forward branch of a split gateway to reconverge at the matched join — a bypassing branch is `UNMATCHED_GATEWAY`
 
-See [docs/bpmn-spec.md](../docs/bpmn-spec.md).
+See [ARCHITECTURE.md § BPMN Compiler](../ARCHITECTURE.md#bpmn-compiler).
 
 ## Stage Type + Assignment Elements
 
@@ -69,7 +69,7 @@ See [docs/bpmn-spec.md](../docs/bpmn-spec.md).
 
 **Approval-stage rejection** is modelled with error events: the approve-stage worker signals an error code on rejection; an error boundary event on the enclosing subprocess catches it and routes the rework path. This keeps XOR semantics clean (deterministic choice) vs error semantics (exception outcome).
 
-See [docs/bpmn-spec.md](../docs/bpmn-spec.md) §Routing vs Rejection.
+See [ARCHITECTURE.md § BPMN Compiler](../ARCHITECTURE.md#bpmn-compiler) §Routing vs Rejection.
 
 ## isExecutable Flag
 

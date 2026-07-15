@@ -1,0 +1,21 @@
+sequenceDiagram
+    participant Consumer as shared workflow-events consumer
+    participant Handler as http/handler.HandleInternalEvent
+    participant Svc as VersionService.HandleMembershipRevoked
+    participant Tx as Transactor.RunInTx
+    participant Repo as VersionRepo
+    participant Outbox as OutboxRepo.Enqueue
+
+    Consumer ->>+ Handler: POST /internal/events (envelope)
+    Handler ->> Handler: WithGUCSet(tenant_id) · dispatch by type
+    Handler ->> Handler: RecordIfNew(eventID, "membership-wf-q") — dedup guard
+    Handler ->>+ Svc: HandleMembershipRevoked(ctx, payload)
+    loop for each affected version
+        Svc ->>+ Tx: RunInTx(ctx, fn)
+        Tx ->> Repo: VersionRepo.GetByID  →  check is_valid
+        Tx ->> Repo: VersionRepo.SetInvalid(ctx, versionID, nodes)
+        Tx ->> Outbox: OutboxRepo.Enqueue(ctx, TemplateEligibilityInvalidated)
+        Tx -->>- Svc: commit
+    end
+    Svc -->>- Handler: nil
+    Handler -->>- Consumer: 200 OK (consumer acks the SQS message)

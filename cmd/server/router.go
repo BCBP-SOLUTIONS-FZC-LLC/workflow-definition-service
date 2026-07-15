@@ -41,7 +41,7 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	if cfg.AppEnv == "dev" {
-		r.StaticFile("/api/openapi.yaml", "api/openapi.yaml")
+		r.StaticFile("/api/openapi.yaml", "docs/swagger/openapi.yaml")
 		stdSwagger := ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.URL("/api/openapi.yaml"))
 		r.GET("/swagger/*any", func(c *gin.Context) {
 			switch {

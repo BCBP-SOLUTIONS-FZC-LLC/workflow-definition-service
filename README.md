@@ -15,9 +15,21 @@ Frontend Builder ──REST──► Definition Service ──gRPC──► Exec
                               AWS SNS (domain events)
 ```
 
-> **Architecture doc** — [ARCHITECTURE.md](ARCHITECTURE.md) — layer model, sequence diagrams, config reference, and error catalog.
+| Responsibility | Detail |
+| --- | --- |
+| **BPMN ingestion** | Accepts BPMN 2.0 XML uploads from the frontend canvas modeler |
+| **Validation** | Runs structural, semantic, and topological (DAG/cycle) checks |
+| **Compilation** | Converts validated BPMN graphs into immutable JSON DSL execution plans |
+| **Versioning** | Manages DRAFT → PUBLISHED → ARCHIVED lifecycle with optimistic concurrency |
+| **Serving** | Exposes compiled DSLs to the Execution Service over high-throughput gRPC |
+| **Event publishing** | Emits `TemplatePublished`, `TemplateArchived`, `TemplateEligibilityInvalidated` events via transactional outbox |
+| **Membership sync** | Consumes `DepartmentMembershipRevoked` events (via `POST /internal/events`) to invalidate affected template assignees |
+
+> **Architecture** — [ARCHITECTURE.md](ARCHITECTURE.md): layer model, sequence diagrams, BPMN compiler reference, configuration reference, and error catalog. Diagram sources live in [docs/architecture/](docs/architecture/).
 >
-> **Full documentation** — `make docs-serve` → [http://localhost:8001](http://localhost:8001)
+> **API specs** — REST: [docs/swagger/openapi.yaml](docs/swagger/openapi.yaml), served locally at `/swagger/*any` in dev mode. Events: [api/asyncapi.yaml](api/asyncapi.yaml). gRPC: [api/proto/](api/proto/).
+>
+> **Contributing** — [CONTRIBUTING.md](CONTRIBUTING.md) for the local dev workflow, testing, and PR checklist.
 
 ---
 
@@ -74,12 +86,74 @@ make migrate
 go run ./cmd/server
 ```
 
+The server is ready when you see:
+
+```sh
+INFO  HTTP server starting         {"addr": ":8080"}
+INFO  gRPC server starting         {"addr": ":9090"}
+INFO  outbox relay starting
+```
+
 Verify:
 
 ```bash
 curl http://localhost:8080/healthz   # {"status":"OK"}
+curl http://localhost:8080/readyz    # {"status":"OK"}
 curl http://localhost:8080/metrics   # Prometheus exposition
 ```
+
+---
+
+## Local Development
+
+### AWS stubs
+
+By default `AWS_USE_STUB=true` in `.env.example`. This activates a no-op stub SNS publisher so the service boots without any AWS credentials. (The service does not consume SQS in-process — inbound events arrive over HTTP at `POST /internal/events`.)
+
+### LocalStack + full stack (end-to-end)
+
+`make docker-up` includes a LocalStack container that emulates SNS locally. To run the service against real AWS clients and test the full event pipeline:
+
+```bash
+# 1. Start everything (Postgres + Valkey + LocalStack)
+make docker-up
+
+# 2. Start outbound service stubs (gRPC + HTTP)
+go run ./cmd/stub/execution &    # :9091 (gRPC), :9092 (control)
+go run ./cmd/stub/membership &   # :8081 (HTTP + /control toggle)
+
+# 3. Run the server against LocalStack and stubs (AWS_USE_STUB=false)
+ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_ADDR=localhost:9091 \
+  AWS_USE_STUB=false go run ./cmd/server &
+
+# 4. Run the smoke test
+./scripts/smoke-test.sh
+```
+
+The stub binaries expose a runtime control plane to toggle their responses:
+
+```bash
+# Toggle membership eligibility
+curl -X POST http://localhost:8081/control -d '{"eligible":true}'
+curl -X POST http://localhost:8081/control -d '{"eligible":false}'
+
+# Toggle active instances on execution service
+curl -X POST http://localhost:9092/control -d '{"has_active":false}'
+curl -X POST http://localhost:9092/control -d '{"has_active":true}'
+```
+
+### Environment variables and Make
+
+The Makefile automatically loads `.env` if the file exists, so variables like `DATABASE_URL` are available to all targets without manually sourcing the file first:
+
+```bash
+cp .env.example .env   # do this once
+make test-integration  # DATABASE_URL etc. are read automatically
+```
+
+Variables in `.env` override any existing shell environment values for the duration of the make process only.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the code generation and testing workflow.
 
 ---
 
@@ -108,11 +182,10 @@ make help
 | `make fix` | Auto-fix formatting and lint issues |
 | `make check` | Full local CI pass: fmt + lint + vet + arch-lint + tests + coverage gate |
 | `make vuln` | Run govulncheck for known dependency vulnerabilities |
-| `make schema-validate` | Validate `internal/eventschema/*.json` against `api/asyncapi.yaml` (no AWS required) — see [Schema Governance](docs/schemagov.md) |
+| `make schema-validate` | Validate `internal/eventschema/*.json` against `api/asyncapi.yaml` (no AWS required) — see [Schema Governance](#schema-governance) |
 | `make schema-register` / `make schema-prune` | Register/retire event schemas in AWS Glue Schema Registry |
 | `make docker-build` / `make docker-lint` / `make docker-trivy` | Build the container image, lint the Dockerfile, scan for CVEs |
-| `make docs-serve` | Live-reload docs at <http://localhost:8001> |
-| `make docs-build` | Build static MkDocs site to `site/` |
+| `make godoc` | Serve Go package documentation locally via pkgsite (`http://localhost:8080`) |
 | `make docker-up` | Start PostgreSQL + Valkey (+ LocalStack + PgBouncer) |
 | `make docker-down` | Stop infra |
 | `make clean` | Remove `bin/`, `gen/`, coverage, mock outputs |
@@ -127,7 +200,7 @@ internal/
   core/
     domain/              ← entities, enums, error sentinels
     port/                ← interface contracts (no impls)
-    service/             ← business logic
+    service/              ← business logic
   adapter/
     inbound/
       http/              ← Gin handlers, authz, middleware, POST /internal/events
@@ -137,27 +210,378 @@ internal/
       valkey/            ← Valkey cache adapter
   bpmn_compiler/         ← XML parser, validator, DSL compiler
   config/                ← env var loading
-api/                     ← REST (OpenAPI), AsyncAPI specs, and .proto source files (committed)
+api/                     ← REST (OpenAPI source), AsyncAPI specs, and .proto source files (committed)
 gen/                     ← buf-generated stubs (gitignored)
 db/
   migrations/            ← golang-migrate SQL migrations (.up.sql/.down.sql, committed)
   queries/               ← sqlc query definitions (committed)
-docs/                    ← MkDocs pages
+docs/
+  architecture/          ← Mermaid diagram sources for ARCHITECTURE.md
+  swagger/               ← OpenAPI spec served by the dev-mode Swagger UI
+  bpmn-designer-guide.md ← BPMN modelling guide for business analysts / process owners
+  ui-enrichment-guide.md ← Compiled-plan enrichment guide for ops/engineering reviewers
 ```
+
+---
+
+## API Overview
+
+### REST API
+
+Full OpenAPI schema: [`docs/swagger/openapi.yaml`](docs/swagger/openapi.yaml).
+
+**Global headers.** All requests through the Envoy gateway carry these headers (injected post-JWT verification):
+
+| Header | Required | Description |
+| --- | --- | --- |
+| `x-tenant-id` | Yes | Tenant UUID — enforces RLS isolation |
+| `x-user-id` | Yes | Executing user UUID |
+| `x-tenant-roles` | Yes | Comma-separated roles, e.g. `tenant_admin,member` |
+| `x-departments` | No | User department memberships |
+| `x-plan` | No | Subscription tier: `starter`, `pro`, `enterprise` |
+| `x-request-id` | No | Client correlation ID — echoed as `X-Request-ID` |
+| `traceparent` | No | W3C trace context — echoed as `X-Trace-ID` |
+
+Validated by `gincommon.RequireAuth`. Handlers access them via:
+
+```go
+rctx := gincommon.RequestContext(c)
+// rctx.TenantID, rctx.UserID, rctx.Roles, rctx.TraceID
+```
+
+**Endpoint registry**
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/workflows` | Any | List tenant workflows |
+| `POST` | `/api/v1/workflows` | Admin | Create workflow + initial draft |
+| `GET` | `/api/v1/workflows/:id` | Any | Workflow detail + version list |
+| `GET` | `/api/v1/workflows/:id/versions` | Any | Paginated version history |
+| `GET` | `/api/v1/workflows/:id/versions/:version_id` | Any | Version detail (XML + compiled plan) |
+| `GET` | `/api/v1/workflows/:id/draft` | Any | Active draft detail |
+| `POST` | `/api/v1/workflows/:id/draft` | Admin | Init draft from active version |
+| `PUT` | `/api/v1/workflows/:id/draft` | Admin | Update draft XML/name/description |
+| `DELETE` | `/api/v1/workflows/:id/draft` | Admin | Discard draft |
+| `POST` | `/api/v1/workflows/:id/versions/:version_id/publish` | Admin | Compile & publish draft |
+| `POST` | `/api/v1/workflows/:id/versions/:version_id/clone` | Admin | Clone to new workflow key |
+| `POST` | `/api/v1/workflows/:id/versions/:version_id/promote` | Admin | Rollback/rollforward active pointer |
+| `POST` | `/api/v1/workflows/:id/archive` | Admin | Archive workflow |
+| `POST` | `/api/v1/workflows/validate` | Any | Stateless BPMN validation |
+| `GET` | `/api/v1/workflows/:id/versions/:version_id/export` | Any | Download raw BPMN XML |
+| `GET` | `/api/v1/workflows/:id/versions/:version_id/diff/:target_version_id` | Any | Structural diff between two versions |
+| `GET` | `/healthz` | Public | Liveness probe |
+| `GET` | `/readyz` | Public | Readiness probe (DB ping) |
+| `GET` | `/metrics` | Public | Prometheus metrics |
+| `POST` | `/internal/events` | Internal | Ingest a domain-event envelope from the shared workflow-events consumer (e.g. `DepartmentMembershipRevoked`) |
+
+**Admin** = requires `tenant_admin` or `tenant_owner` in `x-tenant-roles`. **Internal** = service-to-service only; not exposed on the public gateway. Optionally authenticated with `x-internal-token` (`INTERNAL_API_TOKEN`); the handler sets the RLS tenant from the envelope `tenant_id`. Returns 2xx (incl. idempotent no-op), 400 (malformed — non-retryable), or 500 (transient — retried).
+
+**Optimistic concurrency on draft update.** `PUT /api/v1/workflows/:id/draft` accepts a `record_version` (the token returned on `GET /draft` and version responses). A stale value yields `409 DRAFT_CONCURRENCY`. `record_version` is bumped by the DB on every real change. The `PUT /draft`, `POST /workflows`, and clone responses include a `message` field; create/clone also echo the new identifiers.
+
+**Error format (RFC-9457):**
+
+```json
+{
+  "type": "https://api.workflow.platform/errors/draft-already-exists",
+  "title": "Draft Already Exists",
+  "status": 409,
+  "detail": "An active draft already exists for this workflow.",
+  "instance": "/api/v1/workflows/abc/draft",
+  "code": "DRAFT_ALREADY_EXISTS"
+}
+```
+
+Validation errors include an `invalid_params` array:
+
+```json
+{
+  "type": "https://api.workflow.platform/errors/validation-failed",
+  "title": "BPMN Validation Failed",
+  "status": 422,
+  "detail": "BPMN semantic or structural validation failed.",
+  "instance": "/api/v1/workflows/abc/versions/xyz/publish",
+  "code": "BPMN_VALIDATION_FAILED",
+  "invalid_params": [
+    { "name": "Task_1", "reason": "Cycle detected at task node", "code": "CYCLE_DETECTED" }
+  ]
+}
+```
+
+**Error codes**
+
+| Code | HTTP | Trigger |
+| --- | --- | --- |
+| `BAD_REQUEST` | 400 | Malformed request body/params, or an invalid UUID path param |
+| `INVALID_BPMN_XML` | 400 | The BPMN document cannot be parsed — bad XML, forbidden `DOCTYPE`/entity, or the XML-bomb token cap. (Forbidden constructs also emit an internal security log; the client response is identical.) |
+| `NOT_FOUND` | 404 | Workflow or version not found, or RLS boundary breached |
+| `DRAFT_NOT_FOUND` | 404 | No active draft exists for the workflow |
+| `NO_ACTIVE_VERSION` | 404 | Workflow has no published active version |
+| `UNAUTHORIZED` | 401 | Missing or invalid `x-user-id` / `x-tenant-id` headers |
+| `FORBIDDEN` | 403 | Caller lacks `tenant_admin` or `tenant_owner` role |
+| `DRAFT_ALREADY_EXISTS` | 409 | A draft already exists; publish or discard it first |
+| `DUPLICATE_BUSINESS_KEY` | 409 | Business key already in use within the tenant |
+| `DRAFT_CONCURRENCY` | 409 | Optimistic lock violation on draft save |
+| `INVALID_VERSION_STATUS` | 409 | Operation not valid for the version's current status |
+| `ACTIVE_INSTANCES_EXIST` | 409 | Cannot archive while running instances exist |
+| `STRUCTURAL_DIVERGENCE` | 409 | Topology changed vs. active version; use `force_publish_structural` to override |
+| `IDEMPOTENCY_KEY_REPLAY` | 409 | Same idempotency key submitted with a different payload |
+| `PAYLOAD_TOO_LARGE` | 413 | Request body exceeds the 10 MB limit |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | Request carries a body whose `Content-Type` is not `application/json` |
+| `PLAN_QUOTA_EXCEEDED` | 403 | Tenant has reached the maximum number of workflow templates for their plan |
+| `ASSIGNEE_INELIGIBLE` | 422 | A default assignee no longer has the required department/role membership |
+| `BPMN_VALIDATION_FAILED` | 422 | BPMN structural or semantic validation failed; see `invalid_params` |
+| `UPSTREAM_UNAVAILABLE` | 503 | Execution Service or Org & Membership service unreachable |
+| `INTERNAL_ERROR` | 500 | Unexpected server error |
+
+**BPMN status split:** a document that **cannot be parsed** returns **400 `INVALID_BPMN_XML`**; a document that parses but **fails validation** (structural/semantic, including `MISSING_NAMESPACE` and `REJECTED_ELEMENT`) returns **422 `BPMN_VALIDATION_FAILED`** with per-node `invalid_params`. Forbidden `DOCTYPE`/entity or XML-bomb input returns the **same** generic `400 INVALID_BPMN_XML` (so a probe is not confirmed) and is additionally recorded in an internal security log.
+
+### gRPC API
+
+Proto source: [`api/proto/definition/v1/definition.proto`](api/proto/definition/v1/definition.proto).
+
+**Service: `DefinitionService`.** High-throughput internal gRPC endpoint. Called by the Execution Service during runtime workflow instantiation to fetch compiled DSL plans. Bypasses the Envoy REST gateway to eliminate serialisation overhead.
+
+**Transport.** The gRPC server accepts insecure plain-text connections on the intra-cluster network. mTLS is enforced at the Envoy sidecar layer — connections from outside the mesh are rejected there, not at the server.
+
+**Reflection.** Server reflection is registered (`reflection.Register`), so `grpcurl` works without passing proto files:
+
+```bash
+# List all services
+grpcurl -plaintext localhost:9090 list
+
+# Describe the service
+grpcurl -plaintext localhost:9090 describe definition.v1.DefinitionService
+
+# Call GetCompiledWorkflow
+grpcurl -plaintext \
+  -d '{"tenant_id":"<uuid>","workflow_version_id":"<uuid>"}' \
+  localhost:9090 definition.v1.DefinitionService/GetCompiledWorkflow
+```
+
+**`GetCompiledWorkflow`**
+
+```protobuf
+rpc GetCompiledWorkflow(GetCompiledWorkflowRequest)
+    returns (GetCompiledWorkflowResponse);
+```
+
+Request:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `tenant_id` | `string` | Tenant UUID — mandatory; sets RLS session GUC before any DB access |
+| `workflow_version_id` | `string` | UUID of the version record to fetch |
+
+Response:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `workflow_id` | `string` | Parent workflow UUID |
+| `version_id` | `string` | Requested version UUID |
+| `version_number` | `int32` | Published version number |
+| `status` | `string` | `DRAFT`, `PUBLISHED`, or `ARCHIVED` |
+| `is_valid` | `bool` | `false` if any default assignee has become ineligible |
+| `compiled_plan_json` | `string` | Pre-compiled ExecutionPlan DSL as a JSON string |
+
+The version is carried on the response (`version_number`), not inside the DSL blob.
+
+**Compiled DSL shape (`compiled_plan_json`).** `{ name, task_queue, departments[], execution: { steps[] } }`. Each step in `execution.steps` is one of:
+
+| Step kind | Shape | Meaning |
+| --- | --- | --- |
+| `sequential` | `["deptA", "deptB"]` | departments run in order |
+| `parallel` | `["deptA", "deptB"]` | departments run concurrently (AND split/join) |
+| `exclusive` | `[{ branch }, …]` | XOR decision — runtime evaluates each branch's `condition_expression` |
+
+Each `exclusive` branch object:
+
+| Field | Meaning |
+| --- | --- |
+| `target` | Destination department for a forward branch. **Empty** when the branch terminates the workflow (routes to the end event), and empty on a revert branch. |
+| `condition_expression` | Expression the Execution Service / Temporal worker evaluates to pick the branch. |
+| `revert_to_dept` / `revert_to_stage` | Present on a **guarded-loop revert branch** (back-edge from the gateway) instead of `target`: the `(department, stage_type)` to send the task back to. |
+
+gRPC status codes:
+
+| Code | Meaning |
+| --- | --- |
+| `OK` (0) | Success |
+| `INVALID_ARGUMENT` (3) | Missing or malformed `workflow_version_id` |
+| `PERMISSION_DENIED` (7) | `tenant_id` is empty (no tenant context) |
+| `NOT_FOUND` (5) | Version not found or RLS filtered it out |
+| `INTERNAL` (13) | Unexpected server error |
+
+**Compiled-plan cache.** Responses are cached in Valkey under `wf:plan:<tenant_id>:<version_id>` (TTL `CACHE_COMPILED_PLAN_TTL`, default 1h), populated lazily on the first read. The cache is fail-open — a cache outage falls back to Postgres. Entries are invalidated when a version's `status` or `is_valid` changes (workflow archive, membership-revocation invalidation).
+
+**Health Check (`grpc.health.v1.Health`).** The server registers the standard gRPC health service at startup (`grpc_health_v1.RegisterHealthServer`), reporting `SERVING` for all service names by default — used for Kubernetes liveness/readiness probes on `:9090` and service-mesh health checks:
+
+```bash
+grpcurl -plaintext localhost:9090 grpc.health.v1.Health/Check
+grpcurl -plaintext -d '{"service":"definition.v1.DefinitionService"}' localhost:9090 grpc.health.v1.Health/Check
+```
+
+Proto stubs are generated via `make generate` (`buf generate`); output goes to `gen/proto/`, gitignored.
 
 ---
 
 ## Deployment
 
-A container image (`Dockerfile`, distroless nonroot runtime) and a Helm chart (`deploy/helm/`) ship the service to Kubernetes — Deployment/Service on ports `8080` (HTTP) / `9090` (gRPC), a migration Job that runs before every rollout (there is no auto-migration at server boot), HPA/PodDisruptionBudget sized for this service's own resource profile, NetworkPolicy, and a ServiceMonitor/PrometheusRule pair covering availability, error rate, latency, BPMN validation failure rate, publish latency, outbox delivery stalls, and RLS violations. `release.yml`'s `deploy-gate` job deploys, verifies, and health-gates every tagged release before it's published.
+This service ships a container image and a Helm chart (`deploy/helm/`) for running it on Kubernetes, plus a set of static Prometheus rule files (`deploy/monitoring/`) for environments that don't run the Prometheus Operator CRDs.
 
-See [Deployment](docs/deployment.md) for the full reference.
+### Container image
+
+Multi-stage `Dockerfile`: a `golang:1.26-alpine` builder (private-module access via a BuildKit secret, `GOPRIVATE`-aware) compiles a stripped, trimmed static binary, copied into a `gcr.io/distroless/static-debian12:nonroot` runtime — no shell, no package manager, runs as UID `65532` by default. Both base images are pinned by digest (`make pin-base-images` refreshes them; tracked in `.docker-digests`).
+
+```bash
+make docker-build              # builds workflow-definition-service:local (requires GO_PRIVATE_TOKEN)
+make docker-lint                # Hadolint
+make docker-trivy               # HIGH/CRITICAL CVE scan (source + deps)
+make docker-check                # both, no image build required
+```
+
+The image exposes two ports:
+
+| Port | Protocol | Purpose |
+| --- | --- | --- |
+| `8080` | HTTP | REST API (`/api/v1`), `/healthz`, `/readyz`, `/metrics` |
+| `9090` | gRPC | `GetCompiledWorkflow` — called by the Execution Service |
+
+The image's built-in `HEALTHCHECK` directive is best-effort for standalone `docker run` use; Kubernetes ignores it entirely and uses its own `startupProbe`/`livenessProbe`/`readinessProbe` against `/healthz` and `/readyz` instead.
+
+### Helm chart (`deploy/helm/`)
+
+```text
+deploy/helm/
+  Chart.yaml
+  values.yaml
+  templates/
+    deployment.yaml        service.yaml        serviceaccount.yaml
+    secret.yaml             migrate-job.yaml     hpa.yaml
+    pdb.yaml                 networkpolicy.yaml   servicemonitor.yaml
+    prometheusrule.yaml    ingress.yaml          httproute.yaml
+    securitypolicy.yaml    _helpers.tpl          NOTES.txt
+```
+
+```bash
+helm lint ./deploy/helm
+helm template my-release ./deploy/helm --set secretValues.DATABASE_URL=... # ... (see Secrets below)
+helm upgrade workflow-definition-service ./deploy/helm --install --namespace <ns>
+```
+
+**Ports and probes.** The Service and Deployment both expose named `http` (8080) and `grpc` (9090) ports. `startupProbe`/`livenessProbe`/`readinessProbe` all target `http` — `/healthz` is a trivial liveness check, `/readyz` actually verifies the Postgres pool and Valkey are reachable (`cmd/server/handlers.go`), so a pod only receives traffic once its real dependencies are up.
+
+**Migrations run as a Helm hook, not at boot.** `cmd/server/main.go` never migrates on the normal server boot path — schema changes are applied by a dedicated `migrate` subcommand (`/server migrate`) that runs the outbox schema and this service's own domain migrations, then exits. Running that inline at boot would let two replicas race on `golang-migrate`'s advisory lock during a rolling deploy, stalling the loser and risking a readiness-probe timeout for no reason.
+
+The chart wires this up as `templates/migrate-job.yaml`, a Kubernetes `Job` annotated `helm.sh/hook: pre-install,pre-upgrade`. Helm runs it — and waits for it to complete — before rolling out the Deployment, so every `helm upgrade --install` applies pending migrations first, sequentially, with no replica race. It's gated by `migrationJob.enabled` (default `true`) in case migrations are ever driven out-of-band instead.
+
+One consequence worth knowing: `cmd/server/main.go` loads and validates the full `Config` *before* it even checks whether it was invoked as `migrate` — so the migrate Job needs the exact same required environment variables and secrets as the main Deployment (not just `DATABASE_URL`), or config validation fails before a single migration runs. The chart template already reuses the same `env`/`envFromSecret` blocks as the Deployment for this reason.
+
+**Resources and scaling.** Base replica count is `2`, with the `HorizontalPodAutoscaler` floor matching it (`autoscaling.minReplicas: 2`) — two AZ-spread replicas is the minimum for this service to survive a single-AZ outage without downtime. `resources.requests`/`limits` (`250m`/`512Mi` request, `500m`/`1024Mi` limit) size for BPMN parsing and DSL compilation, which allocate meaningfully more per-request than a typical CRUD handler. `targetCPUUtilizationPercentage`/`targetMemoryUtilizationPercentage` (`70`/`80`) scale out before either resource is saturated. An optional RPS-based scaling metric (`autoscaling.targetRPSPerReplica`) is wired into the HPA template but left unset by default — it requires `deploy/monitoring/prometheus-adapter-rule.yaml` to be installed in the cluster first.
+
+`podDisruptionBudget.minAvailable` is `1`: at a 2-replica floor, `minAvailable: 2` would block every voluntary disruption (node drains, cluster upgrades) — `1` allows exactly one pod to be evicted at a time while guaranteeing the service never drops to zero replicas from a voluntary action.
+
+`terminationGracePeriodSeconds` is `60`. `cmd/server/app.go`'s shutdown sequence on `SIGTERM`: an HTTP `Shutdown(ctx)` bounded by a single 30-second context, then `grpcServer.GracefulStop()` (no context — blocks unboundedly until in-flight RPCs drain), then the outbox relay's own `Stop()` (also uncancellable, ~30-second internal drain default), then a final pool drain bounded by whatever remains of the original 30-second deadline. In practice this finishes well under 30 seconds — but the grace period carries real headroom above the worst case rather than assuming 30 seconds caps the whole sequence.
+
+**Secrets.** Two mutually exclusive modes, selected by whether `existingSecret` is set:
+
+- **`existingSecret: "<name>"`** (recommended beyond local testing) — points at a Secret already provisioned by External Secrets Operator, the AWS Secrets Manager CSI driver, or Sealed Secrets. The chart creates no Secret resource of its own. Bump `rotationEpoch` (`--set rotationEpoch=$(date +%s)`) to force a rollout after the external secret rotates.
+- **`secretValues.*`** (dev/CI only) — pass real values via `--set` or a Helm secrets plugin. `secret.yaml` hard-fails the render if any key required by `envFromSecret` (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `VALKEY_PASSWORD`, `SNS_TOPIC_ARN`, `INTERNAL_API_TOKEN`) is empty. These land in the Helm release history unencrypted (base64) — never use this mode against a shared cluster.
+
+**Networking.** `networkPolicy.enabled: true` by default. Ingress is split by port on purpose: the gateway/ingress-controller rule only opens `8080` (nothing fronts the gRPC port externally), while an intra-namespace rule opens both `8080` and `9090` so the Execution Service can reach `GetCompiledWorkflow` directly pod-to-pod. A separate rule scopes `/metrics` scraping to the monitoring namespace only. Egress allows DNS, HTTPS (AWS APIs), Postgres/PgBouncer, Valkey, and OTel OTLP explicitly, plus same-namespace pod egress for `ORG_MEMBERSHIP_BASE_URL` and `EXECUTION_SERVICE_ADDR`.
+
+`ingress.type` supports either `HTTPRoute` (Gateway API — default) or classic `Ingress`. CORS and gateway-level rate limiting attach via an Envoy Gateway `SecurityPolicy` (`ingress.securityPolicy`) when enabled.
+
+**Observability.** `serviceMonitor.enabled: true` scrapes `/metrics` every 30s. Every alert in the `PrometheusRule` template (and its static twin at `deploy/monitoring/app-alerts.yml`) is verified against a metric actually emitted by this service or one of its vendored platform libraries:
+
+- **Availability** — no healthy scrape target for 2 minutes; replica count below the HA floor.
+- **HTTP errors/latency** — 5xx ratio and p99 latency (`http_requests_total`/`http_request_duration_seconds`).
+- **`GetCompiledWorkflow` error rate/latency** — scoped separately from the blended gRPC rate, since this is the one RPC the Execution Service depends on synchronously.
+- **BPMN validation failure rate** — sustained activity on `wf_validation_failures_total` (emitted only by the standalone `/validate` endpoint).
+- **Publish latency and retry exhaustion** — p95 of `wf_publish_latency_seconds` exceeding 2s, and any increase in `pgcommon_retry_exhausted_total`.
+- **Outbox health** — delivery stalls (`outbox_dead_letters_total`), backlog (`outbox_pending_total`), relay-internal errors.
+- **Internal event ingest failures** — sustained `bad_payload`/`error` results on `POST /internal/events`.
+- **Postgres query error rate** — `pgcommon_query_total{status="error"}`.
+- **Panics** — any increase in `http_panic_total`/`grpc_panic_total`, paged immediately.
+- **Compiled-plan cache hit ratio** (informational) — `wf_cache_hits_total`/`wf_cache_misses_total`, not an incident trigger.
+
+**Row-level security violation alerting is intentionally not implemented.** There is no `rls_violations_total` metric anywhere in this service or `platform-pgcommon` — the `rls_violation_log` table is populated by DB triggers, not application code, and nothing currently exports it to Prometheus. Flagged here as a known gap rather than shipped as a dead alert.
+
+### CI/CD deploy gate
+
+`release.yml`'s `deploy-gate` job runs after the image is built, signed, and pushed, and before the GitHub Release is published:
+
+1. `helm upgrade workflow-definition-service ./deploy/helm --install --wait --timeout=5m --atomic` — `--atomic` rolls back automatically if the release fails to become healthy within the timeout.
+2. Verifies the running Deployment's image digest matches the digest that was actually signed and pushed.
+3. Waits for `kubectl rollout status` to confirm the new pods are ready.
+4. Runs a 2-minute Prometheus check on the 5xx ratio; if it exceeds 1%, `helm rollback` runs automatically and the job — and therefore the release — fails.
+
+The GitHub Release step only runs if `deploy-gate` succeeds. **Required repository configuration** (not shipped by this chart): a `KUBECONFIG_B64` secret for the target cluster, and optionally `K8S_NAMESPACE` (defaults to `workflow-app`) and `PROMETHEUS_URL` vars in the `production` GitHub environment.
+
+---
 
 ## Schema Governance
 
-Outbound event contracts (`api/asyncapi.yaml` → `internal/eventschema/*.json`) are validated, diffed for breaking changes, and registered in AWS Glue Schema Registry via `platform-schemagov`, both locally (`make schema-validate`, `make schema-register`) and in CI (`schema-registry.yml`, `schema-prune.yml`, `schema-health-quarterly.yml`, `freeze-watchdog.yml`).
+This service publishes one outbound domain event today (`workflow.template.published`) and treats its wire contract as a versioned, governed artifact rather than an implicit side effect of whatever the Go struct happens to look like. `platform-schemagov` — a CLI distributed as a Docker image (`ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov`) — enforces this end to end: locally during development and again in CI on every push.
 
-See [Schema Governance](docs/schemagov.md) for the full reference.
+### Source of truth
+
+```text
+api/asyncapi.yaml   →  make extract-schemas  →  internal/eventschema/*.json
+```
+
+`api/asyncapi.yaml` is authored by hand and is the canonical description of every event this service emits, including `x-lifecycle` and `x-owner` governance annotations per message. `internal/eventschema/*.json` is a derived, *committed* artifact — one Draft-07 JSON Schema file per event — extracted from the AsyncAPI spec and checked into the repo so it can be diffed, validated, and registered independently of the Go source.
+
+Both are tracked in git (`internal/eventschema/` is deliberately not in `.gitignore`, unlike the other generated directories in this repo) precisely because schema evolution needs its own review and audit trail, separate from application code changes.
+
+### Local commands
+
+```bash
+make schema-pull        # pull the platform-schemagov image
+make extract-schemas    # api/asyncapi.yaml → internal/eventschema/*.json
+make schema-validate    # 8-pass structural/lifecycle/drift validation, no AWS required
+make schema-diff CURRENT=<f> PROPOSED=<f> [SCHEMA_NAME=<name>]   # pure file-to-file diff
+make schema-register     # register into AWS Glue Schema Registry (needs AWS creds or LocalStack)
+make schema-prune        # report orphaned Glue schemas (EXECUTE=true to actually delete)
+```
+
+`make schema-validate` runs entirely offline against the committed files — no AWS credentials needed — which is what makes it safe to run as a fast local check or a read-only CI gate before any registry call happens.
+
+### Schema governance environment variables
+
+| Variable | Used by | Notes |
+| --- | --- | --- |
+| `GLUE_REGISTRY_NAME` | Running service (`internal/config`) **and** CI tooling | Required at runtime when `AWS_USE_STUB=false` — the service's Glue codec resolves schemas against this registry when decoding/encoding events. |
+| `GLUE_REGISTRY_ARN` | CI/schema-gov tooling only | **Not read by the running service** — no corresponding field on `internal/config.Config`. It scopes IAM policy for the `schema-register`/`schema-prune` pipeline steps, not application behavior. |
+| `SCHEMA_GOV_IMAGE` | `make schema-*` targets and CI | Pins the `platform-schemagov` image tag used by every schema command; not read by the server binary at all. |
+
+### CI workflows
+
+Four workflows implement the full lifecycle, each with a distinct, narrow responsibility:
+
+**`schema-registry.yml` — validate, diff, register.** Triggers: PR into `main` touching schema files (`pr-check`, read-only), push to `main` (`staging`, full pipeline), a published release (`production`), or manual dispatch. The full (staging/production) pipeline: validate → check for an active schema freeze → assess event usage against CloudWatch/Prometheus (flagging events nobody has emitted, `NEVER_SEEN`, for deprecation) → diff against what's already registered (fails the run on a breaking change *before* anything is uploaded) → register (idempotent create-or-new-version) → append a dated changelog entry → emit metrics. The `pr-check` job runs only the read-only half (validate + diff against the staging registry).
+
+**`schema-prune.yml` — retire orphaned schemas.** A schema becomes a prune candidate when it's registered in Glue but has no corresponding file in `internal/eventschema/`. Runs monthly as a dry-run report only; actually deleting requires an explicit manual dispatch with `dry_run=false` — production pruning is never scheduled automatically, since `glue:DeleteSchema` is irreversible for any consumer still pinned to a version UUID. Executed prunes archive every version definition to `docs/schema-archive/<schema-name>/` before deleting from Glue.
+
+**`schema-health-quarterly.yml` — health review prompt.** A read-only quarterly report (version accumulation per schema, overdue deprecations, stale lifecycle annotations) surfaced as a GitHub Step Summary for a human to act on. Never mutates anything — follow-up goes through `schema-prune.yml` or a normal schema PR.
+
+**`freeze-watchdog.yml` — guard against a forgotten freeze.** `SCHEMA_FREEZE` blocks registration (used during incident response or planned migrations). This workflow polls its age every few hours and escalates from a warning to a hard failure if left on far longer than any real freeze window should last.
+
+### Governance guardrails
+
+- **CODEOWNERS**: changes to `api/asyncapi.yaml` and `internal/eventschema/` require review from the platform-engineers/platform-team owners.
+- **Drift gate**: `validate-test.yml` runs `extract-schemas --check` on every push — if the committed JSON Schema files don't match what `api/asyncapi.yaml` would currently produce, CI fails.
+- **Breaking-change gate**: the `diff` step in `schema-registry.yml` fails the pipeline before any registration if a proposed schema isn't backward-compatible with what's already live.
+
+---
+
+## Workflow Design Guide
+
+Two guides live alongside the code, aimed at non-engineering audiences who touch a workflow template before or after it's compiled:
+
+- **[docs/bpmn-designer-guide.md](docs/bpmn-designer-guide.md)** — for business analysts and process owners modelling workflows in Camunda Modeler: lanes/departments, task types, gateways, condition expressions, and the structural rules checked on upload.
+- **[docs/ui-enrichment-guide.md](docs/ui-enrichment-guide.md)** — for the ops/engineering team reviewing a compiled plan before activation: verifying identity fields (department IDs, assignee UUIDs) against IAM records.
+
+See [ARCHITECTURE.md § BPMN Compiler](ARCHITECTURE.md#bpmn-compiler) for the full element reference, validation rule catalog, and error-code set these guides summarize for a non-engineering audience.
 
 ---
 
@@ -191,7 +615,7 @@ make tools-integration   # docker pull postgres:18-alpine
 make test-integration
 ```
 
-Coverage gate: **95%** on unit tests. The postgres repo adapter (`internal/adapter/outbound/postgres/`) and generated packages (`postgres/db/`, `core/port/mocks/`) are excluded from the unit gate and covered by integration tests instead.
+Coverage gate: **95%** on unit tests. The postgres repo adapter (`internal/adapter/outbound/postgres/`) and generated packages (`postgres/db/`, `core/port/mocks/`) are excluded from the unit gate and covered by integration tests instead. See [CONTRIBUTING.md § Testing](CONTRIBUTING.md#testing) for the full test-authoring conventions (table-driven tests, white-box vs black-box placement, mocking).
 
 ---
 
@@ -225,8 +649,59 @@ All database access must go through `pgcommon.Pool` helpers (`WithConn`, `RunInT
 
 ## Environment variables
 
-See [`.env.example`](.env.example) or the [Configuration docs](docs/configuration.md) for the full reference.
-See [ARCHITECTURE.md](ARCHITECTURE.md#configuration-reference) for the complete table with defaults.
+See [`.env.example`](.env.example) for the raw template, and [ARCHITECTURE.md § Configuration reference](ARCHITECTURE.md#configuration-reference) for the complete table with defaults, grouped by subsystem.
+
+---
+
+## Database
+
+### Schema
+
+Database: PostgreSQL 18, schema `workflow_definition`. Multi-tenancy is enforced via **Row-Level Security (RLS)** — every query is automatically filtered by the `app.tenant_id` GUC set per-connection by the postgres adapter. Cross-tenant data leaks are impossible at the database level.
+
+| Table | Purpose |
+| --- | --- |
+| `workflow` | Root template entity — business key, name, active version pointer |
+| `workflow_version` | Versioned snapshot — BPMN XML, compiled DSL, status lifecycle |
+| `workflow_node_assignee` | Denormalised reverse index: user → versions that reference them as default assignees |
+| `outbox_events` | Transactional event queue for SNS delivery (published_at = NULL → NOW()) |
+| `outbox_dead_letters` | Failed events that exhausted max attempts |
+| `processed_event` | Inbound-event idempotency registry — composite PK `(event_id, consumer)`, no RLS |
+
+See full DDL in [`db/migrations/`](db/migrations/).
+
+### Query patterns
+
+Query definitions in `db/queries/` are compiled to type-safe Go by [sqlc](https://sqlc.dev). Generated output goes to `internal/adapter/outbound/postgres/db/`. Repository adapters hold a `*pgcommon.Pool` value and use transaction/connection helpers (`WithConn`, `RunInTx`) to run sqlc-generated queries. Outbox enqueuing writes `outbox_events` through the same transaction context via `outbox.Enqueue(ctx, tx, env)`; the background delivery relay is handled entirely by the `platform-events` outbox runner.
+
+```bash
+make generate          # runs buf generate (proto) AND sqlc generate (queries)
+make generate-sqlc     # sqlc only — use after editing db/queries/*.sql
+```
+
+**Status-guarded mutations (`:execresult`).** Mutations that require the record to be in a specific status (e.g. `PublishVersion` requires DRAFT) are defined with `:execresult` in `db/queries/` so `RowsAffected()` can be inspected:
+
+```sql
+-- name: PublishVersion :execresult
+UPDATE workflow_version
+SET status = 'PUBLISHED', version_number = $3, ...
+WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT';
+```
+
+On `RowsAffected() == 0` — either the record doesn't exist or it exists in the wrong status — Go calls `statusOrNotFound` to do a secondary `GetWorkflowVersionByID` and distinguish the two cases. See [ARCHITECTURE.md § Repository error semantics](ARCHITECTURE.md#repository-error-semantics).
+
+**Dynamic list queries (raw pgx).** `ListWorkflows` uses a hand-written dynamic WHERE clause because sqlc cannot generate optional filters. The `nextArg()` closure manages `$N` parameter numbering — all filter parameters must be appended via `nextArg()` only, never by hand-crafting `$N` literals.
+
+### Key constraints
+
+| Table | Constraint | Enforces |
+| --- | --- | --- |
+| `workflow` | `UNIQUE (tenant_id, business_key)` | No duplicate keys per tenant |
+| `workflow_version` | `idx_wv_single_draft` (partial unique) | At most one DRAFT per workflow |
+| `workflow_version` | `uq_workflow_version_published` | Unique version numbers per workflow |
+| `workflow_version` | `chk_version_number_on_publish` | Published versions must have a version number |
+
+See [CONTRIBUTING.md § Database Migrations](CONTRIBUTING.md#database-migrations) for the migration-authoring workflow.
 
 ---
 
