@@ -2,11 +2,11 @@
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_TimerBoundaryNI" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="Process_TimerBoundaryNI" name="Non-Interrupting Timer Boundary Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_design_prep</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_qa" name="qa">
+      <bpmn:lane id="Lane_qa" name="qa"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a98d408d-cc9a-50a7-b09e-1d881389fdd4"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Task_qa_prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
       </bpmn:lane>

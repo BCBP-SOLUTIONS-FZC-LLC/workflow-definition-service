@@ -2,11 +2,11 @@
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_Subprocess" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.46.1">
   <bpmn:process id="Process_Subprocess" name="Subprocess Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>SubProcess_1</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_qa" name="qa">
+      <bpmn:lane id="Lane_qa" name="qa"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a98d408d-cc9a-50a7-b09e-1d881389fdd4"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Task_qa_prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
       </bpmn:lane>
@@ -14,7 +14,7 @@
     <bpmn:startEvent id="StartEvent_1" name="Start" />
     <bpmn:subProcess id="SubProcess_1" name="Design Review Sub">
       <bpmn:laneSet id="InnerLaneSet_1">
-        <bpmn:lane id="Lane_inner_design" name="design">
+        <bpmn:lane id="Lane_inner_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="06549a3b-5b30-54dd-a893-d9ce984c933c"/></zeebe:properties></bpmn:extensionElements>
           <bpmn:flowNodeRef>InnerStart_1</bpmn:flowNodeRef>
           <bpmn:flowNodeRef>InnerTask_prep</bpmn:flowNodeRef>
           <bpmn:flowNodeRef>InnerTask_approve</bpmn:flowNodeRef>

@@ -64,7 +64,7 @@
   </bpmn:collaboration>
   <bpmn:process id="Process_contractor" name="Clarification and BIP Prep" isExecutable="true">
     <bpmn:laneSet id="LaneSet_contractor">
-      <bpmn:lane id="Lane_0mnrcoq" name="Planning">
+      <bpmn:lane id="Lane_0mnrcoq" name="Planning"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="5931f527-aa65-5e12-8177-ba24a07c2ffa"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Activity_0t24ht5</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_07cj73e</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_1llugo9</bpmn:flowNodeRef>
@@ -75,7 +75,7 @@
         <bpmn:flowNodeRef>Activity_1le4lqg</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_06k0hdc</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_1bm6ngx" name="HSE">
+      <bpmn:lane id="Lane_1bm6ngx" name="HSE"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="c3b41f40-4115-56f8-b8ec-e92eb22d2e4b"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Activity_1id3oby</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_1gffvqx</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_1ysz04w</bpmn:flowNodeRef>
@@ -86,7 +86,7 @@
         <bpmn:flowNodeRef>Activity_1pv7jx2</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_08l3kbz</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_1mdxeqj" name="Procurement">
+      <bpmn:lane id="Lane_1mdxeqj" name="Procurement"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="15d2c93f-7441-5a81-9709-2dda99471b39"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Activity_0nkvh3q</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_10s6wqv</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_1y4786s</bpmn:flowNodeRef>
@@ -98,7 +98,7 @@
         <bpmn:flowNodeRef>Activity_0qwrvsl</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_0a7l4s0</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_0yvei4o" name="Contracts">
+      <bpmn:lane id="Lane_0yvei4o" name="Contracts"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="d7e8d09b-8228-5b96-955e-22476ec3228d"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Activity_099iek7</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_12e01lk</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_0hzz0eb</bpmn:flowNodeRef>
@@ -109,7 +109,7 @@
         <bpmn:flowNodeRef>Activity_072mblj</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_0fxiaqg</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_0fqxx6o" name="QAQC">
+      <bpmn:lane id="Lane_0fqxx6o" name="QAQC"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="9e42b28e-d932-5e05-91a8-4acf0fb0759b"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Activity_11d30m6</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_0g830gg</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_19h7tio</bpmn:flowNodeRef>
@@ -120,7 +120,7 @@
         <bpmn:flowNodeRef>Activity_0fmv0oi</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_0vd8zkc</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_18l5q7e" name="Engineering">
+      <bpmn:lane id="Lane_18l5q7e" name="Engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="6c548091-6405-5979-8663-f27ff127f33d"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Activity_1n4mwwk</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_09hrvzn</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_0kgehzv</bpmn:flowNodeRef>
@@ -133,7 +133,7 @@
         <bpmn:flowNodeRef>Activity_0f32edx</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_1gmii35</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_tender" name="Tender Business">
+      <bpmn:lane id="Lane_tender" name="Tender Business"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="4417b1ea-a41e-5115-ad6d-a6a214bb7b07"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Gateway_0t01zt3</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Event_03fyrn8</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_0c65oeq</bpmn:flowNodeRef>
@@ -829,7 +829,7 @@
       </zeebe:properties>
     </bpmn:extensionElements>
     <bpmn:laneSet id="LaneSet_consultant">
-      <bpmn:lane id="Lane_client" name="Client" />
+      <bpmn:lane id="Lane_client" name="Client" ><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="225cfa00-6603-5eff-a0c5-6736ac526622"/></zeebe:properties></bpmn:extensionElements></bpmn:lane>
     </bpmn:laneSet>
     <bpmn:endEvent id="Event_15hvnyk">
       <bpmn:incoming>Flow_1sqauml</bpmn:incoming>
@@ -857,7 +857,7 @@
   </bpmn:process>
   <bpmn:process id="Process_PrepareResponse" name="Prepare Response" isExecutable="true">
     <bpmn:laneSet id="LaneSet_PR">
-      <bpmn:lane id="Lane_pr_tender" name="tender-business" />
+      <bpmn:lane id="Lane_pr_tender" name="tender-business" ><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="fc9192ae-7cd7-5f7e-a12a-2439e63fba24"/></zeebe:properties></bpmn:extensionElements></bpmn:lane>
     </bpmn:laneSet>
     <bpmn:startEvent id="PR_Start">
       <bpmn:outgoing>PR_Flow_1</bpmn:outgoing>
@@ -920,7 +920,7 @@
       </zeebe:properties>
     </bpmn:extensionElements>
     <bpmn:laneSet id="LaneSet_0tdm10b">
-      <bpmn:lane id="Lane_0rt0okj" name="Contracts">
+      <bpmn:lane id="Lane_0rt0okj" name="Contracts"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="8ca8daa5-8a26-5571-803d-52f24f612033"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Gateway_0itwilr</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_1gh9ykh</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_0ockrqr</bpmn:flowNodeRef>
@@ -928,19 +928,19 @@
         <bpmn:flowNodeRef>Activity_1n454sr</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_0rau13h</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_0mejvlk" name="QA/QC">
+      <bpmn:lane id="Lane_0mejvlk" name="QA/QC"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a8707e39-d070-5778-9860-2505e013d72a"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Activity_0d5ejo5</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_0x06ygl</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_09so199</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_0vradg2</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_0umzhq0" name="PLanning">
+      <bpmn:lane id="Lane_0umzhq0" name="PLanning"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="19d958c9-08a0-529a-a54c-9007b4550b55"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Activity_0h4jwyf</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_02d19fy</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_0wgrvdq</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_1oar4i0</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_08f4k66" name="Procurement">
+      <bpmn:lane id="Lane_08f4k66" name="Procurement"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="90bf02ef-22b2-599d-a5b6-3132bca7e7f4"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Activity_04pughi</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_1sm007y</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_16zlmgx</bpmn:flowNodeRef>
@@ -957,7 +957,7 @@
         <bpmn:flowNodeRef>Activity_1b4dvho</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_15h35mb</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_0hm3hxh" name="Tender">
+      <bpmn:lane id="Lane_0hm3hxh" name="Tender"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="3da33a7e-cf67-55d3-987a-3b9d83f074ce"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Event_0fxeskt</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_issue_rfq</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Event_0s6izbr</bpmn:flowNodeRef>
@@ -1281,7 +1281,7 @@
       </zeebe:properties>
     </bpmn:extensionElements>
     <bpmn:laneSet id="LaneSet_0ak8a6k">
-      <bpmn:lane id="Lane_0kvoc6v" name="Tender Business">
+      <bpmn:lane id="Lane_0kvoc6v" name="Tender Business"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="1d76cb66-6a85-5873-b28f-1c9bada58fac"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Activity_1kbs6zn</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_05uh4gd</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_1ivyzsd</bpmn:flowNodeRef>

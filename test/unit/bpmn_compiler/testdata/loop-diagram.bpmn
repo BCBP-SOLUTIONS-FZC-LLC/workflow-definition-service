@@ -16,18 +16,18 @@
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_ParaLoop" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="Process_ParallelLoop" name="Parallel Procurement &#38; Planning with Construction Rework Loop" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_design_prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_Split</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_procurement" name="procurement">
+      <bpmn:lane id="Lane_procurement" name="procurement"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="8c7fc284-f1dc-5fed-9dad-535933b2db7e"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Task_procurement_prep</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_planning" name="planning">
+      <bpmn:lane id="Lane_planning" name="planning"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bdc0d984-6f5f-55eb-815d-9f27d318067f"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Task_planning_prep</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_construction" name="construction">
+      <bpmn:lane id="Lane_construction" name="construction"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="2f17c191-efb8-5460-b54c-d13169ebe7f8"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Gateway_Join</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_construction_prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_construction_review</bpmn:flowNodeRef>

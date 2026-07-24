@@ -465,7 +465,8 @@ func TestVersionService_Publish_EligibilityFail(t *testing.T) {
 	assigneeID := uuid.Must(uuid.NewV7())
 	plan := &domain.CompiledPlan{
 		Departments: []domain.DepartmentDef{{
-			ID: "finance",
+			ID:              "finance",
+			IAMDepartmentID: "finance",
 			Stages: []domain.StageDef{{
 				Type:             "review",
 				Role:             "reviewer",
@@ -543,7 +544,8 @@ func TestVersionService_Publish_WithAssignees_BulkInsert(t *testing.T) {
 	assigneeID := uuid.Must(uuid.NewV7())
 	plan := &domain.CompiledPlan{
 		Departments: []domain.DepartmentDef{{
-			ID: "ops",
+			ID:              "ops",
+			IAMDepartmentID: uuid.New().String(),
 			Stages: []domain.StageDef{{
 				Type:             "approve",
 				Role:             "manager",
@@ -1305,7 +1307,8 @@ func TestVersionService_Publish_BulkInsertError(t *testing.T) {
 	assigneeID := uuid.Must(uuid.NewV7())
 	plan := &domain.CompiledPlan{
 		Departments: []domain.DepartmentDef{{
-			ID: "hr",
+			ID:              "hr",
+			IAMDepartmentID: uuid.New().String(),
 			Stages: []domain.StageDef{{
 				Type:             "approve",
 				Role:             "manager",
@@ -1426,7 +1429,8 @@ func TestVersionService_Publish_EligibilityCheckError(t *testing.T) {
 	assigneeID := uuid.Must(uuid.NewV7())
 	plan := &domain.CompiledPlan{
 		Departments: []domain.DepartmentDef{{
-			ID: "ops",
+			ID:              "ops",
+			IAMDepartmentID: "ops",
 			Stages: []domain.StageDef{{
 				Type:             "approve",
 				Role:             "manager",
@@ -1534,7 +1538,8 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	assigneeID := uuid.Must(uuid.NewV7())
 	plan := &domain.CompiledPlan{
 		Departments: []domain.DepartmentDef{{
-			ID: "finance",
+			ID:              "finance",
+			IAMDepartmentID: "018e1f2a-0000-7000-8000-000000000030",
 			Stages: []domain.StageDef{{
 				Type:             "approve",
 				Role:             "manager",
@@ -1553,7 +1558,7 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	// All assignees eligible → checkAssigneeEligibility returns nil
-	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "finance", "manager").
+	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "018e1f2a-0000-7000-8000-000000000030", "manager").
 		Return(true, nil)
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -1586,7 +1591,8 @@ func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	plan := &domain.CompiledPlan{
 		Departments: []domain.DepartmentDef{{
-			ID: "ops",
+			ID:              "ops",
+			IAMDepartmentID: uuid.New().String(),
 			Stages: []domain.StageDef{{
 				Type:             "review",
 				Role:             "reviewer",

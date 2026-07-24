@@ -38,7 +38,7 @@ var (
 	mTenantID = uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	mUserID   = uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 	mEventID  = uuid.MustParse("cccccccc-cccc-cccc-cccc-cccccccccccc")
-	mDeptID   = "dept-finance"
+	mDeptID   = "018e1f2a-0000-7000-8000-000000000010"
 	mVerID    = uuid.MustParse("dddddddd-dddd-dddd-dddd-dddddddddddd")
 	mVerID2   = uuid.MustParse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
 )
@@ -48,7 +48,7 @@ func assignee(versionID uuid.UUID, nodeKey, deptID string) *domain.NodeAssignee 
 		WorkflowVersionID: versionID,
 		NodeKey:           nodeKey,
 		UserID:            mUserID,
-		DepartmentID:      deptID,
+		DepartmentID:      uuid.MustParse(deptID),
 		Role:              "reviewer",
 	}
 }
@@ -66,7 +66,7 @@ func TestHandleMembershipRevoked_RecordIfNewError(t *testing.T) {
 
 	// No matching assignees; PauseUserTasks succeeds; then RecordIfNew fails.
 	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).
-		Return([]*domain.NodeAssignee{assignee(mVerID, "task-1", "dept-other")}, nil)
+		Return([]*domain.NodeAssignee{assignee(mVerID, "task-1", "018e1f2a-0000-7000-8000-000000000020")}, nil)
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 	pe.EXPECT().RecordIfNew(gomock.Any(), mEventID, "membership-wf-q", "DepartmentMembershipRevoked").Return(false, errors.New("db error"))
 
@@ -131,7 +131,7 @@ func TestHandleMembershipRevoked_AlreadyProcessed(t *testing.T) {
 
 	// No matching assignees for this department; PauseUserTasks still called.
 	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).
-		Return([]*domain.NodeAssignee{assignee(mVerID, "task-1", "dept-other")}, nil)
+		Return([]*domain.NodeAssignee{assignee(mVerID, "task-1", "018e1f2a-0000-7000-8000-000000000020")}, nil)
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 	pe.EXPECT().RecordIfNew(gomock.Any(), mEventID, "membership-wf-q", "DepartmentMembershipRevoked").Return(false, nil)
 
@@ -152,7 +152,7 @@ func TestHandleMembershipRevoked_NoMatchingAssignees(t *testing.T) {
 
 	// Assignees exist but in a different department — filtered out.
 	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).
-		Return([]*domain.NodeAssignee{assignee(mVerID, "task-1", "dept-other")}, nil)
+		Return([]*domain.NodeAssignee{assignee(mVerID, "task-1", "018e1f2a-0000-7000-8000-000000000020")}, nil)
 	// PauseUserTasks is still called: Execution may have active tasks for this user.
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 	pe.EXPECT().RecordIfNew(gomock.Any(), mEventID, "membership-wf-q", "DepartmentMembershipRevoked").Return(true, nil)

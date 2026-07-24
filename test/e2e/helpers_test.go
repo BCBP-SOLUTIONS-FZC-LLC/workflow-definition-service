@@ -30,7 +30,7 @@ const minimalBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   id="D1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="E2E Test" isExecutable="true">
     <bpmn:laneSet id="LS1">
-      <bpmn:lane id="Lane_eng" name="engineering">
+      <bpmn:lane id="Lane_eng" name="engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_review</bpmn:flowNodeRef>

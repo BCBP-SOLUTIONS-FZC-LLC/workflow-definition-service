@@ -20,7 +20,7 @@ func compilableBPMN(processBody, extraShapes string) string {
   id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="Proc_1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
@@ -147,7 +147,7 @@ func TestCompile_SendTask(t *testing.T) {
   <bpmn:message id="` + msgID + `" name="` + msgName + `"/>
   <bpmn:process id="Proc_1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_send</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
@@ -201,7 +201,7 @@ func TestCompile_ReceiveTask(t *testing.T) {
   <bpmn:message id="` + msgID + `" name="` + msgName + `"/>
   <bpmn:process id="Proc_1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_recv</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
@@ -256,7 +256,7 @@ func TestCompile_UnknownZeebeProperties(t *testing.T) {
   id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="Proc_1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
@@ -316,7 +316,7 @@ func TestCompile_SendTaskInExclusiveBranch(t *testing.T) {
   <bpmn:message id="` + msgID + `" name="Notify"/>
   <bpmn:process id="Proc_1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>XOR_1</bpmn:flowNodeRef>
@@ -394,7 +394,7 @@ func TestCompile_SendTask_WithZeebeProperties(t *testing.T) {
   <bpmn:message id="` + msgID + `" name="` + msgName + `"/>
   <bpmn:process id="Proc_1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_send</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
@@ -460,7 +460,7 @@ func TestCompile_ReceiveTaskInExclusiveBranch(t *testing.T) {
   <bpmn:message id="` + msgID + `" name="` + msgName + `"/>
   <bpmn:process id="Proc_1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>XOR_1</bpmn:flowNodeRef>

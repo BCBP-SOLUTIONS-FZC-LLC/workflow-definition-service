@@ -19,7 +19,7 @@ const callActivityBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 
   <bpmn:process id="Process_Main" name="Main" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_main" name="management">
+      <bpmn:lane id="Lane_main" name="management"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="92fd92cf-4b2c-58dc-bf98-f3d0af729876"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>CA_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
@@ -38,7 +38,7 @@ const callActivityBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 
   <bpmn:process id="Process_PrepReview" name="Prepare Review" isExecutable="false">
     <bpmn:laneSet id="LaneSet_PR">
-      <bpmn:lane id="Lane_eng" name="engineering">
+      <bpmn:lane id="Lane_eng" name="engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>PR_Start</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>PR_Prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>PR_End</bpmn:flowNodeRef>
@@ -78,7 +78,7 @@ const callActivityMissingRefBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 
   <bpmn:process id="Process_Main" name="Main" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_eng" name="engineering">
+      <bpmn:lane id="Lane_eng" name="engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>CA_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
@@ -113,7 +113,7 @@ const callActivityUnknownRefBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 
   <bpmn:process id="Process_Main" name="Main" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_eng" name="engineering">
+      <bpmn:lane id="Lane_eng" name="engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>CA_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
@@ -154,7 +154,7 @@ const callActivityWithBoundaryBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 
   <bpmn:process id="Process_Main" name="Main" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_eng" name="engineering">
+      <bpmn:lane id="Lane_eng" name="engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>CA_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>BE_Timer</bpmn:flowNodeRef>
@@ -180,7 +180,7 @@ const callActivityWithBoundaryBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 
   <bpmn:process id="Process_PR_Boundary" name="Prepare Review" isExecutable="false">
     <bpmn:laneSet id="LaneSet_PR">
-      <bpmn:lane id="Lane_prep" name="preparer">
+      <bpmn:lane id="Lane_prep" name="preparer"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="4114224f-65ed-5323-8cb4-737f55b94368"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>PR_Start</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>PR_Prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>PR_End</bpmn:flowNodeRef>
@@ -295,7 +295,7 @@ const callActivityNoLaneWithDeptBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 
   <bpmn:process id="Process_Main" name="Main" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_mgmt" name="management">
+      <bpmn:lane id="Lane_mgmt" name="management"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="2200a5ae-2466-54f7-a1d8-243106e05705"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>CA_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
@@ -351,7 +351,7 @@ const callActivityNoLaneMissingDeptBPMN = `<?xml version="1.0" encoding="UTF-8"?
 
   <bpmn:process id="Process_Main" name="Main" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_mgmt" name="management">
+      <bpmn:lane id="Lane_mgmt" name="management"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="2200a5ae-2466-54f7-a1d8-243106e05705"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>CA_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
@@ -465,7 +465,7 @@ const nestedSubProcessBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 
   <bpmn:process id="Process_Main" name="Main" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_eng" name="engineering">
+      <bpmn:lane id="Lane_eng" name="engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>SP_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
@@ -526,7 +526,7 @@ const callActivityDeptsRemapBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 
   <bpmn:process id="Process_Main" name="Main" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_main" name="management">
+      <bpmn:lane id="Lane_main" name="management"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="92fd92cf-4b2c-58dc-bf98-f3d0af729876"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>CA_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
@@ -548,7 +548,7 @@ const callActivityDeptsRemapBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 
   <bpmn:process id="Process_PrepReview" name="Prepare Review" isExecutable="false">
     <bpmn:laneSet id="LaneSet_PR">
-      <bpmn:lane id="Lane_eng" name="engineering">
+      <bpmn:lane id="Lane_eng" name="engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>PR_Start</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>PR_Prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>PR_End</bpmn:flowNodeRef>

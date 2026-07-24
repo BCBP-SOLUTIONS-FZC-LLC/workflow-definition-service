@@ -66,7 +66,7 @@ func minimalBPMN(processBody string) string {
   id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="Proc_1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
@@ -523,7 +523,7 @@ func TestCompile_DeptFromLane(t *testing.T) {
   id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="Proc_1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_contracts" name="contracts">
+      <bpmn:lane id="Lane_contracts" name="contracts"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="617f68ef-53c8-5870-8877-2eb86e33cb59"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>EndEvent_1</bpmn:flowNodeRef>
@@ -597,7 +597,7 @@ func TestValidate_AllFailuresAggregated(t *testing.T) {
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="D">
   <bpmn:process id="P1" isExecutable="true">
     <bpmn:laneSet id="LS">
-      <bpmn:lane id="L_design" name="Design">
+      <bpmn:lane id="L_design" name="Design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="f1c21e4d-91aa-57c5-a958-8247e3dd5e85"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Task_bad</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_A</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_B</bpmn:flowNodeRef>
@@ -946,7 +946,7 @@ const subprocessUnknownErrorRefBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   <bpmn:error id="Error_Known" errorCode="KNOWN"/>
   <bpmn:process id="Proc_1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>SubProcess_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>BE_Error_1</bpmn:flowNodeRef>
@@ -957,7 +957,7 @@ const subprocessUnknownErrorRefBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:startEvent id="StartEvent_1" name="Start"/>
     <bpmn:subProcess id="SubProcess_1" name="Inner">
       <bpmn:laneSet id="InnerLS">
-        <bpmn:lane id="Inner_design" name="design">
+        <bpmn:lane id="Inner_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="07347272-d6d5-5ddc-a9b6-2ec6b07318e4"/></zeebe:properties></bpmn:extensionElements>
           <bpmn:flowNodeRef>InnerStart</bpmn:flowNodeRef>
           <bpmn:flowNodeRef>InnerTask</bpmn:flowNodeRef>
           <bpmn:flowNodeRef>InnerEnd</bpmn:flowNodeRef>

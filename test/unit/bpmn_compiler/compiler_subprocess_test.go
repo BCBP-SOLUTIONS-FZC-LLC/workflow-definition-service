@@ -16,7 +16,7 @@ const subprocessTimerBoundaryBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="Proc_1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>SubProcess_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>BE_Timer_sub</bpmn:flowNodeRef>
@@ -27,7 +27,7 @@ const subprocessTimerBoundaryBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:startEvent id="StartEvent_1" name="Start"/>
     <bpmn:subProcess id="SubProcess_1" name="Inner">
       <bpmn:laneSet id="InnerLS">
-        <bpmn:lane id="Inner_design" name="design">
+        <bpmn:lane id="Inner_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="07347272-d6d5-5ddc-a9b6-2ec6b07318e4"/></zeebe:properties></bpmn:extensionElements>
           <bpmn:flowNodeRef>InnerStart</bpmn:flowNodeRef>
           <bpmn:flowNodeRef>InnerTask</bpmn:flowNodeRef>
           <bpmn:flowNodeRef>InnerEnd</bpmn:flowNodeRef>
@@ -179,7 +179,7 @@ func TestValidate_TimerBoundary_InvalidDuration(t *testing.T) {
                   xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Def_1">
   <bpmn:process id="P1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LS1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>T1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
@@ -220,7 +220,7 @@ func TestValidate_ErrorBoundary_OnUserTask_Rejected(t *testing.T) {
                   xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Def_1">
   <bpmn:process id="P1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LS1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>T1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
@@ -366,7 +366,7 @@ func TestCompile_TimerBoundary_AlreadyVisitedTarget(t *testing.T) {
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" id="Def_TimerVisited" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="TimerVisited" isExecutable="true">
     <bpmn:laneSet id="LS">
-      <bpmn:lane id="L_ops" name="ops">
+      <bpmn:lane id="L_ops" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="14649f77-3140-51bf-bdc3-9066944b090f"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_A</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_B</bpmn:flowNodeRef>
@@ -438,11 +438,11 @@ func TestCompile_Subprocess_CatchAllErrorBoundary(t *testing.T) {
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" id="Def_CatchAll" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P_CatchAll" name="CatchAll Error" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
-      <bpmn:lane id="Lane_design" name="design">
+      <bpmn:lane id="Lane_design" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>SP_1</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_qa" name="qa">
+      <bpmn:lane id="Lane_qa" name="qa"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a98d408d-cc9a-50a7-b09e-1d881389fdd4"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Task_qa</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>BE_catchall</bpmn:flowNodeRef>
@@ -451,7 +451,7 @@ func TestCompile_Subprocess_CatchAllErrorBoundary(t *testing.T) {
     <bpmn:startEvent id="Start_1"/>
     <bpmn:subProcess id="SP_1" name="Inner Sub">
       <bpmn:laneSet id="InnerLS">
-        <bpmn:lane id="InnerLane" name="design">
+        <bpmn:lane id="InnerLane" name="design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="976d130a-c3b2-5932-9a84-b6a657cda616"/></zeebe:properties></bpmn:extensionElements>
           <bpmn:flowNodeRef>InnerStart</bpmn:flowNodeRef>
           <bpmn:flowNodeRef>InnerTask</bpmn:flowNodeRef>
           <bpmn:flowNodeRef>InnerEnd</bpmn:flowNodeRef>

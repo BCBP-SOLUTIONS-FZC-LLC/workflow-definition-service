@@ -22,7 +22,7 @@ func TestValidate_XOR_LoopWithAllTerminateBranches(t *testing.T) {
   id="Def_XORLoop" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="XOR Loop" isExecutable="true">
     <bpmn:laneSet id="LS">
-      <bpmn:lane id="L_ops" name="ops">
+      <bpmn:lane id="L_ops" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="14649f77-3140-51bf-bdc3-9066944b090f"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_A</bpmn:flowNodeRef>
       </bpmn:lane>
@@ -119,7 +119,7 @@ func TestValidate_XOR_EarlyExitBranchWithJoin_Valid(t *testing.T) {
   id="Def_EarlyExit" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="EarlyExit" isExecutable="true">
     <bpmn:laneSet id="LS1">
-      <bpmn:lane id="L_ops" name="ops">
+      <bpmn:lane id="L_ops" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="14649f77-3140-51bf-bdc3-9066944b090f"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_A</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_B</bpmn:flowNodeRef>

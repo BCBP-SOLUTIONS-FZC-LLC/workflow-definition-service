@@ -58,7 +58,7 @@ var collabExtBody = `
     <bpmn:sequenceFlow id="FC2" sourceRef="Task_send"  targetRef="End_ext"/>`
 
 var collabMainLanes = `
-      <bpmn:lane id="Lane_main" name="ops">
+      <bpmn:lane id="Lane_main" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="92fd92cf-4b2c-58dc-bf98-f3d0af729876"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_main</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_main</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_main</bpmn:flowNodeRef>
@@ -105,13 +105,13 @@ func TestValidate_Collaboration_UnknownMessageRef(t *testing.T) {
     <bpmn:messageFlow id="MF_1" sourceRef="P_a" targetRef="P_b" messageRef="Msg_unknown"/>
   </bpmn:collaboration>
   <bpmn:process id="Proc_a" name="A" isExecutable="true">
-    <bpmn:laneSet id="LS_a"><bpmn:lane id="L_a" name="l"><bpmn:flowNodeRef>S_a</bpmn:flowNodeRef><bpmn:flowNodeRef>E_a</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:laneSet id="LS_a"><bpmn:lane id="L_a" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="207141b1-baba-5be9-9c4c-fda8b6fa0eaa"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_a</bpmn:flowNodeRef><bpmn:flowNodeRef>E_a</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="S_a"><bpmn:outgoing>F_a</bpmn:outgoing></bpmn:startEvent>
     <bpmn:endEvent id="E_a"><bpmn:incoming>F_a</bpmn:incoming></bpmn:endEvent>
     <bpmn:sequenceFlow id="F_a" sourceRef="S_a" targetRef="E_a"/>
   </bpmn:process>
   <bpmn:process id="Proc_b" name="B" isExecutable="true">
-    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:flowNodeRef>S_b</bpmn:flowNodeRef><bpmn:flowNodeRef>E_b</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a6fa83e8-b796-501d-9b76-5dbf249271df"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_b</bpmn:flowNodeRef><bpmn:flowNodeRef>E_b</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="S_b"><bpmn:outgoing>F_b</bpmn:outgoing></bpmn:startEvent>
     <bpmn:endEvent id="E_b"><bpmn:incoming>F_b</bpmn:incoming></bpmn:endEvent>
     <bpmn:sequenceFlow id="F_b" sourceRef="S_b" targetRef="E_b"/>
@@ -142,13 +142,13 @@ func TestValidate_Collaboration_UnmatchedMessageFlow_UnknownSource(t *testing.T)
     <bpmn:messageFlow id="MF_1" sourceRef="NoSuchNode" targetRef="P_b" messageRef="Msg_1"/>
   </bpmn:collaboration>
   <bpmn:process id="Proc_a" name="A" isExecutable="true">
-    <bpmn:laneSet id="LS_a"><bpmn:lane id="L_a" name="l"><bpmn:flowNodeRef>S_a</bpmn:flowNodeRef><bpmn:flowNodeRef>E_a</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:laneSet id="LS_a"><bpmn:lane id="L_a" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="207141b1-baba-5be9-9c4c-fda8b6fa0eaa"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_a</bpmn:flowNodeRef><bpmn:flowNodeRef>E_a</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="S_a"><bpmn:outgoing>F_a</bpmn:outgoing></bpmn:startEvent>
     <bpmn:endEvent id="E_a"><bpmn:incoming>F_a</bpmn:incoming></bpmn:endEvent>
     <bpmn:sequenceFlow id="F_a" sourceRef="S_a" targetRef="E_a"/>
   </bpmn:process>
   <bpmn:process id="Proc_b" name="B" isExecutable="true">
-    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:flowNodeRef>S_b</bpmn:flowNodeRef><bpmn:flowNodeRef>E_b</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a6fa83e8-b796-501d-9b76-5dbf249271df"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_b</bpmn:flowNodeRef><bpmn:flowNodeRef>E_b</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="S_b"><bpmn:outgoing>F_b</bpmn:outgoing></bpmn:startEvent>
     <bpmn:endEvent id="E_b"><bpmn:incoming>F_b</bpmn:incoming></bpmn:endEvent>
     <bpmn:sequenceFlow id="F_b" sourceRef="S_b" targetRef="E_b"/>
@@ -193,13 +193,13 @@ func TestValidate_Collaboration_MessageFlowUnresolvableName_Warns(t *testing.T) 
     <bpmn:messageFlow id="MF_1" sourceRef="S_a" targetRef="S_b"/>
   </bpmn:collaboration>
   <bpmn:process id="Proc_a" name="A" isExecutable="true">
-    <bpmn:laneSet id="LS_a"><bpmn:lane id="L_a" name="l"><bpmn:flowNodeRef>S_a</bpmn:flowNodeRef><bpmn:flowNodeRef>E_a</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:laneSet id="LS_a"><bpmn:lane id="L_a" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="207141b1-baba-5be9-9c4c-fda8b6fa0eaa"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_a</bpmn:flowNodeRef><bpmn:flowNodeRef>E_a</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="S_a"><bpmn:outgoing>F_a</bpmn:outgoing></bpmn:startEvent>
     <bpmn:endEvent id="E_a"><bpmn:incoming>F_a</bpmn:incoming></bpmn:endEvent>
     <bpmn:sequenceFlow id="F_a" sourceRef="S_a" targetRef="E_a"/>
   </bpmn:process>
   <bpmn:process id="Proc_b" name="B" isExecutable="true">
-    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:flowNodeRef>S_b</bpmn:flowNodeRef><bpmn:flowNodeRef>E_b</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a6fa83e8-b796-501d-9b76-5dbf249271df"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_b</bpmn:flowNodeRef><bpmn:flowNodeRef>E_b</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="S_b"><bpmn:outgoing>F_b</bpmn:outgoing></bpmn:startEvent>
     <bpmn:endEvent id="E_b"><bpmn:incoming>F_b</bpmn:incoming></bpmn:endEvent>
     <bpmn:sequenceFlow id="F_b" sourceRef="S_b" targetRef="E_b"/>
@@ -238,13 +238,13 @@ func TestValidate_Collaboration_MessageFlowNameViaConnectedNode_NoWarn(t *testin
     <bpmn:messageFlow id="MF_1" sourceRef="S_a" targetRef="BE_b"/>
   </bpmn:collaboration>
   <bpmn:process id="Proc_a" name="A" isExecutable="true">
-    <bpmn:laneSet id="LS_a"><bpmn:lane id="L_a" name="l"><bpmn:flowNodeRef>S_a</bpmn:flowNodeRef><bpmn:flowNodeRef>E_a</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:laneSet id="LS_a"><bpmn:lane id="L_a" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="207141b1-baba-5be9-9c4c-fda8b6fa0eaa"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_a</bpmn:flowNodeRef><bpmn:flowNodeRef>E_a</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="S_a"><bpmn:outgoing>F_a</bpmn:outgoing></bpmn:startEvent>
     <bpmn:endEvent id="E_a"><bpmn:incoming>F_a</bpmn:incoming></bpmn:endEvent>
     <bpmn:sequenceFlow id="F_a" sourceRef="S_a" targetRef="E_a"/>
   </bpmn:process>
   <bpmn:process id="Proc_b" name="B" isExecutable="true">
-    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l">
+    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a6fa83e8-b796-501d-9b76-5dbf249271df"/></zeebe:properties></bpmn:extensionElements>
       <bpmn:flowNodeRef>S_b</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>T_b</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>E_b</bpmn:flowNodeRef>
@@ -333,7 +333,7 @@ func TestCompileCollaboration_ValidationError(t *testing.T) {
     <bpmn:participant id="P_a" processRef="Proc_a"/>
   </bpmn:collaboration>
   <bpmn:process id="Proc_a" name="A" isExecutable="true">
-    <bpmn:laneSet id="LS"><bpmn:lane id="L" name="ops"><bpmn:flowNodeRef>T1</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:laneSet id="LS"><bpmn:lane id="L" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="c3e61f3a-a879-5734-8bc7-de880d2bb9d9"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>T1</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:userTask id="T1" name="T">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
@@ -364,7 +364,7 @@ func TestValidate_SendTask_NotInLane_Error(t *testing.T) {
   id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LS">
-      <bpmn:lane id="L1" name="ops">
+      <bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
       </bpmn:lane>
@@ -401,7 +401,7 @@ func TestValidate_SendTask_NoTaskDefRequired(t *testing.T) {
   id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LS">
-      <bpmn:lane id="L1" name="ops">
+      <bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>ST1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
@@ -438,7 +438,7 @@ func TestValidate_Collaboration_MissingDiagram(t *testing.T) {
     <bpmn:participant id="P_a" processRef="Proc_a"/>
   </bpmn:collaboration>
   <bpmn:process id="Proc_a" name="A" isExecutable="true">
-    <bpmn:laneSet id="LS"><bpmn:lane id="L" name="l">
+    <bpmn:laneSet id="LS"><bpmn:lane id="L" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="c3e61f3a-a879-5734-8bc7-de880d2bb9d9"/></zeebe:properties></bpmn:extensionElements>
       <bpmn:flowNodeRef>S1</bpmn:flowNodeRef><bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
     </bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="S1"><bpmn:outgoing>F1</bpmn:outgoing></bpmn:startEvent>
@@ -465,7 +465,7 @@ func TestWithStageType_CustomStagePreventsInvalidTaskDefError(t *testing.T) {
   id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LS">
-      <bpmn:lane id="L1" name="ops">
+      <bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>T1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
@@ -516,7 +516,7 @@ const xorAllTerminateContinuationBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   id="Def_xor1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P_xor1" name="BidNoBid" isExecutable="true">
     <bpmn:laneSet id="LS_xor1">
-      <bpmn:lane id="Lane_tender" name="tender">
+      <bpmn:lane id="Lane_tender" name="tender"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="4417b1ea-a41e-5115-ad6d-a6a214bb7b07"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_x1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_eval</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>XOR_bid</bpmn:flowNodeRef>
@@ -583,7 +583,7 @@ const xorAllTerminateAllEndBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   id="Def_xor2" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P_xor2" name="Decision" isExecutable="true">
     <bpmn:laneSet id="LS_xor2">
-      <bpmn:lane id="Lane_ops_xor2" name="ops">
+      <bpmn:lane id="Lane_ops_xor2" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a10c71ba-dc1a-5691-b491-670e1f62ab2c"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_x2</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_decide</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>XOR_dec</bpmn:flowNodeRef>
@@ -705,7 +705,7 @@ const parallelExclusiveCollabBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmn:collaboration>
   <bpmn:process id="Proc_iss_pe" name="Issuer">
     <bpmn:laneSet id="LS_iss_pe">
-      <bpmn:lane id="Lane_cli_pe" name="client">
+      <bpmn:lane id="Lane_cli_pe" name="client"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cf7f5730-b8d5-50ce-a147-c96e426b72cd"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_iss_pe</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_rfq_pe</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_iss_pe</bpmn:flowNodeRef>
@@ -725,7 +725,7 @@ const parallelExclusiveCollabBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmn:process>
   <bpmn:process id="Proc_rev_pe" name="Reviewer">
     <bpmn:laneSet id="LS_rev_pe">
-      <bpmn:lane id="Lane_ops_pe" name="ops">
+      <bpmn:lane id="Lane_ops_pe" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="b6b23a4d-79e2-5b1f-bd6b-e856cfa0963e"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_rev_pe</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_init_pe</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_par_ops</bpmn:flowNodeRef>
@@ -734,7 +734,7 @@ const parallelExclusiveCollabBPMN = `<?xml version="1.0" encoding="UTF-8"?>
         <bpmn:flowNodeRef>Task_fin_pe</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_rev_pe</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_fin_pe" name="finance">
+      <bpmn:lane id="Lane_fin_pe" name="finance"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="d1d6a21d-333b-5aec-958c-5ae470f74633"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Task_par_fin</bpmn:flowNodeRef>
       </bpmn:lane>
     </bpmn:laneSet>
@@ -905,7 +905,7 @@ const subworkflowCollabBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmn:collaboration>
   <bpmn:process id="Proc_iss_sw" name="Issuer">
     <bpmn:laneSet id="LS_iss_sw">
-      <bpmn:lane id="Lane_iss_sw" name="client">
+      <bpmn:lane id="Lane_iss_sw" name="client"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="8d9a46a9-d049-555e-8b9e-8791ef8116bd"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_iss_sw</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_iss_sw</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_iss_sw</bpmn:flowNodeRef>
@@ -925,14 +925,14 @@ const subworkflowCollabBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmn:process>
   <bpmn:process id="Proc_proc_sw" name="Processor">
     <bpmn:laneSet id="LS_proc_sw">
-      <bpmn:lane id="Lane_ops_sw" name="ops">
+      <bpmn:lane id="Lane_ops_sw" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="25c934d6-c6b6-5892-94ab-88d77191de07"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_proc_sw</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_prep_sw</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>SubProc_sw</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_final_sw</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_proc_sw</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_esc_sw" name="escalation">
+      <bpmn:lane id="Lane_esc_sw" name="escalation"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="4c08a2ca-7e6f-50a7-8ea9-ab77b8342cc2"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Task_escalate_sw</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_esc_sw</bpmn:flowNodeRef>
       </bpmn:lane>
@@ -955,7 +955,7 @@ const subworkflowCollabBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:subProcess id="SubProc_sw" name="Review Sub">
       <bpmn:incoming>FP2</bpmn:incoming><bpmn:outgoing>FP3</bpmn:outgoing>
       <bpmn:laneSet id="LS_inner_sw">
-        <bpmn:lane id="Lane_inner_sw" name="inner_ops">
+        <bpmn:lane id="Lane_inner_sw" name="inner_ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="0fc8e228-772d-5015-9975-a5f5aa09a868"/></zeebe:properties></bpmn:extensionElements>
           <bpmn:flowNodeRef>InnerStart_sw</bpmn:flowNodeRef>
           <bpmn:flowNodeRef>InnerTask_sw</bpmn:flowNodeRef>
           <bpmn:flowNodeRef>InnerEnd_sw</bpmn:flowNodeRef>
@@ -1096,7 +1096,7 @@ const messageBoundaryUserTaskBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmn:collaboration>
   <bpmn:process id="Proc_iss_mb" name="Issuer">
     <bpmn:laneSet id="LS_iss_mb">
-      <bpmn:lane id="Lane_iss_mb" name="client">
+      <bpmn:lane id="Lane_iss_mb" name="client"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="2099679d-bd14-5a0c-9009-5a116f503016"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_iss_mb</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_iss_mb</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_iss_mb</bpmn:flowNodeRef>
@@ -1116,12 +1116,12 @@ const messageBoundaryUserTaskBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmn:process>
   <bpmn:process id="Proc_proc_mb" name="Processor">
     <bpmn:laneSet id="LS_proc_mb">
-      <bpmn:lane id="Lane_ops_mb" name="ops">
+      <bpmn:lane id="Lane_ops_mb" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="895bbb2f-0a7d-5d46-95c1-0794e1b571ab"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start_proc_mb</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_prep_mb</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_proc_mb</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_esc_mb" name="escalation">
+      <bpmn:lane id="Lane_esc_mb" name="escalation"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="aeb319c5-0647-5954-b8df-51967797340f"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Task_escalate_mb</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>End_esc_mb</bpmn:flowNodeRef>
       </bpmn:lane>
@@ -1238,7 +1238,7 @@ func TestValidate_ReceiveTask_NoTaskDefRequired(t *testing.T) {
   id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="Test" isExecutable="true">
     <bpmn:laneSet id="LS">
-      <bpmn:lane id="L1" name="ops">
+      <bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>RT1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
@@ -1283,7 +1283,7 @@ func TestCompileCollaboration_WithReceiveTask(t *testing.T) {
   </bpmn:collaboration>
   <bpmn:process id="Proc_sender" name="Sender" isExecutable="true">
     <bpmn:laneSet id="LS1">
-      <bpmn:lane id="L1" name="ops">
+      <bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_send</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
@@ -1302,7 +1302,7 @@ func TestCompileCollaboration_WithReceiveTask(t *testing.T) {
   </bpmn:process>
   <bpmn:process id="Proc_receiver" name="Receiver" isExecutable="true">
     <bpmn:laneSet id="LS2">
-      <bpmn:lane id="L2" name="ops">
+      <bpmn:lane id="L2" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="63bb1e15-d338-5793-b74d-ba57f73778c4"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S2</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_rcv</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E2</bpmn:flowNodeRef>
@@ -1360,7 +1360,7 @@ func TestValidate_Collaboration_TargetRef_UnknownNode(t *testing.T) {
   </bpmn:collaboration>
   <bpmn:process id="Proc_1" name="Sender" isExecutable="true">
     <bpmn:laneSet id="LS1">
-      <bpmn:lane id="L1" name="ops">
+      <bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
@@ -1379,7 +1379,7 @@ func TestValidate_Collaboration_TargetRef_UnknownNode(t *testing.T) {
   </bpmn:process>
   <bpmn:process id="Proc_2" name="Receiver" isExecutable="true">
     <bpmn:laneSet id="LS2">
-      <bpmn:lane id="L2" name="ops">
+      <bpmn:lane id="L2" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="63bb1e15-d338-5793-b74d-ba57f73778c4"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S2</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_2</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E2</bpmn:flowNodeRef>
@@ -1424,7 +1424,7 @@ func TestCompileCollaboration_ParticipantWithoutMatchingProcess(t *testing.T) {
   </bpmn:collaboration>
   <bpmn:process id="Proc_real" name="Real" isExecutable="true">
     <bpmn:laneSet id="LS1">
-      <bpmn:lane id="L1" name="ops">
+      <bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
@@ -1469,7 +1469,7 @@ func TestValidate_InclusiveGateway_SplitJoin_Unsupported(t *testing.T) {
   id="Def_IncGW" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="InclusiveGW" isExecutable="true">
     <bpmn:laneSet id="LS">
-      <bpmn:lane id="L_ops" name="ops">
+      <bpmn:lane id="L_ops" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="14649f77-3140-51bf-bdc3-9066944b090f"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_A</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_B</bpmn:flowNodeRef>
@@ -1554,7 +1554,7 @@ func TestValidate_Collaboration_ReceiveTask_CollabReachable(t *testing.T) {
   </bpmn:collaboration>
   <bpmn:process id="Proc_sender" name="Sender" isExecutable="true">
     <bpmn:laneSet id="LS1">
-      <bpmn:lane id="L1" name="ops">
+      <bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_send</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
@@ -1573,7 +1573,7 @@ func TestValidate_Collaboration_ReceiveTask_CollabReachable(t *testing.T) {
   </bpmn:process>
   <bpmn:process id="Proc_receiver" name="Receiver" isExecutable="true">
     <bpmn:laneSet id="LS2">
-      <bpmn:lane id="L2" name="ops">
+      <bpmn:lane id="L2" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="63bb1e15-d338-5793-b74d-ba57f73778c4"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S2</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_rcv</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>E2</bpmn:flowNodeRef>

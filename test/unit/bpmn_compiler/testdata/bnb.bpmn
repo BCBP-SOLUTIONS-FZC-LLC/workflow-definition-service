@@ -20,7 +20,7 @@
       </zeebe:properties>
     </bpmn:extensionElements>
     <bpmn:laneSet id="LaneSet_consultant">
-      <bpmn:lane id="Lane_client" name="Client" />
+      <bpmn:lane id="Lane_client" name="Client" ><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="225cfa00-6603-5eff-a0c5-6736ac526622"/></zeebe:properties></bpmn:extensionElements></bpmn:lane>
     </bpmn:laneSet>
     <bpmn:userTask id="Task_issue_rfq" name="Issue RFQ to Contractor">
       <bpmn:extensionElements>
@@ -36,7 +36,7 @@
   </bpmn:process>
   <bpmn:process id="Process_contractor" name="Bid-No-Bid Review" isExecutable="true">
     <bpmn:laneSet id="LaneSet_contractor">
-      <bpmn:lane id="Lane_tender" name="Tender\ Buisness">
+      <bpmn:lane id="Lane_tender" name="Tender\ Buisness"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="4417b1ea-a41e-5115-ad6d-a6a214bb7b07"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>XOR_bid_decision</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_1gll6sb</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Event_13tppgc</bpmn:flowNodeRef>
@@ -156,7 +156,7 @@
   </bpmn:process>
   <bpmn:process id="Docs_preparation_ex" name="Docs_preparation" isExecutable="false">
     <bpmn:laneSet id="LaneSet_1wn906o">
-      <bpmn:lane id="Receiver_qsbu281" name="Receiver">
+      <bpmn:lane id="Receiver_qsbu281" name="Receiver"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="367dca7a-fc44-5fa0-b610-deabd0eb0cdc"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Activity_13swln3</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_0eprcgx</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_0zz5tcp</bpmn:flowNodeRef>
@@ -165,7 +165,7 @@
         <bpmn:flowNodeRef>Activity_1l5l53o</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Activity_00syxjl</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Sender_aqhuh1uhsn" name="Sender">
+      <bpmn:lane id="Sender_aqhuh1uhsn" name="Sender"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="7c3ac52c-f980-52ad-bdce-a8ae8f8bd388"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:extensionElements>
           <zeebe:properties>
             <zeebe:property name="ignore" value="true" />
