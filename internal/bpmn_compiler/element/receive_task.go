@@ -24,8 +24,8 @@ func (ReceiveTaskHandler) Compile(nodeID string, cs *bpmncore.CompileState) erro
 	msgName := bpmncore.ResolveMessageName(task.MessageRef, cs.Defs)
 	stage := bpmncore.BuildMessageStageDef(task.ID, task.Name, "receive_task", msgName, task.ExtensionElements)
 
-	deptID, label := cs.DeptOf(nodeID)
-	cs.EnsureDept(deptID, label)
+	deptID, label, iamDeptID := cs.DeptOf(nodeID)
+	cs.EnsureDept(deptID, label, iamDeptID)
 	cs.AppendStage(deptID, stage)
 	cs.AddToSeqBuf(deptID)
 

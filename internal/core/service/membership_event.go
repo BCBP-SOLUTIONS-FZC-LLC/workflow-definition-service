@@ -27,9 +27,14 @@ func (s *VersionService) HandleMembershipRevoked(
 		return fmt.Errorf("list assignees: %w", err)
 	}
 
+	deptUUID, err := uuid.Parse(departmentID)
+	if err != nil {
+		return fmt.Errorf("invalid department id %q: %w", departmentID, err)
+	}
+
 	nodesByVersion := make(map[uuid.UUID][]string)
 	for _, a := range assignees {
-		if a.DepartmentID != departmentID {
+		if a.DepartmentID != deptUUID {
 			continue
 		}
 		nodesByVersion[a.WorkflowVersionID] = append(nodesByVersion[a.WorkflowVersionID], a.NodeKey)

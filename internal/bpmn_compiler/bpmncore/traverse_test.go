@@ -33,32 +33,34 @@ func (h *stubElementHandler) Compile(nodeID string, cs *CompileState) error {
 
 func TestDeptOf(t *testing.T) {
 	s := newMinimalState()
-	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"t1"}}}
+	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"t1"}, ExtensionElements: BPMNExtensionElements{
+		ZeebeProps: BPMNZeebeProperties{Items: []ZeebeProperty{{Name: "dept_id", Value: "018e1f2a-0000-7000-8000-000000000099"}}},
+	}}}
 
-	id, label := s.DeptOf("t1")
-	if id != "Ops" || label != "Ops" {
-		t.Errorf("got (%q,%q); want (Ops,Ops)", id, label)
+	id, label, iamDeptID := s.DeptOf("t1")
+	if id != "Ops" || label != "Ops" || iamDeptID != "018e1f2a-0000-7000-8000-000000000099" {
+		t.Errorf("got (%q,%q,%q); want (Ops,Ops,018e1f2a-0000-7000-8000-000000000099)", id, label, iamDeptID)
 	}
-	id2, label2 := s.DeptOf("unknown")
-	if id2 != "" || label2 != "" {
-		t.Errorf("got (%q,%q); want (\"\",\"\")", id2, label2)
+	id2, label2, iamDeptID2 := s.DeptOf("unknown")
+	if id2 != "" || label2 != "" || iamDeptID2 != "" {
+		t.Errorf("got (%q,%q,%q); want (\"\",\"\",\"\")", id2, label2, iamDeptID2)
 	}
 }
 
 func TestEnsureDept_Idempotent(t *testing.T) {
 	s := newMinimalState()
-	s.EnsureDept("ops", "Ops")
-	s.EnsureDept("ops", "OpsRenamed")
+	s.EnsureDept("ops", "Ops", "018e1f2a-0000-7000-8000-000000000099")
+	s.EnsureDept("ops", "OpsRenamed", "018e1f2a-0000-7000-8000-000000000000")
 
 	depts := s.CollectedDepts()
-	if len(depts) != 1 || depts[0].Label != "Ops" {
-		t.Errorf("expected dept to stay single with original label; got %v", depts)
+	if len(depts) != 1 || depts[0].Label != "Ops" || depts[0].IAMDepartmentID != "018e1f2a-0000-7000-8000-000000000099" {
+		t.Errorf("expected dept to stay single with original label/iam id; got %v", depts)
 	}
 }
 
 func TestAppendStage(t *testing.T) {
 	s := newMinimalState()
-	s.EnsureDept("ops", "Ops")
+	s.EnsureDept("ops", "Ops", "")
 	s.AppendStage("ops", domain.StageDef{NodeID: "t1"})
 
 	depts := s.CollectedDepts()

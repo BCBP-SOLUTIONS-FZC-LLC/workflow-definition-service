@@ -74,17 +74,19 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 	// Inner sub-process tasks have no laneSet of their own; their lane comes
 	// from the parent process (the sub-process element itself is in a lane).
 	if parentLane := bpmncore.LaneNameFor(nodeID, cs.Proc); parentLane != "" {
+		parentIAMDeptID := bpmncore.DeptIDFor(nodeID, cs.Proc)
 		for i := range depts {
 			if depts[i].ID == "" {
 				depts[i].ID = parentLane
 				depts[i].Label = parentLane
+				depts[i].IAMDepartmentID = parentIAMDeptID
 			}
 		}
 		patchEmptyDepts(steps, parentLane)
 	}
 
 	for _, dept := range depts {
-		cs.EnsureDept(dept.ID, dept.Label)
+		cs.EnsureDept(dept.ID, dept.Label, dept.IAMDepartmentID)
 		for _, stage := range dept.Stages {
 			cs.AppendStage(dept.ID, stage)
 		}

@@ -649,7 +649,9 @@ func TestValidateCollaborationProcesses_SkipsIgnored(t *testing.T) {
 		ID:   "Main",
 		Name: "Main",
 		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{
-			{ID: "L1", Name: "ops", FlowNodeRefs: []string{"S1", task.ID, "E1"}},
+			{ID: "L1", Name: "ops", FlowNodeRefs: []string{"S1", task.ID, "E1"}, ExtensionElements: bpmncore.BPMNExtensionElements{
+				ZeebeProps: bpmncore.BPMNZeebeProperties{Items: []bpmncore.ZeebeProperty{{Name: "dept_id", Value: "018e1f2a-0000-7000-8000-000000000099"}}},
+			}},
 		}},
 		StartEvents: []bpmncore.BPMNEvent{{ID: "S1"}},
 		UserTasks:   []bpmncore.BPMNUserTask{*task},
@@ -884,7 +886,7 @@ func TestValidate_SingleProcess_Valid(t *testing.T) {
   xmlns:zeebe="` + nsZeebe + `"
   id="D1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="Test" isExecutable="true">
-    <bpmn:laneSet id="LS"><bpmn:lane id="L1" name="ops">
+    <bpmn:laneSet id="LS"><bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
       <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>T1</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
@@ -934,7 +936,7 @@ func TestValidate_Collaboration_TerminalBridgeFiltersNoEndEvent(t *testing.T) {
   </bpmn:collaboration>
   <bpmn:process id="Proc_sender" name="Sender" isExecutable="true">
     <bpmn:laneSet id="LS1">
-      <bpmn:lane id="L1" name="ops">
+      <bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>Start1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_send</bpmn:flowNodeRef>
       </bpmn:lane>
@@ -1002,7 +1004,7 @@ func TestCompile_BlockingValidationErrors(t *testing.T) {
   xmlns:zeebe="` + nsZeebe + `"
   id="D1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="Test" isExecutable="true">
-    <bpmn:laneSet id="LS"><bpmn:lane id="L1" name="ops">
+    <bpmn:laneSet id="LS"><bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
       <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>T1</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
@@ -1044,7 +1046,7 @@ func TestCompile_BpmnCoreCompileError(t *testing.T) {
   xmlns:zeebe="` + nsZeebe + `"
   id="D1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="Test" isExecutable="true">
-    <bpmn:laneSet id="LS"><bpmn:lane id="L1" name="ops">
+    <bpmn:laneSet id="LS"><bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
       <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>T1</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>PGW</bpmn:flowNodeRef>
@@ -1143,7 +1145,7 @@ func TestCompileCollaboration_BlockingValidationErrors(t *testing.T) {
     <bpmn:participant id="P_a" processRef="Proc_a"/>
   </bpmn:collaboration>
   <bpmn:process id="Proc_a" name="A" isExecutable="true">
-    <bpmn:laneSet id="LS"><bpmn:lane id="L" name="ops"><bpmn:flowNodeRef>T1</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:laneSet id="LS"><bpmn:lane id="L" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="c3e61f3a-a879-5734-8bc7-de880d2bb9d9"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>T1</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:userTask id="T1" name="T">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
@@ -1178,7 +1180,7 @@ const compileCollabSuccessBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:extensionElements>
       <zeebe:properties><zeebe:property name="main" value="1"/></zeebe:properties>
     </bpmn:extensionElements>
-    <bpmn:laneSet id="LSa"><bpmn:lane id="La" name="ops">
+    <bpmn:laneSet id="LSa"><bpmn:lane id="La" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="3d932808-0516-54ee-84f1-8d48a995f734"/></zeebe:properties></bpmn:extensionElements>
       <bpmn:flowNodeRef>Start_a</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>Task_a</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>End_a</bpmn:flowNodeRef>
@@ -1192,7 +1194,7 @@ const compileCollabSuccessBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:sequenceFlow id="Fa2" sourceRef="Task_a" targetRef="End_a"/>
   </bpmn:process>
   <bpmn:process id="Proc_b" name="B" isExecutable="true">
-    <bpmn:laneSet id="LSb"><bpmn:lane id="Lb" name="fin">
+    <bpmn:laneSet id="LSb"><bpmn:lane id="Lb" name="fin"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="e80aa05e-a9bc-53b6-8799-97544004a165"/></zeebe:properties></bpmn:extensionElements>
       <bpmn:flowNodeRef>Start_b</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>Task_b</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>End_b</bpmn:flowNodeRef>

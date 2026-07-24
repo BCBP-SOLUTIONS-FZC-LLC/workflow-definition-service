@@ -205,13 +205,14 @@ func TestWorkflowVersionFromDB(t *testing.T) {
 
 func TestAssigneeFromDB(t *testing.T) {
 	vID := uuid.New()
+	deptID := uuid.New()
 	row := db.WorkflowNodeAssignee{
 		ID:                uuid.New(),
 		TenantID:          uuid.New(),
 		WorkflowVersionID: pgtype.UUID{Bytes: vID, Valid: true},
 		NodeKey:           "task-1",
 		UserID:            uuid.New(),
-		DepartmentID:      "engineering",
+		DepartmentID:      deptID,
 		Role:              "reviewer",
 	}
 	a := assigneeFromDB(row)
@@ -221,7 +222,7 @@ func TestAssigneeFromDB(t *testing.T) {
 		want string
 	}{
 		{"NodeKey", a.NodeKey, "task-1"},
-		{"DepartmentID", a.DepartmentID, "engineering"},
+		{"DepartmentID", a.DepartmentID.String(), deptID.String()},
 		{"Role", a.Role, "reviewer"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

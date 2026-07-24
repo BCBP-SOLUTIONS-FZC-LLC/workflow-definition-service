@@ -418,7 +418,7 @@ func TestCompile_PassthroughGateway(t *testing.T) {
   id="D1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="P1" name="Passthrough Test">
     <bpmn:laneSet id="LS1">
-      <bpmn:lane id="Lane_design" name="Design">
+      <bpmn:lane id="Lane_design" name="Design"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cdae8dac-0c71-5ae9-8ecc-74a1cdc0bda3"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_pass</bpmn:flowNodeRef>
@@ -617,8 +617,8 @@ func TestFlushSeqBuf_Empty(t *testing.T) {
 
 func TestEnsureDept_Idempotent(t *testing.T) {
 	state := bpmncore.NewCompileState(&bpmncore.BPMNProcess{}, &bpmncore.Graph{}, nil, nil, nil, defaultStageTypes(), element.DefaultElementHandlers(), nil)
-	state.EnsureDept("design", "Design")
-	state.EnsureDept("design", "Design")
+	state.EnsureDept("design", "Design", "")
+	state.EnsureDept("design", "Design", "")
 	if len(state.CollectedDepts()) != 1 {
 		t.Errorf("EnsureDept called twice should produce 1 dept, got %d", len(state.CollectedDepts()))
 	}

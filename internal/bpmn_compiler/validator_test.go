@@ -194,6 +194,76 @@ func TestValidateLaneMembership_TaskInLane(t *testing.T) {
 	}
 }
 
+func TestValidateDeptID(t *testing.T) {
+	tests := []struct {
+		name     string
+		lanes    []bpmncore.BPMNLane
+		taskID   string
+		wantCode domain.BPMNErrorCode
+		wantErr  bool
+	}{
+		{
+			name:    "no lane at all — not this validator's concern",
+			lanes:   nil,
+			taskID:  "T1",
+			wantErr: false,
+		},
+		{
+			name: "lane with no dept_id property",
+			lanes: []bpmncore.BPMNLane{
+				{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}},
+			},
+			taskID:   "T1",
+			wantCode: domain.BPMNErrMissingDeptID,
+			wantErr:  true,
+		},
+		{
+			name: "lane with empty-string dept_id property",
+			lanes: []bpmncore.BPMNLane{
+				{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}, ExtensionElements: bpmncore.BPMNExtensionElements{
+					ZeebeProps: bpmncore.BPMNZeebeProperties{Items: []bpmncore.ZeebeProperty{{Name: "dept_id", Value: ""}}},
+				}},
+			},
+			taskID:   "T1",
+			wantCode: domain.BPMNErrMissingDeptID,
+			wantErr:  true,
+		},
+		{
+			name: "lane with invalid-format dept_id",
+			lanes: []bpmncore.BPMNLane{
+				{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}, ExtensionElements: bpmncore.BPMNExtensionElements{
+					ZeebeProps: bpmncore.BPMNZeebeProperties{Items: []bpmncore.ZeebeProperty{{Name: "dept_id", Value: "not-a-uuid"}}},
+				}},
+			},
+			taskID:   "T1",
+			wantCode: domain.BPMNErrInvalidDeptID,
+			wantErr:  true,
+		},
+		{
+			name: "lane with valid dept_id",
+			lanes: []bpmncore.BPMNLane{
+				{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}, ExtensionElements: bpmncore.BPMNExtensionElements{
+					ZeebeProps: bpmncore.BPMNZeebeProperties{Items: []bpmncore.ZeebeProperty{{Name: "dept_id", Value: "018e1f2a-0000-7000-8000-000000000099"}}},
+				}},
+			},
+			taskID:  "T1",
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			proc := &bpmncore.BPMNProcess{LaneSet: bpmncore.BPMNLaneSet{Lanes: tt.lanes}}
+			errs := validator.ValidateDeptID(tt.taskID, proc)
+			if tt.wantErr != (len(errs) != 0) {
+				t.Fatalf("expected error=%v; got %v", tt.wantErr, errs)
+			}
+			if tt.wantErr && !hasCodeIn(errs, tt.wantCode) {
+				t.Errorf("expected %s; got %v", tt.wantCode, errCodesOf(errs))
+			}
+		})
+	}
+}
+
 func TestBuildLaneRefSet(t *testing.T) {
 	proc := &bpmncore.BPMNProcess{
 		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{

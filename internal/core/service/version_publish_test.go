@@ -17,7 +17,8 @@ func TestExtractAssignees_InvalidUUID(t *testing.T) {
 	plan := &domain.CompiledPlan{
 		Departments: []domain.DepartmentDef{
 			{
-				ID: "engineering",
+				ID:              "engineering",
+				IAMDepartmentID: uuid.New().String(),
 				Stages: []domain.StageDef{
 					{
 						Type:             "prep",

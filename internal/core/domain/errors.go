@@ -71,6 +71,8 @@ const (
 	BPMNErrUnresolvedCalledElement      BPMNErrorCode = "UNRESOLVED_CALLED_ELEMENT"
 	BPMNErrNestedSubProcessNotSupported BPMNErrorCode = "NESTED_SUBPROCESS_NOT_SUPPORTED"
 	BPMNErrMissingDeptInputForModule    BPMNErrorCode = "MISSING_DEPT_INPUT_FOR_MODULE"
+	BPMNErrMissingDeptID                BPMNErrorCode = "MISSING_DEPT_ID"
+	BPMNErrInvalidDeptID                BPMNErrorCode = "INVALID_DEPT_ID"
 )
 
 type BPMNValidationSeverity string

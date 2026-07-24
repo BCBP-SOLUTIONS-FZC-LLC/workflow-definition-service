@@ -17,11 +17,12 @@ type VisualElementDef struct {
 }
 
 type DepartmentDef struct {
-	ID     string            `json:"id"`
-	Label  string            `json:"label"`
-	Ignore bool              `json:"ignore,omitempty"`
-	Props  map[string]string `json:"props,omitempty"`
-	Stages []StageDef        `json:"stages"`
+	ID              string            `json:"id"`
+	Label           string            `json:"label"`
+	IAMDepartmentID string            `json:"iam_department_id,omitempty"`
+	Ignore          bool              `json:"ignore,omitempty"`
+	Props           map[string]string `json:"props,omitempty"`
+	Stages          []StageDef        `json:"stages"`
 }
 
 type StageDef struct {

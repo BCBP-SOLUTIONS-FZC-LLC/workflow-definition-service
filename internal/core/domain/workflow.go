@@ -55,7 +55,7 @@ type NodeAssignee struct {
 	WorkflowVersionID uuid.UUID
 	NodeKey           string
 	UserID            uuid.UUID
-	DepartmentID      string
+	DepartmentID      uuid.UUID
 	Role              string
 	CreatedAt         time.Time
 }

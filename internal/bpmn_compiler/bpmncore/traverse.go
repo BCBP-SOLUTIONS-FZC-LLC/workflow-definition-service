@@ -14,9 +14,9 @@ const (
 	ExclusiveGateway GatewayKind = true
 )
 
-func (s *CompileState) DeptOf(taskID string) (id, label string) {
+func (s *CompileState) DeptOf(taskID string) (id, label, iamDeptID string) {
 	name := LaneNameFor(taskID, s.Proc)
-	return name, name
+	return name, name, DeptIDFor(taskID, s.Proc)
 }
 
 func (s *CompileState) ForwardNexts(node string) []string {
@@ -30,12 +30,12 @@ func (s *CompileState) ForwardNexts(node string) []string {
 	return fwd
 }
 
-func (s *CompileState) EnsureDept(id, label string) {
+func (s *CompileState) EnsureDept(id, label, iamDeptID string) {
 	if _, ok := s.sd.deptIdx[id]; ok {
 		return
 	}
 	s.sd.deptIdx[id] = len(s.sd.depts)
-	s.sd.depts = append(s.sd.depts, domain.DepartmentDef{ID: id, Label: label})
+	s.sd.depts = append(s.sd.depts, domain.DepartmentDef{ID: id, Label: label, IAMDepartmentID: iamDeptID})
 }
 
 func (s *CompileState) AppendStage(deptID string, stage domain.StageDef) {
@@ -536,7 +536,7 @@ func (s *CompileState) processExclusiveUserTask(
 	if task == nil {
 		return fmt.Errorf(errTaskNotFound, curr)
 	}
-	deptID, label := s.DeptOf(curr)
+	deptID, label, iamDeptID := s.DeptOf(curr)
 	if *branchDept == "" {
 		*branchDept = deptID
 		if task.ExtensionElements.TaskDefinition != nil {
@@ -549,7 +549,7 @@ func (s *CompileState) processExclusiveUserTask(
 	}
 	s.FillBoundaryTimerTarget(task.ID, &stage)
 	s.FillBoundaryMessageTarget(task.ID, &stage)
-	s.EnsureDept(deptID, label)
+	s.EnsureDept(deptID, label, iamDeptID)
 	s.AppendStage(deptID, stage)
 	s.visited[curr] = true
 	return nil
@@ -559,7 +559,7 @@ func (s *CompileState) processExclusiveMessageTask(
 	curr, stageType string,
 	branchDept, branchStage *string,
 ) error {
-	deptID, label := s.DeptOf(curr)
+	deptID, label, iamDeptID := s.DeptOf(curr)
 	if *branchDept == "" {
 		*branchDept = deptID
 		*branchStage = stageType
@@ -584,7 +584,7 @@ func (s *CompileState) processExclusiveMessageTask(
 		ext = t.ExtensionElements
 	}
 	stage := BuildMessageStageDef(taskID, taskName, stageType, msgName, ext)
-	s.EnsureDept(deptID, label)
+	s.EnsureDept(deptID, label, iamDeptID)
 	s.AppendStage(deptID, stage)
 	s.visited[curr] = true
 	return nil

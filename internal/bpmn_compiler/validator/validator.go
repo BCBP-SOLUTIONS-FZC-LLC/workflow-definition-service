@@ -60,10 +60,12 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 	for _, t := range proc.SendTasks {
 		errs = append(errs, ValidateLaneMembership(t.ID, laneRefs)...)
 		errs = append(errs, ValidateOptionalAssignment(t.ID, t.ExtensionElements)...)
+		errs = append(errs, ValidateDeptID(t.ID, proc)...)
 	}
 	for _, t := range proc.ReceiveTasks {
 		errs = append(errs, ValidateLaneMembership(t.ID, laneRefs)...)
 		errs = append(errs, ValidateOptionalAssignment(t.ID, t.ExtensionElements)...)
+		errs = append(errs, ValidateDeptID(t.ID, proc)...)
 	}
 	for _, ca := range proc.CallActivities {
 		errs = append(errs, ValidateLaneMembership(ca.ID, laneRefs)...)

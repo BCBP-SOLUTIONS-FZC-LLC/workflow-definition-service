@@ -190,7 +190,7 @@ func TestSetDeptMeta(t *testing.T) {
 		t.Fatalf("expected no departments to be created; got %v", s.CollectedDepts())
 	}
 
-	s.EnsureDept("ops", "Ops")
+	s.EnsureDept("ops", "Ops", "")
 	s.SetDeptMeta("ops", true, map[string]string{"ignore": "true", "sla": "24h"})
 
 	depts := s.CollectedDepts()

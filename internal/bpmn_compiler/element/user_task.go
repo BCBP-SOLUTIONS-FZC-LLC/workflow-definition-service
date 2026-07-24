@@ -22,6 +22,7 @@ func (UserTaskHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *bp
 	errs = append(errs, validator.ValidateTaskDef(task.ID, task.ExtensionElements, stageTypes)...)
 	errs = append(errs, validator.ValidateAssignmentDef(task.ID, task.ExtensionElements)...)
 	errs = append(errs, validator.ValidateLaneMembership(task.ID, laneRefs)...)
+	errs = append(errs, validator.ValidateDeptID(task.ID, proc)...)
 	return errs
 }
 
@@ -30,7 +31,7 @@ func (UserTaskHandler) Compile(nodeID string, cs *bpmncore.CompileState) error {
 	if task == nil {
 		return fmt.Errorf("task %q not found in process", nodeID)
 	}
-	deptID, label := cs.DeptOf(nodeID)
+	deptID, label, iamDeptID := cs.DeptOf(nodeID)
 
 	stage, err := bpmncore.BuildStageDef(task, cs.StageTypes, cs.Proc, cs.Defs)
 	if err != nil {
@@ -38,7 +39,7 @@ func (UserTaskHandler) Compile(nodeID string, cs *bpmncore.CompileState) error {
 	}
 	cs.FillBoundaryTimerTarget(task.ID, &stage)
 	cs.FillBoundaryMessageTarget(task.ID, &stage)
-	cs.EnsureDept(deptID, label)
+	cs.EnsureDept(deptID, label, iamDeptID)
 	cs.AppendStage(deptID, stage)
 	cs.AddToSeqBuf(deptID)
 

@@ -83,7 +83,7 @@ func collectMessagePaths(nodeID string, cs *bpmncore.CompileState) []domain.Mess
 		}
 		targetDept := ""
 		if nexts := cs.ForwardNexts(be.ID); len(nexts) > 0 {
-			targetDept, _ = cs.DeptOf(nexts[0])
+			targetDept, _, _ = cs.DeptOf(nexts[0])
 		}
 		paths = append(paths, domain.MessagePath{
 			MessageName:  msgName,
@@ -154,7 +154,7 @@ func mergeDepts(depts []domain.DepartmentDef, calledProc *bpmncore.BPMNProcess, 
 		}
 		props := bpmncore.PropsMap(lane.ExtensionElements)
 		ignore := props["ignore"] == "true"
-		cs.EnsureDept(deptID, deptID)
+		cs.EnsureDept(deptID, deptID, "")
 		cs.SetDeptMeta(deptID, ignore, props)
 		for _, stage := range dept.Stages {
 			cs.AppendStage(deptID, stage)
@@ -187,7 +187,7 @@ func mergeLanelessDepts(depts []domain.DepartmentDef, deptID string, cs *bpmncor
 	if deptID == "" {
 		return
 	}
-	cs.EnsureDept(deptID, deptID)
+	cs.EnsureDept(deptID, deptID, "")
 	for _, dept := range depts {
 		for _, stage := range dept.Stages {
 			cs.AppendStage(deptID, stage)

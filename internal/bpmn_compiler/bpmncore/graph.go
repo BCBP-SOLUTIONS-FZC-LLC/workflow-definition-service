@@ -231,12 +231,33 @@ func findProcessByParticipantID(defs *BPMNDefinitions, participantID string) *BP
 	return nil
 }
 
-func LaneNameFor(taskID string, proc *BPMNProcess) string {
-	for _, lane := range proc.LaneSet.Lanes {
+func LaneFor(taskID string, proc *BPMNProcess) *BPMNLane {
+	for i := range proc.LaneSet.Lanes {
+		lane := &proc.LaneSet.Lanes[i]
 		for _, ref := range lane.FlowNodeRefs {
 			if ref == taskID {
-				return lane.Name
+				return lane
 			}
+		}
+	}
+	return nil
+}
+
+func LaneNameFor(taskID string, proc *BPMNProcess) string {
+	if lane := LaneFor(taskID, proc); lane != nil {
+		return lane.Name
+	}
+	return ""
+}
+
+func DeptIDFor(taskID string, proc *BPMNProcess) string {
+	lane := LaneFor(taskID, proc)
+	if lane == nil {
+		return ""
+	}
+	for _, p := range lane.ExtensionElements.ZeebeProps.Items {
+		if p.Name == "dept_id" {
+			return p.Value
 		}
 	}
 	return ""

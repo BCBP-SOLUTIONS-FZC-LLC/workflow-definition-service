@@ -136,7 +136,7 @@ func (s *VersionService) checkAssigneeEligibility(
 ) error {
 	for _, dept := range plan.Departments {
 		for _, stage := range dept.Stages {
-			if err := s.checkStageEligibility(ctx, tenantID, dept.ID, stage); err != nil {
+			if err := s.checkStageEligibility(ctx, tenantID, dept.IAMDepartmentID, stage); err != nil {
 				return err
 			}
 		}
@@ -174,6 +174,10 @@ func extractAssignees(
 	for _, dept := range plan.Departments {
 		for _, stage := range dept.Stages {
 			nodeKey := dept.ID + "/" + stage.Type
+			deptUUID, err := uuid.Parse(dept.IAMDepartmentID)
+			if err != nil {
+				continue
+			}
 			for _, assigneeID := range stage.DefaultAssignees {
 				userID, err := uuid.Parse(assigneeID)
 				if err != nil {
@@ -189,7 +193,7 @@ func extractAssignees(
 					WorkflowVersionID: versionID,
 					NodeKey:           nodeKey,
 					UserID:            userID,
-					DepartmentID:      dept.ID,
+					DepartmentID:      deptUUID,
 					Role:              stage.Role,
 				})
 			}

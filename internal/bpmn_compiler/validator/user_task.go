@@ -74,6 +74,26 @@ func validateCandidateUser(taskID, candidateUsers string) []domain.BPMNValidatio
 	return nil
 }
 
+// ValidateDeptID rejects a lane with no valid dept_id zeebe property — the
+// real IAM department UUID eligibility checks and workflow_node_assignee
+// need, distinct from the lane's name (used elsewhere as the visual/grouping id).
+func ValidateDeptID(taskID string, proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
+	lane := bpmncore.LaneFor(taskID, proc)
+	if lane == nil {
+		return nil // no lane at all is ValidateLaneMembership's TASK_NOT_IN_LANE, not this one's
+	}
+	deptID := bpmncore.DeptIDFor(taskID, proc)
+	if deptID == "" {
+		return AppendErr(nil, domain.BPMNErrMissingDeptID, taskID,
+			fmt.Sprintf("lane %q has no dept_id zeebe property; add <zeebe:properties><zeebe:property name=\"dept_id\" value=\"<IAM department UUID>\"/></zeebe:properties>", lane.ID))
+	}
+	if _, err := uuid.Parse(deptID); err != nil {
+		return AppendErr(nil, domain.BPMNErrInvalidDeptID, taskID,
+			fmt.Sprintf("lane %q dept_id %q is not a valid UUID", lane.ID, deptID))
+	}
+	return nil
+}
+
 func ValidateLaneMembership(taskID string, laneRefs map[string]struct{}) []domain.BPMNValidationError {
 	// When no lanes are defined (e.g. inner subprocess without a laneSet) all
 	// tasks are implicitly in scope — skip the check entirely.
