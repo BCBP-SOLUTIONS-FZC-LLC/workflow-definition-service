@@ -4,24 +4,27 @@ name: CI
 #
 #   generate ─────────┬──► validate-quality ──────────────────────────────────┐
 #                      ├──► validate-test ──────────┬──► smoke-tests ─────────┤
-#                      ├──► build-image-cache ────┐  │                        ├──► pr-summary  (PR events only)
-#                      └──► lint-dockerfile ─────┴┴──► trivy-cve-scan ────────┤   push-image-ghcr (push events only)
+#                      └──► build-image-cache ─────┴──► trivy-cve-scan ───────┤   pr-summary  (PR events only)
+#                          (hadolint runs as its first step)                  ┤   push-image-ghcr (push events only)
 #
 # validate-test now runs unit + integration tests (race + coverage, merged
 # into one profile) — no separate integration-test job, matching iam.
 # validate-test gates smoke-tests: fail fast, don't smoke-test a build that
 # already failed a correctness check.
-# lint-dockerfile + build-image-cache also gate smoke-tests, not just
-# trivy-cve-scan: a commit is never smoke-tested green while the Dockerfile
-# itself fails to lint or the image fails to build — the same commit is what
-# eventually ships as a container.
+# build-image-cache also gates smoke-tests, not just trivy-cve-scan: a commit
+# is never smoke-tested green while the Dockerfile itself fails to lint or
+# the image fails to build — the same commit is what eventually ships as a
+# container. Hadolint runs as build-image-cache's first step (folded in,
+# matching iam) so a lint failure fails fast before the Docker build starts.
 # pr-summary/push-image-ghcr both wait on every job above — they report/ship
 # the final result, so nothing before them can be skipped.
 #
 on:
   pull_request:
+    paths-ignore: ['**.md', 'docs/**']
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -96,10 +99,10 @@ jobs:
     uses: ./.github/workflows/validate-test.yml
     secrets: inherit
 
-  lint-dockerfile:
-    name: Lint Dockerfile
+  build-image-cache:
+    name: Build image (cache)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     needs: [generate]
     steps:
       - uses: actions/checkout@v6
@@ -111,17 +114,6 @@ jobs:
         with:
           dockerfile: Dockerfile
           config: .hadolint.yaml
-
-  build-image-cache:
-    name: Build image (cache)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [generate]
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -148,7 +140,7 @@ jobs:
     name: Trivy CVE scan
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [generate, lint-dockerfile, build-image-cache]
+    needs: [generate, build-image-cache]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -197,7 +189,7 @@ jobs:
     name: Smoke tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [validate-test, lint-dockerfile, build-image-cache]
+    needs: [validate-test, build-image-cache]
     env:
       GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
       GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
@@ -337,7 +329,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always() && github.event_name == 'pull_request'
-    needs: [generate, validate-quality, validate-test, lint-dockerfile, build-image-cache, trivy-cve-scan, smoke-tests]
+    needs: [generate, validate-quality, validate-test, build-image-cache, trivy-cve-scan, smoke-tests]
     permissions:
       contents: read
       pull-requests: write

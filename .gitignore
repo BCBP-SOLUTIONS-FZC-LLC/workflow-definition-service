@@ -54,3 +54,5 @@ tags
 !.claude/
 .claude/*
 !.claude/*.md
+
+/graphify-out/
