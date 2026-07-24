@@ -1,5 +1,8 @@
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
 CREATE INDEX idx_workflow_tenant_id ON workflow(tenant_id);
 CREATE INDEX idx_workflow_active_version ON workflow(active_version_id) WHERE active_version_id IS NOT NULL;
+CREATE INDEX idx_workflow_name_trgm ON workflow USING gin (name gin_trgm_ops);
 
 CREATE INDEX idx_wv_workflow_id ON workflow_version(workflow_id);
 CREATE INDEX idx_wv_tenant_status ON workflow_version(tenant_id, status);

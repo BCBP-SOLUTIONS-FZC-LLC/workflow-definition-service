@@ -1,6 +1,3 @@
-DROP POLICY IF EXISTS tenant_isolation_policy ON processed_event;
-ALTER TABLE processed_event DISABLE ROW LEVEL SECURITY;
-
 DROP POLICY IF EXISTS tenant_isolation_policy ON workflow_node_assignee;
 ALTER TABLE workflow_node_assignee DISABLE ROW LEVEL SECURITY;
 
