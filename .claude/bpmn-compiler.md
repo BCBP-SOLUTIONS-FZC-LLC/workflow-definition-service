@@ -7,7 +7,7 @@ metadata:
 
 # BPMN Compiler Reference
 
-The compiler (`internal/bpmn_compiler/`) is stateless. It imports `internal/core/domain` for error types and compiled-plan structs but nothing from `adapter/` or `service/`. Three phases: **parse → validate → compile**. A separate `Hash(ctx, bpmnXML) (string, error)` method computes the canonical SHA-256 of a BPMN document for change-detection without a full compile.
+The compiler (`internal/bpmn_compiler/`) is stateless. It imports `internal/core/domain` for error types and `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl` for compiled-plan structs (`CompiledPlan`, `StageDef`, `ExecutionStep`, etc. — `internal/core/domain/compiled_plan.go` no longer exists), but nothing from `adapter/` or `service/`. Three phases: **parse → validate → compile**. A separate `Hash(ctx, bpmnXML) (string, error)` method computes the canonical SHA-256 of a BPMN document for change-detection without a full compile.
 
 ## Error Response Codes
 

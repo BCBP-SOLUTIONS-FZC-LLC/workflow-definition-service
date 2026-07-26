@@ -11,9 +11,10 @@ metadata:
 
 | Module | Version | Notes |
 |---|---|---|
-| `platform-events` | v1.2.0 | `outbox.NewRunner` returns `(*Runner, error)`. `actor`/`subject` envelope fields not yet available (v1.3.0 unreleased). |
+| `platform-events` | v1.3.0 | `outbox.NewRunner` returns `(*Runner, error)`. Envelope carries `actor`/`subject` fields. |
 | `platform-gincommon` | v1.2.0 | `pgcommon.Config.Logger` / `Config.Tracer` use unexported `port.Field` — cannot be wired externally. |
 | `platform-pgcommon` | v1.1.1 | `port.Transactor` exposes `RunInTxWithRetry` (SERIALIZABLE + 40001/40P01 retry). gRPC health check registered for K8s liveness probes. |
+| `workflow-models` | v0.1.0-beta.1 | Pre-release. `pkg/dsl` types are field-for-field identical to the deleted `internal/core/domain/compiled_plan.go`; `pkg/events`/`pkg/enums` hold the shared `TemplatePublishedPayload`/`EventTypeTemplatePublished`. |
 
 Fetch / upgrade:
 ```bash
@@ -39,8 +40,13 @@ Never add a `replace` directive pointing to `./platform-libs/` — that director
 | `changelog-check.yml` | PR touching `internal/`, `api/`, `cmd/` | fails unless `CHANGELOG.md` was also updated |
 
 Branch protection required checks come from **two active GitHub rulesets** that both apply to this repo:
+
 - **Org-wide** (`protect-main-branch`, applies to all BCBP repos): `Build image (cache)`, `Lint Dockerfile`, `Trivy CVE scan`, `Smoke tests`, `Validate / Quality / quality`, `Validate / Test / test`, `PR summary` — all satisfied by real job names as of this restructure.
-- **Repo-specific** (this repo only): `Test`, `Build`, `Iint`, `vet`, `coverage` — stale, predates the validate-quality/validate-test consolidation, and none of its 5 entries match a real job name anymore: `Test`/`vet`/`coverage` haven't matched anything since that consolidation; `Build` stopped matching once the standalone compile-only `Build` job was removed (redundant with `build-image-cache`'s Docker build, matching iam, which has no equivalent job at all); `Iint` stopped matching once the standalone integration-test job was folded into `validate-test.yml`'s `test` job (matching iam, which has no separate integration-test job either — see below). Whether this stale ruleset needs cleanup is a separate branch-protection admin decision, not resolved here.
+- **Repo-specific** (this repo only): `Test`, `Build`, `Iint`, `vet`, `coverage` — stale, predates the validate-quality/validate-test consolidation. None of its 5 entries match a real job name anymore:
+  - `Test`/`vet`/`coverage` haven't matched anything since that consolidation.
+  - `Build` stopped matching once the standalone compile-only `Build` job was removed (redundant with `build-image-cache`'s Docker build — matches `iam`, which has no equivalent job at all).
+  - `Iint` stopped matching once the standalone integration-test job was folded into `validate-test.yml`'s `test` job (matches `iam`, which has no separate integration-test job either — see below).
+  - Whether this stale ruleset needs cleanup is a separate branch-protection admin decision, not resolved here.
 
 `validate-quality.yml` and `validate-test.yml` are reusable workflows that download the caller's `generate` job's `generated` artifact (proto/sqlc/mocks) rather than each regenerating it — `ci.yml` and `release.yml` both run their own `generate` job first and pass it downstream via `actions/upload-artifact`/`download-artifact`. Codegen now runs once per CI/release run instead of three times.
 

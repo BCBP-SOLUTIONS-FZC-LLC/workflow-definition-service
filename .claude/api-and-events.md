@@ -80,11 +80,22 @@ The Glue schema registry codec caches the schema version ID in-memory (TTL `GLUE
 
 `internal/eventschema/*.json` (Draft-07, one file per event) is derived from `api/asyncapi.yaml` via `make extract-schemas`; `validate-test.yml` runs `extract --check` on every PR/push to catch drift. `api/asyncapi.yaml` messages carry `x-lifecycle`/`x-owner` annotations. `platform-schemagov` is a Docker-shipped CLI (`ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov:0.4`, not a Go import — pull requires `docker/login-action` + `GITHUB_TOKEN`, the image is private) — see the Makefile's `schema-*` targets.
 
-**CLI flags are confirmed against iam-user-profile's working implementation** (same org, same tool), not the README's prose description — the two differ. Real flags: `validate --asyncapi <file> --schema-dir <dir>`, `extract --asyncapi <file> --schema-dir <dir> [--check]`, `diff --current <file> --proposed <file> --schema-name <name>` (pure file-to-file, no AWS — the "vs. registry" comparison is done by fetching the live definition via `aws glue get-schema`/`get-schema-version` first, then diffing that fetched file), `register --registry <name> --schema-dir <dir> --output <file> [--force]`, `prune --registry <name> --env <name> --output <file> [--execute]`, `usage-check`/`enforce-lifecycle`/`changelog`/`metrics` (see `schema-registry.yml` for full flag sets). There is no `--workspace` flag on any command.
+**CLI flags are confirmed against iam-user-profile's working implementation** (same org, same tool), not the README's prose description — the two differ. Real flags (see `schema-registry.yml` for full flag sets; there is no `--workspace` flag on any command):
+
+- `validate --asyncapi <file> --schema-dir <dir>`
+- `extract --asyncapi <file> --schema-dir <dir> [--check]`
+- `diff --current <file> --proposed <file> --schema-name <name>` — pure file-to-file, no AWS; the "vs. registry" comparison is done by fetching the live definition via `aws glue get-schema`/`get-schema-version` first, then diffing that fetched file
+- `register --registry <name> --schema-dir <dir> --output <file> [--force]`
+- `prune --registry <name> --env <name> --output <file> [--execute]`
+- `usage-check` / `enforce-lifecycle` / `changelog` / `metrics`
 
 **What works without AWS credentials**: `validate`/`extract`/`extract --check` (structure/Draft-07/enum-drift/lifecycle/open-schema/coverage — all local/git), `changelog-check.yml`, `freeze-watchdog.yml` (reads a GitHub Environment/repo variable via `gh api`, not AWS).
 
-**Blocked until ops provisions AWS creds** (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` with Glue write scoped to `GLUE_REGISTRY_ARN` — write access is deployment-pipeline-role only, per the design doc): `usage-check`/`enforce-lifecycle` (CloudWatch/Prometheus), `register`/`prune` (Glue write), and `schema-registry.yml`'s diff-vs-registry step (Glue read of the live registry). The `schema-registry.yml`/`schema-prune.yml`/`schema-health-quarterly.yml` workflows are already wired but no-op or fail loudly on their AWS-dependent steps until those secrets exist — that's expected, not a bug. `pr-check`'s AWS-dependent steps specifically degrade gracefully (skip, don't fail) since they run on every PR regardless of whether secrets are configured yet — see the "Check AWS credentials configured" step pattern (secrets can't be referenced directly in `if:` conditions, so it's piped through an `env:` + step output first).
+**Blocked until ops provisions AWS creds** (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` with Glue write scoped to `GLUE_REGISTRY_ARN` — write access is deployment-pipeline-role only, per the design doc):
+
+- `usage-check`/`enforce-lifecycle` (CloudWatch/Prometheus), `register`/`prune` (Glue write), and `schema-registry.yml`'s diff-vs-registry step (Glue read of the live registry).
+- `schema-registry.yml`/`schema-prune.yml`/`schema-health-quarterly.yml` are already wired but no-op or fail loudly on their AWS-dependent steps until those secrets exist — expected, not a bug.
+- `pr-check`'s AWS-dependent steps specifically degrade gracefully (skip, don't fail) since they run on every PR regardless of whether secrets are configured — see the "Check AWS credentials configured" step pattern (secrets can't be referenced directly in `if:` conditions, so it's piped through an `env:` + step output first).
 
 **`CI_REPO_READ_TOKEN` fallback**: every `actions/checkout` step across all workflows uses `token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}`. Confirmed necessary in iam-user-profile (same GitHub org) — the default `GITHUB_TOKEN` failed with "repository not found" in some contexts. Falls back to the default token when the secret is unset (true today) — a no-op until/unless ops configures it.
 

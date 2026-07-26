@@ -729,7 +729,7 @@ All error responses follow RFC 9457 (`application/problem+json`):
 
 ## BPMN Compiler
 
-The `internal/bpmn_compiler` package tree is the stateless heart of the design-time control plane. It turns an uploaded BPMN 2.0 XML document into an immutable, execution-ready DSL (`domain.CompiledPlan`) — or a structured list of validation errors. It holds no state and touches no I/O; assignee eligibility and persistence happen in the service layer around it.
+The `internal/bpmn_compiler` package tree is the stateless heart of the design-time control plane. It turns an uploaded BPMN 2.0 XML document into an immutable, execution-ready DSL (`dsl.CompiledPlan`, from the shared `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models` module) — or a structured list of validation errors. It holds no state and touches no I/O; assignee eligibility and persistence happen in the service layer around it.
 
 This service accepts a restricted subset of BPMN 2.0 XML, validated against this profile before any workflow version can be published. The profile is intentionally narrow: it models human-centred approval workflows across departments and companies, not general-purpose automation.
 
