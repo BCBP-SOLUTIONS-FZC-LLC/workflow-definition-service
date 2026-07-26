@@ -6,6 +6,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/events"
+
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 
@@ -14,15 +17,15 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 )
 
-func buildPlan(deptIDs ...string) *domain.CompiledPlan {
-	depts := make([]domain.DepartmentDef, 0, len(deptIDs))
+func buildPlan(deptIDs ...string) *dsl.CompiledPlan {
+	depts := make([]dsl.DepartmentDef, 0, len(deptIDs))
 	for _, id := range deptIDs {
-		depts = append(depts, domain.DepartmentDef{ID: id, Label: id})
+		depts = append(depts, dsl.DepartmentDef{ID: id, Label: id})
 	}
-	return &domain.CompiledPlan{Name: "test", Departments: depts}
+	return &dsl.CompiledPlan{Name: "test", Departments: depts}
 }
 
-func marshalledPlan(t *testing.T, plan *domain.CompiledPlan) *string {
+func marshalledPlan(t *testing.T, plan *dsl.CompiledPlan) *string {
 	t.Helper()
 	b, err := json.Marshal(plan)
 	if err != nil {
@@ -463,11 +466,11 @@ func TestVersionService_Publish_EligibilityFail(t *testing.T) {
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	assigneeID := uuid.Must(uuid.NewV7())
-	plan := &domain.CompiledPlan{
-		Departments: []domain.DepartmentDef{{
+	plan := &dsl.CompiledPlan{
+		Departments: []dsl.DepartmentDef{{
 			ID:              "finance",
 			IAMDepartmentID: "finance",
-			Stages: []domain.StageDef{{
+			Stages: []dsl.StageDef{{
 				Type:             "review",
 				Role:             "reviewer",
 				DefaultAssignees: []string{assigneeID.String()},
@@ -542,11 +545,11 @@ func TestVersionService_Publish_WithAssignees_BulkInsert(t *testing.T) {
 
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	assigneeID := uuid.Must(uuid.NewV7())
-	plan := &domain.CompiledPlan{
-		Departments: []domain.DepartmentDef{{
+	plan := &dsl.CompiledPlan{
+		Departments: []dsl.DepartmentDef{{
 			ID:              "ops",
 			IAMDepartmentID: uuid.New().String(),
-			Stages: []domain.StageDef{{
+			Stages: []dsl.StageDef{{
 				Type:             "approve",
 				Role:             "manager",
 				DefaultAssignees: []string{assigneeID.String()},
@@ -1106,14 +1109,14 @@ func TestVersionService_Diff_WithStepChanges(t *testing.T) {
 
 	tenantID, wfID, baseID, targetID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 
-	basePlan := &domain.CompiledPlan{
-		Execution: domain.ExecutionPlan{
-			Steps: []domain.ExecutionStep{{Sequential: []string{"step-a"}}},
+	basePlan := &dsl.CompiledPlan{
+		Execution: dsl.ExecutionPlan{
+			Steps: []dsl.ExecutionStep{{Sequential: []string{"step-a"}}},
 		},
 	}
-	targetPlan := &domain.CompiledPlan{
-		Execution: domain.ExecutionPlan{
-			Steps: []domain.ExecutionStep{
+	targetPlan := &dsl.CompiledPlan{
+		Execution: dsl.ExecutionPlan{
+			Steps: []dsl.ExecutionStep{
 				{Sequential: []string{"step-a"}},
 				{Sequential: []string{"step-b"}},
 			},
@@ -1150,17 +1153,17 @@ func TestVersionService_Diff_StepRemoved(t *testing.T) {
 	tenantID, wfID, baseID, targetID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 
 	// Base has 2 steps, target has 1 — step removed
-	basePlan := &domain.CompiledPlan{
-		Execution: domain.ExecutionPlan{
-			Steps: []domain.ExecutionStep{
+	basePlan := &dsl.CompiledPlan{
+		Execution: dsl.ExecutionPlan{
+			Steps: []dsl.ExecutionStep{
 				{Sequential: []string{"a"}},
 				{Sequential: []string{"b"}},
 			},
 		},
 	}
-	targetPlan := &domain.CompiledPlan{
-		Execution: domain.ExecutionPlan{
-			Steps: []domain.ExecutionStep{{Sequential: []string{"a"}}},
+	targetPlan := &dsl.CompiledPlan{
+		Execution: dsl.ExecutionPlan{
+			Steps: []dsl.ExecutionStep{{Sequential: []string{"a"}}},
 		},
 	}
 
@@ -1187,7 +1190,7 @@ func publishPreFlightMocks(
 	vRepo *mocks.MockWorkflowVersionRepository,
 	compiler *mocks.MockPlanCompiler,
 	tenantID, wfID, vID uuid.UUID,
-	plan *domain.CompiledPlan,
+	plan *dsl.CompiledPlan,
 ) {
 	t.Helper()
 	draft := &domain.WorkflowVersion{
@@ -1305,11 +1308,11 @@ func TestVersionService_Publish_BulkInsertError(t *testing.T) {
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	assigneeID := uuid.Must(uuid.NewV7())
-	plan := &domain.CompiledPlan{
-		Departments: []domain.DepartmentDef{{
+	plan := &dsl.CompiledPlan{
+		Departments: []dsl.DepartmentDef{{
 			ID:              "hr",
 			IAMDepartmentID: uuid.New().String(),
-			Stages: []domain.StageDef{{
+			Stages: []dsl.StageDef{{
 				Type:             "approve",
 				Role:             "manager",
 				DefaultAssignees: []string{assigneeID.String()},
@@ -1394,10 +1397,10 @@ func TestVersionService_Publish_InvalidAssigneeUUID(t *testing.T) {
 	})
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
-	plan := &domain.CompiledPlan{
-		Departments: []domain.DepartmentDef{{
+	plan := &dsl.CompiledPlan{
+		Departments: []dsl.DepartmentDef{{
 			ID: "legal",
-			Stages: []domain.StageDef{{
+			Stages: []dsl.StageDef{{
 				Type:             "review",
 				Role:             "approver",
 				DefaultAssignees: []string{"not-a-valid-uuid"},
@@ -1427,11 +1430,11 @@ func TestVersionService_Publish_EligibilityCheckError(t *testing.T) {
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	assigneeID := uuid.Must(uuid.NewV7())
-	plan := &domain.CompiledPlan{
-		Departments: []domain.DepartmentDef{{
+	plan := &dsl.CompiledPlan{
+		Departments: []dsl.DepartmentDef{{
 			ID:              "ops",
 			IAMDepartmentID: "ops",
-			Stages: []domain.StageDef{{
+			Stages: []dsl.StageDef{{
 				Type:             "approve",
 				Role:             "manager",
 				DefaultAssignees: []string{assigneeID.String()},
@@ -1536,11 +1539,11 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	assigneeID := uuid.Must(uuid.NewV7())
-	plan := &domain.CompiledPlan{
-		Departments: []domain.DepartmentDef{{
+	plan := &dsl.CompiledPlan{
+		Departments: []dsl.DepartmentDef{{
 			ID:              "finance",
 			IAMDepartmentID: "018e1f2a-0000-7000-8000-000000000030",
-			Stages: []domain.StageDef{{
+			Stages: []dsl.StageDef{{
 				Type:             "approve",
 				Role:             "manager",
 				DefaultAssignees: []string{assigneeID.String()},
@@ -1589,11 +1592,11 @@ func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.
 	})
 
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	plan := &domain.CompiledPlan{
-		Departments: []domain.DepartmentDef{{
+	plan := &dsl.CompiledPlan{
+		Departments: []dsl.DepartmentDef{{
 			ID:              "ops",
 			IAMDepartmentID: uuid.New().String(),
-			Stages: []domain.StageDef{{
+			Stages: []dsl.StageDef{{
 				Type:             "review",
 				Role:             "reviewer",
 				DefaultAssignees: []string{"not-a-uuid"}, // invalid UUID skipped in extractAssignees
@@ -1759,7 +1762,7 @@ func TestVersionService_Publish_EventPayload(t *testing.T) {
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
-	var capturedPayload domain.TemplatePublishedPayload
+	var capturedPayload events.TemplatePublishedPayload
 	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ any, env any) error {
 			// env is events.Envelope[json.RawMessage]; Payload holds the raw JSON.

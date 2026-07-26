@@ -3,9 +3,9 @@ package service
 import (
 	"testing"
 
-	"github.com/google/uuid"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/google/uuid"
 )
 
 // TestExtractAssignees_InvalidUUID verifies that extractAssignees skips a
@@ -14,12 +14,12 @@ import (
 func TestExtractAssignees_InvalidUUID(t *testing.T) {
 	tenantID := uuid.New()
 	versionID := uuid.New()
-	plan := &domain.CompiledPlan{
-		Departments: []domain.DepartmentDef{
+	plan := &dsl.CompiledPlan{
+		Departments: []dsl.DepartmentDef{
 			{
 				ID:              "engineering",
 				IAMDepartmentID: uuid.New().String(),
-				Stages: []domain.StageDef{
+				Stages: []dsl.StageDef{
 					{
 						Type:             "prep",
 						Role:             "preparer",

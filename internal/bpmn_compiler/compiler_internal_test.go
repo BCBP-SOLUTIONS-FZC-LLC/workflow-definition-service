@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/element"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -214,9 +216,9 @@ func TestCompileIgnoredPool_AmbiguousImplicitStartFallback(t *testing.T) {
 // ─── validateCallPoolConstraints ──────────────────────────────────────────
 
 func TestValidateCallPoolConstraints_IgnoredPoolWithCallPool(t *testing.T) {
-	plans := []*domain.CompiledPlan{{
+	plans := []*dsl.CompiledPlan{{
 		Name: "Ignored", Ignored: true,
-		Execution: domain.ExecutionPlan{Steps: []domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "other"}}}},
+		Execution: dsl.ExecutionPlan{Steps: []dsl.ExecutionStep{{CallPool: &dsl.CallPoolStep{Pool: "other"}}}},
 	}}
 	err := validateCallPoolConstraints(plans, "Main")
 	var vfe *domain.ValidationFailedError
@@ -229,9 +231,9 @@ func TestValidateCallPoolConstraints_IgnoredPoolWithCallPool(t *testing.T) {
 }
 
 func TestValidateCallPoolConstraints_MainPoolSkipped(t *testing.T) {
-	plans := []*domain.CompiledPlan{{
+	plans := []*dsl.CompiledPlan{{
 		Name: "Main", Ignored: true,
-		Execution: domain.ExecutionPlan{Steps: []domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "other"}}}},
+		Execution: dsl.ExecutionPlan{Steps: []dsl.ExecutionStep{{CallPool: &dsl.CallPoolStep{Pool: "other"}}}},
 	}}
 	if err := validateCallPoolConstraints(plans, "Main"); err != nil {
 		t.Errorf("main pool should be exempt; got error: %v", err)
@@ -239,9 +241,9 @@ func TestValidateCallPoolConstraints_MainPoolSkipped(t *testing.T) {
 }
 
 func TestValidateCallPoolConstraints_NonIgnoredSkipped(t *testing.T) {
-	plans := []*domain.CompiledPlan{{
+	plans := []*dsl.CompiledPlan{{
 		Name: "Foo", Ignored: false,
-		Execution: domain.ExecutionPlan{Steps: []domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "other"}}}},
+		Execution: dsl.ExecutionPlan{Steps: []dsl.ExecutionStep{{CallPool: &dsl.CallPoolStep{Pool: "other"}}}},
 	}}
 	if err := validateCallPoolConstraints(plans, "Main"); err != nil {
 		t.Errorf("non-ignored pool should be exempt; got error: %v", err)
@@ -249,7 +251,7 @@ func TestValidateCallPoolConstraints_NonIgnoredSkipped(t *testing.T) {
 }
 
 func TestValidateCallPoolConstraints_NoCallPool(t *testing.T) {
-	plans := []*domain.CompiledPlan{{Name: "Ignored", Ignored: true}}
+	plans := []*dsl.CompiledPlan{{Name: "Ignored", Ignored: true}}
 	if err := validateCallPoolConstraints(plans, "Main"); err != nil {
 		t.Errorf("no call_pool anywhere; expected nil, got %v", err)
 	}
@@ -1256,10 +1258,10 @@ func TestCompiler_WithElementHandler(t *testing.T) {
 }
 
 func TestStepsHaveCallPool_NestedParallel(t *testing.T) {
-	steps := []domain.ExecutionStep{
+	steps := []dsl.ExecutionStep{
 		{
-			Parallel: []domain.ParallelBranch{
-				{DeptID: "a", Steps: []domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "Other"}}}},
+			Parallel: []dsl.ParallelBranch{
+				{DeptID: "a", Steps: []dsl.ExecutionStep{{CallPool: &dsl.CallPoolStep{Pool: "Other"}}}},
 			},
 		},
 	}
@@ -1269,11 +1271,11 @@ func TestStepsHaveCallPool_NestedParallel(t *testing.T) {
 }
 
 func TestStepsHaveCallPool_InSubWorkflow(t *testing.T) {
-	steps := []domain.ExecutionStep{
+	steps := []dsl.ExecutionStep{
 		{
-			SubWorkflow: &domain.SubWorkflowStep{
-				Plan: domain.ExecutionPlan{
-					Steps: []domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "Other"}}},
+			SubWorkflow: &dsl.SubWorkflowStep{
+				Plan: dsl.ExecutionPlan{
+					Steps: []dsl.ExecutionStep{{CallPool: &dsl.CallPoolStep{Pool: "Other"}}},
 				},
 			},
 		},

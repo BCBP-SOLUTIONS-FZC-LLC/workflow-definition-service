@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/element"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/validator"
@@ -117,7 +119,7 @@ func (c *Compiler) Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNV
 	return allErrs, nil
 }
 
-func (c *Compiler) Compile(ctx context.Context, bpmnXML string) (*domain.CompiledPlan, error) {
+func (c *Compiler) Compile(ctx context.Context, bpmnXML string) (*dsl.CompiledPlan, error) {
 	defs, err := parse(ctx, bpmnXML)
 	if errors.Is(err, errMissingNamespace) {
 		return nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
@@ -151,7 +153,7 @@ func (c *Compiler) Compile(ctx context.Context, bpmnXML string) (*domain.Compile
 	return plan, nil
 }
 
-func (c *Compiler) CompileCollaboration(ctx context.Context, bpmnXML string) (*domain.CompiledCollaboration, error) {
+func (c *Compiler) CompileCollaboration(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error) {
 	defs, err := parse(ctx, bpmnXML)
 	if errors.Is(err, errMissingNamespace) {
 		return nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
@@ -185,7 +187,7 @@ func (c *Compiler) CompileCollaboration(ctx context.Context, bpmnXML string) (*d
 		return nil, err
 	}
 
-	return &domain.CompiledCollaboration{MainPlan: mainPlan, Plans: plans, Messages: buildMessageDefs(defs)}, nil
+	return &dsl.CompiledCollaboration{MainPlan: mainPlan, Plans: plans, Messages: buildMessageDefs(defs)}, nil
 }
 
 // collaborationProcSets builds the set of ignored process IDs and a
@@ -235,13 +237,13 @@ func (c *Compiler) validateCollaborationProcesses(bpmnXML string, defs *bpmncore
 // CompiledPlan — ignored pools best-effort via compileIgnoredPool, others via
 // the normal traversal with message bridges injected — and qualifies each
 // plan's department IDs with its own plan name.
-func (c *Compiler) compileCollaborationPlans(defs *bpmncore.BPMNDefinitions, ignoredProcIDs map[string]bool, participantNameByProcID map[string]string) ([]*domain.CompiledPlan, error) {
+func (c *Compiler) compileCollaborationPlans(defs *bpmncore.BPMNDefinitions, ignoredProcIDs map[string]bool, participantNameByProcID map[string]string) ([]*dsl.CompiledPlan, error) {
 	procByID := make(map[string]*bpmncore.BPMNProcess, len(defs.Processes))
 	for i := range defs.Processes {
 		procByID[defs.Processes[i].ID] = &defs.Processes[i]
 	}
 
-	var plans []*domain.CompiledPlan
+	var plans []*dsl.CompiledPlan
 	for _, participant := range defs.Collaboration.Participants {
 		proc, ok := procByID[participant.ProcessRef]
 		if !ok {
@@ -275,13 +277,13 @@ func (c *Compiler) compileCollaborationPlans(defs *bpmncore.BPMNDefinitions, ign
 
 // buildMessageDefs assembles the collaboration-level message index linking
 // plans by message name, resolved via ResolveMessageFlowName.
-func buildMessageDefs(defs *bpmncore.BPMNDefinitions) []domain.MessageDef {
+func buildMessageDefs(defs *bpmncore.BPMNDefinitions) []dsl.MessageDef {
 	elementToProcess := buildElementToProcessName(defs.Processes)
 
-	var messages []domain.MessageDef
+	var messages []dsl.MessageDef
 	for i := range defs.Collaboration.MessageFlows {
 		mf := &defs.Collaboration.MessageFlows[i]
-		messages = append(messages, domain.MessageDef{
+		messages = append(messages, dsl.MessageDef{
 			Name:       bpmncore.ResolveMessageFlowName(mf, defs),
 			SourcePlan: elementToProcess[mf.SourceRef],
 			TargetPlan: elementToProcess[mf.TargetRef],
@@ -319,11 +321,11 @@ func compileIgnoredPool(
 	stageTypes map[string]bpmncore.StageTypeHandler,
 	elements map[bpmncore.FlowNodeType]bpmncore.ElementHandler,
 	defs *bpmncore.BPMNDefinitions,
-) *domain.CompiledPlan {
+) *dsl.CompiledPlan {
 	implicitStart := bpmncore.FindImplicitStart(proc, g)
 	plan, err := bpmncore.CompileWithImplicitStart(proc, g, implicitStart, stageTypes, elements, defs)
 	if err != nil {
-		plan = &domain.CompiledPlan{Name: proc.Name}
+		plan = &dsl.CompiledPlan{Name: proc.Name}
 	}
 	plan.Ignored = true
 	plan.TaskQueue = ""
@@ -332,7 +334,7 @@ func compileIgnoredPool(
 
 // validateCallPoolConstraints checks that no ignored pool emits a call_pool step.
 // Only the main pool is allowed to call other pools as child workflows.
-func validateCallPoolConstraints(plans []*domain.CompiledPlan, mainPlan string) error {
+func validateCallPoolConstraints(plans []*dsl.CompiledPlan, mainPlan string) error {
 	for _, plan := range plans {
 		if !plan.Ignored || plan.Name == mainPlan {
 			continue
@@ -347,7 +349,7 @@ func validateCallPoolConstraints(plans []*domain.CompiledPlan, mainPlan string) 
 	return nil
 }
 
-func stepsHaveCallPool(steps []domain.ExecutionStep) bool {
+func stepsHaveCallPool(steps []dsl.ExecutionStep) bool {
 	for i := range steps {
 		if steps[i].CallPool != nil {
 			return true

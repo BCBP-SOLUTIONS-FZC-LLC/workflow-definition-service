@@ -1,12 +1,12 @@
 package bpmncore
 
-import "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+import "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 
 const errTaskNotFound = "task %q not found in process"
 const defaultTaskQueue = "wf-queue-default"
 
 type sharedDeptsStore struct {
-	depts   []domain.DepartmentDef
+	depts   []dsl.DepartmentDef
 	deptIdx map[string]int
 }
 
@@ -25,7 +25,7 @@ type CompileState struct {
 	StopAt string
 
 	sd      *sharedDeptsStore
-	steps   []domain.ExecutionStep
+	steps   []dsl.ExecutionStep
 	seqBuf  []string
 	visited map[string]bool
 }
@@ -72,17 +72,17 @@ func NewBranchState(parent *CompileState, stopAt string) *CompileState {
 	}
 }
 
-func (s *CompileState) CollectedDepts() []domain.DepartmentDef { return s.sd.depts }
+func (s *CompileState) CollectedDepts() []dsl.DepartmentDef { return s.sd.depts }
 
-func (s *CompileState) CollectedSteps() []domain.ExecutionStep { return s.steps }
+func (s *CompileState) CollectedSteps() []dsl.ExecutionStep { return s.steps }
 
-func (s *CompileState) AppendStep(step domain.ExecutionStep) {
+func (s *CompileState) AppendStep(step dsl.ExecutionStep) {
 	s.steps = append(s.steps, step)
 }
 
 func (s *CompileState) StepsCount() int { return len(s.steps) }
 
-func (s *CompileState) PatchStep(idx int, f func(*domain.ExecutionStep)) {
+func (s *CompileState) PatchStep(idx int, f func(*dsl.ExecutionStep)) {
 	if idx >= 0 && idx < len(s.steps) {
 		f(&s.steps[idx])
 	}
@@ -109,14 +109,14 @@ func (s *CompileState) IsVisited(nodeID string) bool { return s.visited[nodeID] 
 
 func (s *CompileState) SeqBufCount() int { return len(s.seqBuf) }
 
-func (s *CompileState) RevertBranches(gatewayID string, backTargets []string) []domain.ExclusiveBranch {
+func (s *CompileState) RevertBranches(gatewayID string, backTargets []string) []dsl.ExclusiveBranch {
 	return s.revertBranches(gatewayID, backTargets)
 }
 
-func (s *CompileState) TraverseBranches(splitID, joinID string) ([]domain.ParallelBranch, error) {
+func (s *CompileState) TraverseBranches(splitID, joinID string) ([]dsl.ParallelBranch, error) {
 	return s.traverseBranches(splitID, joinID)
 }
 
-func (s *CompileState) TraverseExclusiveBranches(splitID, joinID string) ([]domain.ExclusiveBranch, error) {
+func (s *CompileState) TraverseExclusiveBranches(splitID, joinID string) ([]dsl.ExclusiveBranch, error) {
 	return s.traverseExclusiveBranches(splitID, joinID)
 }

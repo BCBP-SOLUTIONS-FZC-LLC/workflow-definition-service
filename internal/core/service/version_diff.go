@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 )
 
-func computeDiff(base, target *domain.CompiledPlan) DiffChanges {
+func computeDiff(base, target *dsl.CompiledPlan) DiffChanges {
 	changes := DiffChanges{}
 	baseDepts := deptSet(base)
 	targetDepts := deptSet(target)
@@ -29,14 +29,14 @@ func computeDiff(base, target *domain.CompiledPlan) DiffChanges {
 	return changes
 }
 
-func diffSteps(baseSteps, targetSteps []domain.ExecutionStep) []StepChange {
+func diffSteps(baseSteps, targetSteps []dsl.ExecutionStep) []StepChange {
 	maxLen := len(baseSteps)
 	if len(targetSteps) > maxLen {
 		maxLen = len(targetSteps)
 	}
 	var changes []StepChange
 	for i := 0; i < maxLen; i++ {
-		var b, t *domain.ExecutionStep
+		var b, t *dsl.ExecutionStep
 		if i < len(baseSteps) {
 			b = &baseSteps[i]
 		}
@@ -54,7 +54,7 @@ func diffSteps(baseSteps, targetSteps []domain.ExecutionStep) []StepChange {
 	return changes
 }
 
-func deptSet(plan *domain.CompiledPlan) map[string]struct{} {
+func deptSet(plan *dsl.CompiledPlan) map[string]struct{} {
 	m := make(map[string]struct{}, len(plan.Departments))
 	for _, d := range plan.Departments {
 		m[d.ID] = struct{}{}

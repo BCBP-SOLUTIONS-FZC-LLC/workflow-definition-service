@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
@@ -828,7 +830,7 @@ func TestCompileCollaboration_QualifiesParallelAndExclusiveSteps(t *testing.T) {
 		t.Fatalf("CompileCollaboration() error: %v", err)
 	}
 	// Find the Reviewer plan.
-	var reviewer *domain.CompiledPlan
+	var reviewer *dsl.CompiledPlan
 	for _, p := range collab.Plans {
 		if p.Name == "Reviewer" {
 			reviewer = p
@@ -1014,7 +1016,7 @@ func TestCompileCollaboration_QualifiesSubworkflowErrorTimerPaths(t *testing.T) 
 	if err != nil {
 		t.Fatalf("CompileCollaboration() error: %v", err)
 	}
-	var processor *domain.CompiledPlan
+	var processor *dsl.CompiledPlan
 	for _, p := range collab.Plans {
 		if p.Name == "Processor" {
 			processor = p
@@ -1049,7 +1051,7 @@ func TestCompileCollaboration_QualifiesSubworkflowErrorTimerPaths(t *testing.T) 
 	}
 
 	// Must have a SubWorkflow step with qualified ErrorPaths and TimerPaths.
-	var sw *domain.SubWorkflowStep
+	var sw *dsl.SubWorkflowStep
 	for i := range processor.Execution.Steps {
 		if processor.Execution.Steps[i].SubWorkflow != nil {
 			sw = processor.Execution.Steps[i].SubWorkflow
@@ -1174,7 +1176,7 @@ func TestCompileCollaboration_MessageBoundaryOnUserTask(t *testing.T) {
 		t.Errorf("Messages[0].TargetPlan = %q, want Processor", collab.Messages[0].TargetPlan)
 	}
 
-	var processor *domain.CompiledPlan
+	var processor *dsl.CompiledPlan
 	for _, p := range collab.Plans {
 		if p.Name == "Processor" {
 			processor = p

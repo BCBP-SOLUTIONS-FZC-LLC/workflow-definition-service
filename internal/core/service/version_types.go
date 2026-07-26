@@ -3,9 +3,9 @@ package service
 import (
 	"strings"
 
-	"github.com/google/uuid"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/google/uuid"
 )
 
 // NOTE: quota tiers are hardcoded until a billing service integration is available.
@@ -40,8 +40,8 @@ type DiffChanges struct {
 
 type StepChange struct {
 	Description string
-	Before      *domain.ExecutionStep
-	After       *domain.ExecutionStep
+	Before      *dsl.ExecutionStep
+	After       *dsl.ExecutionStep
 }
 
 type CloneReq struct {

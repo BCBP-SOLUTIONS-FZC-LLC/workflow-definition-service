@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
@@ -404,7 +406,7 @@ func TestCompile_CallActivity_NoLane_DeptFromIOMapping(t *testing.T) {
 	assertIOMapping(t, plan.Execution.Steps)
 }
 
-func assertHasDept(t *testing.T, depts []domain.DepartmentDef, id string) {
+func assertHasDept(t *testing.T, depts []dsl.DepartmentDef, id string) {
 	t.Helper()
 	for _, d := range depts {
 		if d.ID == id {
@@ -414,7 +416,7 @@ func assertHasDept(t *testing.T, depts []domain.DepartmentDef, id string) {
 	t.Errorf("expected dept %q from dept_id ioMapping; departments = %v", id, depts)
 }
 
-func assertIOMapping(t *testing.T, steps []domain.ExecutionStep) {
+func assertIOMapping(t *testing.T, steps []dsl.ExecutionStep) {
 	t.Helper()
 	for _, step := range steps {
 		if step.IOMapping == nil {

@@ -70,6 +70,7 @@ require (
 
 require (
 	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon v1.1.1
+	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v0.1.0-beta.1
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.23
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.22

@@ -3,7 +3,7 @@ package bpmncore
 import (
 	"testing"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 )
 
 func TestQualifySteps_AllBranches(t *testing.T) {
@@ -14,43 +14,43 @@ func TestQualifySteps_AllBranches(t *testing.T) {
 		return "PREFIX/" + id
 	}
 
-	steps := []domain.ExecutionStep{
+	steps := []dsl.ExecutionStep{
 		{
 			Sequential: []string{"dept-a"},
 		},
 		{
-			Parallel: []domain.ParallelBranch{
+			Parallel: []dsl.ParallelBranch{
 				{
 					DeptID: "dept-b",
-					Steps: []domain.ExecutionStep{
+					Steps: []dsl.ExecutionStep{
 						{Sequential: []string{"dept-nested"}},
 					},
 				},
 			},
 		},
 		{
-			Exclusive: []domain.ExclusiveBranch{
+			Exclusive: []dsl.ExclusiveBranch{
 				{Target: "dept-c", RevertToDept: "dept-d"},
 			},
 		},
 		{
-			SubWorkflow: &domain.SubWorkflowStep{
-				Plan: domain.ExecutionPlan{
-					Steps: []domain.ExecutionStep{
+			SubWorkflow: &dsl.SubWorkflowStep{
+				Plan: dsl.ExecutionPlan{
+					Steps: []dsl.ExecutionStep{
 						{Sequential: []string{"dept-sub"}},
 					},
 				},
-				ErrorPaths:   []domain.ErrorPath{{TargetDept: "dept-err"}},
-				TimerPaths:   []domain.TimerPath{{TargetDept: "dept-timer"}},
-				MessagePaths: []domain.MessagePath{{TargetDept: "dept-msg"}},
+				ErrorPaths:   []dsl.ErrorPath{{TargetDept: "dept-err"}},
+				TimerPaths:   []dsl.TimerPath{{TargetDept: "dept-timer"}},
+				MessagePaths: []dsl.MessagePath{{TargetDept: "dept-msg"}},
 			},
 		},
 		{
-			MessagePaths: []domain.MessagePath{{TargetDept: "dept-top-msg"}},
+			MessagePaths: []dsl.MessagePath{{TargetDept: "dept-top-msg"}},
 		},
 		{
 			// Empty-string targets exercise the passthrough guard in rename().
-			Exclusive: []domain.ExclusiveBranch{{Target: "", RevertToDept: ""}},
+			Exclusive: []dsl.ExclusiveBranch{{Target: "", RevertToDept: ""}},
 		},
 	}
 
@@ -90,14 +90,14 @@ func TestQualifySteps_AllBranches(t *testing.T) {
 }
 
 func TestQualifyPlanDepts(t *testing.T) {
-	plan := &domain.CompiledPlan{
-		Departments: []domain.DepartmentDef{
+	plan := &dsl.CompiledPlan{
+		Departments: []dsl.DepartmentDef{
 			{
 				ID: "dept-a",
-				Stages: []domain.StageDef{
+				Stages: []dsl.StageDef{
 					{
-						BoundaryTimer:   &domain.BoundaryTimer{TargetDept: "dept-b"},
-						BoundaryMessage: &domain.MessagePath{TargetDept: "dept-c"},
+						BoundaryTimer:   &dsl.BoundaryTimer{TargetDept: "dept-b"},
+						BoundaryMessage: &dsl.MessagePath{TargetDept: "dept-c"},
 					},
 					{
 						// No boundary timer/message -> nil guard branches.
@@ -109,8 +109,8 @@ func TestQualifyPlanDepts(t *testing.T) {
 				ID: "",
 			},
 		},
-		Execution: domain.ExecutionPlan{
-			Steps: []domain.ExecutionStep{
+		Execution: dsl.ExecutionPlan{
+			Steps: []dsl.ExecutionStep{
 				{Sequential: []string{"dept-d"}},
 			},
 		},

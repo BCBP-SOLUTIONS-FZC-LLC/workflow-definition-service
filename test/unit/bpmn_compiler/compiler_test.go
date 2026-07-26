@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
@@ -473,7 +475,7 @@ func TestCompile_LoopDiagram(t *testing.T) {
 	if len(s3.Exclusive) != 2 {
 		t.Fatalf("step[3]: want 2 exclusive branches, got %d: %+v", len(s3.Exclusive), s3.Exclusive)
 	}
-	var revert *domain.ExclusiveBranch
+	var revert *dsl.ExclusiveBranch
 	for i := range s3.Exclusive {
 		if s3.Exclusive[i].RevertToDept != "" {
 			revert = &s3.Exclusive[i]

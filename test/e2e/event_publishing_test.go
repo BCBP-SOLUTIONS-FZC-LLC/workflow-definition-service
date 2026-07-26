@@ -5,13 +5,14 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/enums"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/events"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/fixtures"
 )
 
@@ -89,11 +90,11 @@ func TestE2E_Promote_EndToEnd(t *testing.T) {
 	if err := json.Unmarshal([]byte(messages[0]), &env); err != nil {
 		t.Fatalf("unmarshal envelope: %v\nbody: %s", err, messages[0])
 	}
-	if env.Type != string(domain.EventTypeTemplatePublished) {
-		t.Errorf("envelope.type = %q, want %q", env.Type, domain.EventTypeTemplatePublished)
+	if env.Type != string(enums.EventTypeTemplatePublished) {
+		t.Errorf("envelope.type = %q, want %q", env.Type, enums.EventTypeTemplatePublished)
 	}
 
-	var p domain.TemplatePublishedPayload
+	var p events.TemplatePublishedPayload
 	if err := json.Unmarshal(env.Payload, &p); err != nil {
 		t.Fatalf("unmarshal payload: %v\nraw: %s", err, env.Payload)
 	}

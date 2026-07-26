@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
@@ -27,7 +29,7 @@ func (h *stubElementHandler) Compile(nodeID string, cs *CompileState) error {
 	if h.err != nil {
 		return h.err
 	}
-	cs.AppendStep(domain.ExecutionStep{Sequential: []string{nodeID}})
+	cs.AppendStep(dsl.ExecutionStep{Sequential: []string{nodeID}})
 	return nil
 }
 
@@ -61,7 +63,7 @@ func TestEnsureDept_Idempotent(t *testing.T) {
 func TestAppendStage(t *testing.T) {
 	s := newMinimalState()
 	s.EnsureDept("ops", "Ops", "")
-	s.AppendStage("ops", domain.StageDef{NodeID: "t1"})
+	s.AppendStage("ops", dsl.StageDef{NodeID: "t1"})
 
 	depts := s.CollectedDepts()
 	if len(depts[0].Stages) != 1 || depts[0].Stages[0].NodeID != "t1" {
@@ -389,12 +391,12 @@ func TestHandleSplitWithJoin_ParallelError(t *testing.T) {
 
 func TestFillBoundaryTimerTarget_NilStageField(t *testing.T) {
 	s := newMinimalState()
-	s.FillBoundaryTimerTarget("t1", &domain.StageDef{}) // BoundaryTimer nil -> no-op, no panic
+	s.FillBoundaryTimerTarget("t1", &dsl.StageDef{}) // BoundaryTimer nil -> no-op, no panic
 }
 
 func TestFillBoundaryTimerTarget_NoBoundaryEvent(t *testing.T) {
 	s := newMinimalState()
-	stage := &domain.StageDef{BoundaryTimer: &domain.BoundaryTimer{}}
+	stage := &dsl.StageDef{BoundaryTimer: &dsl.BoundaryTimer{}}
 	s.FillBoundaryTimerTarget("t1", stage)
 	if stage.BoundaryTimer.TargetDept != "" {
 		t.Error("expected TargetDept unset when no matching boundary event")
@@ -404,7 +406,7 @@ func TestFillBoundaryTimerTarget_NoBoundaryEvent(t *testing.T) {
 func TestFillBoundaryTimerTarget_NoOutgoingTarget(t *testing.T) {
 	s := newMinimalState()
 	s.Proc.BoundaryEvents = []BPMNBoundaryEvent{{ID: "be1", AttachedToRef: "t1", Timer: &BPMNTimerDef{}}}
-	stage := &domain.StageDef{BoundaryTimer: &domain.BoundaryTimer{}}
+	stage := &dsl.StageDef{BoundaryTimer: &dsl.BoundaryTimer{}}
 	s.FillBoundaryTimerTarget("t1", stage)
 	if stage.BoundaryTimer.TargetDept != "" {
 		t.Error("expected TargetDept unset when boundary event has no outgoing flow")
@@ -419,7 +421,7 @@ func TestFillBoundaryTimerTarget_Resolved(t *testing.T) {
 	s.Proc.UserTasks = []BPMNUserTask{{ID: "target1"}}
 	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"target1"}}}
 
-	stage := &domain.StageDef{BoundaryTimer: &domain.BoundaryTimer{}}
+	stage := &dsl.StageDef{BoundaryTimer: &dsl.BoundaryTimer{}}
 	s.FillBoundaryTimerTarget("t1", stage)
 	if stage.BoundaryTimer.TargetDept != "Ops" {
 		t.Errorf("TargetDept = %q; want Ops", stage.BoundaryTimer.TargetDept)
@@ -428,12 +430,12 @@ func TestFillBoundaryTimerTarget_Resolved(t *testing.T) {
 
 func TestFillBoundaryMessageTarget_NilStageField(t *testing.T) {
 	s := newMinimalState()
-	s.FillBoundaryMessageTarget("t1", &domain.StageDef{})
+	s.FillBoundaryMessageTarget("t1", &dsl.StageDef{})
 }
 
 func TestFillBoundaryMessageTarget_NoBoundaryEvent(t *testing.T) {
 	s := newMinimalState()
-	stage := &domain.StageDef{BoundaryMessage: &domain.MessagePath{}}
+	stage := &dsl.StageDef{BoundaryMessage: &dsl.MessagePath{}}
 	s.FillBoundaryMessageTarget("t1", stage)
 	if stage.BoundaryMessage.TargetDept != "" {
 		t.Error("expected no target when no matching boundary event")
@@ -443,7 +445,7 @@ func TestFillBoundaryMessageTarget_NoBoundaryEvent(t *testing.T) {
 func TestFillBoundaryMessageTarget_NoOutgoingTarget(t *testing.T) {
 	s := newMinimalState()
 	s.Proc.BoundaryEvents = []BPMNBoundaryEvent{{ID: "be1", AttachedToRef: "t1", Message: &BPMNMessageEventDef{}}}
-	stage := &domain.StageDef{BoundaryMessage: &domain.MessagePath{}}
+	stage := &dsl.StageDef{BoundaryMessage: &dsl.MessagePath{}}
 	s.FillBoundaryMessageTarget("t1", stage)
 	if stage.BoundaryMessage.TargetDept != "" {
 		t.Error("expected TargetDept unset when boundary event has no outgoing flow")
@@ -458,7 +460,7 @@ func TestFillBoundaryMessageTarget_Resolved(t *testing.T) {
 	s.Proc.UserTasks = []BPMNUserTask{{ID: "target1"}}
 	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"target1"}}}
 
-	stage := &domain.StageDef{BoundaryMessage: &domain.MessagePath{}}
+	stage := &dsl.StageDef{BoundaryMessage: &dsl.MessagePath{}}
 	s.FillBoundaryMessageTarget("t1", stage)
 	if stage.BoundaryMessage.TargetDept != "Ops" {
 		t.Errorf("TargetDept = %q; want Ops", stage.BoundaryMessage.TargetDept)

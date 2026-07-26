@@ -3,15 +3,15 @@ package bpmncore
 import (
 	"testing"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 )
 
 func TestPatchStep(t *testing.T) {
 	s := newMinimalState()
-	s.AppendStep(domain.ExecutionStep{Sequential: []string{"a"}})
-	s.AppendStep(domain.ExecutionStep{Sequential: []string{"b"}})
+	s.AppendStep(dsl.ExecutionStep{Sequential: []string{"a"}})
+	s.AppendStep(dsl.ExecutionStep{Sequential: []string{"b"}})
 
-	s.PatchStep(0, func(step *domain.ExecutionStep) {
+	s.PatchStep(0, func(step *dsl.ExecutionStep) {
 		step.Sequential = append(step.Sequential, "x")
 	})
 
@@ -26,10 +26,10 @@ func TestPatchStep(t *testing.T) {
 
 func TestPatchStep_OutOfRange(t *testing.T) {
 	s := newMinimalState()
-	s.AppendStep(domain.ExecutionStep{Sequential: []string{"a"}})
+	s.AppendStep(dsl.ExecutionStep{Sequential: []string{"a"}})
 
 	called := false
-	mutate := func(step *domain.ExecutionStep) { called = true }
+	mutate := func(step *dsl.ExecutionStep) { called = true }
 
 	s.PatchStep(-1, mutate)
 	if called {
@@ -53,8 +53,8 @@ func TestStepsCount(t *testing.T) {
 	if s.StepsCount() != 0 {
 		t.Fatalf("expected 0; got %d", s.StepsCount())
 	}
-	s.AppendStep(domain.ExecutionStep{})
-	s.AppendStep(domain.ExecutionStep{})
+	s.AppendStep(dsl.ExecutionStep{})
+	s.AppendStep(dsl.ExecutionStep{})
 	if s.StepsCount() != 2 {
 		t.Fatalf("expected 2; got %d", s.StepsCount())
 	}

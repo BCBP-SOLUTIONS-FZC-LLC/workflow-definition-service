@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 )
 
-func Compile(proc *BPMNProcess, g *Graph, stageTypes map[string]StageTypeHandler, elements map[FlowNodeType]ElementHandler, defs *BPMNDefinitions) (*domain.CompiledPlan, error) {
+func Compile(proc *BPMNProcess, g *Graph, stageTypes map[string]StageTypeHandler, elements map[FlowNodeType]ElementHandler, defs *BPMNDefinitions) (*dsl.CompiledPlan, error) {
 	implicit := ""
 	if len(proc.StartEvents) == 0 {
 		implicit = FindImplicitStart(proc, g)
@@ -15,7 +15,7 @@ func Compile(proc *BPMNProcess, g *Graph, stageTypes map[string]StageTypeHandler
 	return CompileWithImplicitStart(proc, g, implicit, stageTypes, elements, defs)
 }
 
-func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string, stageTypes map[string]StageTypeHandler, elements map[FlowNodeType]ElementHandler, defs *BPMNDefinitions, externalNodes ...map[string]string) (*domain.CompiledPlan, error) {
+func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string, stageTypes map[string]StageTypeHandler, elements map[FlowNodeType]ElementHandler, defs *BPMNDefinitions, externalNodes ...map[string]string) (*dsl.CompiledPlan, error) {
 	startID := ""
 	if len(proc.StartEvents) > 0 {
 		startID = proc.StartEvents[0].ID
@@ -54,25 +54,25 @@ func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string,
 		return nil, fmt.Errorf("compile: %w", err)
 	}
 
-	var visualElems []domain.VisualElementDef
+	var visualElems []dsl.VisualElementDef
 	for _, ds := range proc.DataStoreRefs {
-		visualElems = append(visualElems, domain.VisualElementDef{
+		visualElems = append(visualElems, dsl.VisualElementDef{
 			Kind: "dataStoreReference",
 			ID:   ds.ID,
 			Name: ds.Name,
 		})
 	}
 
-	return &domain.CompiledPlan{
+	return &dsl.CompiledPlan{
 		Name:           proc.Name,
 		TaskQueue:      defaultTaskQueue,
 		Departments:    state.CollectedDepts(),
-		Execution:      domain.ExecutionPlan{Steps: state.steps},
+		Execution:      dsl.ExecutionPlan{Steps: state.steps},
 		VisualElements: visualElems,
 	}, nil
 }
 
-func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, proc *BPMNProcess, defs *BPMNDefinitions) (domain.StageDef, error) {
+func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, proc *BPMNProcess, defs *BPMNDefinitions) (dsl.StageDef, error) {
 	ext := task.ExtensionElements
 
 	stageType := ""
@@ -110,7 +110,7 @@ func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, p
 		extrasOut = extras
 	}
 
-	stage := domain.StageDef{
+	stage := dsl.StageDef{
 		Type:             stageType,
 		Activity:         activityName,
 		NodeID:           task.ID,
@@ -122,7 +122,7 @@ func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, p
 	}
 
 	if be := TimerBoundaryFor(task.ID, proc); be != nil {
-		stage.BoundaryTimer = &domain.BoundaryTimer{
+		stage.BoundaryTimer = &dsl.BoundaryTimer{
 			Duration:     be.Timer.Duration,
 			Interrupting: be.CancelActivity != "false",
 		}
@@ -133,7 +133,7 @@ func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, p
 		if msgName == "" {
 			msgName = ResolveMessageFlowTarget(be.ID, defs)
 		}
-		stage.BoundaryMessage = &domain.MessagePath{
+		stage.BoundaryMessage = &dsl.MessagePath{
 			MessageName:  msgName,
 			Interrupting: be.CancelActivity != "false",
 		}
@@ -147,7 +147,7 @@ func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, p
 	return stage, nil
 }
 
-func BuildMessageStageDef(taskID, taskName, stageType, messageName string, ext BPMNExtensionElements) domain.StageDef {
+func BuildMessageStageDef(taskID, taskName, stageType, messageName string, ext BPMNExtensionElements) dsl.StageDef {
 	role := ""
 	var assignees []string
 	if ext.AssignmentDefinition != nil {
@@ -169,7 +169,7 @@ func BuildMessageStageDef(taskID, taskName, stageType, messageName string, ext B
 		extrasOut = extras
 	}
 
-	return domain.StageDef{
+	return dsl.StageDef{
 		Type:             stageType,
 		Activity:         taskName,
 		NodeID:           taskID,

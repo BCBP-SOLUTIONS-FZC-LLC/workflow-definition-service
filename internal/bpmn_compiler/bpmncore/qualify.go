@@ -1,8 +1,8 @@
 package bpmncore
 
-import "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+import "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 
-func QualifyPlanDepts(plan *domain.CompiledPlan, prefix string) {
+func QualifyPlanDepts(plan *dsl.CompiledPlan, prefix string) {
 	rename := func(id string) string {
 		if id == "" {
 			return ""
@@ -23,7 +23,7 @@ func QualifyPlanDepts(plan *domain.CompiledPlan, prefix string) {
 	QualifySteps(plan.Execution.Steps, rename)
 }
 
-func QualifySteps(steps []domain.ExecutionStep, rename func(string) string) {
+func QualifySteps(steps []dsl.ExecutionStep, rename func(string) string) {
 	for i := range steps {
 		for j := range steps[i].Sequential {
 			steps[i].Sequential[j] = rename(steps[i].Sequential[j])

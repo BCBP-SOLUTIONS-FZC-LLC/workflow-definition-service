@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/element"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/validator"
@@ -740,23 +742,23 @@ func TestStepsHaveCallPool(t *testing.T) {
 	if stepsHaveCallPool(nil) {
 		t.Error("nil steps: expected false")
 	}
-	if stepsHaveCallPool([]domain.ExecutionStep{{Sequential: []string{"dept"}}}) {
+	if stepsHaveCallPool([]dsl.ExecutionStep{{Sequential: []string{"dept"}}}) {
 		t.Error("no call pool anywhere: expected false")
 	}
-	if !stepsHaveCallPool([]domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "other"}}}) {
+	if !stepsHaveCallPool([]dsl.ExecutionStep{{CallPool: &dsl.CallPoolStep{Pool: "other"}}}) {
 		t.Error("top-level call pool: expected true")
 	}
-	nestedInParallel := []domain.ExecutionStep{{
-		Parallel: []domain.ParallelBranch{{
-			Steps: []domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "other"}}},
+	nestedInParallel := []dsl.ExecutionStep{{
+		Parallel: []dsl.ParallelBranch{{
+			Steps: []dsl.ExecutionStep{{CallPool: &dsl.CallPoolStep{Pool: "other"}}},
 		}},
 	}}
 	if !stepsHaveCallPool(nestedInParallel) {
 		t.Error("call pool nested in parallel branch: expected true")
 	}
-	nestedInSubWorkflow := []domain.ExecutionStep{{
-		SubWorkflow: &domain.SubWorkflowStep{
-			Plan: domain.ExecutionPlan{Steps: []domain.ExecutionStep{{CallPool: &domain.CallPoolStep{Pool: "other"}}}},
+	nestedInSubWorkflow := []dsl.ExecutionStep{{
+		SubWorkflow: &dsl.SubWorkflowStep{
+			Plan: dsl.ExecutionPlan{Steps: []dsl.ExecutionStep{{CallPool: &dsl.CallPoolStep{Pool: "other"}}}},
 		},
 	}}
 	if !stepsHaveCallPool(nestedInSubWorkflow) {

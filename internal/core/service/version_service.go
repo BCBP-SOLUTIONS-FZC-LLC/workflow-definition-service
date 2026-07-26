@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/enums"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/events"
+
 	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -130,10 +134,10 @@ func (s *VersionService) Publish(
 			return fmt.Errorf("next version number: %w", err)
 		}
 		versionNumber = n
-		env, err := buildEnvelope(ctx, s.glueCodec, domain.EventTypeTemplatePublished, tenantID.String(),
+		env, err := buildEnvelope(ctx, s.glueCodec, enums.EventTypeTemplatePublished, tenantID.String(),
 			"workflows/"+workflowID.String()+"/versions/"+versionID.String(),
 			userID.String(),
-			domain.TemplatePublishedPayload{
+			events.TemplatePublishedPayload{
 				WorkflowID:    workflowID.String(),
 				WorkflowKey:   businessKey,
 				VersionID:     versionID.String(),
@@ -273,10 +277,10 @@ func (s *VersionService) Promote(
 	if v.VersionNumber != nil {
 		versionNumber = *v.VersionNumber
 	}
-	env, err := buildEnvelope(ctx, s.glueCodec, domain.EventTypeTemplatePublished, tenantID.String(),
+	env, err := buildEnvelope(ctx, s.glueCodec, enums.EventTypeTemplatePublished, tenantID.String(),
 		"workflows/"+workflowID.String()+"/versions/"+versionID.String(),
 		userID.String(),
-		domain.TemplatePublishedPayload{
+		events.TemplatePublishedPayload{
 			WorkflowID:            workflowID.String(),
 			WorkflowKey:           wf.BusinessKey,
 			VersionID:             versionID.String(),
@@ -367,9 +371,9 @@ func (s *VersionService) Diff(
 func (s *VersionService) resolvePlan(
 	ctx context.Context,
 	v *domain.WorkflowVersion,
-) (*domain.CompiledPlan, error) {
+) (*dsl.CompiledPlan, error) {
 	if v.CompiledPlanJSON != nil && *v.CompiledPlanJSON != "" {
-		var plan domain.CompiledPlan
+		var plan dsl.CompiledPlan
 		if err := json.Unmarshal([]byte(*v.CompiledPlanJSON), &plan); err == nil {
 			return &plan, nil
 		}

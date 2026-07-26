@@ -3,7 +3,7 @@ package element
 import (
 	"testing"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 )
 
 // TestPatchEmptyDepts_ExclusiveRevertPath verifies that patchEmptyDepts fills
@@ -11,9 +11,9 @@ import (
 // RevertToStage set) but has no RevertToDept of its own — it must inherit the
 // parent lane, the same way a forward Target does.
 func TestPatchEmptyDepts_ExclusiveRevertPath(t *testing.T) {
-	steps := []domain.ExecutionStep{
+	steps := []dsl.ExecutionStep{
 		{
-			Exclusive: []domain.ExclusiveBranch{
+			Exclusive: []dsl.ExclusiveBranch{
 				{RevertToStage: "prep", RevertToDept: ""},
 			},
 		},

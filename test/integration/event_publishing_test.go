@@ -5,6 +5,8 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/enums"
+	wfevents "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/events"
 	"strings"
 	"testing"
 	"time"
@@ -224,11 +226,11 @@ func assertSNSPayload(t *testing.T, body string, wfID, versionID, userID uuid.UU
 	if err := json.Unmarshal([]byte(body), &env); err != nil {
 		t.Fatalf("unmarshal envelope: %v\nbody: %s", err, body)
 	}
-	if env.Type != string(domain.EventTypeTemplatePublished) {
-		t.Errorf("envelope.type = %q, want %q", env.Type, domain.EventTypeTemplatePublished)
+	if env.Type != string(enums.EventTypeTemplatePublished) {
+		t.Errorf("envelope.type = %q, want %q", env.Type, enums.EventTypeTemplatePublished)
 	}
 
-	var p domain.TemplatePublishedPayload
+	var p wfevents.TemplatePublishedPayload
 	if err := json.Unmarshal(env.Payload, &p); err != nil {
 		t.Fatalf("unmarshal payload: %v\nraw: %s", err, env.Payload)
 	}

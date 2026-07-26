@@ -3,6 +3,8 @@ package element
 import (
 	"fmt"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/validator"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -92,9 +94,9 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 		}
 	}
 
-	var errorPaths []domain.ErrorPath
-	var timerPaths []domain.TimerPath
-	var messagePaths []domain.MessagePath
+	var errorPaths []dsl.ErrorPath
+	var timerPaths []dsl.TimerPath
+	var messagePaths []dsl.MessagePath
 	for _, be := range cs.Proc.BoundaryEvents {
 		if be.AttachedToRef != nodeID {
 			continue
@@ -102,13 +104,13 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 		targetDept := cs.FirstDeptAhead(bpmncore.OutgoingTargetOf(be.ID, cs.Proc))
 		if be.Error != nil {
 			errorCode := cs.ResolveErrorCode(be.Error.ErrorRef)
-			errorPaths = append(errorPaths, domain.ErrorPath{
+			errorPaths = append(errorPaths, dsl.ErrorPath{
 				ErrorCode:  errorCode,
 				TargetDept: targetDept,
 			})
 		}
 		if be.Timer != nil {
-			timerPaths = append(timerPaths, domain.TimerPath{
+			timerPaths = append(timerPaths, dsl.TimerPath{
 				Duration:     be.Timer.Duration,
 				Interrupting: be.CancelActivity != "false",
 				TargetDept:   targetDept,
@@ -119,7 +121,7 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 			if msgName == "" {
 				msgName = bpmncore.ResolveMessageFlowTarget(be.ID, cs.Defs)
 			}
-			messagePaths = append(messagePaths, domain.MessagePath{
+			messagePaths = append(messagePaths, dsl.MessagePath{
 				MessageName:  msgName,
 				Interrupting: be.CancelActivity != "false",
 				TargetDept:   targetDept,
@@ -128,11 +130,11 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 	}
 
 	cs.FlushSeqBuf()
-	cs.AppendStep(domain.ExecutionStep{
-		SubWorkflow: &domain.SubWorkflowStep{
+	cs.AppendStep(dsl.ExecutionStep{
+		SubWorkflow: &dsl.SubWorkflowStep{
 			NodeID:       sp.ID,
 			Name:         sp.Name,
-			Plan:         domain.ExecutionPlan{Steps: steps},
+			Plan:         dsl.ExecutionPlan{Steps: steps},
 			ErrorPaths:   errorPaths,
 			TimerPaths:   timerPaths,
 			MessagePaths: messagePaths,
@@ -146,7 +148,7 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 	return nil
 }
 
-func patchEmptyDepts(steps []domain.ExecutionStep, lane string) {
+func patchEmptyDepts(steps []dsl.ExecutionStep, lane string) {
 	for i := range steps {
 		for j := range steps[i].Sequential {
 			if steps[i].Sequential[j] == "" {

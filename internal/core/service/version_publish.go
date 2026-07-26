@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
 	"github.com/google/uuid"
 
@@ -84,7 +86,7 @@ func (s *VersionService) checkStructuralDivergence(
 	ctx context.Context,
 	tenantID uuid.UUID,
 	wf *domain.Workflow,
-	draftPlan *domain.CompiledPlan,
+	draftPlan *dsl.CompiledPlan,
 	forcePublishStructural bool,
 ) error {
 	if wf.ActiveVersionID == nil {
@@ -99,7 +101,7 @@ func (s *VersionService) checkStructuralDivergence(
 	if active.CompiledPlanJSON == nil || *active.CompiledPlanJSON == "" {
 		return nil // no stored baseline to compare; allow publish
 	}
-	var activePlan domain.CompiledPlan
+	var activePlan dsl.CompiledPlan
 	if err := json.Unmarshal([]byte(*active.CompiledPlanJSON), &activePlan); err != nil {
 		return nil // unreadable baseline; allow publish rather than blocking
 	}
@@ -132,7 +134,7 @@ func (s *VersionService) runPublishTx(ctx context.Context, in publishTxInput) er
 func (s *VersionService) checkAssigneeEligibility(
 	ctx context.Context,
 	tenantID uuid.UUID,
-	plan *domain.CompiledPlan,
+	plan *dsl.CompiledPlan,
 ) error {
 	for _, dept := range plan.Departments {
 		for _, stage := range dept.Stages {
@@ -148,7 +150,7 @@ func (s *VersionService) checkStageEligibility(
 	ctx context.Context,
 	tenantID uuid.UUID,
 	deptID string,
-	stage domain.StageDef,
+	stage dsl.StageDef,
 ) error {
 	for _, assigneeID := range stage.DefaultAssignees {
 		userID, err := uuid.Parse(assigneeID)
@@ -168,7 +170,7 @@ func (s *VersionService) checkStageEligibility(
 
 func extractAssignees(
 	tenantID, versionID uuid.UUID,
-	plan *domain.CompiledPlan,
+	plan *dsl.CompiledPlan,
 ) []*domain.NodeAssignee {
 	var assignees []*domain.NodeAssignee
 	for _, dept := range plan.Departments {
@@ -202,7 +204,7 @@ func extractAssignees(
 	return assignees
 }
 
-func marshalPlan(plan *domain.CompiledPlan) (string, error) {
+func marshalPlan(plan *dsl.CompiledPlan) (string, error) {
 	b, err := json.Marshal(plan)
 	if err != nil {
 		return "", fmt.Errorf("marshal plan: %w", err)

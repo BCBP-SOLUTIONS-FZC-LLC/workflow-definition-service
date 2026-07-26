@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
@@ -89,7 +91,7 @@ func TestCompile_SubProcess_WithTimerBoundary(t *testing.T) {
 	if len(plan.Execution.Steps) == 0 {
 		t.Fatal("expected at least one execution step")
 	}
-	var subStep *domain.SubWorkflowStep
+	var subStep *dsl.SubWorkflowStep
 	for i := range plan.Execution.Steps {
 		if plan.Execution.Steps[i].SubWorkflow != nil {
 			subStep = plan.Execution.Steps[i].SubWorkflow
@@ -118,7 +120,7 @@ func TestCompile_TimerBoundary_Interrupting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var designDept *domain.DepartmentDef
+	var designDept *dsl.DepartmentDef
 	for i := range plan.Departments {
 		if plan.Departments[i].ID == "design" {
 			designDept = &plan.Departments[i]
@@ -151,7 +153,7 @@ func TestCompile_TimerBoundary_NonInterrupting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var designDept *domain.DepartmentDef
+	var designDept *dsl.DepartmentDef
 	for i := range plan.Departments {
 		if plan.Departments[i].ID == "design" {
 			designDept = &plan.Departments[i]
@@ -263,7 +265,7 @@ func TestCompile_Subprocess_MergesDepartments(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var designDept *domain.DepartmentDef
+	var designDept *dsl.DepartmentDef
 	for i := range plan.Departments {
 		if plan.Departments[i].ID == "design" {
 			designDept = &plan.Departments[i]
@@ -307,7 +309,7 @@ func TestCompile_SubprocessError_ErrorPath(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var sw *domain.SubWorkflowStep
+	var sw *dsl.SubWorkflowStep
 	for _, step := range plan.Execution.Steps {
 		if step.SubWorkflow != nil {
 			sw = step.SubWorkflow
@@ -508,7 +510,7 @@ func TestCompile_Subprocess_CatchAllErrorBoundary(t *testing.T) {
 		t.Fatalf("Compile() unexpected error: %v", err)
 	}
 
-	var sw *domain.SubWorkflowStep
+	var sw *dsl.SubWorkflowStep
 	for _, step := range plan.Execution.Steps {
 		if step.SubWorkflow != nil {
 			sw = step.SubWorkflow

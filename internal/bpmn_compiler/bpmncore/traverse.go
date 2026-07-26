@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 )
 
 type GatewayKind bool
@@ -35,10 +35,10 @@ func (s *CompileState) EnsureDept(id, label, iamDeptID string) {
 		return
 	}
 	s.sd.deptIdx[id] = len(s.sd.depts)
-	s.sd.depts = append(s.sd.depts, domain.DepartmentDef{ID: id, Label: label, IAMDepartmentID: iamDeptID})
+	s.sd.depts = append(s.sd.depts, dsl.DepartmentDef{ID: id, Label: label, IAMDepartmentID: iamDeptID})
 }
 
-func (s *CompileState) AppendStage(deptID string, stage domain.StageDef) {
+func (s *CompileState) AppendStage(deptID string, stage dsl.StageDef) {
 	i := s.sd.deptIdx[deptID]
 	s.sd.depts[i].Stages = append(s.sd.depts[i].Stages, stage)
 }
@@ -55,7 +55,7 @@ func (s *CompileState) FlushSeqBuf() {
 	}
 	buf := make([]string, len(s.seqBuf))
 	copy(buf, s.seqBuf)
-	s.steps = append(s.steps, domain.ExecutionStep{Sequential: buf})
+	s.steps = append(s.steps, dsl.ExecutionStep{Sequential: buf})
 	s.seqBuf = s.seqBuf[:0]
 }
 
@@ -72,8 +72,8 @@ func (s *CompileState) TraverseNode(nodeID string) error {
 	if s.G.NodeType[nodeID] == NodeTypeExternalParticipant {
 		s.FlushSeqBuf()
 		if pool, ok := s.ExternalNodes[nodeID]; ok {
-			s.steps = append(s.steps, domain.ExecutionStep{
-				CallPool: &domain.CallPoolStep{Pool: pool},
+			s.steps = append(s.steps, dsl.ExecutionStep{
+				CallPool: &dsl.CallPoolStep{Pool: pool},
 			})
 		}
 		for _, next := range s.ForwardNexts(nodeID) {
@@ -123,7 +123,7 @@ func (s *CompileState) HandleGateway(nodeID string, kind GatewayKind) error {
 func (s *CompileState) handleSingleForwardWithReverts(
 	nodeID string, fwd, backTargets []string,
 ) error {
-	step := domain.ExecutionStep{}
+	step := dsl.ExecutionStep{}
 	if len(fwd) == 1 {
 		dept, stage := s.firstTaskAhead(fwd[0])
 		terminates := s.G.NodeType[fwd[0]] == NodeTypeEndEvent
@@ -131,7 +131,7 @@ func (s *CompileState) handleSingleForwardWithReverts(
 		if !terminates && (stage == "sub_workflow" || stage == "") {
 			nodeID0, name0 = s.firstTaskNodeAhead(fwd[0])
 		}
-		step.Exclusive = append(step.Exclusive, domain.ExclusiveBranch{
+		step.Exclusive = append(step.Exclusive, dsl.ExclusiveBranch{
 			Target:              dept,
 			TargetStage:         stage,
 			TargetNodeID:        nodeID0,
@@ -154,7 +154,7 @@ func (s *CompileState) handleSplitNoJoin(
 	if kind != ExclusiveGateway {
 		return fmt.Errorf("split gateway %q has no matching join", nodeID)
 	}
-	step := domain.ExecutionStep{}
+	step := dsl.ExecutionStep{}
 	var continuationNode string
 	for _, branchStart := range fwd {
 		dept, stage := s.firstTaskAhead(branchStart)
@@ -162,7 +162,7 @@ func (s *CompileState) handleSplitNoJoin(
 		if stage == "sub_workflow" || stage == "" {
 			nodeID0, name0 = s.firstTaskNodeAhead(branchStart)
 		}
-		step.Exclusive = append(step.Exclusive, domain.ExclusiveBranch{
+		step.Exclusive = append(step.Exclusive, dsl.ExclusiveBranch{
 			Target:              dept,
 			TargetStage:         stage,
 			TargetNodeID:        nodeID0,
@@ -185,7 +185,7 @@ func (s *CompileState) handleSplitNoJoin(
 func (s *CompileState) handleSplitWithJoin(
 	nodeID string, fwd, backTargets []string, joinID string, kind GatewayKind,
 ) error {
-	var step domain.ExecutionStep
+	var step dsl.ExecutionStep
 	var err error
 	if kind == ExclusiveGateway {
 		step.Exclusive, err = s.traverseExclusiveBranches(nodeID, joinID)
@@ -223,7 +223,7 @@ func (s *CompileState) compileSubprocBranches(fwd []string, joinID string) error
 	return nil
 }
 
-func (s *CompileState) FillBoundaryTimerTarget(taskID string, stage *domain.StageDef) {
+func (s *CompileState) FillBoundaryTimerTarget(taskID string, stage *dsl.StageDef) {
 	if stage.BoundaryTimer == nil {
 		return
 	}
@@ -237,7 +237,7 @@ func (s *CompileState) FillBoundaryTimerTarget(taskID string, stage *domain.Stag
 	}
 }
 
-func (s *CompileState) FillBoundaryMessageTarget(taskID string, stage *domain.StageDef) {
+func (s *CompileState) FillBoundaryMessageTarget(taskID string, stage *dsl.StageDef) {
 	if stage.BoundaryMessage == nil {
 		return
 	}
@@ -293,15 +293,15 @@ func (s *CompileState) backNexts(node string) []string {
 func (s *CompileState) revertBranches(
 	gatewayID string,
 	backTargets []string,
-) []domain.ExclusiveBranch {
-	branches := make([]domain.ExclusiveBranch, 0, len(backTargets))
+) []dsl.ExclusiveBranch {
+	branches := make([]dsl.ExclusiveBranch, 0, len(backTargets))
 	for _, backTarget := range backTargets {
 		dept, stage := s.firstTaskAhead(backTarget)
 		nodeID0, name0 := "", ""
 		if stage == "sub_workflow" || stage == "" {
 			nodeID0, name0 = s.firstTaskNodeAhead(backTarget)
 		}
-		branches = append(branches, domain.ExclusiveBranch{
+		branches = append(branches, dsl.ExclusiveBranch{
 			ConditionExpression: s.condExprs[[2]string{gatewayID, backTarget}],
 			RevertToDept:        dept,
 			RevertToStage:       stage,
@@ -421,8 +421,8 @@ func reachesEndEvent(g *Graph, backEdges map[[2]string]bool, from, stop string) 
 	return false
 }
 
-func (s *CompileState) traverseBranches(splitID, joinID string) ([]domain.ParallelBranch, error) {
-	var branches []domain.ParallelBranch
+func (s *CompileState) traverseBranches(splitID, joinID string) ([]dsl.ParallelBranch, error) {
+	var branches []dsl.ParallelBranch
 
 	for _, branchStart := range s.ForwardNexts(splitID) {
 		leadDept, _ := s.firstTaskAhead(branchStart)
@@ -433,7 +433,7 @@ func (s *CompileState) traverseBranches(splitID, joinID string) ([]domain.Parall
 		}
 		bs.FlushSeqBuf()
 
-		branches = append(branches, domain.ParallelBranch{
+		branches = append(branches, dsl.ParallelBranch{
 			DeptID: leadDept,
 			Steps:  bs.CollectedSteps(),
 		})
@@ -443,8 +443,8 @@ func (s *CompileState) traverseBranches(splitID, joinID string) ([]domain.Parall
 
 func (s *CompileState) traverseExclusiveBranches(
 	splitID, joinID string,
-) ([]domain.ExclusiveBranch, error) {
-	var branches []domain.ExclusiveBranch
+) ([]dsl.ExclusiveBranch, error) {
+	var branches []dsl.ExclusiveBranch
 	for _, branchStart := range s.ForwardNexts(splitID) {
 		b, err := s.compileExclusiveBranch(splitID, branchStart, joinID)
 		if err != nil {
@@ -457,7 +457,7 @@ func (s *CompileState) traverseExclusiveBranches(
 
 func (s *CompileState) compileExclusiveBranch(
 	splitID, branchStart, joinID string,
-) (domain.ExclusiveBranch, error) {
+) (dsl.ExclusiveBranch, error) {
 	condExpr := s.condExprs[[2]string{splitID, branchStart}]
 	var branchDept, branchStage string
 	curr := branchStart
@@ -470,7 +470,7 @@ func (s *CompileState) compileExclusiveBranch(
 		walked[curr] = true
 
 		if err := s.processExclusiveNode(curr, &branchDept, &branchStage); err != nil {
-			return domain.ExclusiveBranch{}, err
+			return dsl.ExclusiveBranch{}, err
 		}
 
 		fwd := s.ForwardNexts(curr)
@@ -493,7 +493,7 @@ func (s *CompileState) compileExclusiveBranch(
 			targetNodeID, targetName = s.firstTaskNodeAhead(joinID)
 		}
 	}
-	return domain.ExclusiveBranch{
+	return dsl.ExclusiveBranch{
 		Target:              branchDept,
 		TargetStage:         branchStage,
 		TargetNodeID:        targetNodeID,

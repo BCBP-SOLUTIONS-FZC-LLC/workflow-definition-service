@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/validator"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -57,11 +59,11 @@ func (CallActivityHandler) Compile(nodeID string, cs *bpmncore.CompileState) err
 	appendStepsWithIOMapping(steps, toIOMapping(ca.ExtensionElements.IOMapping), cs)
 
 	if props := bpmncore.PropsMap(ca.ExtensionElements); len(props) > 0 {
-		cs.PatchStep(firstStepIdx, func(s *domain.ExecutionStep) { s.Extras = props })
+		cs.PatchStep(firstStepIdx, func(s *dsl.ExecutionStep) { s.Extras = props })
 	}
 
 	if msgPaths := collectMessagePaths(nodeID, cs); len(msgPaths) > 0 {
-		cs.PatchStep(firstStepIdx, func(s *domain.ExecutionStep) { s.MessagePaths = msgPaths })
+		cs.PatchStep(firstStepIdx, func(s *dsl.ExecutionStep) { s.MessagePaths = msgPaths })
 	}
 
 	fwd := cs.ForwardNexts(nodeID)
@@ -71,8 +73,8 @@ func (CallActivityHandler) Compile(nodeID string, cs *bpmncore.CompileState) err
 	return nil
 }
 
-func collectMessagePaths(nodeID string, cs *bpmncore.CompileState) []domain.MessagePath {
-	var paths []domain.MessagePath
+func collectMessagePaths(nodeID string, cs *bpmncore.CompileState) []dsl.MessagePath {
+	var paths []dsl.MessagePath
 	for _, be := range cs.Proc.BoundaryEvents {
 		if be.AttachedToRef != nodeID || be.Message == nil {
 			continue
@@ -85,7 +87,7 @@ func collectMessagePaths(nodeID string, cs *bpmncore.CompileState) []domain.Mess
 		if nexts := cs.ForwardNexts(be.ID); len(nexts) > 0 {
 			targetDept, _, _ = cs.DeptOf(nexts[0])
 		}
-		paths = append(paths, domain.MessagePath{
+		paths = append(paths, dsl.MessagePath{
 			MessageName:  msgName,
 			Interrupting: be.CancelActivity != "false",
 			TargetDept:   targetDept,
@@ -94,7 +96,7 @@ func collectMessagePaths(nodeID string, cs *bpmncore.CompileState) []domain.Mess
 	return paths
 }
 
-func compileCalledProcess(calledProc *bpmncore.BPMNProcess, ioMapping *bpmncore.ZeebeIOMapping, deptsRemap map[string]string, cs *bpmncore.CompileState) ([]domain.ExecutionStep, error) {
+func compileCalledProcess(calledProc *bpmncore.BPMNProcess, ioMapping *bpmncore.ZeebeIOMapping, deptsRemap map[string]string, cs *bpmncore.CompileState) ([]dsl.ExecutionStep, error) {
 	innerG := bpmncore.BuildGraph(calledProc)
 	innerLaneLabels := bpmncore.BuildLaneLabels(calledProc)
 	innerCondExprs := bpmncore.BuildCondExprs(calledProc)
@@ -134,12 +136,12 @@ func compileCalledProcess(calledProc *bpmncore.BPMNProcess, ioMapping *bpmncore.
 	return steps, nil
 }
 
-func mergeDepts(depts []domain.DepartmentDef, calledProc *bpmncore.BPMNProcess, ioMapping *bpmncore.ZeebeIOMapping, deptsRemap map[string]string, cs *bpmncore.CompileState) {
+func mergeDepts(depts []dsl.DepartmentDef, calledProc *bpmncore.BPMNProcess, ioMapping *bpmncore.ZeebeIOMapping, deptsRemap map[string]string, cs *bpmncore.CompileState) {
 	if len(calledProc.LaneSet.Lanes) == 0 {
 		mergeLanelessDepts(depts, deptIDFromIOMapping(ioMapping), cs)
 		return
 	}
-	deptsByID := make(map[string]domain.DepartmentDef, len(depts))
+	deptsByID := make(map[string]dsl.DepartmentDef, len(depts))
 	for _, d := range depts {
 		deptsByID[d.ID] = d
 	}
@@ -183,7 +185,7 @@ func extractDeptsMap(m *bpmncore.ZeebeIOMapping) map[string]string {
 	return nil
 }
 
-func mergeLanelessDepts(depts []domain.DepartmentDef, deptID string, cs *bpmncore.CompileState) {
+func mergeLanelessDepts(depts []dsl.DepartmentDef, deptID string, cs *bpmncore.CompileState) {
 	if deptID == "" {
 		return
 	}
@@ -195,7 +197,7 @@ func mergeLanelessDepts(depts []domain.DepartmentDef, deptID string, cs *bpmncor
 	}
 }
 
-func appendStepsWithIOMapping(steps []domain.ExecutionStep, ioMap *domain.IOMapping, cs *bpmncore.CompileState) {
+func appendStepsWithIOMapping(steps []dsl.ExecutionStep, ioMap *dsl.IOMapping, cs *bpmncore.CompileState) {
 	for i, step := range steps {
 		if i == 0 {
 			step.IOMapping = ioMap
@@ -216,18 +218,18 @@ func deptIDFromIOMapping(m *bpmncore.ZeebeIOMapping) string {
 	return ""
 }
 
-func toIOMapping(m *bpmncore.ZeebeIOMapping) *domain.IOMapping {
+func toIOMapping(m *bpmncore.ZeebeIOMapping) *dsl.IOMapping {
 	if m == nil {
 		return nil
 	}
-	result := &domain.IOMapping{}
+	result := &dsl.IOMapping{}
 	for _, in := range m.Inputs {
 		if in.Target != "dept_id" && in.Target != "Depts" { // compiler-internal, not passed to execution
-			result.Inputs = append(result.Inputs, domain.IOVar{Source: in.Source, Target: in.Target})
+			result.Inputs = append(result.Inputs, dsl.IOVar{Source: in.Source, Target: in.Target})
 		}
 	}
 	for _, out := range m.Outputs {
-		result.Outputs = append(result.Outputs, domain.IOVar{Source: out.Source, Target: out.Target})
+		result.Outputs = append(result.Outputs, dsl.IOVar{Source: out.Source, Target: out.Target})
 	}
 	if len(result.Inputs) == 0 && len(result.Outputs) == 0 {
 		return nil
