@@ -131,6 +131,11 @@ BPMN_VALID='<?xml version="1.0" encoding="UTF-8"?>
   <bpmn:process id="Process_smoke" isExecutable="true">
     <bpmn:laneSet id="LaneSet_1">
       <bpmn:lane id="Lane_design" name="Design">
+        <bpmn:extensionElements>
+          <zeebe:properties>
+            <zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/>
+          </zeebe:properties>
+        </bpmn:extensionElements>
         <bpmn:flowNodeRef>StartEvent_1</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_review</bpmn:flowNodeRef>
@@ -221,6 +226,11 @@ BPMN_IE='<?xml version="1.0" encoding="UTF-8"?>
   <bpmn:process id="Process_ie" isExecutable="true">
     <bpmn:laneSet id="LaneSet_ie">
       <bpmn:lane id="Lane_ie" name="Design">
+        <bpmn:extensionElements>
+          <zeebe:properties>
+            <zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/>
+          </zeebe:properties>
+        </bpmn:extensionElements>
         <bpmn:flowNodeRef>SE_ie</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_ie_prep</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_ie_review</bpmn:flowNodeRef>
@@ -535,7 +545,7 @@ REVOKE_MSG=$(cat <<JSON
   "source": "iam-svc",
   "data": {
     "user_id": "${ALICE}",
-    "department_id": "Design",
+    "department_id": "f14abc9f-befa-54ff-b57f-c15ab3090062",
     "role": "preparer"
   }
 }
@@ -603,7 +613,7 @@ REVOKE_MSG2=$(cat <<JSON
   "source": "iam-svc",
   "data": {
     "user_id": "${BOB}",
-    "department_id": "Design",
+    "department_id": "f14abc9f-befa-54ff-b57f-c15ab3090062",
     "role": "reviewer"
   }
 }
