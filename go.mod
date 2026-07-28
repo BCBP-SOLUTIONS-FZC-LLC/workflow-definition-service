@@ -5,7 +5,7 @@ go 1.26.5
 // Direct dependencies
 require (
 	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events v1.3.1
-	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.2.0
+	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.2.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.23.2
@@ -69,7 +69,7 @@ require (
 )
 
 require (
-	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon v1.1.1
+	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon v1.1.2
 	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.0.0
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.23
@@ -83,7 +83,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
-	github.com/testcontainers/testcontainers-go v0.42.0
+	github.com/testcontainers/testcontainers-go v0.43.0
 	go.uber.org/mock v0.6.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -135,7 +135,7 @@ require (
 	github.com/mailru/easyjson v0.7.6 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect
-	github.com/moby/moby/api v1.54.2 // indirect
+	github.com/moby/moby/api v1.55.0 // indirect
 	github.com/moby/moby/client v0.4.1 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.6.0 // indirect
@@ -146,7 +146,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
-	github.com/shirou/gopsutil/v4 v4.26.4 // indirect
+	github.com/shirou/gopsutil/v4 v4.26.5 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/swaggo/swag v1.8.12 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect
