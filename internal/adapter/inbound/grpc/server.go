@@ -49,6 +49,7 @@ type cachedPlan struct {
 	Status           string `json:"status"`
 	IsValid          bool   `json:"is_valid"`
 	CompiledPlanJSON string `json:"compiled_plan_json"`
+	SchemaVersion    int32  `json:"dsl_schema_version"`
 }
 
 func (cp cachedPlan) toResponse() *definitionv1.GetCompiledWorkflowResponse {
@@ -59,7 +60,19 @@ func (cp cachedPlan) toResponse() *definitionv1.GetCompiledWorkflowResponse {
 		Status:           cp.Status,
 		IsValid:          cp.IsValid,
 		CompiledPlanJson: cp.CompiledPlanJSON,
+		DslSchemaVersion: cp.SchemaVersion,
 	}
+}
+
+// compiledPlanSchemaVersion pulls the DSL schema major version off an
+// already-fetched compiled_plan_json blob (dsl.CompiledCollaboration.SchemaVersion)
+// without importing the full dsl package for one field.
+func compiledPlanSchemaVersion(compiledPlanJSON string) int32 {
+	var v struct {
+		SchemaVersion int32 `json:"schema_version"`
+	}
+	_ = json.Unmarshal([]byte(compiledPlanJSON), &v)
+	return v.SchemaVersion
 }
 
 func (s *Server) GetCompiledWorkflow(
@@ -107,6 +120,7 @@ func (s *Server) GetCompiledWorkflow(
 	}
 	if v.CompiledPlanJSON != nil {
 		cp.CompiledPlanJSON = *v.CompiledPlanJSON
+		cp.SchemaVersion = compiledPlanSchemaVersion(*v.CompiledPlanJSON)
 	}
 	if v.VersionNumber != nil {
 		cp.VersionNumber = *v.VersionNumber

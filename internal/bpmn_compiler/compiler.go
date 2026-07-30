@@ -187,7 +187,12 @@ func (c *Compiler) CompileCollaboration(ctx context.Context, bpmnXML string) (*d
 		return nil, err
 	}
 
-	return &dsl.CompiledCollaboration{MainPlan: mainPlan, Plans: plans, Messages: buildMessageDefs(defs)}, nil
+	return &dsl.CompiledCollaboration{
+		MainPlan:      mainPlan,
+		Plans:         plans,
+		Messages:      buildMessageDefs(defs),
+		SchemaVersion: dsl.CurrentSchemaVersion,
+	}, nil
 }
 
 // collaborationProcSets builds the set of ignored process IDs and a

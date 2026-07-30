@@ -77,7 +77,7 @@ func (c *fakeCache) Ping(context.Context) error { return nil }
 
 func TestGetCompiledWorkflow_PublishedVersion(t *testing.T) {
 	versionNumber := int32(3)
-	compiledJSON := `{"name":"test"}`
+	compiledJSON := `{"name":"test","schema_version":1}`
 	srv := newServer(func(_ context.Context, tID, vID uuid.UUID) (*domain.WorkflowVersion, error) {
 		return &domain.WorkflowVersion{
 			ID:               gVersionID,
@@ -114,6 +114,9 @@ func TestGetCompiledWorkflow_PublishedVersion(t *testing.T) {
 	}
 	if resp.CompiledPlanJson != compiledJSON {
 		t.Errorf("compiled_plan_json: got %q, want %q", resp.CompiledPlanJson, compiledJSON)
+	}
+	if resp.DslSchemaVersion != 1 {
+		t.Errorf("dsl_schema_version: got %d, want 1", resp.DslSchemaVersion)
 	}
 }
 
