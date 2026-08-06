@@ -19,7 +19,7 @@ Four private Go modules hosted on GitHub, fetched at build time via `GOPRIVATE` 
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events` | SNS publisher, transactional outbox runner + schema, typed event envelopes |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon` | pgx pool, RLS GUC injection, transactor, `migrate.Runner` (golang-migrate) |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon` | Gin middleware, OTel tracing init, Zap logger, gRPC middleware |
-| `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models` | Shared compiled-plan DSL (`pkg/dsl`) + the shared `workflow.template.published` event payload/enums (`pkg/events`, `pkg/enums`) between this service and the Execution Service. Pre-release (`v0.1.0-beta.1`). `internal/core/domain/compiled_plan.go` was deleted — every compiler/service call site imports `pkg/dsl` directly instead. |
+| `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models` | Shared compiled-plan DSL (`pkg/dsl`) + the shared `workflow.template.published` event payload/enums (`pkg/events`, `pkg/enums`) between this service and the Execution Service. `internal/core/domain/compiled_plan.go` was deleted — every compiler/service call site imports `pkg/dsl` directly instead. |
 
 Current pinned versions, per-version quirks/gotchas, and the fetch/upgrade command live in [`.claude/operations.md`](operations.md) § Platform Library Versions — this table is deliberately version-less to avoid the two drifting out of sync.
 
@@ -28,6 +28,7 @@ Current pinned versions, per-version quirks/gotchas, and the fetch/upgrade comma
 - **Never add a `replace` directive** pointing to `./platform-libs/` in `go.mod`. That directory is gitignored and does not exist in CI.
 - **Never import from `./platform-libs/`** in source code. The import path must always be the full `github.com/BCBP-SOLUTIONS-FZC-LLC/...` module path.
 - **`platform-libs/`** is a local read-only reference copy only. **`.design/`** is the same: design documents (HLD, LLD, DBML) for reference.
+- When a comment needs to cite rationale written down elsewhere, reference the design doc by name and section (e.g. "execution LLD §2.5") rather than restating it — design docs may only exist as shareable documents outside this repo, so name them, don't path them. But first try to not mention any comment at all.
 
 ---
 
