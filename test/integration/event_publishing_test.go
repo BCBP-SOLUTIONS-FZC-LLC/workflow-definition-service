@@ -217,8 +217,9 @@ func seedPublishFixtures(
 func assertSNSPayload(t *testing.T, body string, wfID, versionID, userID uuid.UUID) {
 	t.Helper()
 
-	// With RawMessageDelivery=true and noopGlueCodec, the SQS body is the raw
-	// serialised events.Envelope[json.RawMessage].
+	// With RawMessageDelivery=true and no Codec configured on the publisher
+	// (this test never wires one), the SQS body is the raw serialised
+	// events.Envelope[json.RawMessage] — no Glue wire-format encoding applied.
 	var env struct {
 		Type    string          `json:"type"`
 		Payload json.RawMessage `json:"data"`

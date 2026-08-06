@@ -54,7 +54,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	}
 	closeCache := func() { _ = redisClient.Close() }
 
-	publisher, err := newPublisher(cfg, log)
+	glueCodec, err := newGlueCodec(context.Background(), cfg)
 	if err != nil {
 		pool.Close()
 		closeCache()
@@ -62,7 +62,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		return nil, err
 	}
 
-	glueCodec, err := newGlueCodec(context.Background(), cfg)
+	publisher, err := newPublisher(cfg, log, glueCodec)
 	if err != nil {
 		pool.Close()
 		closeCache()
@@ -137,7 +137,6 @@ func newApp(cfg *config.Config) (*app, error) {
 		Execution:       executionSvc,
 		Compiler:        compiler,
 		Cache:           cache,
-		GlueCodec:       glueCodec,
 		Log:             log,
 	})
 

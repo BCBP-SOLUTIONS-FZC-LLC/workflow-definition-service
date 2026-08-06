@@ -111,6 +111,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - `ErrNoActiveVersion` → `409 NO_ACTIVE_VERSION` and `ErrPlanQuotaExceeded` → `403 PLAN_QUOTA_EXCEEDED` added to `errResponse` mapping
 - BPMN validation called on `WorkflowService.Create` (was missing — invalid BPMN could be stored without validation)
 - OTel traces severed at SNS/SQS boundary — `buildEnvelope` now attaches `WithTraceID` from the active span when `SpanContext.IsValid()`
+- **Outbox write would break under real (non-stub) Glue encoding** — `buildEnvelope` used to call the Glue codec's `Encode` at outbox-enqueue time and embed its binary Glue wire-format bytes directly as the envelope's plain-JSON `data` field, which `outbox.Enqueue`'s `json.Marshal(env)` cannot serialize. `platform-events` upgraded `v1.3.1` → `v1.4.0` for `events.WithCodec`, which moves Glue Schema Registry encoding to SNS-publish time instead — `cmd/server/infra.go`'s `newPublisher` now injects the Glue `Codec` into `events.NewSNSPublisher`, and `buildEnvelope`/`VersionService` no longer reference a codec at all. `internal/core/port/glue.go` (`port.GlueCodec`) removed; `internal/adapter/outbound/glue.Codec` now implements `events.Codec` directly (`Encode` returns `(encoded []byte, schemaID string, err error)`; new `Decode` reverses the wire-format framing).
 
 ---
 

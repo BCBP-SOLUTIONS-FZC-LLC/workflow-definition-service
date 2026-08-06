@@ -148,9 +148,6 @@ mock:
 	$(MOCKGEN) -source=internal/core/port/transactor.go \
 	           -destination=internal/core/port/mocks/transactor_mock.go \
 	           -package=mocks
-	$(MOCKGEN) -source=internal/core/port/glue.go \
-	           -destination=internal/core/port/mocks/glue_mock.go \
-	           -package=mocks
 	@echo "✓ mocks written to internal/core/port/mocks/"
 
 

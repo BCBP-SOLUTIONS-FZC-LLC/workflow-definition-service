@@ -550,7 +550,7 @@ make schema-prune        # report orphaned Glue schemas (EXECUTE=true to actuall
 
 | Variable | Used by | Notes |
 | --- | --- | --- |
-| `GLUE_REGISTRY_NAME` | Running service (`internal/config`) **and** CI tooling | Required at runtime when `AWS_USE_STUB=false` — the service's Glue codec resolves schemas against this registry when decoding/encoding events. |
+| `GLUE_REGISTRY_NAME` | Running service (`internal/config`) **and** CI tooling | Required at runtime when `AWS_USE_STUB=false` — the service's Glue codec resolves schemas against this registry, encoding at SNS-publish time (via `events.WithCodec`) rather than at outbox-enqueue time. |
 | `GLUE_REGISTRY_ARN` | CI/schema-gov tooling only | **Not read by the running service** — no corresponding field on `internal/config.Config`. It scopes IAM policy for the `schema-register`/`schema-prune` pipeline steps, not application behavior. |
 | `SCHEMA_GOV_IMAGE` | `make schema-*` targets and CI | Pins the `platform-schemagov` image tag used by every schema command; not read by the server binary at all. |
 

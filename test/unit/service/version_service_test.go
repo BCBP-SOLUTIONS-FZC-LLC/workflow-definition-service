@@ -726,27 +726,6 @@ func TestVersionService_Promote_WorkflowMismatch(t *testing.T) {
 	}
 }
 
-func TestVersionService_Promote_CodecEncodeError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
-	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	codec := mocks.NewMockGlueCodec(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{
-		Workflows: wfRepo, Versions: vRepo, GlueCodec: codec,
-	})
-
-	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
-	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
-		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
-	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
-		&domain.Workflow{ID: wfID}, nil)
-	codec.EXPECT().Encode(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("glue unavailable"))
-
-	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err == nil {
-		t.Fatal("expected error from codec.Encode failure in buildEnvelope")
-	}
-}
-
 func TestVersionService_Promote_WorkflowGetError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
@@ -1202,33 +1181,6 @@ func publishPreFlightMocks(
 	compiler.EXPECT().Compile(gomock.Any(), "<bpmn/>").Return(plan, nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
-}
-
-func TestVersionService_Publish_CodecEncodeError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	tx := mocks.NewMockTransactor(ctrl)
-	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	compiler := mocks.NewMockPlanCompiler(ctrl)
-	codec := mocks.NewMockGlueCodec(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{
-		Transactor: tx, Versions: vRepo, Compiler: compiler, GlueCodec: codec,
-	})
-
-	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
-	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
-		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>"}, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
-	compiler.EXPECT().Compile(gomock.Any(), "<bpmn/>").Return(buildPlan(), nil)
-	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
-	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
-	codec.EXPECT().Encode(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("glue unavailable"))
-
-	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
-	if err == nil {
-		t.Fatal("expected error from codec.Encode failure")
-	}
 }
 
 func TestVersionService_Publish_HashError(t *testing.T) {

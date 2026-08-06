@@ -68,7 +68,7 @@ func newCacheStore(ctx context.Context, cfg *config.Config) (port.CacheStore, *r
 	return valkey.NewCache(client), client, nil
 }
 
-func newPublisher(cfg *config.Config, log port.Logger) (events.Publisher, error) {
+func newPublisher(cfg *config.Config, log port.Logger, codec events.Codec) (events.Publisher, error) {
 	if cfg.AWSUseStub {
 		return &mock.Publisher{}, nil
 	}
@@ -77,14 +77,14 @@ func newPublisher(cfg *config.Config, log port.Logger) (events.Publisher, error)
 		Region:      cfg.AWSRegion,
 		EndpointURL: cfg.AWSEndpointURL,
 		Logger:      log,
-	})
+	}, events.WithCodec(codec))
 	if err != nil {
 		return nil, fmt.Errorf("sns publisher: %w", err)
 	}
 	return pub, nil
 }
 
-func newGlueCodec(ctx context.Context, cfg *config.Config) (port.GlueCodec, error) {
+func newGlueCodec(ctx context.Context, cfg *config.Config) (events.Codec, error) {
 	var awsCfg aws.Config
 	var err error
 	if !cfg.AWSUseStub {

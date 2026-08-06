@@ -11,7 +11,7 @@ metadata:
 
 | Module | Version | Notes |
 |---|---|---|
-| `platform-events` | v1.3.0 | `outbox.NewRunner` returns `(*Runner, error)`. Envelope carries `actor`/`subject` fields. |
+| `platform-events` | v1.4.0 | `outbox.NewRunner` returns `(*Runner, error)`. Envelope carries `actor`/`subject` fields. `events.WithCodec` moves Glue Schema Registry wire-format encoding to SNS-publish time (`cmd/server/infra.go`'s `newPublisher`), not outbox-enqueue time — keeps the outbox's `json.Marshal(env)` working on a plain-JSON payload. |
 | `platform-gincommon` | v1.2.0 | `pgcommon.Config.Logger` / `Config.Tracer` use unexported `port.Field` — cannot be wired externally. |
 | `platform-pgcommon` | v1.1.1 | `port.Transactor` exposes `RunInTxWithRetry` (SERIALIZABLE + 40001/40P01 retry). gRPC health check registered for K8s liveness probes. |
 | `workflow-models` | v0.1.0-beta.1 | Pre-release. `pkg/dsl` types are field-for-field identical to the deleted `internal/core/domain/compiled_plan.go`; `pkg/events`/`pkg/enums` hold the shared `TemplatePublishedPayload`/`EventTypeTemplatePublished`. |

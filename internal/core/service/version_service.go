@@ -32,7 +32,6 @@ type VersionDeps struct {
 	Execution       port.ExecutionService
 	Compiler        port.PlanCompiler
 	Cache           port.CacheStore
-	GlueCodec       port.GlueCodec
 	Log             port.Logger
 }
 
@@ -47,15 +46,10 @@ type VersionService struct {
 	execution       port.ExecutionService
 	compiler        port.PlanCompiler
 	cache           port.CacheStore
-	glueCodec       port.GlueCodec
 	log             port.Logger
 }
 
 func NewVersionService(d VersionDeps) *VersionService {
-	var gc = d.GlueCodec
-	if gc == nil {
-		gc = noopGlueCodec{}
-	}
 	return &VersionService{
 		transactor:      d.Transactor,
 		workflows:       d.Workflows,
@@ -67,7 +61,6 @@ func NewVersionService(d VersionDeps) *VersionService {
 		execution:       d.Execution,
 		compiler:        d.Compiler,
 		cache:           d.Cache,
-		glueCodec:       gc,
 		log:             logOrNoop(d.Log),
 	}
 }
@@ -134,7 +127,7 @@ func (s *VersionService) Publish(
 			return fmt.Errorf("next version number: %w", err)
 		}
 		versionNumber = n
-		env, err := buildEnvelope(ctx, s.glueCodec, enums.EventTypeTemplatePublished, tenantID.String(),
+		env, err := buildEnvelope(ctx, enums.EventTypeTemplatePublished, tenantID.String(),
 			"workflows/"+workflowID.String()+"/versions/"+versionID.String(),
 			userID.String(),
 			events.TemplatePublishedPayload{
@@ -277,7 +270,7 @@ func (s *VersionService) Promote(
 	if v.VersionNumber != nil {
 		versionNumber = *v.VersionNumber
 	}
-	env, err := buildEnvelope(ctx, s.glueCodec, enums.EventTypeTemplatePublished, tenantID.String(),
+	env, err := buildEnvelope(ctx, enums.EventTypeTemplatePublished, tenantID.String(),
 		"workflows/"+workflowID.String()+"/versions/"+versionID.String(),
 		userID.String(),
 		events.TemplatePublishedPayload{

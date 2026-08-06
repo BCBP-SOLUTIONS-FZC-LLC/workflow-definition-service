@@ -657,7 +657,7 @@ All configuration is read from environment variables via `internal/config.Config
 | `AWS_REGION` | No | `us-east-1` | AWS region |
 | `AWS_ENDPOINT_URL` | No | *(empty)* | Custom endpoint URL (e.g. `http://localhost:4566` for LocalStack) |
 | `SNS_TOPIC_ARN` | When `AWS_USE_STUB=false` | — | SNS topic for `wf.template.events` |
-| `GLUE_REGISTRY_NAME` | When `AWS_USE_STUB=false` | — | AWS Glue Schema Registry name; resolved at runtime by the Glue codec when encoding/decoding events |
+| `GLUE_REGISTRY_NAME` | When `AWS_USE_STUB=false` | — | AWS Glue Schema Registry name; resolved by the Glue codec at SNS-publish time (via `events.WithCodec`), not at outbox-enqueue time |
 | `GLUE_SCHEMA_CACHE_TTL` | No | `5m` | TTL for the in-process Glue schema cache |
 
 > `GLUE_REGISTRY_ARN` (present in `.env.example`) is **not** read by the running service — there is no corresponding field on `internal/config.Config`. It only scopes IAM policy for the `make schema-register`/`schema-prune` CI tooling. See [Schema Governance](README.md#schema-governance).
