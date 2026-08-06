@@ -4,7 +4,7 @@ go 1.26.5
 
 // Direct dependencies
 require (
-	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events v1.3.1
+	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events v1.4.0
 	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.2.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
