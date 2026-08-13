@@ -97,5 +97,9 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 	ver.GET("/:version_id/export", h.ExportBPMN)
 	ver.GET("/:version_id/diff/:target_version_id", h.GetVersionDiff)
 
+	conn := api.Group("/connectors")
+	conn.GET("/registry", h.ListConnectorRegistry)
+	conn.POST("/credentials", idem(h.WriteConnectorCredential))
+
 	return r
 }

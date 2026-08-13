@@ -43,6 +43,7 @@ const (
 	BPMNErrMissingAssignmentDefinition  BPMNErrorCode = "MISSING_ASSIGNMENT_DEFINITION"
 	BPMNErrInvalidTaskDefinitionType    BPMNErrorCode = "INVALID_TASK_DEFINITION_TYPE"
 	BPMNWarnUnknownStageType            BPMNErrorCode = "UNKNOWN_STAGE_TYPE"
+	BPMNWarnUnknownConnectorType        BPMNErrorCode = "UNKNOWN_CONNECTOR_TYPE"
 	BPMNErrTaskNotInLane                BPMNErrorCode = "TASK_NOT_IN_LANE"
 	BPMNErrCandidateGroupsEmpty         BPMNErrorCode = "CANDIDATE_GROUPS_EMPTY"
 	BPMNErrInvalidCandidateUser         BPMNErrorCode = "INVALID_CANDIDATE_USER"

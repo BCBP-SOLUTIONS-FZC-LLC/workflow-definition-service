@@ -66,6 +66,11 @@ type Config struct {
 	MembershipClientTimeout time.Duration
 	ExecutionServiceAddr    string
 	ExecutionClientTimeout  time.Duration
+
+	OpenBaoAddr          string
+	OpenBaoToken         string
+	OpenBaoMount         string
+	SecretsClientTimeout time.Duration
 }
 
 func Load() (*Config, error) {
@@ -115,6 +120,11 @@ func Load() (*Config, error) {
 		MembershipClientTimeout: getEnvDurationOrDefault("MEMBERSHIP_CLIENT_TIMEOUT", 10*time.Second),
 		ExecutionServiceAddr:    getEnvOrDefault("EXECUTION_SERVICE_ADDR", ""),
 		ExecutionClientTimeout:  getEnvDurationOrDefault("EXECUTION_CLIENT_TIMEOUT", 5*time.Second),
+
+		OpenBaoAddr:          getEnvOrDefault("OPENBAO_ADDR", ""),
+		OpenBaoToken:         getEnvOrDefault("OPENBAO_TOKEN", ""),
+		OpenBaoMount:         getEnvOrDefault("OPENBAO_MOUNT", "secret"),
+		SecretsClientTimeout: getEnvDurationOrDefault("SECRETS_CLIENT_TIMEOUT", 5*time.Second),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -154,6 +164,12 @@ func (c *Config) validate() error {
 	}
 	if c.ExecutionClientTimeout <= 0 {
 		return fmt.Errorf("EXECUTION_CLIENT_TIMEOUT must be > 0")
+	}
+	if c.SecretsClientTimeout <= 0 {
+		return fmt.Errorf("SECRETS_CLIENT_TIMEOUT must be > 0")
+	}
+	if c.AppEnv != "dev" && c.OpenBaoAddr != "" && c.OpenBaoToken == "" {
+		return fmt.Errorf("OPENBAO_TOKEN is required when OPENBAO_ADDR is set in non-dev environments")
 	}
 	if c.AppEnv == "prod" && c.InternalAPIToken == "" {
 		return fmt.Errorf("INTERNAL_API_TOKEN is required in prod environment")
