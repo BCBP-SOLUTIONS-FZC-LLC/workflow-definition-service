@@ -29,6 +29,7 @@ Current pinned versions, per-version quirks/gotchas, and the fetch/upgrade comma
 - **Never import from `./platform-libs/`** in source code. The import path must always be the full `github.com/BCBP-SOLUTIONS-FZC-LLC/...` module path.
 - **`platform-libs/`** is a local read-only reference copy only. **`.design/`** is the same: design documents (HLD, LLD, DBML) for reference.
 - When a comment needs to cite rationale written down elsewhere, reference the design doc by name and section (e.g. "execution LLD §2.5") rather than restating it — design docs may only exist as shareable documents outside this repo, so name them, don't path them. But first try to not mention any comment at all.
+- **Any request field that gets interpolated into an external resource path (a secrets-store path, a file path, anything a downstream system resolves as a hierarchy) must be allowlisted (e.g. `^[a-zA-Z0-9_-]+$`) before it touches the path, not just non-empty-checked.** A `WriteCredential`-style endpoint that built an OpenBao path from unvalidated `connector_type`/`field_name` allowed a `"../<other-tenant>/x"` value to climb out of the caller's own tenant subtree — found in review, not by design. Where a field's legal values are already a closed set (e.g. a connector type), validate against that set directly instead of (or in addition to) a charset regex.
 
 ---
 
