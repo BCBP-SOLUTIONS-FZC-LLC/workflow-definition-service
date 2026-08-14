@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+### Added
+
+- **Connector-task compiler exception + authoring endpoints** (`design/LLD/workflow_connectors.md`) — a `connector:<name>`-prefixed `serviceTask` compiles to a fully automation-only `StageDef` (no assignee/role fields), with `IOMapping` preserved and an unrecognized connector type warning rather than rejecting (the type might still be registered before the workflow is instantiated). `GET /connectors/registry` serves `workflow-connectors`' `pkg/registry` catalogue; `POST /connectors/credentials` writes a provider credential to OpenBao and returns only the resulting secret path — the raw value never appears in any response.
+
 ### Changed
 
 - **Compiled-plan DSL and shared event payload migrated to `workflow-models`** — `internal/core/domain/compiled_plan.go` deleted; `CompiledPlan`, `StageDef`, `ExecutionStep`, `CompiledCollaboration`, and every other compiled-plan type now come from `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models`'s `pkg/dsl` (pre-release `v0.1.0-beta.1`). `eventpayloads.go` now only holds `EventSource`; `TemplatePublishedPayload`/`EventTypeTemplatePublished` come from the module's `pkg/events`/`pkg/enums`. All call sites across `internal/bpmn_compiler/**`, `internal/core/service/**`, `internal/core/port/**`, and `internal/adapter/inbound/grpc/server.go` repointed directly at the module (no type alias).
@@ -104,6 +108,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Fixed
 
+- **CRITICAL — path traversal in `POST /connectors/credentials`**: `connector_type`/`field_name` were interpolated into the OpenBao secret path with no validation, letting a `"../<other-tenant>/x"`-style value climb out of the caller's own tenant subtree. Both are now validated (`connector_type` against the registry, `field_name` against `^[a-zA-Z0-9_-]+$`) before either touches the path.
+- `secrets_client.go` leaked OpenBao's raw error text (network error / HTTP response body) into the API response and logs on failure — now a fixed generic detail, matching this file's own existing convention for BPMN validation errors; the raw error is still logged server-side.
+- An empty connector type (`type="connector:"`) was accepted as a lenient "unknown type" warning instead of being rejected — an empty name can never be registered, unlike a real-but-unrecognized one. Fixed in both places this prefix-cut logic was independently implemented.
+- A connector task carrying a contradictory `<zeebe:assignmentDefinition>` was silently dropped with no diagnostic — now warns.
+- A `serviceTask` nested inside another `serviceTask` (BPMN-illegal but parseable) had its connector type misattributed to the outer element, which then silently vanished from the compiled graph instead of being rejected.
 - `compiled_plan_json` was double-encoded (JSON string containing escaped JSON) — now stored and returned as a raw JSON value
 - `ListVersions` pagination response shape corrected to match OpenAPI contract
 - `PublishVersion` response narrowed to return only the version object (not the full workflow)
