@@ -75,6 +75,10 @@ func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string,
 func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, proc *BPMNProcess, defs *BPMNDefinitions) (dsl.StageDef, error) {
 	ext := task.ExtensionElements
 
+	if connectorType, ok := ConnectorType(ext); ok {
+		return buildConnectorStageDef(task, connectorType, proc, defs), nil
+	}
+
 	stageType := ""
 	if ext.TaskDefinition != nil {
 		stageType = ext.TaskDefinition.Type
@@ -145,6 +149,76 @@ func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, p
 	}
 
 	return stage, nil
+}
+
+// buildConnectorStageDef builds a connector-typed StageDef (design/LLD/workflow_connectors.md
+// §3/§5.1) — no assignee/role fields (connector tasks are fully automation-only)
+// and IOMapping copied unfiltered from the parsed zeebe:ioMapping.
+func buildConnectorStageDef(task *BPMNUserTask, connectorType string, proc *BPMNProcess, defs *BPMNDefinitions) dsl.StageDef {
+	ext := task.ExtensionElements
+
+	activityName := task.Name
+	if activityName == "" {
+		activityName = connectorType
+	}
+
+	extras := map[string]string{}
+	for _, p := range ext.ZeebeProps.Items {
+		extras[p.Name] = p.Value
+	}
+	var extrasOut map[string]string
+	if len(extras) > 0 {
+		extrasOut = extras
+	}
+
+	stage := dsl.StageDef{
+		Type:          "connector",
+		Activity:      activityName,
+		NodeID:        task.ID,
+		ConnectorType: connectorType,
+		IOMapping:     toConnectorIOMapping(ext.IOMapping),
+		Extras:        extrasOut,
+	}
+
+	if be := TimerBoundaryFor(task.ID, proc); be != nil {
+		stage.BoundaryTimer = &dsl.BoundaryTimer{
+			Duration:     be.Timer.Duration,
+			Interrupting: be.CancelActivity != "false",
+		}
+	}
+	if be := MessageBoundaryFor(task.ID, proc); be != nil {
+		msgName := ResolveMessageName(be.Message.MessageRef, defs)
+		if msgName == "" {
+			msgName = ResolveMessageFlowTarget(be.ID, defs)
+		}
+		stage.BoundaryMessage = &dsl.MessagePath{
+			MessageName:  msgName,
+			Interrupting: be.CancelActivity != "false",
+		}
+	}
+	if ts := ext.TaskSchedule; ts != nil {
+		stage.DueDate = ts.DueDate
+		stage.FollowUpDate = ts.FollowUpDate
+	}
+
+	return stage
+}
+
+// toConnectorIOMapping copies every input/output unfiltered, unlike
+// element/call_activity.go's toIOMapping which strips dept_id/Depts targets —
+// those are callActivity-only compiler-internal conventions that don't apply here.
+func toConnectorIOMapping(m *ZeebeIOMapping) *dsl.IOMapping {
+	if m == nil {
+		return nil
+	}
+	result := &dsl.IOMapping{}
+	for _, in := range m.Inputs {
+		result.Inputs = append(result.Inputs, dsl.IOVar{Source: in.Source, Target: in.Target})
+	}
+	for _, out := range m.Outputs {
+		result.Outputs = append(result.Outputs, dsl.IOVar{Source: out.Source, Target: out.Target})
+	}
+	return result
 }
 
 func BuildMessageStageDef(taskID, taskName, stageType, messageName string, ext BPMNExtensionElements) dsl.StageDef {

@@ -1,6 +1,9 @@
 package bpmncore
 
-import "encoding/xml"
+import (
+	"encoding/xml"
+	"strings"
+)
 
 type FlowNodeType string
 
@@ -59,6 +62,7 @@ type BPMNProcess struct {
 	LaneSet           BPMNLaneSet           `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL laneSet"`
 	UserTasks         []BPMNUserTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL userTask"`
 	GenericTasks      []BPMNUserTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL task"`
+	ServiceTasks      []BPMNUserTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL serviceTask"`
 	SendTasks         []BPMNSendTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL sendTask"`
 	ReceiveTasks      []BPMNReceiveTask     `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL receiveTask"`
 	StartEvents       []BPMNEvent           `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL startEvent"`
@@ -132,6 +136,7 @@ type BPMNSubProcess struct {
 	LaneSet           BPMNLaneSet           `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL laneSet"`
 	UserTasks         []BPMNUserTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL userTask"`
 	GenericTasks      []BPMNUserTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL task"`
+	ServiceTasks      []BPMNUserTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL serviceTask"`
 	SendTasks         []BPMNSendTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL sendTask"`
 	ReceiveTasks      []BPMNReceiveTask     `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL receiveTask"`
 	StartEvents       []BPMNEvent           `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL startEvent"`
@@ -256,6 +261,25 @@ type ZeebeProperty struct {
 
 func IsBoundaryEventType(t FlowNodeType) bool {
 	return t == NodeTypeBoundaryEvent || t == NodeTypeTimerBoundaryEvent || t == NodeTypeErrorBoundaryEvent || t == NodeTypeMessageBoundaryEvent
+}
+
+const ConnectorTaskDefPrefix = "connector:"
+
+// ConnectorType returns the connector type name and true when ext's
+// taskDefinition is connector:-prefixed with a non-empty name
+// (design/LLD/workflow_connectors.md §4.1). An empty name after the prefix
+// (type="connector:") is not "recognized as connector, unknown type" — it
+// can never be registered, so it falls through as a rejected element rather
+// than reaching the lenient unknown-type warning path.
+func ConnectorType(ext BPMNExtensionElements) (string, bool) {
+	if ext.TaskDefinition == nil {
+		return "", false
+	}
+	name, ok := strings.CutPrefix(ext.TaskDefinition.Type, ConnectorTaskDefPrefix)
+	if name == "" {
+		return "", false
+	}
+	return name, ok
 }
 
 func PropsMap(ext BPMNExtensionElements) map[string]string {

@@ -51,6 +51,7 @@ type Handler struct {
 	versions   versionSvc
 	validation validationSvc
 	membership membershipRevoker
+	connectors connectorSvc
 	log        port.Logger
 }
 
@@ -60,6 +61,7 @@ type Services struct {
 	Versions   versionSvc
 	Validation validationSvc
 	Membership membershipRevoker
+	Connectors connectorSvc
 	Log        port.Logger
 }
 
@@ -70,6 +72,7 @@ func New(s Services) *Handler {
 		versions:   s.Versions,
 		validation: s.Validation,
 		membership: s.Membership,
+		connectors: s.Connectors,
 		log:        s.Log,
 	}
 }

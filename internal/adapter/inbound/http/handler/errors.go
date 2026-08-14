@@ -190,6 +190,8 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 		return http.StatusForbidden, CodePlanQuota, err.Error(), nil
 	case errors.Is(err, domain.ErrAssigneeIneligible):
 		return http.StatusUnprocessableEntity, CodeAssigneeIneligible, err.Error(), nil
+	case errors.Is(err, domain.ErrInvalidConnectorCredentialInput):
+		return http.StatusBadRequest, CodeInvalidInput, err.Error(), nil
 	case errors.As(err, &valErr):
 		p := make([]invalidParam, len(valErr.Errors))
 		for i, e := range valErr.Errors {
@@ -198,7 +200,12 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 		return http.StatusUnprocessableEntity, CodeBPMNValidation,
 			"BPMN semantic or structural validation failed.", p
 	case errors.Is(err, domain.ErrUpstreamUnavailable):
-		return http.StatusServiceUnavailable, CodeUpstream, err.Error(), nil
+		// A generic detail, not err.Error(): the wrapped error can carry an
+		// upstream's raw response body or network error text (e.g. OpenBao's
+		// secrets_client.go) — same non-disclosure rationale as
+		// ErrMalformedBPMN below, just for a different upstream. The raw
+		// error is still logged server-side by errResponse for any 5xx.
+		return http.StatusServiceUnavailable, CodeUpstream, "an upstream dependency is temporarily unavailable", nil
 	case errors.Is(err, domain.ErrMalformedBPMN):
 		// Covers forbidden-construct (ErrForbiddenXML) failures too — the client
 		// response is identical so a probe is not confirmed; the security log is

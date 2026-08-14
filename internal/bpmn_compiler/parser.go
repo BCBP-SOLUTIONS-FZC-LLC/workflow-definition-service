@@ -112,6 +112,17 @@ func scanRejected(xmlData string) []domain.BPMNValidationError {
 		if !ok || se.Name.Space != nsBPMN {
 			continue
 		}
+		if se.Name.Local == "serviceTask" {
+			_, isConnector, lookErr := scanServiceTaskConnectorType(dec)
+			if lookErr != nil {
+				return errs // EOF or parse error already surfaced elsewhere
+			}
+			if !isConnector {
+				errs = validator.AppendErr(errs, domain.BPMNErrRejectedElement, elementID(se),
+					fmt.Sprintf("BPMN element <%s> is not supported (§4.1.2 Tier 3)", se.Name.Local))
+			}
+			continue
+		}
 		if _, rejected := rejectedBPMNElems[se.Name.Local]; rejected {
 			errs = validator.AppendErr(errs, domain.BPMNErrRejectedElement, elementID(se),
 				fmt.Sprintf("BPMN element <%s> is not supported (§4.1.2 Tier 3)", se.Name.Local))
@@ -122,6 +133,51 @@ func scanRejected(xmlData string) []domain.BPMNValidationError {
 				fmt.Sprintf("BPMN element <%s> is planned but not yet implemented (§4.1.2 Tier 2)", se.Name.Local))
 		}
 	}
+}
+
+// scanServiceTaskConnectorType reads dec forward through one serviceTask's
+// subtree (dec already past its start element) for a nested
+// zeebe:taskDefinition's type attribute — scanRejected's flat token scan has
+// no notion of nesting, so this is the only way to know whether this specific
+// serviceTask is connector:-prefixed.
+func scanServiceTaskConnectorType(dec *xml.Decoder) (connectorType string, isConnector bool, err error) {
+	depth := 1
+	for depth > 0 {
+		tok, terr := dec.Token()
+		if terr != nil {
+			return "", false, fmt.Errorf("scan service task subtree: %w", terr)
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Space == nsBPMN && t.Name.Local == "serviceTask" {
+				depth++
+			}
+			// depth == 1 means still directly inside the outer serviceTask,
+			// never having descended into a (BPMN-illegal but syntactically
+			// parseable) nested one — a taskDefinition seen at depth > 1
+			// belongs to that inner element, not this one, and must not be
+			// misattributed to it.
+			if !isConnector && depth == 1 && t.Name.Space == nsZeebe && t.Name.Local == "taskDefinition" {
+				for _, a := range t.Attr {
+					if a.Name.Local == "type" {
+						// An empty name after the prefix (type="connector:") is
+						// not a connector task at all — mirrors
+						// bpmncore.ConnectorType's own empty-name guard, since
+						// this scan can't call that helper directly (it reads
+						// raw tokens, not unmarshaled BPMNExtensionElements).
+						if name, ok := strings.CutPrefix(a.Value, bpmncore.ConnectorTaskDefPrefix); ok && name != "" {
+							connectorType, isConnector = name, true
+						}
+					}
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Space == nsBPMN && t.Name.Local == "serviceTask" {
+				depth--
+			}
+		}
+	}
+	return connectorType, isConnector, nil
 }
 
 // elementID returns the element's id attribute, or its local name when absent,
@@ -187,15 +243,32 @@ func unmarshal(xmlData string) (*bpmncore.BPMNDefinitions, error) {
 		p := &defs.Processes[i]
 		p.UserTasks = append(p.UserTasks, p.GenericTasks...)
 		p.GenericTasks = nil
+		p.UserTasks = append(p.UserTasks, connectorServiceTasks(p.ServiceTasks)...)
+		p.ServiceTasks = nil
 		p.SequenceFlows = stripEmptyRefFlows(p.SequenceFlows)
 		for j := range p.SubProcesses {
 			sp := &p.SubProcesses[j]
 			sp.UserTasks = append(sp.UserTasks, sp.GenericTasks...)
 			sp.GenericTasks = nil
+			sp.UserTasks = append(sp.UserTasks, connectorServiceTasks(sp.ServiceTasks)...)
+			sp.ServiceTasks = nil
 			sp.SequenceFlows = stripEmptyRefFlows(sp.SequenceFlows)
 		}
 	}
 	return &defs, nil
+}
+
+// connectorServiceTasks filters serviceTask elements down to connector:-prefixed
+// ones only — any other serviceTask stays rejected via scanRejected and must
+// never enter the structured (UserTasks) pipeline.
+func connectorServiceTasks(tasks []bpmncore.BPMNUserTask) []bpmncore.BPMNUserTask {
+	var out []bpmncore.BPMNUserTask
+	for _, t := range tasks {
+		if _, ok := bpmncore.ConnectorType(t.ExtensionElements); ok {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func stripEmptyRefFlows(flows []bpmncore.BPMNSequenceFlow) []bpmncore.BPMNSequenceFlow {

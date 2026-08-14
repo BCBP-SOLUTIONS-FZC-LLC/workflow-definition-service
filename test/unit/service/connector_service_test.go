@@ -1,0 +1,83 @@
+package service_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
+)
+
+type fakeSecretsClient struct {
+	writeFn func(ctx context.Context, path string, data map[string]string) error
+	written []string
+}
+
+func (f *fakeSecretsClient) Write(ctx context.Context, path string, data map[string]string) error {
+	f.written = append(f.written, path)
+	if f.writeFn != nil {
+		return f.writeFn(ctx, path, data)
+	}
+	return nil
+}
+
+func TestConnectorService_WriteCredential_Success(t *testing.T) {
+	secrets := &fakeSecretsClient{}
+	svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
+
+	path, err := svc.WriteCredential(context.Background(), uuid.New(), "send-email", "apiKey", "sg-live-abc")
+	require.NoError(t, err)
+	assert.Contains(t, path, "send-email/apiKey")
+	assert.Len(t, secrets.written, 1)
+}
+
+// TestConnectorService_WriteCredential_PathTraversal is the regression test
+// for the critical finding: connectorType/fieldName were interpolated
+// straight into the OpenBao path with no validation, letting a "../" segment
+// climb out of the caller's own tenant subtree. Neither value should ever
+// reach the SecretsClient once rejected.
+func TestConnectorService_WriteCredential_PathTraversal(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name          string
+		connectorType string
+		fieldName     string
+	}{
+		{"traversal in field_name", "send-email", "../other-tenant/apiKey"},
+		{"slash in field_name", "send-email", "a/b"},
+		{"traversal in connector_type", "../other-tenant", "apiKey"},
+		{"unregistered connector_type", "not-a-real-connector", "apiKey"},
+		{"empty connector_type", "", "apiKey"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			secrets := &fakeSecretsClient{}
+			svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
+
+			_, err := svc.WriteCredential(context.Background(), uuid.New(), tc.connectorType, tc.fieldName, "secret-value")
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, domain.ErrInvalidConnectorCredentialInput), "got: %v", err)
+			assert.Empty(t, secrets.written, "rejected input must never reach SecretsClient.Write")
+		})
+	}
+}
+
+func TestConnectorService_WriteCredential_UpstreamUnavailable(t *testing.T) {
+	secrets := &fakeSecretsClient{
+		writeFn: func(context.Context, string, map[string]string) error {
+			return errors.New("connection refused: dial tcp 10.0.0.5:8200")
+		},
+	}
+	svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
+
+	_, err := svc.WriteCredential(context.Background(), uuid.New(), "send-email", "apiKey", "x")
+	require.Error(t, err)
+}

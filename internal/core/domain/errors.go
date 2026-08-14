@@ -31,6 +31,10 @@ var (
 	// The client response is identical (400 INVALID_BPMN_XML — detection is not
 	// disclosed); the handler emits an internal security-alert log on this sentinel.
 	ErrForbiddenXML = errors.New("forbidden XML construct")
+	// ErrInvalidConnectorCredentialInput marks a connector_type/field_name that
+	// fails WriteCredential's charset allowlist or isn't a registered connector
+	// type — rejected before either value is interpolated into an OpenBao path.
+	ErrInvalidConnectorCredentialInput = errors.New("invalid connector credential input")
 )
 
 type BPMNErrorCode string
@@ -43,6 +47,8 @@ const (
 	BPMNErrMissingAssignmentDefinition  BPMNErrorCode = "MISSING_ASSIGNMENT_DEFINITION"
 	BPMNErrInvalidTaskDefinitionType    BPMNErrorCode = "INVALID_TASK_DEFINITION_TYPE"
 	BPMNWarnUnknownStageType            BPMNErrorCode = "UNKNOWN_STAGE_TYPE"
+	BPMNWarnUnknownConnectorType        BPMNErrorCode = "UNKNOWN_CONNECTOR_TYPE"
+	BPMNWarnConnectorTaskHasAssignment  BPMNErrorCode = "CONNECTOR_TASK_HAS_ASSIGNMENT"
 	BPMNErrTaskNotInLane                BPMNErrorCode = "TASK_NOT_IN_LANE"
 	BPMNErrCandidateGroupsEmpty         BPMNErrorCode = "CANDIDATE_GROUPS_EMPTY"
 	BPMNErrInvalidCandidateUser         BPMNErrorCode = "INVALID_CANDIDATE_USER"

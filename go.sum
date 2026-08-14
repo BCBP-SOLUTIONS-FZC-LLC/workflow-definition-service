@@ -10,8 +10,10 @@ github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.2.1 h1:paQLZYcqdCer4lwT7
 github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.2.1/go.mod h1:r5pfSBAnADcKv+6S5Ih/hGEbLr08iu9fywko5k1KLA8=
 github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon v1.1.2 h1:0DqZ1/HTBRDXnk6hgZ8RwJQDLU7Ua5XdqY1Jst//K6k=
 github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon v1.1.2/go.mod h1:+PVVhiuBNSf1apuJUjoNNG4Y0Uduko/ikzzkfK/kido=
-github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.1.0 h1:7R5ceY5SmGWS4EvLSYjxKlR3pdeP2VdeEtZzSyZSpPc=
-github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.1.0/go.mod h1:5qVCsQ5Alfeux8OJj+cMoBOpXeaL2e4ZF1K5Swyq7Xo=
+github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors v0.0.0-20260814044400-bb010072f28c h1:bW8qSneaTKKRSyk4vH59tQ0qUHLK2VD2v9TpYr6JFnc=
+github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors v0.0.0-20260814044400-bb010072f28c/go.mod h1:84EKESRmuh0vugBkmLlQK9knsapBNuM44OxlqdOad6I=
+github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.2.0-rc.1 h1:wc0ONZzlk3iNBiFOlHu+H4Ft7Ht5JafRSswB6HfPjA0=
+github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.2.0-rc.1/go.mod h1:5qVCsQ5Alfeux8OJj+cMoBOpXeaL2e4ZF1K5Swyq7Xo=
 github.com/KyleBanks/depth v1.2.1 h1:5h8fQADFrWtarTdtDudMmGsC7GPbOAu6RVB3ffsVFHc=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=

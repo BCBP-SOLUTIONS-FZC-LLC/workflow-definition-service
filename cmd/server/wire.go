@@ -26,6 +26,7 @@ import (
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres"
 	bpmncompiler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 )
 
@@ -72,6 +73,7 @@ func newApp(cfg *config.Config) (*app, error) {
 
 	var membershipSvc *outboundhttp.MembershipClient
 	var executionSvc *outboundgrpc.ExecutionClient
+	var secretsSvc port.SecretsClient
 
 	if cfg.OrgMembershipBaseURL != "" {
 		membershipSvc = outboundhttp.NewMembershipClient(cfg.OrgMembershipBaseURL, cfg.MembershipClientTimeout)
@@ -84,6 +86,9 @@ func newApp(cfg *config.Config) (*app, error) {
 			tracingShutdown()
 			return nil, fmt.Errorf("execution client: %w", err)
 		}
+	}
+	if cfg.OpenBaoAddr != "" {
+		secretsSvc = outboundhttp.NewSecretsClient(cfg.OpenBaoAddr, cfg.OpenBaoToken, cfg.OpenBaoMount, cfg.SecretsClientTimeout)
 	}
 
 	relay, err := outbox.NewRunner(outbox.Config{
@@ -145,6 +150,11 @@ func newApp(cfg *config.Config) (*app, error) {
 		Log:      log,
 	})
 
+	connectorSvc := service.NewConnectorService(service.ConnectorDeps{
+		Secrets: secretsSvc,
+		Log:     log,
+	})
+
 	h := httphandler.New(httphandler.Services{
 		Workflows:  workflowSvc,
 		Drafts:     draftSvc,
@@ -152,6 +162,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		Validation: validationSvc,
 		// Inbound events arrive over HTTP via POST /internal/events
 		Membership: versionSvc,
+		Connectors: connectorSvc,
 		Log:        log,
 	})
 
