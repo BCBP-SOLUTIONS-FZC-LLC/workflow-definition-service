@@ -266,12 +266,19 @@ func IsBoundaryEventType(t FlowNodeType) bool {
 const ConnectorTaskDefPrefix = "connector:"
 
 // ConnectorType returns the connector type name and true when ext's
-// taskDefinition is connector:-prefixed (design/LLD/workflow_connectors.md §4.1).
+// taskDefinition is connector:-prefixed with a non-empty name
+// (design/LLD/workflow_connectors.md §4.1). An empty name after the prefix
+// (type="connector:") is not "recognized as connector, unknown type" — it
+// can never be registered, so it falls through as a rejected element rather
+// than reaching the lenient unknown-type warning path.
 func ConnectorType(ext BPMNExtensionElements) (string, bool) {
 	if ext.TaskDefinition == nil {
 		return "", false
 	}
 	name, ok := strings.CutPrefix(ext.TaskDefinition.Type, ConnectorTaskDefPrefix)
+	if name == "" {
+		return "", false
+	}
 	return name, ok
 }
 

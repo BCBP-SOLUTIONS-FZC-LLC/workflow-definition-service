@@ -23,6 +23,7 @@ func (UserTaskHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *bp
 		// Connector tasks are fully automation-only — no assignmentDefinition
 		// required or expected (design/LLD/workflow_connectors.md §5.3).
 		errs = append(errs, validator.ValidateConnectorTaskDef(task.ID, connectorType)...)
+		errs = append(errs, validator.ValidateConnectorTaskNoAssignment(task.ID, task.ExtensionElements)...)
 		errs = append(errs, validator.ValidateLaneMembership(task.ID, laneRefs)...)
 		errs = append(errs, validator.ValidateDeptID(task.ID, proc)...)
 		return errs

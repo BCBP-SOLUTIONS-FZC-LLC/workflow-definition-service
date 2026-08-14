@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors/pkg/registry"
 	"github.com/google/uuid"
@@ -10,6 +11,13 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
+
+// validConnectorSegment bounds connectorType/fieldName before either is
+// interpolated into an OpenBao path (secrets_client.go) — a raw, unvalidated
+// segment there is a path-traversal write into another tenant's secret path
+// (a "/"- or ".."-bearing value climbs out of tenantID's own subtree, since
+// only path's own leading slash gets trimmed downstream).
+var validConnectorSegment = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 type ConnectorDeps struct {
 	Secrets port.SecretsClient
@@ -40,6 +48,12 @@ func (s *ConnectorService) WriteCredential(
 	tenantID uuid.UUID,
 	connectorType, fieldName, value string,
 ) (secretPath string, err error) {
+	if _, ok := registry.All()[connectorType]; !ok {
+		return "", fmt.Errorf("%w: unrecognized connector_type %q", domain.ErrInvalidConnectorCredentialInput, connectorType)
+	}
+	if !validConnectorSegment.MatchString(fieldName) {
+		return "", fmt.Errorf("%w: field_name must match %s", domain.ErrInvalidConnectorCredentialInput, validConnectorSegment.String())
+	}
 	if s.secrets == nil {
 		return "", fmt.Errorf("%w: OpenBao is not configured", domain.ErrUpstreamUnavailable)
 	}

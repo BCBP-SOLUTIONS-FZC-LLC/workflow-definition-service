@@ -3,6 +3,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -98,4 +99,24 @@ func TestWriteConnectorCredential_UpstreamUnavailable(t *testing.T) {
 	body := map[string]any{"connector_type": "send-email", "field_name": "apiKey", "value": "x"}
 	w := do(newRouter(h), req(http.MethodPost, "/api/v1/connectors/credentials", body))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+// TestWriteConnectorCredential_UpstreamUnavailable_NoRawErrorLeak is the
+// regression test for the raw-OpenBao-error-leak finding: a wrapped upstream
+// error (network error or raw HTTP response body, as secrets_client.go's
+// real errors carry) must never reach the client-facing detail field.
+func TestWriteConnectorCredential_UpstreamUnavailable_NoRawErrorLeak(t *testing.T) {
+	rawUpstreamText := "openbao write \"connectors/tenant/send-email/apiKey\": status 500: {\"errors\":[\"internal storage backend at 10.0.0.5:8200 is sealed\"]}"
+	h := newConnectorHandler(&fakeConnectorSvc{
+		writeFn: func(context.Context, uuid.UUID, string, string, string) (string, error) {
+			return "", fmt.Errorf("write credential: %w: %s", domain.ErrUpstreamUnavailable, rawUpstreamText)
+		},
+	})
+
+	body := map[string]any{"connector_type": "send-email", "field_name": "apiKey", "value": "x"}
+	w := do(newRouter(h), req(http.MethodPost, "/api/v1/connectors/credentials", body))
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.NotContains(t, w.Body.String(), "10.0.0.5")
+	assert.NotContains(t, w.Body.String(), "sealed")
+	assert.NotContains(t, w.Body.String(), rawUpstreamText)
 }

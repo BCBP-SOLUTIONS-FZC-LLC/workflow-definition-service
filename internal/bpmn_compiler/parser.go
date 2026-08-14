@@ -152,10 +152,20 @@ func scanServiceTaskConnectorType(dec *xml.Decoder) (connectorType string, isCon
 			if t.Name.Space == nsBPMN && t.Name.Local == "serviceTask" {
 				depth++
 			}
-			if !isConnector && t.Name.Space == nsZeebe && t.Name.Local == "taskDefinition" {
+			// depth == 1 means still directly inside the outer serviceTask,
+			// never having descended into a (BPMN-illegal but syntactically
+			// parseable) nested one — a taskDefinition seen at depth > 1
+			// belongs to that inner element, not this one, and must not be
+			// misattributed to it.
+			if !isConnector && depth == 1 && t.Name.Space == nsZeebe && t.Name.Local == "taskDefinition" {
 				for _, a := range t.Attr {
 					if a.Name.Local == "type" {
-						if name, ok := strings.CutPrefix(a.Value, bpmncore.ConnectorTaskDefPrefix); ok {
+						// An empty name after the prefix (type="connector:") is
+						// not a connector task at all — mirrors
+						// bpmncore.ConnectorType's own empty-name guard, since
+						// this scan can't call that helper directly (it reads
+						// raw tokens, not unmarshaled BPMNExtensionElements).
+						if name, ok := strings.CutPrefix(a.Value, bpmncore.ConnectorTaskDefPrefix); ok && name != "" {
 							connectorType, isConnector = name, true
 						}
 					}
