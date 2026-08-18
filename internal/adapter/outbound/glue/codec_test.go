@@ -116,6 +116,21 @@ func TestCodec_Decode_TooShort(t *testing.T) {
 	}
 }
 
+// TestRegistrySchemaName_ConvertsDotsToUnderscores is the regression test
+// for the schema-name mismatch: platform-schemagov's register command has
+// no name-override and always registers Glue schemas under the underscored
+// JSON schema filename stem (e.g. "workflow_template_published"), never the
+// dotted wire event type real callers pass in (e.g.
+// "workflow.template.published"). getSchemaVersionID must convert before
+// calling Glue's GetSchemaVersion, or every real (non-stub) publish 404s.
+func TestRegistrySchemaName_ConvertsDotsToUnderscores(t *testing.T) {
+	got := registrySchemaName("workflow.template.published")
+	want := "workflow_template_published"
+	if got != want {
+		t.Errorf("registrySchemaName(%q) = %q, want %q", "workflow.template.published", got, want)
+	}
+}
+
 func TestCodec_Decode_WrongVersionByte(t *testing.T) {
 	codec := NewCodec(aws.Config{}, "workflow-template-events", false, "", 0)
 
