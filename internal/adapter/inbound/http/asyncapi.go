@@ -40,6 +40,7 @@ type asyncMessage struct {
 	Name        string    `yaml:"name"`
 	Title       string    `yaml:"title"`
 	Summary     string    `yaml:"summary"`
+	Desc        string    `yaml:"description"`
 	ContentType string    `yaml:"contentType"`
 	Payload     asyncRef  `yaml:"payload"`
 	Bindings    yaml.Node `yaml:"bindings"`
@@ -86,6 +87,59 @@ type asyncProp struct {
 	Enum    []string   `yaml:"enum"`
 	Ref     string     `yaml:"$ref"`
 	Items   *asyncProp `yaml:"items"`
+}
+
+// UnmarshalYAML lets Type accept either a scalar ("string") or the
+// JSON-Schema nullable-field idiom (["string", "null"]), joining a sequence
+// with "|" and dropping "null" — plain yaml.Unmarshal into a string field
+// errors on the sequence form, which this spec's own promoted_from_version_id
+// property already uses.
+func (p *asyncProp) UnmarshalYAML(value *yaml.Node) error {
+	type rawProp struct {
+		Type    yaml.Node  `yaml:"type"`
+		Format  string     `yaml:"format"`
+		Desc    string     `yaml:"description"`
+		Example any        `yaml:"example"`
+		Enum    []string   `yaml:"enum"`
+		Ref     string     `yaml:"$ref"`
+		Items   *asyncProp `yaml:"items"`
+	}
+	var raw rawProp
+	if err := value.Decode(&raw); err != nil {
+		return fmt.Errorf("decode asyncapi prop node: %w", err)
+	}
+	*p = asyncProp{
+		Type:    flattenTypeNode(&raw.Type),
+		Format:  raw.Format,
+		Desc:    raw.Desc,
+		Example: raw.Example,
+		Enum:    raw.Enum,
+		Ref:     raw.Ref,
+		Items:   raw.Items,
+	}
+	return nil
+}
+
+func flattenTypeNode(n *yaml.Node) string {
+	switch n.Kind {
+	case yaml.SequenceNode:
+		var parts []string
+		for _, c := range n.Content {
+			if c.Value != "null" {
+				parts = append(parts, c.Value)
+			}
+		}
+		return strings.Join(parts, "|")
+	case yaml.ScalarNode:
+		return n.Value
+	case yaml.DocumentNode, yaml.MappingNode, yaml.AliasNode:
+		// "type:" is never one of these shapes in an AsyncAPI/JSON-Schema
+		// property — fall back to empty rather than guess at n.Value's
+		// meaning for a node kind that doesn't carry a scalar value.
+		return ""
+	default:
+		return ""
+	}
 }
 
 func AsyncAPIHandler(c *gin.Context) {
@@ -258,7 +312,7 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 	renderServers(w, &s.Servers)
 
 	w.WriteString(`<div class="section" id="messages"><div class="section-title">Messages</div>`)
-	msgOrder := []string{"WorkflowTemplatePublished"}
+	msgOrder := []string{"WorkflowTemplatePublished", "DepartmentMembershipRevokedInbound"}
 	for _, name := range msgOrder {
 		msg, ok := s.Comps.Messages[name]
 		if !ok {
@@ -272,7 +326,8 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 	schemaOrder := []string{
 		"EventEnvelope",
 		"WorkflowTemplatePublishedPayload",
-		"WorkflowPublishedData",
+		"WorkflowTemplatePublishedEnvelope",
+		"DepartmentMembershipRevokedInbound",
 	}
 	for _, name := range schemaOrder {
 		sc, ok := s.Comps.Schemas[name]
@@ -475,24 +530,41 @@ func renderServers(w *bytes.Buffer, node *yaml.Node) {
 	w.WriteString(`</div></div>`)
 }
 
+// isInboundMessage reports whether a components.messages key documents a
+// consumed (receive) event rather than one this service publishes. Inbound
+// entries deliberately carry an "Inbound" key suffix — see api/asyncapi.yaml
+// — since their payload schema is owned/registered by the producing service,
+// not this one (mirrors execution_service's own asyncapi.yaml convention).
+func isInboundMessage(name string) bool {
+	return strings.HasSuffix(name, "Inbound")
+}
+
 func renderMessage(w *bytes.Buffer, name string, msg *asyncMessage, comps *asyncComponents) {
 	title := msg.Title
 	if title == "" {
 		title = name
 	}
 	summary := strings.TrimSpace(msg.Summary)
+	if summary == "" {
+		summary = strings.TrimSpace(msg.Desc)
+	}
 
 	eventType := snsEventType(&msg.Bindings)
 
+	badgeClass, badgeLabel := "m-send", "SEND"
+	if isInboundMessage(name) {
+		badgeClass, badgeLabel = "m-recv", "RECEIVE"
+	}
+
 	fmt.Fprintf(w, `<div class="card" id="msg-%s">
 <div class="card-header">
-  <span class="badge m-send">SEND</span>
+  <span class="badge %s">%s</span>
   <span class="card-title">%s</span>
   %s
   <button class="toggle-btn" type="button" tabindex="-1" aria-hidden="true">▸</button>
 </div>
 <div class="card-body" style="display:none">
-`, name, html.EscapeString(title),
+`, name, badgeClass, badgeLabel, html.EscapeString(title),
 		func() string {
 			if eventType != "" {
 				return fmt.Sprintf(`<span class="sns-attr">event_type: %s</span>`, html.EscapeString(eventType))

@@ -28,9 +28,12 @@ type membershipRevoker interface {
 }
 
 type membershipRevokedPayload struct {
-	UserID       string `json:"user_id"`
+	UserID string `json:"user_id"`
+	// DepartmentID is parsed as a UUID by HandleMembershipRevoked today, but
+	// its format is owned by the Org & Membership Service and not formally
+	// confirmed on our side — see definition_service.md §7.4.2.
 	DepartmentID string `json:"department_id"`
-	Role         string `json:"role"`
+	Role         string `json:"role"` // the membership role being revoked
 }
 
 // Consumer retry contract: 2xx = handled (incl. dedup no-op), 400 = malformed (non-retryable), 500 = transient (retry).

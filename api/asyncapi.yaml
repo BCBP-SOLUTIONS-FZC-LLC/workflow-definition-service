@@ -2,7 +2,13 @@ asyncapi: 3.0.0
 info:
   title: workflow-definition-svc events
   version: 1.0.0
-  description: Outbound events published to wf-template-events (SNS → SQS fan-out)
+  description: >
+    Outbound: workflow template version publishes, sent to wf-template-events
+    (SNS → SQS fan-out). Inbound: DepartmentMembershipRevoked, consumed off the
+    shared Workflow-Events Consumer (POST /internal/events) — documented here
+    as a `receive` operation for completeness, but its payload schema is owned
+    and registered by the producing service (Org & Membership), NOT
+    re-registered by Definition.
 
 channels:
   wf/template/events:
@@ -14,6 +20,23 @@ channels:
       WorkflowTemplatePublished:
         $ref: '#/components/messages/WorkflowTemplatePublished'
 
+  # Schema below is documentation-only (no "Payload" suffix → schema-gov skips
+  # it); the authoritative contract is owned/registered by the Org &
+  # Membership Service.
+  iam/membership/events:
+    address: iam-membership-events
+    description: Consumed off membership-wf-q (dedup consumer `membership-wf-q`).
+    bindings:
+      sqs:
+        queue:
+          name: membership-wf-q
+          fifoQueue: false
+          redrivePolicy:
+            deadLetterQueue: { name: membership-wf-q-dlq }
+            maxReceiveCount: 5
+    messages:
+      department.membership.revoked: { $ref: '#/components/messages/DepartmentMembershipRevokedInbound' }
+
 operations:
   publishTemplateEvents:
     action: send
@@ -21,6 +44,14 @@ operations:
       $ref: '#/channels/wf~1template~1events'
     messages:
       - $ref: '#/channels/wf~1template~1events/messages/WorkflowTemplatePublished'
+  receiveMembershipEvents:
+    action: receive
+    channel: { $ref: '#/channels/iam~1membership~1events' }
+    description: >
+      Invalidates any workflow version whose default-assignee node targets the
+      revoked user+department pair (marks the version invalid with a per-node
+      error), and pauses the user's active tasks in Execution if wired. Dedup
+      consumer `membership-wf-q`.
 
 components:
   messages:
@@ -34,6 +65,19 @@ components:
         slack: "#workflow-engine"
       payload:
         $ref: '#/components/schemas/WorkflowTemplatePublishedEnvelope'
+
+    DepartmentMembershipRevokedInbound:
+      name: DepartmentMembershipRevoked
+      x-lifecycle: { status: active }
+      title: Department membership revoked (owned by Org & Membership Service)
+      description: >
+        Consumed to invalidate any workflow version whose default-assignee
+        node targets this user+department pair, and to pause the user's
+        active Execution tasks if wired. Recorded as processed only after
+        both side effects complete, so a transient failure causes a retry
+        rather than a silent skip.
+      x-schema-owner: iam-org-membership
+      payload: { $ref: '#/components/schemas/DepartmentMembershipRevokedInbound' }
 
   schemas:
     # Shared event envelope fields emitted by every outbox event.
@@ -140,3 +184,25 @@ components:
           description: >
             ID of the version that was previously active when this version
             was promoted. Null for the first publish of a workflow.
+
+    # Documentation-only, like execution_service's own *Inbound schemas: this
+    # event is owned/registered by its producer (Org & Membership), not by
+    # Definition, so the name deliberately omits the "Payload" suffix
+    # schema-gov's extractor matches on.
+    DepartmentMembershipRevokedInbound:
+      type: object
+      additionalProperties: true
+      required: [user_id, department_id, role]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        department_id:
+          type: string
+          description: >
+            Format owned by the Org & Membership Service. HandleMembershipRevoked
+            parses it as a UUID today, but that shape is not formally confirmed
+            on Definition's side — see definition_service.md §7.4.2.
+        role:
+          type: string
+          description: The membership role being revoked.
