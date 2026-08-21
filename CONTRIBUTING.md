@@ -410,6 +410,7 @@ Use the PR template (`.github/pull_request_template.md`) as your checklist. Key 
 - `make cover-check` must pass (≥ 95%)
 - New migration files must have both `Up` and `Down`
 - New outbound event types must be documented in `.claude/CLAUDE.md`
+- New or changed consumed event types must also be documented in `api/asyncapi.yaml` (as a `receive` operation/message/schema, non-`Payload`-suffixed since the producer owns registration) — not just the outbound side
 - All `outbox.Enqueue` calls must be inside a `Transactor.RunInTx` callback
 
 ---
