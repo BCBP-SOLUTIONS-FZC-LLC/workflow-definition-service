@@ -57,7 +57,7 @@ func (s *VersionService) HandleMembershipRevoked(
 	// rather than silently skip on the next delivery (at-least-once guarantee).
 	// Both invalidateVersion and PauseUserTasks are idempotent, so re-running on
 	// concurrent delivery is safe.
-	isNew, err := s.processedEvents.RecordIfNew(ctx, eventID, "membership-wf-q", "DepartmentMembershipRevoked")
+	isNew, err := s.processedEvents.RecordIfNew(ctx, eventID, "membership-wf-q", "department.membership.revoked")
 	if err != nil {
 		return fmt.Errorf("record processed event: %w", err)
 	}
