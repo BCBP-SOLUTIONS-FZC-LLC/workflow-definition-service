@@ -43,7 +43,7 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 	}
 
 	switch env.Type {
-	case "DepartmentMembershipRevoked":
+	case "department.membership.revoked":
 		h.handleMembershipRevoked(c, env)
 	default:
 		// Unknown types are accepted and ignored so new upstream event types do
@@ -57,11 +57,11 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 }
 
 func (h *Handler) handleMembershipRevoked(c *gin.Context, env events.Envelope[json.RawMessage]) {
-	const evtType = "DepartmentMembershipRevoked"
+	const evtType = "department.membership.revoked"
 	var p membershipRevokedPayload
 	if err := json.Unmarshal(env.Payload, &p); err != nil {
 		internalEventsIngestTotal.WithLabelValues(evtType, "bad_payload").Inc()
-		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid DepartmentMembershipRevoked payload", nil)
+		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid department.membership.revoked payload", nil)
 		return
 	}
 	eventID, err := uuid.Parse(env.ID)
