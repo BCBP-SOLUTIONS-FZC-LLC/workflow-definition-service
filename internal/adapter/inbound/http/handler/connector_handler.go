@@ -83,6 +83,9 @@ func (h *Handler) WriteConnectorCredential(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !requireAdmin(c) {
+		return
+	}
 
 	var req writeConnectorCredentialReq
 	if err := c.ShouldBindJSON(&req); err != nil {

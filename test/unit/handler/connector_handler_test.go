@@ -75,7 +75,9 @@ func TestWriteConnectorCredential_Success(t *testing.T) {
 	})
 
 	body := map[string]any{"connector_type": "send-email", "field_name": "apiKey", "value": "sg-live-abc"}
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/connectors/credentials", body))
+	r := req(http.MethodPost, "/api/v1/connectors/credentials", body)
+	r.Header.Set("x-tenant-roles", "tenant_admin")
+	w := do(newRouter(h), r)
 	assert.Equal(t, http.StatusCreated, w.Code)
 
 	var resp map[string]string
@@ -83,9 +85,17 @@ func TestWriteConnectorCredential_Success(t *testing.T) {
 	assert.Contains(t, resp["secret_path"], "send-email/apiKey")
 }
 
+func TestWriteConnectorCredential_Forbidden(t *testing.T) {
+	h := newConnectorHandler(&fakeConnectorSvc{})
+	w := do(newRouter(h), req(http.MethodPost, "/api/v1/connectors/credentials", map[string]any{"connector_type": "send-email", "field_name": "apiKey", "value": "x"}))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
 func TestWriteConnectorCredential_BindError(t *testing.T) {
 	h := newConnectorHandler(&fakeConnectorSvc{})
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/connectors/credentials", map[string]any{"connector_type": "send-email"}))
+	r := req(http.MethodPost, "/api/v1/connectors/credentials", map[string]any{"connector_type": "send-email"})
+	r.Header.Set("x-tenant-roles", "tenant_admin")
+	w := do(newRouter(h), r)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -97,7 +107,9 @@ func TestWriteConnectorCredential_UpstreamUnavailable(t *testing.T) {
 	})
 
 	body := map[string]any{"connector_type": "send-email", "field_name": "apiKey", "value": "x"}
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/connectors/credentials", body))
+	r := req(http.MethodPost, "/api/v1/connectors/credentials", body)
+	r.Header.Set("x-tenant-roles", "tenant_admin")
+	w := do(newRouter(h), r)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
@@ -114,7 +126,9 @@ func TestWriteConnectorCredential_UpstreamUnavailable_NoRawErrorLeak(t *testing.
 	})
 
 	body := map[string]any{"connector_type": "send-email", "field_name": "apiKey", "value": "x"}
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/connectors/credentials", body))
+	r := req(http.MethodPost, "/api/v1/connectors/credentials", body)
+	r.Header.Set("x-tenant-roles", "tenant_admin")
+	w := do(newRouter(h), r)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.NotContains(t, w.Body.String(), "10.0.0.5")
 	assert.NotContains(t, w.Body.String(), "sealed")

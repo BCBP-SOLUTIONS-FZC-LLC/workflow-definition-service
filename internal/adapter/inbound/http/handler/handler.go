@@ -77,6 +77,30 @@ func New(s Services) *Handler {
 	}
 }
 
+// adminRoles are the x-tenant-roles values granting admin-only access
+// (definition_service.md §3.2), mirroring execution_service's own gate.
+var adminRoles = map[string]bool{
+	"tenant_admin": true,
+	"tenant_owner": true,
+}
+
+// requireAdmin writes 403 FORBIDDEN and returns false if the caller lacks
+// tenant_admin/tenant_owner — a hard gate for admin-only endpoints.
+func requireAdmin(c *gin.Context) bool {
+	rc, ok := gincommon.RequestContext(c)
+	if !ok {
+		writeProblem(c, http.StatusForbidden, CodeForbidden, "caller lacks tenant_admin/tenant_owner role", nil)
+		return false
+	}
+	for _, role := range rc.Roles {
+		if adminRoles[role] {
+			return true
+		}
+	}
+	writeProblem(c, http.StatusForbidden, CodeForbidden, "caller lacks tenant_admin/tenant_owner role", nil)
+	return false
+}
+
 func mustCtx(c *gin.Context) (tenantID, userID uuid.UUID, ok bool) {
 	rc, exists := gincommon.RequestContext(c)
 	if !exists {
