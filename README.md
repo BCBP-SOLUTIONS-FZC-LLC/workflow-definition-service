@@ -218,6 +218,7 @@ db/
 docs/
   architecture/          ← Mermaid diagram sources for ARCHITECTURE.md
   swagger/               ← OpenAPI spec served by the dev-mode Swagger UI
+  lld/                   ← in-repo copy of the design repo's LLD, kept content-identical
   bpmn-designer-guide.md ← BPMN modelling guide for business analysts / process owners
   ui-enrichment-guide.md ← Compiled-plan enrichment guide for ops/engineering reviewers
 ```

@@ -10,7 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Added
 
-- **Connector-task compiler exception + authoring endpoints** (`design/LLD/workflow_connectors.md`) — a `connector:<name>`-prefixed `serviceTask` compiles to a fully automation-only `StageDef` (no assignee/role fields), with `IOMapping` preserved and an unrecognized connector type warning rather than rejecting (the type might still be registered before the workflow is instantiated). `GET /connectors/registry` serves `workflow-connectors`' `pkg/registry` catalogue; `POST /connectors/credentials` writes a provider credential to OpenBao and returns only the resulting secret path — the raw value never appears in any response.
+- **Connector-task compiler exception + authoring endpoints** (per the `workflow_connectors` LLD) — a `connector:<name>`-prefixed `serviceTask` compiles to a fully automation-only `StageDef` (no assignee/role fields), with `IOMapping` preserved and an unrecognized connector type warning rather than rejecting (the type might still be registered before the workflow is instantiated). `GET /connectors/registry` serves `workflow-connectors`' `pkg/registry` catalogue; `POST /connectors/credentials` writes a provider credential to OpenBao and returns only the resulting secret path — the raw value never appears in any response.
 
 ### Changed
 
