@@ -29,15 +29,19 @@ spec:
         - port: {{ .Values.service.ports.http }}
           protocol: TCP
 
-    # Allow internal service-to-service traffic within the same namespace — both
-    # HTTP and gRPC (covers the Execution Service calling GetCompiledWorkflow).
+    # Named same-namespace callers (covers the Execution Service calling
+    # GetCompiledWorkflow) — not a blanket podSelector: {} allow.
+    {{- range .Values.networkPolicy.allowedCallers }}
     - from:
-        - podSelector: {}
+        - podSelector:
+            matchLabels:
+              {{- toYaml .podSelector | nindent 14 }}
       ports:
-        - port: {{ .Values.service.ports.http }}
+        - port: {{ $.Values.service.ports.http }}
           protocol: TCP
-        - port: {{ .Values.service.ports.grpc }}
+        - port: {{ $.Values.service.ports.grpc }}
           protocol: TCP
+    {{- end }}
 
     # Allow Prometheus to scrape /metrics — restricted to the monitoring namespace.
     {{- if .Values.networkPolicy.metricsIngress.enabled }}
@@ -49,7 +53,7 @@ spec:
             matchLabels:
               {{- toYaml .Values.networkPolicy.metricsIngress.podSelector | nindent 14 }}
       ports:
-        - port: {{ .Values.service.ports.http }}
+        - port: {{ .Values.service.ports.metrics }}
           protocol: TCP
     {{- end }}
 
@@ -90,13 +94,17 @@ spec:
         - port: 4317
           protocol: TCP
 
-    # Allow calls to other in-cluster services within the same namespace — covers
-    # ORG_MEMBERSHIP_BASE_URL (HTTP) and EXECUTION_SERVICE_ADDR (gRPC), both
-    # outbound dependencies of this service. If either points at a different
-    # namespace, add a scoped rule via networkPolicy.additionalEgressRules instead
-    # of widening this one.
+    # Named same-namespace egress targets — covers ORG_MEMBERSHIP_BASE_URL (HTTP)
+    # and EXECUTION_SERVICE_ADDR (gRPC), this service's only same-namespace
+    # outbound dependencies. Not a blanket podSelector: {} allow. If either target
+    # moves to a different namespace, add a scoped rule via
+    # networkPolicy.additionalEgressRules instead of widening this one.
+    {{- range .Values.networkPolicy.allowedEgressTargets }}
     - to:
-        - podSelector: {}
+        - podSelector:
+            matchLabels:
+              {{- toYaml .podSelector | nindent 14 }}
+    {{- end }}
 
     {{- with .Values.networkPolicy.additionalEgressRules }}
     {{- toYaml . | nindent 4 }}

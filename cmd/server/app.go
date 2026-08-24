@@ -26,6 +26,7 @@ type app struct {
 	pool           *pgcommon.Pool
 	cache          port.CacheStore
 	httpServer     *http.Server
+	metricsServer  *http.Server
 	grpcServer     *grpc.Server
 	outboxRelay    *outbox.Runner
 	shutdown       func()
@@ -54,6 +55,14 @@ func (a *app) startServers() {
 		a.log.Info("HTTP server starting", map[string]any{"addr": a.httpServer.Addr})
 		if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			a.log.Error("HTTP server error", map[string]any{"error": err.Error()})
+			os.Exit(1)
+		}
+	}()
+
+	go func() {
+		a.log.Info("metrics server starting", map[string]any{"addr": a.metricsServer.Addr})
+		if err := a.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			a.log.Error("metrics server error", map[string]any{"error": err.Error()})
 			os.Exit(1)
 		}
 	}()
@@ -89,6 +98,9 @@ func (a *app) startServers() {
 func (a *app) stopServers(ctx context.Context) {
 	if err := a.httpServer.Shutdown(ctx); err != nil {
 		a.log.Error("HTTP server shutdown error", map[string]any{"error": err.Error()})
+	}
+	if err := a.metricsServer.Shutdown(ctx); err != nil {
+		a.log.Error("metrics server shutdown error", map[string]any{"error": err.Error()})
 	}
 	a.grpcServer.GracefulStop()
 

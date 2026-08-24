@@ -13,6 +13,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgmetrics"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -188,12 +189,20 @@ func newApp(cfg *config.Config) (*app, error) {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsSrv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", cfg.MetricsPort),
+		Handler: metricsMux,
+	}
+
 	return &app{
 		cfg:            cfg,
 		log:            log,
 		pool:           pool,
 		cache:          cache,
 		httpServer:     srv,
+		metricsServer:  metricsSrv,
 		grpcServer:     grpcSrv,
 		outboxRelay:    relay,
 		shutdown:       tracingShutdown,

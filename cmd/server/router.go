@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
@@ -38,7 +37,6 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 
 	r.GET("/healthz", healthzHandler)
 	r.GET("/readyz", readyzHandler(pool, cache))
-	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	if cfg.AppEnv == "dev" {
 		r.StaticFile("/api/openapi.yaml", "docs/swagger/openapi.yaml")

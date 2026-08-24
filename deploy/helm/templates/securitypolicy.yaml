@@ -1,5 +1,5 @@
 {{- $httpRouteEnabled := and .Values.ingress.enabled (eq (.Values.ingress.type | default "Ingress") "HTTPRoute") }}
-{{- $anyPolicyEnabled := or .Values.ingress.securityPolicy.cors.enabled .Values.ingress.securityPolicy.rateLimit.enabled }}
+{{- $anyPolicyEnabled := .Values.ingress.securityPolicy.cors.enabled }}
 {{- if and $httpRouteEnabled .Values.ingress.securityPolicy.enabled $anyPolicyEnabled }}
 # Envoy Gateway SecurityPolicy — attaches CORS and/or rate limiting to the
 # HTTPRoute at the gateway layer. Requires Envoy Gateway v0.6+ (gateway.envoyproxy.io/v1alpha1 CRD).
@@ -33,13 +33,9 @@ spec:
       {{- toYaml .Values.ingress.securityPolicy.cors.allowHeaders | nindent 6 }}
     maxAge: {{ .Values.ingress.securityPolicy.cors.maxAge | quote }}
   {{- end }}
-  {{- if .Values.ingress.securityPolicy.rateLimit.enabled }}
-  rateLimit:
-    type: Global
-    global:
-      rules:
-        - limit:
-            requests: {{ .Values.ingress.securityPolicy.rateLimit.requestsPerUnit }}
-            unit: {{ .Values.ingress.securityPolicy.rateLimit.unit }}
-  {{- end }}
 {{- end }}
+{{- /*
+  Envoy Gateway's SecurityPolicy CRD has no spec.rateLimit field — rate limiting
+  is a separate BackendTrafficPolicy CRD. Add a templates/backendtrafficpolicy.yaml
+  if/when rate limiting is actually needed (mirrors stream_gateway's chart).
+*/}}

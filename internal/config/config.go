@@ -15,6 +15,10 @@ type Config struct {
 
 	HTTPPort int
 	GRPCPort int
+	// MetricsPort is deliberately a separate port from HTTPPort — /metrics is
+	// served on its own http.Server so NetworkPolicy can scope Prometheus
+	// scrape ingress independently of the API port.
+	MetricsPort int
 
 	// OTel — consumed by platform-gincommon.InitTracingFromEnv()
 	OTELServiceName        string
@@ -80,8 +84,9 @@ func Load() (*Config, error) {
 		AppEnv:       getEnvOrDefault("APP_ENV", "dev"),
 		BuildVersion: getEnvOrDefault("BUILD_VERSION", "dev"),
 
-		HTTPPort: getEnvIntOrDefault("HTTP_PORT", 8080),
-		GRPCPort: getEnvIntOrDefault("GRPC_PORT", 9090),
+		HTTPPort:    getEnvIntOrDefault("HTTP_PORT", 8080),
+		GRPCPort:    getEnvIntOrDefault("GRPC_PORT", 9090),
+		MetricsPort: getEnvIntOrDefault("METRICS_PORT", 9091),
 
 		OTELServiceName:        getEnvOrDefault("OTEL_SERVICE_NAME", "workflow-definition-svc"),
 		OTELExporterEndpoint:   getEnvOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
@@ -143,6 +148,9 @@ func (c *Config) validate() error {
 	}
 	if c.GRPCPort < 1 || c.GRPCPort > 65535 {
 		return fmt.Errorf("GRPC_PORT must be in [1, 65535]")
+	}
+	if c.MetricsPort < 1 || c.MetricsPort > 65535 {
+		return fmt.Errorf("METRICS_PORT must be in [1, 65535]")
 	}
 	if c.PGMaxConns <= 0 {
 		return fmt.Errorf("PG_MAX_CONNS must be > 0")

@@ -54,6 +54,9 @@ spec:
             - name: grpc
               containerPort: {{ .Values.service.ports.grpc }}
               protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.service.ports.metrics }}
+              protocol: TCP
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

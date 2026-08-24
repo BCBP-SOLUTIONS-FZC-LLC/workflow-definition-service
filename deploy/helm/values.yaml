@@ -16,8 +16,9 @@ serviceAccount:
 service:
   type: ClusterIP
   ports:
-    http: 8080  # REST/OpenAPI, /healthz, /readyz, /metrics
-    grpc: 9090  # GetCompiledWorkflow (called by the Execution Service)
+    http: 8080     # REST/OpenAPI, /healthz, /readyz
+    grpc: 9090     # GetCompiledWorkflow (called by the Execution Service)
+    metrics: 9091  # /metrics only — served on its own http.Server (cmd/server/wire.go)
 
 autoscaling:
   enabled: true
@@ -42,6 +43,7 @@ env:
   APP_ENV: "prod"                                 # enables INTERNAL_API_TOKEN + ORG_MEMBERSHIP_BASE_URL + EXECUTION_SERVICE_ADDR validation (internal/config/config.go validate())
   HTTP_PORT: "8080"
   GRPC_PORT: "9090"
+  METRICS_PORT: "9091"
   OTEL_SERVICE_NAME: "workflow-definition-svc"     # exact value from internal/config/config.go default
   OTEL_EXPORTER_OTLP_ENDPOINT: ""                  # e.g. otel-collector.observability:4317
   OTEL_EXPORTER_OTLP_INSECURE: "false"
@@ -171,6 +173,11 @@ networkPolicy:
   # Optional pod label selector — combined with namespaceSelector (logical AND).
   # Leave empty ({}) to allow all pods in the ingress controller namespace.
   ingressControllerPodSelector: {}
+  # Named same-namespace callers, replacing a blanket podSelector: {} allow.
+  # Execution Service calls both the HTTP API and GetCompiledWorkflow over gRPC.
+  allowedCallers:
+    - podSelector:
+        app.kubernetes.io/name: workflow-execution-service
   metricsIngress:
     enabled: true
     # Namespace where Prometheus runs.
@@ -179,6 +186,14 @@ networkPolicy:
     # Pod label selector for the Prometheus pod.
     podSelector:
       app.kubernetes.io/name: prometheus
+  # Named same-namespace egress targets, replacing a blanket podSelector: {} allow.
+  # ORG_MEMBERSHIP_BASE_URL (HTTP) and EXECUTION_SERVICE_ADDR (gRPC) are this
+  # service's only same-namespace outbound dependencies.
+  allowedEgressTargets:
+    - podSelector:
+        app.kubernetes.io/name: iam-user-profile
+    - podSelector:
+        app.kubernetes.io/name: workflow-execution-service
   # If the Execution Service (gRPC caller) lives in a different namespace than this
   # release, add an ingress rule here restricted to port 9090.
   additionalIngressRules: []
@@ -245,10 +260,9 @@ ingress:
         - Content-Type
         - X-Idempotency-Key
       maxAge: "86400"
-    rateLimit:
-      enabled: false
-      requestsPerUnit: 1000
-      unit: Second          # Second | Minute | Hour
+    # No rateLimit knob here: Envoy Gateway configures rate limiting via a
+    # separate BackendTrafficPolicy CRD, not a field on SecurityPolicy
+    # (see securitypolicy.yaml's own comment).
 
   className: ""
   annotations: {}
