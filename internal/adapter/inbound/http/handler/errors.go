@@ -192,6 +192,8 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 		return http.StatusUnprocessableEntity, CodeAssigneeIneligible, err.Error(), nil
 	case errors.Is(err, domain.ErrInvalidConnectorCredentialInput):
 		return http.StatusBadRequest, CodeInvalidInput, err.Error(), nil
+	case errors.Is(err, domain.ErrInvalidConnectorAliasInput):
+		return http.StatusBadRequest, CodeInvalidInput, err.Error(), nil
 	case errors.As(err, &valErr):
 		p := make([]invalidParam, len(valErr.Errors))
 		for i, e := range valErr.Errors {

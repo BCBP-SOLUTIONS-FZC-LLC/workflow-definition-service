@@ -8,11 +8,18 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors/pkg/registry"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
 type connectorSvc interface {
 	Registry(ctx context.Context) map[string]registry.Definition
 	WriteCredential(ctx context.Context, tenantID uuid.UUID, connectorType, fieldName, value string) (string, error)
+	ListAliases(ctx context.Context) ([]domain.ConnectorRestAlias, []domain.ConnectorSQLAlias, error)
+	WriteRestAlias(ctx context.Context, a domain.ConnectorRestAlias) error
+	WriteSQLAlias(ctx context.Context, q domain.ConnectorSQLAlias) error
+	DeleteRestAlias(ctx context.Context, alias string) (bool, error)
+	DeleteSQLAlias(ctx context.Context, alias string) (bool, error)
 }
 
 type connectorFieldResp struct {

@@ -68,6 +68,15 @@ type ProcessedEventRepository interface {
 	RecordIfNew(ctx context.Context, eventID uuid.UUID, consumer, eventType string) (bool, error)
 }
 
+type ConnectorAliasRepository interface {
+	ListRest(ctx context.Context) ([]domain.ConnectorRestAlias, error)
+	ListSQL(ctx context.Context) ([]domain.ConnectorSQLAlias, error)
+	UpsertRest(ctx context.Context, a domain.ConnectorRestAlias) error
+	UpsertSQL(ctx context.Context, q domain.ConnectorSQLAlias) error
+	DeleteRest(ctx context.Context, alias string) (bool, error)
+	DeleteSQL(ctx context.Context, alias string) (bool, error)
+}
+
 type WorkflowFilter struct {
 	Search      *string
 	BusinessKey *string

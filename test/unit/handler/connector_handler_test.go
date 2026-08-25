@@ -17,8 +17,13 @@ import (
 )
 
 type fakeConnectorSvc struct {
-	registryFn func(context.Context) map[string]registry.Definition
-	writeFn    func(context.Context, uuid.UUID, string, string, string) (string, error)
+	registryFn    func(context.Context) map[string]registry.Definition
+	writeFn       func(context.Context, uuid.UUID, string, string, string) (string, error)
+	listAliasesFn func(context.Context) ([]domain.ConnectorRestAlias, []domain.ConnectorSQLAlias, error)
+	writeRestFn   func(context.Context, domain.ConnectorRestAlias) error
+	writeSQLFn    func(context.Context, domain.ConnectorSQLAlias) error
+	deleteRestFn  func(context.Context, string) (bool, error)
+	deleteSQLFn   func(context.Context, string) (bool, error)
 }
 
 func (f *fakeConnectorSvc) Registry(ctx context.Context) map[string]registry.Definition {
@@ -33,6 +38,41 @@ func (f *fakeConnectorSvc) WriteCredential(ctx context.Context, tenantID uuid.UU
 		return f.writeFn(ctx, tenantID, connectorType, fieldName, value)
 	}
 	return "", nil
+}
+
+func (f *fakeConnectorSvc) ListAliases(ctx context.Context) ([]domain.ConnectorRestAlias, []domain.ConnectorSQLAlias, error) {
+	if f.listAliasesFn != nil {
+		return f.listAliasesFn(ctx)
+	}
+	return nil, nil, nil
+}
+
+func (f *fakeConnectorSvc) WriteRestAlias(ctx context.Context, a domain.ConnectorRestAlias) error {
+	if f.writeRestFn != nil {
+		return f.writeRestFn(ctx, a)
+	}
+	return nil
+}
+
+func (f *fakeConnectorSvc) WriteSQLAlias(ctx context.Context, q domain.ConnectorSQLAlias) error {
+	if f.writeSQLFn != nil {
+		return f.writeSQLFn(ctx, q)
+	}
+	return nil
+}
+
+func (f *fakeConnectorSvc) DeleteRestAlias(ctx context.Context, alias string) (bool, error) {
+	if f.deleteRestFn != nil {
+		return f.deleteRestFn(ctx, alias)
+	}
+	return true, nil
+}
+
+func (f *fakeConnectorSvc) DeleteSQLAlias(ctx context.Context, alias string) (bool, error) {
+	if f.deleteSQLFn != nil {
+		return f.deleteSQLFn(ctx, alias)
+	}
+	return true, nil
 }
 
 func newConnectorHandler(conn *fakeConnectorSvc) *handler.Handler {

@@ -60,6 +60,11 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 	internal.Use(httpmiddleware.RequireInternalToken(cfg.InternalAPIToken))
 	internal.Use(httpmiddleware.InjectGUCSet(log))
 	internal.POST("/events", h.HandleInternalEvent)
+	internal.GET("/connector-aliases", h.ListConnectorAliases)
+	internal.POST("/connector-aliases/rest", h.WriteConnectorRestAlias)
+	internal.POST("/connector-aliases/sql", h.WriteConnectorSQLAlias)
+	internal.DELETE("/connector-aliases/rest/:alias", h.DeleteConnectorRestAlias)
+	internal.DELETE("/connector-aliases/sql/:alias", h.DeleteConnectorSQLAlias)
 
 	api := r.Group("/api/v1")
 	for _, mw := range gincommon.ProtectedMiddlewares(mwCfg) {

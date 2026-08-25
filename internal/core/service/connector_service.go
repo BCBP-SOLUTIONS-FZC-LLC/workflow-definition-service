@@ -21,17 +21,20 @@ var validConnectorSegment = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 type ConnectorDeps struct {
 	Secrets port.SecretsClient
+	Aliases port.ConnectorAliasRepository
 	Log     port.Logger
 }
 
 type ConnectorService struct {
 	secrets port.SecretsClient
+	aliases port.ConnectorAliasRepository
 	log     port.Logger
 }
 
 func NewConnectorService(d ConnectorDeps) *ConnectorService {
 	return &ConnectorService{
 		secrets: d.Secrets,
+		aliases: d.Aliases,
 		log:     logOrNoop(d.Log),
 	}
 }
@@ -62,4 +65,38 @@ func (s *ConnectorService) WriteCredential(
 		return "", fmt.Errorf("write credential: %w", err)
 	}
 	return secretPath, nil
+}
+
+func (s *ConnectorService) ListAliases(ctx context.Context) ([]domain.ConnectorRestAlias, []domain.ConnectorSQLAlias, error) {
+	rest, err := s.aliases.ListRest(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	sql, err := s.aliases.ListSQL(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rest, sql, nil
+}
+
+func (s *ConnectorService) WriteRestAlias(ctx context.Context, a domain.ConnectorRestAlias) error {
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	return s.aliases.UpsertRest(ctx, a)
+}
+
+func (s *ConnectorService) WriteSQLAlias(ctx context.Context, q domain.ConnectorSQLAlias) error {
+	if err := q.Validate(); err != nil {
+		return err
+	}
+	return s.aliases.UpsertSQL(ctx, q)
+}
+
+func (s *ConnectorService) DeleteRestAlias(ctx context.Context, alias string) (bool, error) {
+	return s.aliases.DeleteRest(ctx, alias)
+}
+
+func (s *ConnectorService) DeleteSQLAlias(ctx context.Context, alias string) (bool, error) {
+	return s.aliases.DeleteSQL(ctx, alias)
 }

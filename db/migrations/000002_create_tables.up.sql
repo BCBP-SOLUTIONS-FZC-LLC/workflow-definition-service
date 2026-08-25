@@ -59,6 +59,25 @@ CREATE TABLE processed_event (
     PRIMARY KEY (event_id, consumer)
 );
 
+-- Org-owned internal service registry, not tenant data — same class as
+-- processed_event; no RLS.
+CREATE TABLE connector_rest_alias (
+    alias         TEXT PRIMARY KEY,
+    method        TEXT NOT NULL,
+    base_url      TEXT NOT NULL,
+    path_template TEXT NOT NULL,
+    timeout_ms    INTEGER NOT NULL DEFAULT 5000
+);
+
+CREATE TABLE connector_sql_alias (
+    alias       TEXT PRIMARY KEY,
+    base_url    TEXT NOT NULL,
+    path        TEXT NOT NULL,
+    query_id    TEXT NOT NULL,
+    param_count INTEGER NOT NULL DEFAULT 0,
+    timeout_ms  INTEGER NOT NULL DEFAULT 5000
+);
+
 -- Operational audit log (same class as processed_event, outbox_events); no
 -- RLS. Populated by DB-level triggers on RLS violations, not application code.
 -- Cleaned by the external periodic job per LLD §7.1.2 (GAP-11).

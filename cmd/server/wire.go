@@ -112,6 +112,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	assigneeRepo := pgadapter.NewAssigneeRepo(pool)
 	outboxRepo := pgadapter.NewOutboxRepo(pool)
 	processedEventRepo := pgadapter.NewProcessedEventRepo(pool)
+	connectorAliasRepo := pgadapter.NewConnectorAliasRepo(pool)
 	compiler := bpmncompiler.New()
 
 	workflowSvc := service.NewWorkflowService(service.WorkflowDeps{
@@ -153,6 +154,7 @@ func newApp(cfg *config.Config) (*app, error) {
 
 	connectorSvc := service.NewConnectorService(service.ConnectorDeps{
 		Secrets: secretsSvc,
+		Aliases: connectorAliasRepo,
 		Log:     log,
 	})
 

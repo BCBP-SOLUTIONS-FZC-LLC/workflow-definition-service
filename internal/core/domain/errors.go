@@ -35,6 +35,7 @@ var (
 	// fails WriteCredential's charset allowlist or isn't a registered connector
 	// type — rejected before either value is interpolated into an OpenBao path.
 	ErrInvalidConnectorCredentialInput = errors.New("invalid connector credential input")
+	ErrInvalidConnectorAliasInput      = errors.New("invalid connector alias input")
 )
 
 type BPMNErrorCode string
