@@ -135,7 +135,7 @@ func (h *Handler) GetVersion(c *gin.Context) {
 }
 
 func (h *Handler) PublishVersion(c *gin.Context) {
-	tenantID, userID, ok := mustCtx(c)
+	tenantID, userID, ok := mustAdminCtx(c)
 	if !ok {
 		return
 	}
@@ -169,7 +169,7 @@ func (h *Handler) PublishVersion(c *gin.Context) {
 }
 
 func (h *Handler) CloneVersion(c *gin.Context) {
-	tenantID, userID, ok := mustCtx(c)
+	tenantID, userID, ok := mustAdminCtx(c)
 	if !ok {
 		return
 	}
@@ -222,7 +222,7 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 }
 
 func (h *Handler) PromoteVersion(c *gin.Context) {
-	tenantID, userID, ok := mustCtx(c)
+	tenantID, userID, ok := mustAdminCtx(c)
 	if !ok {
 		return
 	}

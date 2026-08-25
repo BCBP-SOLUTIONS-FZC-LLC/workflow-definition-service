@@ -120,7 +120,7 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 }
 
 func (h *Handler) CreateWorkflow(c *gin.Context) {
-	tenantID, userID, ok := mustCtx(c)
+	tenantID, userID, ok := mustAdminCtx(c)
 	if !ok {
 		return
 	}
@@ -196,7 +196,7 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 }
 
 func (h *Handler) ArchiveWorkflow(c *gin.Context) {
-	tenantID, userID, ok := mustCtx(c)
+	tenantID, userID, ok := mustAdminCtx(c)
 	if !ok {
 		return
 	}
@@ -218,8 +218,6 @@ func (h *Handler) ArchiveWorkflow(c *gin.Context) {
 	})
 }
 
-// normalizePlanTier maps unrecognised x-plan header values to "starter" so the
-// quota service always receives a canonical tier string.
 // TODO: return 400 for unknown plan once membership service can validate plan tier.
 func normalizePlanTier(plan string) string {
 	switch plan {

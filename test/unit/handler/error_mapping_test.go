@@ -23,7 +23,6 @@ func problemCode(t *testing.T, body []byte) string {
 	return code
 }
 
-// Unparseable BPMN posted to /validate must surface as 400 INVALID_BPMN_XML, not 500.
 func TestValidateBPMN_Malformed_400(t *testing.T) {
 	val := &fakeValidationSvc{validate: func(context.Context, string, []string) (bool, []domain.BPMNValidationError, error) {
 		return false, nil, fmt.Errorf("validate bpmn: %w: XML decode: unexpected EOF", domain.ErrMalformedBPMN)
@@ -36,9 +35,6 @@ func TestValidateBPMN_Malformed_400(t *testing.T) {
 	assert.Equal(t, "INVALID_BPMN_XML", problemCode(t, w.Body.Bytes()))
 }
 
-// Forbidden XML (DOCTYPE/entity/XML-bomb) returns the SAME generic 400
-// INVALID_BPMN_XML to the client (detection is not disclosed); the security log
-// is driven off domain.ErrForbiddenXML in the chain.
 func TestValidateBPMN_ForbiddenXML_400_Generic(t *testing.T) {
 	val := &fakeValidationSvc{validate: func(context.Context, string, []string) (bool, []domain.BPMNValidationError, error) {
 		return false, nil, fmt.Errorf("validate bpmn: %w: %w: DOCTYPE detected",
@@ -52,8 +48,6 @@ func TestValidateBPMN_ForbiddenXML_400_Generic(t *testing.T) {
 	assert.Equal(t, "INVALID_BPMN_XML", problemCode(t, w.Body.Bytes()))
 }
 
-// Unparseable BPMN posted to POST /workflows maps to 400, while a
-// parseable-but-invalid document still maps to 422.
 func TestCreateWorkflow_BPMNStatusMapping(t *testing.T) {
 	body := map[string]string{"key": "wf", "name": "WF", "bpmn_xml": "<x>"}
 
@@ -62,7 +56,7 @@ func TestCreateWorkflow_BPMNStatusMapping(t *testing.T) {
 			return nil, nil, fmt.Errorf("create workflow: %w", domain.ErrMalformedBPMN)
 		}}
 		h := newHandler(wf, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-		w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
+		w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows", body))
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Equal(t, "INVALID_BPMN_XML", problemCode(t, w.Body.Bytes()))
 	})
@@ -74,14 +68,12 @@ func TestCreateWorkflow_BPMNStatusMapping(t *testing.T) {
 			}}
 		}}
 		h := newHandler(wf, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-		w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
+		w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows", body))
 		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 		assert.Equal(t, "BPMN_VALIDATION_FAILED", problemCode(t, w.Body.Bytes()))
 	})
 }
 
-// The /validate response must carry every validation error, not just the first —
-// the handler emits one array element per error.
 func TestValidateBPMN_AllErrorsInResponse(t *testing.T) {
 	val := &fakeValidationSvc{validate: func(context.Context, string, []string) (bool, []domain.BPMNValidationError, error) {
 		return false, []domain.BPMNValidationError{
@@ -114,7 +106,6 @@ func TestValidateBPMN_AllErrorsInResponse(t *testing.T) {
 	assert.ElementsMatch(t, []string{"CANDIDATE_GROUPS_EMPTY", "UNMATCHED_GATEWAY"}, codes)
 }
 
-// A malformed UUID path param is a bad request, not a missing resource.
 func TestGetWorkflow_BadUUIDParam_400(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
@@ -124,7 +115,6 @@ func TestGetWorkflow_BadUUIDParam_400(t *testing.T) {
 	assert.Equal(t, "BAD_REQUEST", problemCode(t, w.Body.Bytes()))
 }
 
-// versions_limit out of range is clamped to the default; an in-range value passes through.
 func TestGetWorkflow_VersionsLimitClamped(t *testing.T) {
 	tests := []struct {
 		name  string

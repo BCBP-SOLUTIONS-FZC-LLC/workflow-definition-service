@@ -24,7 +24,7 @@ func TestGetDraft_OK(t *testing.T) {
 		},
 	}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodGet, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
+	w := do(newRouter(h), adminReq(http.MethodGet, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]any
@@ -45,11 +45,17 @@ func TestGetDraft_NoDraftExists(t *testing.T) {
 		},
 	}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodGet, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
+	w := do(newRouter(h), adminReq(http.MethodGet, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	var prob map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&prob))
 	assert.Equal(t, "DRAFT_NOT_FOUND", prob["code"])
+}
+
+func TestInitDraft_Forbidden(t *testing.T) {
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
+	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestInitDraft_OK(t *testing.T) {
@@ -60,7 +66,7 @@ func TestInitDraft_OK(t *testing.T) {
 		},
 	}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
 	assert.Equal(t, http.StatusCreated, w.Code)
 
 	var resp map[string]any
@@ -70,7 +76,7 @@ func TestInitDraft_OK(t *testing.T) {
 
 func TestInitDraft_InvalidUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/bad/draft", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/bad/draft", nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -81,7 +87,7 @@ func TestInitDraft_DraftAlreadyExists(t *testing.T) {
 		},
 	}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
 	assert.Equal(t, http.StatusConflict, w.Code)
 	var prob map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&prob))
@@ -95,8 +101,14 @@ func TestInitDraft_NotFound(t *testing.T) {
 		},
 	}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestUpdateDraft_Forbidden(t *testing.T) {
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
+	w := do(newRouter(h), req(http.MethodPut, "/api/v1/workflows/"+testWFID.String()+"/draft", map[string]any{"name": "x"}))
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestUpdateDraft_OK(t *testing.T) {
@@ -116,7 +128,7 @@ func TestUpdateDraft_OK(t *testing.T) {
 		"name":           newName,
 		"record_version": 3,
 	}
-	w := do(newRouter(h), req(http.MethodPut, "/api/v1/workflows/"+testWFID.String()+"/draft", body))
+	w := do(newRouter(h), adminReq(http.MethodPut, "/api/v1/workflows/"+testWFID.String()+"/draft", body))
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]any
@@ -124,10 +136,6 @@ func TestUpdateDraft_OK(t *testing.T) {
 	assert.NotNil(t, resp["version_id"])
 }
 
-// TestUpdateDraft_WithModuleBPMNXMLs sends a populated module_bpmn_xmls array —
-// the handler must take the pointer of req.ModuleBPMNXMLs and pass it through,
-// rather than leaving ModuleBPMNXMLs nil (the omitted-field case every other
-// UpdateDraft test exercises).
 func TestUpdateDraft_WithModuleBPMNXMLs(t *testing.T) {
 	draft := newDraftVersion()
 	var captured *[]string
@@ -142,7 +150,7 @@ func TestUpdateDraft_WithModuleBPMNXMLs(t *testing.T) {
 	body := map[string]any{
 		"module_bpmn_xmls": []string{"<module/>"},
 	}
-	w := do(newRouter(h), req(http.MethodPut, "/api/v1/workflows/"+testWFID.String()+"/draft", body))
+	w := do(newRouter(h), adminReq(http.MethodPut, "/api/v1/workflows/"+testWFID.String()+"/draft", body))
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	if captured == nil {
@@ -158,13 +166,14 @@ func TestUpdateDraft_BindError(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("x-tenant-id", testTenantID.String())
 	r.Header.Set("x-user-id", testUserID.String())
+	r.Header.Set("x-tenant-roles", "tenant_admin")
 	w := do(newRouter(h), r)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestUpdateDraft_InvalidUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-	w := do(newRouter(h), req(http.MethodPut, "/api/v1/workflows/bad/draft", nil))
+	w := do(newRouter(h), adminReq(http.MethodPut, "/api/v1/workflows/bad/draft", nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -175,11 +184,17 @@ func TestUpdateDraft_DraftConcurrency(t *testing.T) {
 		},
 	}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodPut, "/api/v1/workflows/"+testWFID.String()+"/draft", map[string]any{"name": "x"}))
+	w := do(newRouter(h), adminReq(http.MethodPut, "/api/v1/workflows/"+testWFID.String()+"/draft", map[string]any{"name": "x"}))
 	assert.Equal(t, http.StatusConflict, w.Code)
 	var prob map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&prob))
 	assert.Equal(t, "DRAFT_CONCURRENCY", prob["code"])
+}
+
+func TestDiscardDraft_Forbidden(t *testing.T) {
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
+	w := do(newRouter(h), req(http.MethodDelete, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestDiscardDraft_OK(t *testing.T) {
@@ -187,13 +202,13 @@ func TestDiscardDraft_OK(t *testing.T) {
 		discard: func(_ context.Context, _, _ uuid.UUID) error { return nil },
 	}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodDelete, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
+	w := do(newRouter(h), adminReq(http.MethodDelete, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
 	assert.Equal(t, http.StatusNoContent, w.Code)
 }
 
 func TestDiscardDraft_InvalidUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-	w := do(newRouter(h), req(http.MethodDelete, "/api/v1/workflows/bad/draft", nil))
+	w := do(newRouter(h), adminReq(http.MethodDelete, "/api/v1/workflows/bad/draft", nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -202,6 +217,6 @@ func TestDiscardDraft_NoDraftExists(t *testing.T) {
 		discard: func(_ context.Context, _, _ uuid.UUID) error { return domain.ErrNoDraftExists },
 	}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodDelete, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
+	w := do(newRouter(h), adminReq(http.MethodDelete, "/api/v1/workflows/"+testWFID.String()+"/draft", nil))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }

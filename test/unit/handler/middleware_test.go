@@ -88,14 +88,12 @@ func TestLimitRequestBody_ExceedsLimit_Returns413(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 	r.POST("/workflows", h.CreateWorkflow)
 
-	// Valid JSON with a string value larger than the 10 MB limit.
-	// The JSON decoder reads past the limit mid-string and surfaces *http.MaxBytesError,
-	// which errResponse maps to 413 PAYLOAD_TOO_LARGE.
 	bigJSON := `{"bpmn_xml":"` + strings.Repeat("a", 10<<20+512) + `"}`
 	httpReq, _ := http.NewRequest(http.MethodPost, "/workflows", strings.NewReader(bigJSON))
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-tenant-id", testTenantID.String())
 	httpReq.Header.Set("x-user-id", testUserID.String())
+	httpReq.Header.Set("x-tenant-roles", "tenant_admin")
 
 	w := do(r, httpReq)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
@@ -105,8 +103,6 @@ func TestLimitRequestBody_ExceedsLimit_Returns413(t *testing.T) {
 }
 
 func TestInjectGUCSet_MissingContext_LogsWarning(t *testing.T) {
-	// Router without ProtectedMiddlewares — RequestContext is absent.
-	// InjectGUCSet must log a warn (when logger is non-nil) and still call Next.
 	logger := &fakeLogger{}
 	gin.SetMode(gin.TestMode)
 	r := gin.New() // no ProtectedMiddlewares

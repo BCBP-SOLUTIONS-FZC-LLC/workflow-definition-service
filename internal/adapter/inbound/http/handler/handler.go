@@ -77,19 +77,14 @@ func New(s Services) *Handler {
 	}
 }
 
-// adminRoles are the x-tenant-roles values granting admin-only access
-// (definition_service.md §3.2), mirroring execution_service's own gate.
 var adminRoles = map[string]bool{
 	"tenant_admin": true,
 	"tenant_owner": true,
 }
 
-// requireAdmin writes 403 FORBIDDEN and returns false if the caller lacks
-// tenant_admin/tenant_owner — a hard gate for admin-only endpoints.
-func requireAdmin(c *gin.Context) bool {
+func isAdmin(c *gin.Context) bool {
 	rc, ok := gincommon.RequestContext(c)
 	if !ok {
-		writeProblem(c, http.StatusForbidden, CodeForbidden, "caller lacks tenant_admin/tenant_owner role", nil)
 		return false
 	}
 	for _, role := range rc.Roles {
@@ -97,8 +92,15 @@ func requireAdmin(c *gin.Context) bool {
 			return true
 		}
 	}
-	writeProblem(c, http.StatusForbidden, CodeForbidden, "caller lacks tenant_admin/tenant_owner role", nil)
 	return false
+}
+
+func requireAdmin(c *gin.Context) bool {
+	if !isAdmin(c) {
+		writeProblem(c, http.StatusForbidden, CodeForbidden, "caller lacks tenant_admin/tenant_owner role", nil)
+		return false
+	}
+	return true
 }
 
 func mustCtx(c *gin.Context) (tenantID, userID uuid.UUID, ok bool) {
@@ -120,9 +122,16 @@ func mustCtx(c *gin.Context) (tenantID, userID uuid.UUID, ok bool) {
 	return tenantID, userID, true
 }
 
-// logForbiddenXML emits an internal security-alert log when a BPMN parse failure
-// tripped a forbidden-construct guard (DOCTYPE/entity or the XML-bomb token cap).
-// The client response is unchanged (400 INVALID_BPMN_XML, set by errResponse) —
+// mustAdminCtx is mustCtx plus the Admin-only gate (§3.2) combined, for the
+// handlers that need both checks in sequence.
+func mustAdminCtx(c *gin.Context) (tenantID, userID uuid.UUID, ok bool) {
+	tenantID, userID, ok = mustCtx(c)
+	if !ok || !requireAdmin(c) {
+		return uuid.Nil, uuid.Nil, false
+	}
+	return tenantID, userID, true
+}
+
 // detection is never disclosed to the caller; this is telemetry only.
 func (h *Handler) logForbiddenXML(c *gin.Context, err error) {
 	if h.log == nil || !errors.Is(err, domain.ErrForbiddenXML) {
@@ -161,9 +170,6 @@ func paginate(c *gin.Context) (page, limit int) {
 	return
 }
 
-// boundedQuery reads an integer query param, returning def when it is absent,
-// unparseable, or outside [min, max]. Mirrors paginate's lenient-clamp policy so
-// a hostile or fat-fingered value can never reach the service / SQL LIMIT.
 func boundedQuery(c *gin.Context, key string, def, min, max int) int {
 	v, err := strconv.Atoi(c.DefaultQuery(key, strconv.Itoa(def)))
 	if err != nil || v < min || v > max {

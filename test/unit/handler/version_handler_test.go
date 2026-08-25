@@ -116,6 +116,13 @@ func TestGetVersion_ServiceError(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+func TestPublishVersion_Forbidden(t *testing.T) {
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
+	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/publish"
+	w := do(newRouter(h), req(http.MethodPost, path, nil))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
 func TestPublishVersion_OK_NoBody(t *testing.T) {
 	ver := newPublishedVersion()
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
@@ -126,7 +133,7 @@ func TestPublishVersion_OK_NoBody(t *testing.T) {
 	}, &fakeValidationSvc{})
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/publish"
-	w := do(newRouter(h), req(http.MethodPost, path, nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, nil))
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -140,7 +147,7 @@ func TestPublishVersion_OK_WithSkip(t *testing.T) {
 	}, &fakeValidationSvc{})
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/publish"
-	w := do(newRouter(h), req(http.MethodPost, path, map[string]any{"force_publish_structural": true}))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, map[string]any{"force_publish_structural": true}))
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -152,7 +159,7 @@ func TestPublishVersion_InvalidVersionStatus(t *testing.T) {
 	}, &fakeValidationSvc{})
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/publish"
-	w := do(newRouter(h), req(http.MethodPost, path, nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, nil))
 	assert.Equal(t, http.StatusConflict, w.Code)
 	var prob map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&prob))
@@ -167,7 +174,7 @@ func TestPublishVersion_VersionNotDraft(t *testing.T) {
 	}, &fakeValidationSvc{})
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/publish"
-	w := do(newRouter(h), req(http.MethodPost, path, nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, nil))
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
@@ -179,7 +186,7 @@ func TestPublishVersion_VersionAlreadyPublished(t *testing.T) {
 	}, &fakeValidationSvc{})
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/publish"
-	w := do(newRouter(h), req(http.MethodPost, path, nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, nil))
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
@@ -191,7 +198,7 @@ func TestPublishVersion_AssigneeIneligible(t *testing.T) {
 	}, &fakeValidationSvc{})
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/publish"
-	w := do(newRouter(h), req(http.MethodPost, path, nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, nil))
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 }
 
@@ -207,11 +214,18 @@ func TestPublishVersion_ValidationFailed(t *testing.T) {
 	}, &fakeValidationSvc{})
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/publish"
-	w := do(newRouter(h), req(http.MethodPost, path, nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, nil))
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 	var prob map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&prob))
 	assert.Equal(t, "BPMN_VALIDATION_FAILED", prob["code"])
+}
+
+func TestCloneVersion_Forbidden(t *testing.T) {
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
+	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/clone"
+	w := do(newRouter(h), req(http.MethodPost, path, map[string]any{"new_key": "x", "new_name": "y"}))
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestCloneVersion_OK(t *testing.T) {
@@ -226,7 +240,7 @@ func TestCloneVersion_OK(t *testing.T) {
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/clone"
 	body := map[string]any{"new_key": "new-key", "new_name": "New Name"}
-	w := do(newRouter(h), req(http.MethodPost, path, body))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, body))
 	assert.Equal(t, http.StatusCreated, w.Code)
 
 	var resp map[string]any
@@ -241,7 +255,7 @@ func TestCloneVersion_BindError(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/clone"
 	// missing required new_key and new_name
-	w := do(newRouter(h), req(http.MethodPost, path, map[string]any{"new_description": "only desc"}))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, map[string]any{"new_description": "only desc"}))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	var prob map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&prob))
@@ -257,8 +271,15 @@ func TestCloneVersion_VersionNotPublished(t *testing.T) {
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/clone"
 	body := map[string]any{"new_key": "x", "new_name": "y"}
-	w := do(newRouter(h), req(http.MethodPost, path, body))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, body))
 	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestPromoteVersion_Forbidden(t *testing.T) {
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
+	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/promote"
+	w := do(newRouter(h), req(http.MethodPost, path, nil))
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestPromoteVersion_OK(t *testing.T) {
@@ -269,19 +290,19 @@ func TestPromoteVersion_OK(t *testing.T) {
 	}, &fakeValidationSvc{})
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/promote"
-	w := do(newRouter(h), req(http.MethodPost, path, nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, nil))
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestPromoteVersion_InvalidWorkflowUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/bad/versions/"+testVerID.String()+"/promote", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/bad/versions/"+testVerID.String()+"/promote", nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestPromoteVersion_InvalidVersionUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/versions/bad/promote", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/versions/bad/promote", nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -293,7 +314,7 @@ func TestPromoteVersion_VersionNotPublished(t *testing.T) {
 	}, &fakeValidationSvc{})
 
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/promote"
-	w := do(newRouter(h), req(http.MethodPost, path, nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, nil))
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 

@@ -37,7 +37,7 @@ func (h *Handler) GetDraft(c *gin.Context) {
 }
 
 func (h *Handler) InitDraft(c *gin.Context) {
-	tenantID, userID, ok := mustCtx(c)
+	tenantID, userID, ok := mustAdminCtx(c)
 	if !ok {
 		return
 	}
@@ -63,7 +63,7 @@ func (h *Handler) InitDraft(c *gin.Context) {
 }
 
 func (h *Handler) UpdateDraft(c *gin.Context) {
-	tenantID, userID, ok := mustCtx(c)
+	tenantID, userID, ok := mustAdminCtx(c)
 	if !ok {
 		return
 	}
@@ -106,7 +106,7 @@ func (h *Handler) UpdateDraft(c *gin.Context) {
 }
 
 func (h *Handler) DiscardDraft(c *gin.Context) {
-	tenantID, _, ok := mustCtx(c)
+	tenantID, _, ok := mustAdminCtx(c)
 	if !ok {
 		return
 	}

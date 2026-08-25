@@ -121,6 +121,13 @@ func TestListWorkflows_InvalidUserCtx(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+func TestCreateWorkflow_Forbidden(t *testing.T) {
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
+	body := map[string]any{"key": "wf-1", "name": "My Workflow", "bpmn_xml": "<definitions/>"}
+	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
 func TestCreateWorkflow_OK(t *testing.T) {
 	wf := newWorkflow()
 	ver := newDraftVersion()
@@ -136,7 +143,7 @@ func TestCreateWorkflow_OK(t *testing.T) {
 		"name":     "My Workflow",
 		"bpmn_xml": "<definitions/>",
 	}
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows", body))
 	assert.Equal(t, http.StatusCreated, w.Code)
 
 	var resp map[string]any
@@ -150,7 +157,7 @@ func TestCreateWorkflow_OK(t *testing.T) {
 func TestCreateWorkflow_BindError(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 	// missing required fields
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", map[string]any{"name": "x"}))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows", map[string]any{"name": "x"}))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	var prob map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&prob))
@@ -165,7 +172,7 @@ func TestCreateWorkflow_DuplicateKey(t *testing.T) {
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
 	body := map[string]any{"key": "x", "name": "y", "bpmn_xml": "<x/>"}
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows", body))
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
@@ -177,7 +184,7 @@ func TestCreateWorkflow_PlanQuota(t *testing.T) {
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
 	body := map[string]any{"key": "x", "name": "y", "bpmn_xml": "<x/>"}
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows", body))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -189,7 +196,7 @@ func TestCreateWorkflow_IdempotencyReplay(t *testing.T) {
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
 	body := map[string]any{"key": "x", "name": "y", "bpmn_xml": "<x/>"}
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows", body))
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
@@ -201,7 +208,7 @@ func TestCreateWorkflow_InternalError(t *testing.T) {
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
 	body := map[string]any{"key": "x", "name": "y", "bpmn_xml": "<x/>"}
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows", body))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -269,18 +276,24 @@ func TestGetWorkflow_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
+func TestArchiveWorkflow_Forbidden(t *testing.T) {
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
+	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/archive", nil))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
 func TestArchiveWorkflow_OK(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{
 		archive: func(_ context.Context, _, _, _ uuid.UUID) error { return nil },
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/archive", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/archive", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestArchiveWorkflow_InvalidUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/bad/archive", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/bad/archive", nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -289,7 +302,7 @@ func TestArchiveWorkflow_ActiveInstances(t *testing.T) {
 		archive: func(_ context.Context, _, _, _ uuid.UUID) error { return domain.ErrActiveInstancesExist },
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/archive", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/archive", nil))
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
@@ -298,7 +311,7 @@ func TestArchiveWorkflow_NoActiveVersion(t *testing.T) {
 		archive: func(_ context.Context, _, _, _ uuid.UUID) error { return domain.ErrNoActiveVersion },
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/archive", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/archive", nil))
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
@@ -307,6 +320,6 @@ func TestArchiveWorkflow_UpstreamUnavailable(t *testing.T) {
 		archive: func(_ context.Context, _, _, _ uuid.UUID) error { return domain.ErrUpstreamUnavailable },
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/archive", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/archive", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }

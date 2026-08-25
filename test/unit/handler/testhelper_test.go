@@ -223,6 +223,12 @@ func req(method, path string, body any) *http.Request {
 	return httpReq
 }
 
+func adminReq(method, path string, body any) *http.Request {
+	r := req(method, path, body)
+	r.Header.Set("x-tenant-roles", "tenant_admin")
+	return r
+}
+
 func do(router *gin.Engine, r *http.Request) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
@@ -242,7 +248,6 @@ func (f *fakeLogger) Warn(msg string, _ map[string]any) {
 	f.warnCalls = append(f.warnCalls, msg)
 }
 
-// errReader is an io.Reader that always returns an error.
 type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }

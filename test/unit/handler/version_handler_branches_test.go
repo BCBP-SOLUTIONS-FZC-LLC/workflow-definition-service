@@ -29,13 +29,13 @@ func TestPublishVersion_MissingCtx(t *testing.T) {
 
 func TestPublishVersion_InvalidWorkflowUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/bad/versions/"+testVerID.String()+"/publish", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/bad/versions/"+testVerID.String()+"/publish", nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestPublishVersion_InvalidVersionUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-	w := do(newRouter(h), req(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/versions/bad/publish", nil))
+	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/workflows/"+testWFID.String()+"/versions/bad/publish", nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -49,14 +49,14 @@ func TestCloneVersion_MissingCtx(t *testing.T) {
 func TestCloneVersion_InvalidWorkflowUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 	path := "/api/v1/workflows/bad/versions/" + testVerID.String() + "/clone"
-	w := do(newRouter(h), req(http.MethodPost, path, map[string]any{"new_key": "x", "new_name": "y"}))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, map[string]any{"new_key": "x", "new_name": "y"}))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCloneVersion_InvalidVersionUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/bad/clone"
-	w := do(newRouter(h), req(http.MethodPost, path, map[string]any{"new_key": "x", "new_name": "y"}))
+	w := do(newRouter(h), adminReq(http.MethodPost, path, map[string]any{"new_key": "x", "new_name": "y"}))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
