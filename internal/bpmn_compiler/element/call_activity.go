@@ -53,7 +53,6 @@ func (CallActivityHandler) Compile(nodeID string, cs *bpmncore.CompileState) err
 		return fmt.Errorf("callActivity %q: %w", nodeID, err)
 	}
 
-	// Flatten called-process steps directly into the parent execution plan.
 	cs.FlushSeqBuf()
 	firstStepIdx := cs.StepsCount()
 	appendStepsWithIOMapping(steps, toIOMapping(ca.ExtensionElements.IOMapping), cs)
@@ -156,7 +155,7 @@ func mergeDepts(depts []dsl.DepartmentDef, calledProc *bpmncore.BPMNProcess, ioM
 		}
 		props := bpmncore.PropsMap(lane.ExtensionElements)
 		ignore := props["ignore"] == "true"
-		cs.EnsureDept(deptID, deptID, "")
+		cs.EnsureDept(deptID, deptID, dept.IAMDepartmentID)
 		cs.SetDeptMeta(deptID, ignore, props)
 		for _, stage := range dept.Stages {
 			cs.AppendStage(deptID, stage)

@@ -260,6 +260,9 @@ func TestCompile_CallActivity_Flat(t *testing.T) {
 	for _, d := range plan.Departments {
 		if d.ID == "engineering" {
 			found = true
+			if d.IAMDepartmentID != "f14abc9f-befa-54ff-b57f-c15ab3090062" {
+				t.Errorf("expected engineering dept to carry its lane's IAMDepartmentID; got %q", d.IAMDepartmentID)
+			}
 			break
 		}
 	}
