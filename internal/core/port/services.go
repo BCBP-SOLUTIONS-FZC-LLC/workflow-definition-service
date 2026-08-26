@@ -26,6 +26,9 @@ type PlanCompiler interface {
 	Hash(ctx context.Context, bpmnXML string) (string, error)
 	// Bundle merges module BPMNs into mainXML before compile/validate.
 	Bundle(mainXML string, moduleXMLs []string) (string, error)
+	// ProcessID returns bpmnXML's single top-level <bpmn:process> id, erroring
+	// if it contains zero or more than one.
+	ProcessID(ctx context.Context, bpmnXML string) (string, error)
 }
 
 type Authorizer interface {

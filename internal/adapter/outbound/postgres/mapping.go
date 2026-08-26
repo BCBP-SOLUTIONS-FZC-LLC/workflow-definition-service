@@ -151,6 +151,49 @@ func workflowVersionFromDB(row db.WorkflowVersion) *domain.WorkflowVersion {
 	}
 }
 
+func toCatalogScope(s domain.CatalogScope) db.CatalogScope {
+	return db.CatalogScope(s)
+}
+
+func fromCatalogScope(s db.CatalogScope) domain.CatalogScope {
+	return domain.CatalogScope(s)
+}
+
+func moduleFromDB(row db.GetModuleByIDRow) *domain.Module {
+	return &domain.Module{
+		ID:              row.ID,
+		TenantID:        fromPgtypeUUID(row.TenantID),
+		Scope:           fromCatalogScope(row.Scope),
+		Name:            row.Name,
+		Description:     fromPgtypeText(row.Description),
+		ActiveVersionID: fromPgtypeUUID(row.ActiveVersionID),
+		CreatedByUserID: fromPgtypeUUID(row.CreatedByUserID),
+		RecordVersion:   row.RecordVersion,
+		CreatedAt:       fromPgtypeTimestamp(row.CreatedAt),
+		UpdatedAt:       fromPgtypeTimestamp(row.UpdatedAt),
+	}
+}
+
+func moduleVersionFromDB(row db.GetModuleVersionByIDRow) *domain.ModuleVersion {
+	return &domain.ModuleVersion{
+		ID:                   row.ID,
+		ModuleID:             mustUUID(row.ModuleID),
+		TenantID:             fromPgtypeUUID(row.TenantID),
+		Scope:                fromCatalogScope(row.Scope),
+		Status:               fromVersionStatus(row.Status),
+		BPMNXML:              row.BpmnXml,
+		ProcessID:            row.ProcessID,
+		VersionNumber:        fromPgtypeInt4(row.VersionNumber),
+		IsValid:              row.IsValid,
+		ValidationErrorsJSON: fromJSONB(row.ValidationErrorsJson),
+		PublishedAt:          fromPgtypeTimestampPtr(row.PublishedAt),
+		CreatedByUserID:      fromPgtypeUUID(row.CreatedByUserID),
+		RecordVersion:        row.RecordVersion,
+		CreatedAt:            fromPgtypeTimestamp(row.CreatedAt),
+		UpdatedAt:            fromPgtypeTimestamp(row.UpdatedAt),
+	}
+}
+
 func assigneeFromDB(row db.WorkflowNodeAssignee) *domain.NodeAssignee {
 	return &domain.NodeAssignee{
 		ID:                row.ID,

@@ -13,6 +13,8 @@ const (
 	constraintWorkflowBusinessKey      = "workflow_tenant_id_business_key_key"
 	constraintWorkflowVersionDraft     = "idx_wv_single_draft"
 	constraintWorkflowVersionPublished = "uq_workflow_version_published"
+	constraintModuleVersionDraft       = "idx_mv_single_draft"
+	constraintModuleVersionPublished   = "uq_module_version_published"
 )
 
 func mapErr(err error) error {
@@ -29,6 +31,10 @@ func mapErr(err error) error {
 		case constraintWorkflowVersionDraft:
 			return domain.ErrDraftAlreadyExists
 		case constraintWorkflowVersionPublished:
+			return domain.ErrDraftConcurrency
+		case constraintModuleVersionDraft:
+			return domain.ErrDraftAlreadyExists
+		case constraintModuleVersionPublished:
 			return domain.ErrDraftConcurrency
 		}
 	}

@@ -77,6 +77,33 @@ type ConnectorAliasRepository interface {
 	DeleteSQL(ctx context.Context, alias string) (bool, error)
 }
 
+type ModuleFilter struct {
+	Scope  *domain.CatalogScope
+	Search *string
+	Page   int
+	Limit  int
+}
+
+type ModuleRepository interface {
+	Create(ctx context.Context, m *domain.Module) error
+	GetByID(ctx context.Context, callerTenantID, id uuid.UUID) (*domain.Module, error)
+	List(ctx context.Context, callerTenantID uuid.UUID, filter ModuleFilter) ([]*domain.Module, int64, error)
+	UpdateActiveVersion(ctx context.Context, moduleID uuid.UUID, versionID *uuid.UUID) error
+}
+
+type ModuleVersionRepository interface {
+	Create(ctx context.Context, v *domain.ModuleVersion) error
+	GetByID(ctx context.Context, callerTenantID, id uuid.UUID) (*domain.ModuleVersion, error)
+	ListByModule(
+		ctx context.Context,
+		callerTenantID, moduleID uuid.UUID,
+		page, limit int,
+	) ([]*domain.ModuleVersion, int64, error)
+	Publish(ctx context.Context, versionID uuid.UUID, versionNumber int32) error
+	Archive(ctx context.Context, versionID uuid.UUID) error
+	NextVersionNumber(ctx context.Context, moduleID uuid.UUID) (int32, error)
+}
+
 type WorkflowFilter struct {
 	Search      *string
 	BusinessKey *string

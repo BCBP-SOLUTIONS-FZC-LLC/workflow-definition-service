@@ -106,5 +106,15 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 
 	api.GET("/bpmn/allowed-elements", h.AllowedBPMNElements)
 
+	mod := api.Group("/modules")
+	mod.GET("", h.ListModules)
+	mod.POST("", idem(h.CreateModule))
+	mod.GET("/:id", h.GetModule)
+	mod.GET("/:id/versions", h.ListModuleVersions)
+	mod.GET("/:id/versions/:version_id", h.GetModuleVersion)
+	mod.POST("/:id/versions", idem(h.AddModuleVersion))
+	mod.POST("/:id/versions/:version_id/publish", idem(h.PublishModuleVersion))
+	mod.DELETE("/:id", idem(h.ArchiveModule))
+
 	return r
 }

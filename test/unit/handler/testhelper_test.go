@@ -156,6 +156,66 @@ func (f *fakeValidationSvc) Validate(ctx context.Context, bpmnXML string, module
 	return true, nil, nil
 }
 
+type fakeModuleSvc struct {
+	list         func(context.Context, uuid.UUID, port.ModuleFilter) ([]*domain.Module, int64, error)
+	create       func(context.Context, uuid.UUID, uuid.UUID, service.CreateModuleReq) (*domain.Module, *domain.ModuleVersion, error)
+	get          func(context.Context, uuid.UUID, uuid.UUID) (*domain.Module, *domain.ModuleVersion, error)
+	listVersions func(context.Context, uuid.UUID, uuid.UUID, int, int) ([]*domain.ModuleVersion, int64, error)
+	getVersion   func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.ModuleVersion, error)
+	addVersion   func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, service.AddModuleVersionReq) (*domain.ModuleVersion, error)
+	publish      func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.ModuleVersion, error)
+	archive      func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error
+}
+
+func (f *fakeModuleSvc) List(ctx context.Context, callerTenantID uuid.UUID, filter port.ModuleFilter) ([]*domain.Module, int64, error) {
+	if f.list != nil {
+		return f.list(ctx, callerTenantID, filter)
+	}
+	return nil, 0, nil
+}
+func (f *fakeModuleSvc) Create(ctx context.Context, callerTenantID, userID uuid.UUID, req service.CreateModuleReq) (*domain.Module, *domain.ModuleVersion, error) {
+	if f.create != nil {
+		return f.create(ctx, callerTenantID, userID, req)
+	}
+	return nil, nil, nil
+}
+func (f *fakeModuleSvc) Get(ctx context.Context, callerTenantID, moduleID uuid.UUID) (*domain.Module, *domain.ModuleVersion, error) {
+	if f.get != nil {
+		return f.get(ctx, callerTenantID, moduleID)
+	}
+	return nil, nil, nil
+}
+func (f *fakeModuleSvc) ListVersions(ctx context.Context, callerTenantID, moduleID uuid.UUID, page, limit int) ([]*domain.ModuleVersion, int64, error) {
+	if f.listVersions != nil {
+		return f.listVersions(ctx, callerTenantID, moduleID, page, limit)
+	}
+	return nil, 0, nil
+}
+func (f *fakeModuleSvc) GetVersion(ctx context.Context, callerTenantID, moduleID, versionID uuid.UUID) (*domain.ModuleVersion, error) {
+	if f.getVersion != nil {
+		return f.getVersion(ctx, callerTenantID, moduleID, versionID)
+	}
+	return nil, nil
+}
+func (f *fakeModuleSvc) AddVersion(ctx context.Context, callerTenantID, userID, moduleID uuid.UUID, req service.AddModuleVersionReq) (*domain.ModuleVersion, error) {
+	if f.addVersion != nil {
+		return f.addVersion(ctx, callerTenantID, userID, moduleID, req)
+	}
+	return nil, nil
+}
+func (f *fakeModuleSvc) Publish(ctx context.Context, callerTenantID, userID, moduleID, versionID uuid.UUID) (*domain.ModuleVersion, error) {
+	if f.publish != nil {
+		return f.publish(ctx, callerTenantID, userID, moduleID, versionID)
+	}
+	return nil, nil
+}
+func (f *fakeModuleSvc) Archive(ctx context.Context, callerTenantID, userID, moduleID uuid.UUID) error {
+	if f.archive != nil {
+		return f.archive(ctx, callerTenantID, userID, moduleID)
+	}
+	return nil
+}
+
 func registerRoutes(r *gin.Engine, h *handler.Handler) {
 	wf := r.Group("/api/v1/workflows")
 	wf.GET("", h.ListWorkflows)
@@ -180,6 +240,16 @@ func registerRoutes(r *gin.Engine, h *handler.Handler) {
 	conn.POST("/credentials", h.WriteConnectorCredential)
 
 	r.GET("/api/v1/bpmn/allowed-elements", h.AllowedBPMNElements)
+
+	mod := r.Group("/api/v1/modules")
+	mod.GET("", h.ListModules)
+	mod.POST("", h.CreateModule)
+	mod.GET("/:id", h.GetModule)
+	mod.GET("/:id/versions", h.ListModuleVersions)
+	mod.GET("/:id/versions/:version_id", h.GetModuleVersion)
+	mod.POST("/:id/versions", h.AddModuleVersion)
+	mod.POST("/:id/versions/:version_id/publish", h.PublishModuleVersion)
+	mod.DELETE("/:id", h.ArchiveModule)
 }
 
 func newRouter(h *handler.Handler) *gin.Engine {
@@ -197,6 +267,10 @@ func newBareRouter(h *handler.Handler) *gin.Engine {
 	r := gin.New()
 	registerRoutes(r, h)
 	return r
+}
+
+func newModuleHandler(mod *fakeModuleSvc) *handler.Handler {
+	return handler.New(handler.Services{Modules: mod})
 }
 
 func newHandler(wf *fakeWorkflowSvc, dr *fakeDraftSvc, vs *fakeVersionSvc, val *fakeValidationSvc) *handler.Handler {
@@ -228,6 +302,12 @@ func req(method, path string, body any) *http.Request {
 func adminReq(method, path string, body any) *http.Request {
 	r := req(method, path, body)
 	r.Header.Set("x-tenant-roles", "tenant_admin")
+	return r
+}
+
+func platformOperatorReq(method, path string, body any) *http.Request {
+	r := req(method, path, body)
+	r.Header.Set("x-tenant-roles", "tenant_admin,platform_operator")
 	return r
 }
 

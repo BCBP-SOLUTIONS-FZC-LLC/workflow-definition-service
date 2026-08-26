@@ -119,12 +119,17 @@ func newApp(cfg *config.Config) (*app, error) {
 	}
 
 	transactor := pgadapter.NewTransactor(pool)
+	globalTransactor := pgadapter.NewTransactor(systemPool)
 	workflowRepo := pgadapter.NewWorkflowRepo(pool)
 	versionRepo := pgadapter.NewWorkflowVersionRepo(pool)
 	assigneeRepo := pgadapter.NewAssigneeRepo(pool)
 	outboxRepo := pgadapter.NewOutboxRepo(pool)
 	processedEventRepo := pgadapter.NewProcessedEventRepo(pool)
 	connectorAliasRepo := pgadapter.NewConnectorAliasRepo(pool)
+	moduleRepo := pgadapter.NewModuleRepo(pool)
+	moduleVersionRepo := pgadapter.NewModuleVersionRepo(pool)
+	globalModuleRepo := pgadapter.NewModuleRepo(systemPool)
+	globalModuleVersionRepo := pgadapter.NewModuleVersionRepo(systemPool)
 	compiler := bpmncompiler.New()
 
 	workflowSvc := service.NewWorkflowService(service.WorkflowDeps{
@@ -170,11 +175,23 @@ func newApp(cfg *config.Config) (*app, error) {
 		Log:     log,
 	})
 
+	moduleSvc := service.NewModuleService(service.ModuleDeps{
+		Transactor:       transactor,
+		GlobalTransactor: globalTransactor,
+		Modules:          moduleRepo,
+		GlobalModules:    globalModuleRepo,
+		Versions:         moduleVersionRepo,
+		GlobalVersions:   globalModuleVersionRepo,
+		Compiler:         compiler,
+		Log:              log,
+	})
+
 	h := httphandler.New(httphandler.Services{
 		Workflows:  workflowSvc,
 		Drafts:     draftSvc,
 		Versions:   versionSvc,
 		Validation: validationSvc,
+		Modules:    moduleSvc,
 		// Inbound events arrive over HTTP via POST /internal/events
 		Membership: versionSvc,
 		Connectors: connectorSvc,

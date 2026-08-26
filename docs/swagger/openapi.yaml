@@ -200,6 +200,70 @@ components:
         created_by_user_id: 4da18bde-7244-47ac-986c-665cd42caaaa
         published_at: "2026-05-14T09:00:00Z"
 
+    CatalogScope:
+      type: string
+      enum: [tenant, global]
+      description: >-
+        `tenant` rows are owned by the caller's own tenant; `global` rows are
+        platform-authored and visible to every tenant. Creating or deleting a
+        `global` row requires the `platform_operator` role.
+
+    ModuleSummary:
+      type: object
+      properties:
+        id:                { type: string, format: uuid }
+        tenant_id:         { type: string, format: uuid, nullable: true }
+        scope:             { $ref: '#/components/schemas/CatalogScope' }
+        name:              { type: string }
+        description:       { type: string }
+        active_version_id: { type: string, format: uuid, nullable: true }
+        created_at:        { type: string, format: date-time }
+        updated_at:        { type: string, format: date-time }
+      example:
+        id: 018f1a2b-0000-7000-8000-000000000001
+        tenant_id: null
+        scope: global
+        name: Standard Approval Chain
+        description: Reusable three-step approval sequence
+        active_version_id: 018f1a2b-0000-7000-8000-000000000002
+        created_at: "2026-08-20T08:00:00Z"
+        updated_at: "2026-08-25T10:00:00Z"
+
+    ModuleVersion:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        module_id:       { type: string, format: uuid }
+        scope:           { $ref: '#/components/schemas/CatalogScope' }
+        status:          { $ref: '#/components/schemas/VersionStatus' }
+        bpmn_xml:        { type: string }
+        process_id:
+          type: string
+          description: The `<bpmn:process id="...">` value inside `bpmn_xml`, matched against a referencing diagram's `callActivity` `calledElement`.
+        version_number:  { type: integer, nullable: true }
+        is_valid:        { type: boolean }
+        published_at:    { type: string, format: date-time, nullable: true }
+        created_at:      { type: string, format: date-time }
+      example:
+        id: 018f1a2b-0000-7000-8000-000000000002
+        module_id: 018f1a2b-0000-7000-8000-000000000001
+        scope: global
+        status: PUBLISHED
+        process_id: ApprovalChain
+        version_number: 1
+        is_valid: true
+        published_at: "2026-08-20T09:00:00Z"
+        created_at: "2026-08-20T08:00:00Z"
+
+    ModuleDetail:
+      allOf:
+        - $ref: '#/components/schemas/ModuleSummary'
+        - type: object
+          properties:
+            active_version:
+              allOf: [{ $ref: '#/components/schemas/ModuleVersion' }]
+              nullable: true
+
     StageDef:
       type: object
       required: [type, activity, role]
@@ -1761,6 +1825,298 @@ paths:
                 elements: [definitions, process, userTask, callActivity]
         "401": { $ref: '#/components/responses/Unauthorized' }
 
+  /api/v1/modules:
+    get:
+      operationId: listModules
+      summary: List modules visible to the caller (own tenant + global)
+      tags: [Modules]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: scope
+          schema: { $ref: '#/components/schemas/CatalogScope' }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Fuzzy search on name.
+      responses:
+        "200":
+          description: Paginated module list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  modules:
+                    type: array
+                    items: { $ref: '#/components/schemas/ModuleSummary' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+
+    post:
+      operationId: createModule
+      summary: Create a module and its first DRAFT version
+      description: >
+        `scope: global` requires the `platform_operator` role and is written
+        through a BYPASSRLS system connection — the ordinary tenant-scoped
+        role cannot insert a global-scope row regardless of this check.
+      tags: [Modules]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, bpmn_xml]
+              properties:
+                name:        { type: string, maxLength: 255 }
+                description: { type: string, maxLength: 2000 }
+                bpmn_xml:
+                  type: string
+                  description: Must contain exactly one top-level `<bpmn:process>`.
+                scope:
+                  allOf: [{ $ref: '#/components/schemas/CatalogScope' }]
+                  default: tenant
+      responses:
+        "201":
+          description: Module and initial draft version created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  module_id:  { type: string, format: uuid }
+                  version_id: { type: string, format: uuid }
+                  status:     { $ref: '#/components/schemas/VersionStatus' }
+                  message:    { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/modules/{id}:
+    get:
+      operationId: getModule
+      summary: Get a module's metadata and active version
+      tags: [Modules]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Module detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModuleDetail' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      operationId: archiveModule
+      summary: Archive a module (clears its active version)
+      description: Deleting a `scope=global` module requires the `platform_operator` role.
+      tags: [Modules]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Module archived.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  module_id: { type: string, format: uuid }
+                  status:    { type: string, example: ARCHIVED }
+                  message:   { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: The module has no active version to archive.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  /api/v1/modules/{id}/versions:
+    get:
+      operationId: listModuleVersions
+      summary: List a module's version history
+      tags: [Modules]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Paginated version list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items: { $ref: '#/components/schemas/ModuleVersion' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+
+    post:
+      operationId: addModuleVersion
+      summary: Add a new DRAFT version to an existing module
+      description: >
+        `bpmn_xml` is optional — omit it to copy the current active version's
+        content forward, or supply it to author fresh content in the new draft.
+      tags: [Modules]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bpmn_xml: { type: string, nullable: true }
+      responses:
+        "201":
+          description: Draft version created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  module_id:  { type: string, format: uuid }
+                  version_id: { type: string, format: uuid }
+                  status:     { $ref: '#/components/schemas/VersionStatus' }
+                  message:    { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: A DRAFT version already exists for this module.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/modules/{id}/versions/{version_id}:
+    get:
+      operationId: getModuleVersion
+      summary: Get a specific module version, including its BPMN XML
+      tags: [Modules]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: version_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Module version detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModuleVersion' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/modules/{id}/versions/{version_id}/publish:
+    post:
+      operationId: publishModuleVersion
+      summary: Publish a DRAFT module version
+      tags: [Modules]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: version_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Version published and set as the module's active version.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  module_id:      { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer }
+                  message:        { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: The version is not in DRAFT status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+
 tags:
   - name: Workflows
     description: Root workflow template management.
@@ -1774,5 +2130,7 @@ tags:
     description: Health and readiness checks.
   - name: Internal
     description: Internal service-to-service endpoints (not exposed on the public gateway).
+  - name: Modules
+    description: Reusable BPMN module library (tenant + platform-authored global catalog).
   - name: BPMN
     description: BPMN modeler-support endpoints (element allowlist discovery).

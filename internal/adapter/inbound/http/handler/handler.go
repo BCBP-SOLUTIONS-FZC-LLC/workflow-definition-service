@@ -45,11 +45,23 @@ type validationSvc interface {
 	Validate(ctx context.Context, bpmnXML string, moduleXMLs []string) (bool, []domain.BPMNValidationError, error)
 }
 
+type moduleSvc interface {
+	List(ctx context.Context, callerTenantID uuid.UUID, filter port.ModuleFilter) ([]*domain.Module, int64, error)
+	Create(ctx context.Context, callerTenantID, userID uuid.UUID, req service.CreateModuleReq) (*domain.Module, *domain.ModuleVersion, error)
+	Get(ctx context.Context, callerTenantID, moduleID uuid.UUID) (*domain.Module, *domain.ModuleVersion, error)
+	ListVersions(ctx context.Context, callerTenantID, moduleID uuid.UUID, page, limit int) ([]*domain.ModuleVersion, int64, error)
+	GetVersion(ctx context.Context, callerTenantID, moduleID, versionID uuid.UUID) (*domain.ModuleVersion, error)
+	AddVersion(ctx context.Context, callerTenantID, userID, moduleID uuid.UUID, req service.AddModuleVersionReq) (*domain.ModuleVersion, error)
+	Publish(ctx context.Context, callerTenantID, userID, moduleID, versionID uuid.UUID) (*domain.ModuleVersion, error)
+	Archive(ctx context.Context, callerTenantID, userID, moduleID uuid.UUID) error
+}
+
 type Handler struct {
 	workflows  workflowSvc
 	drafts     draftSvc
 	versions   versionSvc
 	validation validationSvc
+	modules    moduleSvc
 	membership membershipRevoker
 	connectors connectorSvc
 	log        port.Logger
@@ -60,6 +72,7 @@ type Services struct {
 	Drafts     draftSvc
 	Versions   versionSvc
 	Validation validationSvc
+	Modules    moduleSvc
 	Membership membershipRevoker
 	Connectors connectorSvc
 	Log        port.Logger
@@ -71,6 +84,7 @@ func New(s Services) *Handler {
 		drafts:     s.Drafts,
 		versions:   s.Versions,
 		validation: s.Validation,
+		modules:    s.Modules,
 		membership: s.Membership,
 		connectors: s.Connectors,
 		log:        s.Log,
@@ -98,6 +112,29 @@ func isAdmin(c *gin.Context) bool {
 func requireAdmin(c *gin.Context) bool {
 	if !isAdmin(c) {
 		writeProblem(c, http.StatusForbidden, CodeForbidden, "caller lacks tenant_admin/tenant_owner role", nil)
+		return false
+	}
+	return true
+}
+
+const platformOperatorRole = "platform_operator"
+
+func isPlatformOperator(c *gin.Context) bool {
+	rc, ok := gincommon.RequestContext(c)
+	if !ok {
+		return false
+	}
+	for _, role := range rc.Roles {
+		if role == platformOperatorRole {
+			return true
+		}
+	}
+	return false
+}
+
+func requirePlatformOperator(c *gin.Context) bool {
+	if !isPlatformOperator(c) {
+		writeProblem(c, http.StatusForbidden, CodeForbidden, "caller lacks platform_operator role", nil)
 		return false
 	}
 	return true
