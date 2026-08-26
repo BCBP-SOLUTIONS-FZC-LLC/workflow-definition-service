@@ -876,9 +876,10 @@ erDiagram
         UUID created_by_user_id
         BIGINT record_version
         TIMESTAMP created_at
+        TIMESTAMP updated_at
     }
 
-    WORKFLOW_STARTER_TEMPLATE {
+    WORKFLOW_TEMPLATE {
         UUID id PK
         UUID tenant_id "NULL iff scope='global'"
         VARCHAR scope "'global' | 'tenant'"
@@ -1869,11 +1870,13 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 | `/workflows/:id/versions/:version_id/diff/:target_version_id` | `GET` | Any | Get structural and metadata diff between two versions |
 | `/connectors/registry` | `GET` | Any | Serve the modeler-facing element-template (authoring form) list/detail for each registered connector type, generated from `pkg/registry` (§10.14/§10.15) |
 | `/connectors/credentials` | `POST` | Admin | Accept a provider credential for a connector task at authoring time (`storage`/`send-email`/`document-extract`/`chat-notify`), write it to OpenBao, and return the resulting secret path for use in the task's compiled `IOMapping` (§10.15) |
-| `/bpmn/allowed-elements` | `GET` | Any | Serve the modeler-facing BPMN element allowlist (§4.1.2's enforcement list, mirrored) so the frontend's Camunda-based canvas can restrict its palette to what this service will actually accept. UX convenience only — this service's own §4.1.2 422 rejection remains the authoritative enforcement, not the palette (§10.18) |
+| `/bpmn/allowed-elements` | `GET` | Any | Serve the modeler-facing BPMN element allowlist (§4.1.2's enforcement list, mirrored) so the frontend's Camunda-based canvas can restrict its palette to what this service will actually accept. UX convenience only — this service's own §4.1.2 422 rejection remains the authoritative enforcement, not the palette (§10.17) |
 | `/modules` | `GET` | Any | List reusable BPMN modules visible to the caller (global + their own tenant's), `?scope=`/`?q=` filters (§3.3.18) |
 | `/modules` | `POST` | Admin | Create a new module (tenant-scoped; `platform_operator` role required for `scope=global`, §10.16) |
 | `/modules/:id` | `GET` | Any | Get a module's metadata + its latest published version's BPMN XML |
-| `/modules/:id/versions` | `POST` | Admin | Add a new draft version to an existing module (mirrors `/workflows/:id/draft`'s lifecycle) |
+| `/modules/:id/versions` | `GET` | Any | List a module's version history, `page`/`limit` (added post-registry — see §3.3.18) |
+| `/modules/:id/versions/:version_id` | `GET` | Any | Get a specific module version, including a pending DRAFT (added post-registry — see §3.3.18) |
+| `/modules/:id/versions` | `POST` | Admin | Add a new draft version to an existing module; `bpmn_xml` optional, copies the active version forward when omitted (§3.3.18) |
 | `/modules/:id/versions/:version_id/publish` | `POST` | Admin | Publish a module draft version, promoting it to active |
 | `/modules/:id` | `DELETE` | Admin | Archive a module (soft delete — existing compiled plans that already bundled its XML are unaffected) |
 | `/starters` | `GET` | Any | List starter workflows visible to the caller (global + their own tenant's), `?scope=`/`?category=`/`?q=` filters (§3.3.19) |
@@ -2139,7 +2142,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 Modules are tenant-authored (or platform-authored, `scope=global`) BPMN fragments meant to be referenced from a main diagram's `<bpmn:callActivity>` and merged in at compile time via the existing `Bundle()` mechanism (§4.1.3.3) — this section only adds a persisted, versioned, browsable store in front of that already-existing merge step; `Bundle()` itself is unchanged.
 
 - **GET** `/modules`
-  - **Query Params**: `scope` (`global`|`tenant`|`all`, default `all`), `q` (name substring search), `page`/`limit` (pagination, same defaults as §3.3.3.1).
+  - **Query Params**: `scope` (`global`|`tenant`, optional — omitted returns both), `q` (name substring search), `page`/`limit` (pagination, same defaults as §3.3.3.1).
   - **Response (`200 OK`)**:
 
     ```json
@@ -2163,17 +2166,19 @@ Modules are tenant-authored (or platform-authored, `scope=global`) BPMN fragment
   - **Response (`201 Created`)**: same shape as §3.3.2's create-workflow response (`module_id`, `version_id`, `status: "DRAFT"`, `version_number: null`) — the first version is always a draft, publish it via the next endpoint before it's usable in a compile.
   - The submitted `bpmn_xml` runs through the same parser/element-allowlist validation as a normal workflow draft (§4.1) before being stored — a module is BPMN content like any other, not exempt from Tier validation.
 
-- **POST** `/modules/:id/versions` — add a new draft version to an existing module. Same request/response shape as create; increments `version_number`.
-- **POST** `/modules/:id/versions/:version_id/publish` — publishes a draft version (validates + compiles the fragment standalone, sets `is_valid`/`validation_errors_json`, `status → PUBLISHED`, updates the module's `active_version_id`). Mirrors §3.3.7 exactly; a module version follows the identical DRAFT → PUBLISHED → ARCHIVED lifecycle a workflow version does (§2.1).
+- **POST** `/modules/:id/versions` — add a new draft version to an existing module. `bpmn_xml` is optional: supplied, it's validated and stored as the new draft's content (same validation as create); omitted, the new draft copies the current active version's content forward instead (mirrors `/workflows/:id/draft`'s copy-forward semantics). The single-DRAFT-per-module invariant is a DB partial unique index, not an app-level pre-check.
+- **POST** `/modules/:id/versions/:version_id/publish` — publishes a draft version (compiles the fragment standalone as a validation gate only — no `Bundle()`, no compiled-plan/hash storage, since a module fragment isn't itself executed — `status → PUBLISHED`, updates the module's `active_version_id`). Mirrors §3.3.7 exactly; a module version follows the identical DRAFT → PUBLISHED → ARCHIVED lifecycle a workflow version does (§2.1).
 - **GET** `/modules/:id` — module metadata + its active (published) version's `bpmn_xml`, ready for the frontend to hand to `Bundle()` via a referencing diagram's `module_bpmn_xmls` map.
-- **DELETE** `/modules/:id` — archives the module (`active_version_id → NULL`); does not retroactively affect any already-compiled plan that bundled a snapshot of its XML, since `Bundle()` copies content in at compile time rather than holding a live reference.
+- **GET** `/modules/:id/versions` — a module's version history (`page`/`limit` pagination), so the frontend can review non-active versions. Not in this section's original endpoint list — added once implementation showed there was otherwise no way to retrieve a module's pending DRAFT content before publishing it.
+- **GET** `/modules/:id/versions/:version_id` — a specific module version's metadata + `bpmn_xml`, including a pending DRAFT. Added for the same reason as the previous endpoint.
+- **DELETE** `/modules/:id` — archives the module (`active_version_id → NULL`, and the archived version's own `status → ARCHIVED`, mirroring §3.3.8); does not retroactively affect any already-compiled plan that bundled a snapshot of its XML, since `Bundle()` copies content in at compile time rather than holding a live reference.
 
 #### 3.3.19 Starter Workflows
 
 Starters are complete, ready-to-use BPMN diagrams a tenant can start authoring from — a point-in-time snapshot, not a live link to any workflow. "Using" a starter is nothing more than handing its `bpmn_xml` to the ordinary `POST /workflows` (§3.3.2) a human pasting hand-authored XML would use — this service gains no new compile-time or publish-time behavior for starters at all.
 
 - **GET** `/starters`
-  - **Query Params**: `scope` (`global`|`tenant`|`all`, default `all`), `category` (free-text filter, e.g. `approval`, `onboarding`), `q` (name search), `page`/`limit`.
+  - **Query Params**: `scope` (`global`|`tenant`, optional — omitted returns both), `category` (free-text filter, e.g. `approval`, `onboarding`), `q` (name search), `page`/`limit`.
   - **Response (`200 OK`)**:
 
     ```json
@@ -2200,7 +2205,7 @@ Starters are complete, ready-to-use BPMN diagrams a tenant can start authoring f
 #### 3.3.20 BPMN Element Allowlist Discovery
 
 - **GET** `/bpmn/allowed-elements`
-- **Response (`200 OK`)**: the same allowlist `pkg/enums.AllowedBPMNElements` (`workflow-models`, §10.18) that §4.1.2's compiler enforcement already reads — one shared source, no separate maintenance:
+- **Response (`200 OK`)**: the same allowlist `pkg/enums.AllowedBPMNElements` (`workflow-models`, §10.17) that §4.1.2's compiler enforcement already reads — one shared source, no separate maintenance:
 
   ```json
   {
@@ -2213,7 +2218,7 @@ Starters are complete, ready-to-use BPMN diagrams a tenant can start authoring f
   }
   ```
 
-  `serviceTask`'s presence in this list is unconditional — the `connector:`-prefix scoping (§4.1.2, §10.13) is a compile-time attribute check this endpoint does not attempt to encode; a modeler UI restricting its palette to this list still relies on the compiler's own 422 to catch a `serviceTask` with no valid `connector:` type. This endpoint is a UX convenience for configuring the palette, never the enforcement boundary (§10.18) — a bug or bypass in the frontend's palette restriction cannot let an actually-disallowed element through; §4.1.2's server-side rejection is unconditional and doesn't consult this endpoint or trust anything the client sends.
+  `serviceTask`'s presence in this list is unconditional — the `connector:`-prefix scoping (§4.1.2, §10.13) is a compile-time attribute check this endpoint does not attempt to encode; a modeler UI restricting its palette to this list still relies on the compiler's own 422 to catch a `serviceTask` with no valid `connector:` type. This endpoint is a UX convenience for configuring the palette, never the enforcement boundary (§10.17) — a bug or bypass in the frontend's palette restriction cannot let an actually-disallowed element through; §4.1.2's server-side rejection is unconditional and doesn't consult this endpoint or trust anything the client sends.
 
 ---
 
@@ -4408,14 +4413,16 @@ This section captures the key architectural and design decisions made for the Wo
 
 ### 10.16 Reusable Module & Starter-Workflow Library Absorbed Into This Service
 
-- **Decision**: The "custom BPMN module"/"reusable authoring component" library, and a new "starter/predesigned workflow" library, are both modeled into this service's own schema (`workflow_module`/`workflow_module_version`/`workflow_starter_template`, §2.1, Appendix A) rather than a separate service's database. Both support a `scope` dimension — `global` (platform-authored, `tenant_id NULL`, visible to every tenant) and `tenant` (that tenant's own saved-for-reuse content, RLS-scoped) — per an explicit product requirement that tenants can maintain their own reusable modules/starters alongside platform-provided ones. Global-row writes are gated by the `platform_operator` role at the handler layer (mirroring Org & Membership's identical pattern for its own global department catalog, OP-1) and go through the same `BYPASSRLS` system-role connection the Outbox Relay already uses (§10.4) — the ordinary RLS-bound API role's `WITH CHECK` clause structurally cannot write a `scope='global'` row (§2.1's RLS DDL).
+- **Decision**: The "custom BPMN module"/"reusable authoring component" library, and a new "starter/predesigned workflow" library, are both modeled into this service's own schema (`workflow_module`/`workflow_module_version`/`workflow_template`, §2.1, Appendix A) rather than a separate service's database. Both support a `scope` dimension — `global` (platform-authored, `tenant_id NULL`, visible to every tenant) and `tenant` (that tenant's own saved-for-reuse content, RLS-scoped) — per an explicit product requirement that tenants can maintain their own reusable modules/starters alongside platform-provided ones. Global-row writes are gated by the `platform_operator` role at the handler layer (mirroring Org & Membership's identical pattern for its own global department catalog, OP-1) and go through the same `BYPASSRLS` system-role connection the Outbox Relay already uses (§10.4) — the ordinary RLS-bound API role's `WITH CHECK` clause structurally cannot write a `scope='global'` row (§2.1's RLS DDL).
 - **Rationale**: This service already owns the entire versioned-BPMN-content lifecycle a module/starter library needs — draft → publish → version → clone (§3.3.10), `record_version` optimistic locking, RLS — and is the *only* consumer of module content today via `<bpmn:callActivity>`/`Bundle()` (§4.1.3.3), which currently has no persisted store to draw from and requires the caller to re-supply full module XML on every compile. Colocating storage with its only real consumer closes that gap rather than relocating one, and reuses infrastructure (this service's Postgres instance, already shared with Execution Service via separate schemas per §4.1/§5.1's database-per-service exception) instead of standing up a new deployable, database, and RLS/migration/CI surface for what is structurally more of the same kind of content this service already stores. A starter is deliberately **not** given the same DRAFT/PUBLISHED/ARCHIVED version history a module gets (§2.1) — "using" a starter is nothing more than submitting its `bpmn_xml` to the ordinary `POST /workflows` a hand-authored upload would use (§3.3.19), so it needs no lifecycle machinery of its own beyond simple CRUD.
 - **Open item, not resolved by this decision:** if the intended UI for browsing this content turns out to be CMS-like (cross-tenant search, tagging, thumbnails, marketplace-style discovery) rather than "just another versioned BPMN entity," that product shape could still justify pulling this back into a dedicated service later. Not pre-built for here — see Appendix E.
+- **Implemented**: the module/template library shipped this session (Module CRUD+lifecycle, Template CRUD, RLS, BYPASSRLS write path). Two corrections to this decision's own text found during implementation: (1) the "same `BYPASSRLS` system-role connection the Outbox Relay already uses" phrasing describes a target this service had never actually built — there was exactly one Postgres pool in the whole service (shared by the API and the Outbox Relay) before this; a genuinely new second pool + DSN (`SYSTEM_DATABASE_URL`) was added, used only for `scope=global` writes. (2) The RLS DDL actually shipped uses the simpler inline-policy style already in production for every other table, not `rls_check_tenant_or_global()` — see Appendix A's implementation note below the module/template RLS block for why. Separately, the `platform_operator` role/claim itself is provisional: no code anywhere (this service, `platform-gincommon`, or elsewhere available locally) defines it or confirms how a cross-tenant claim would reach `x-tenant-roles`, which is otherwise populated per-tenant — needs sign-off from whoever owns the gateway/IAM claim contract before the global-write path can be trusted in a real environment (tracked in Appendix E).
 
 ### 10.17 BPMN Element Allowlist Sourced From `workflow-models`
 
 - **Decision**: The BPMN element allowlist this service's compiler enforces (§4.1.2) is sourced from a new shared export in `workflow-models` (`pkg/enums.AllowedBPMNElements`) rather than being defined only as inline Go logic in this service's own `bpmn_compiler` package. `GET /bpmn/allowed-elements` (§3.3.20) serves the same list to the frontend for palette configuration.
 - **Rationale**: `workflow-models` (`platform-workflow-models`) is the shared module whose stated purpose is keeping concepts like this in sync across Definition and Execution — it did not yet carry the element allowlist (verified: as of this decision it only exported `pkg/dsl`/`pkg/enums`/`pkg/events`, no element-allowlist content), which is a gap relative to that stated purpose, not evidence the allowlist belongs somewhere else. Sourcing both this service's own enforcement and the new discovery endpoint from one shared, versioned list removes any drift risk between "what the compiler actually accepts" and "what the modeler UI's palette claims is allowed," without needing a new HTTP round-trip between the two backend services. Client-side palette restriction remains UX only — §4.1.2's server-side 422 rejection is the actual enforcement boundary regardless of what this endpoint reports (§3.3.20).
+- **Implemented**: shipped this session, and `workflow-models`' first pass at `AllowedBPMNElements` needed real corrections before it could safely gate anything — audited against this service's actual parser (`bpmncore`) and found it missing 8 already-supported elements (`task`, `dataStoreReference`, `timerEventDefinition`, `errorEventDefinition`, `messageEventDefinition`, `timeDuration`, `incoming`, `outgoing` — wiring the uncorrected list as enforcement would have started rejecting live workflows using them) — fixed upstream, tagged `workflow-models` `v1.2.0-rc.3`. Also found and fixed two independent, pre-existing bugs while wiring §4.1.2's enforcement: `intermediateCatchEvent` and `eventBasedGateway` were never actually added to `parser.go`'s Tier 2 denylist despite this document's own text already describing `intermediateCatchEvent` as a Tier 2 example — both elements were silently dropped by `encoding/xml` with no validation feedback at all before this fix, unrelated to the allowlist work itself.
 
 ---
 
@@ -4607,6 +4614,7 @@ CREATE TABLE workflow_module_version (
     created_by_user_id UUID,
     record_version BIGINT NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT now(),
+    updated_at TIMESTAMP DEFAULT now(),  -- was missing from this table's first draft of this Appendix; every sibling table has it
 
     CONSTRAINT chk_module_version_number_on_publish
         CHECK (status = 'DRAFT' OR version_number IS NOT NULL)
@@ -4624,7 +4632,7 @@ CREATE UNIQUE INDEX uq_module_version_published
 -- versioned and not compiled by this service; "using" one is nothing more than
 -- submitting its bpmn_xml to the ordinary POST /workflows a hand-authored
 -- upload would use, so no lifecycle machinery beyond simple CRUD is needed here.
-CREATE TABLE workflow_starter_template (
+CREATE TABLE workflow_template (
     id UUID PRIMARY KEY,
     tenant_id UUID,  -- NULL iff scope = 'global'
     scope catalog_scope NOT NULL,
@@ -4711,6 +4719,31 @@ BEFORE UPDATE ON workflow_version FOR EACH ROW
 WHEN (OLD.* IS DISTINCT FROM NEW.*)
 EXECUTE FUNCTION update_workflow_version_meta_column();
 
+-- workflow_module and workflow_module_version were missing their own triggers
+-- in this Appendix's first draft — without one, record_version/updated_at
+-- would never move, breaking the optimistic-lock story those columns exist
+-- for. As shipped, both reuse one shared function (identical body to the two
+-- above) rather than adding two more near-duplicate per-table functions —
+-- the two functions above predate this generalization and were left as-is.
+CREATE OR REPLACE FUNCTION update_meta_columns()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.updated_at = NOW();
+   NEW.record_version = OLD.record_version + 1;
+   RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_workflow_module_updated_at
+BEFORE UPDATE ON workflow_module FOR EACH ROW
+WHEN (OLD.* IS DISTINCT FROM NEW.*)
+EXECUTE FUNCTION update_meta_columns();
+
+CREATE TRIGGER update_workflow_module_version_updated_at
+BEFORE UPDATE ON workflow_module_version FOR EACH ROW
+WHEN (OLD.* IS DISTINCT FROM NEW.*)
+EXECUTE FUNCTION update_meta_columns();
+
 -- PostgreSQL Row-Level Security (RLS) Policies
 -- Notes:
 --   FORCE ROW LEVEL SECURITY: prevents table owner from bypassing RLS
@@ -4742,7 +4775,7 @@ CREATE POLICY tenant_isolation_policy ON workflow_node_assignee
     USING      (rls_check_tenant(tenant_id, 'workflow_node_assignee'))
     WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
 
--- workflow_module / workflow_module_version / workflow_starter_template use
+-- workflow_module / workflow_module_version / workflow_template use
 -- rls_check_tenant_or_global (below), NOT the plain rls_check_tenant used
 -- above — rls_check_tenant is declared STRICT, so passing it a NULL
 -- tenant_id (every scope='global' row) would short-circuit to NULL, which a
@@ -4773,13 +4806,41 @@ CREATE POLICY tenant_isolation_policy ON workflow_module_version
     USING      (rls_check_tenant_or_global(tenant_id, scope, 'workflow_module_version'))
     WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
 
-REVOKE ALL ON workflow_starter_template FROM PUBLIC;
-ALTER TABLE workflow_starter_template ENABLE ROW LEVEL SECURITY;
-ALTER TABLE workflow_starter_template FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation_policy ON workflow_starter_template
+REVOKE ALL ON workflow_template FROM PUBLIC;
+ALTER TABLE workflow_template ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_template FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_policy ON workflow_template
     FOR ALL
-    USING      (rls_check_tenant_or_global(tenant_id, scope, 'workflow_starter_template'))
+    USING      (rls_check_tenant_or_global(tenant_id, scope, 'workflow_template'))
     WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+-- Implementation note (module/module_version/template shipped rev, this session):
+-- `rls_check_tenant`/`rls_check_tenant_or_global`, FORCE ROW LEVEL SECURITY,
+-- REVOKE ALL FROM PUBLIC, and this rls_violation_log schema were never
+-- implemented for ANY table in this service, not just these three — a
+-- pre-existing, platform-wide gap between this Appendix's target-hardened
+-- design and the actually-applied migrations (000004_enable_rls.up.sql uses
+-- plain `USING (tenant_id = current_setting('app.tenant_id')::uuid)` policies
+-- everywhere, no FORCE/REVOKE, and the real rls_violation_log has a different,
+-- incompatible column set: id/tenant_id/user_id/table_name/operation/
+-- client_ip/created_at). Retrofitting the fuller design below to the whole
+-- schema is real, separate work — out of scope for the module/template
+-- library — so the three new tables were shipped using the same simpler
+-- inline-policy style already in production for every other table, not the
+-- rls_check_tenant_or_global() function documented above:
+--
+--   ALTER TABLE workflow_module ENABLE ROW LEVEL SECURITY;
+--   CREATE POLICY tenant_isolation_policy ON workflow_module
+--       USING      (scope = 'global' OR tenant_id = current_setting('app.tenant_id', true)::uuid)
+--       WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
+--   -- (workflow_module_version, workflow_template: identical, table name swapped)
+--
+-- This achieves the same security property WITH CHECK above documents (the
+-- ordinary role can never insert scope='global') without depending on
+-- rls_check_tenant_or_global(), which is also broken as written: its sampled
+-- violation-log INSERT (below) targets columns the real rls_violation_log
+-- table doesn't have, so it would raise an undefined-column error the first
+-- time the 1%-sample branch fired, had it ever been wired in as shown here.
 
 REVOKE ALL ON outbox_events FROM PUBLIC;
 ALTER TABLE outbox_events ENABLE ROW LEVEL SECURITY;
@@ -4811,8 +4872,8 @@ CREATE INDEX idx_module_scope_tenant ON workflow_module(scope, tenant_id);
 CREATE INDEX idx_module_active_version ON workflow_module(active_version_id) WHERE active_version_id IS NOT NULL;
 CREATE INDEX idx_mv_module_id ON workflow_module_version(module_id);
 CREATE UNIQUE INDEX idx_mv_single_draft ON workflow_module_version(module_id) WHERE status = 'DRAFT';
-CREATE INDEX idx_starter_name_trgm ON workflow_starter_template USING gin (name gin_trgm_ops);
-CREATE INDEX idx_starter_scope_tenant_category ON workflow_starter_template(scope, tenant_id, category);
+CREATE INDEX idx_starter_name_trgm ON workflow_template USING gin (name gin_trgm_ops);
+CREATE INDEX idx_starter_scope_tenant_category ON workflow_template(scope, tenant_id, category);
 CREATE INDEX idx_outbox_events_pending ON outbox_events (scheduled_at, id) WHERE published_at IS NULL;
 CREATE INDEX idx_outbox_dead_letters_failed_at ON outbox_dead_letters (failed_at DESC);
 CREATE INDEX idx_processed_event_processed_at ON processed_event(processed_at);
@@ -4885,7 +4946,7 @@ END;
 $$;
 
 -- Global-catalog-aware variant for workflow_module / workflow_module_version /
--- workflow_starter_template (§2.1, §10.16). Deliberately NOT STRICT: a
+-- workflow_template (§2.1, §10.16). Deliberately NOT STRICT: a
 -- scope='global' row's row_tenant_id is NULL by construction (chk_*_scope_tenant),
 -- and a STRICT function short-circuits to NULL — which a USING clause treats as
 -- false — the instant any argument is NULL, silently hiding every global row
@@ -5307,8 +5368,10 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.3 | 2026-08-12 | Citation-only pass syncing against `workflow_connectors.md` rev 6.0, which made connector tasks fully automation-only (no human fallback, ever). **§4.1.2**: dropped the stale "worker placement is deliberately still open" parenthetical (already fixed once placement was decided) — now says placement is decided, this compiler's output needed no change either way. **§4.1.3.3**: an unrecognized connector-type name's compile-time leniency no longer justified by "the runtime already degrades this safely to a plain manual task" — re-derived as "might still get registered before the workflow is ever instantiated; runtime settles it as a real, visible failure now, not a compiler concern." A dangling `endpointAlias`/`queryAlias` now "fails the workflow" the same way, not "degrades." The "no `assignmentDefinition`" note no longer says "who (if anyone) completes it manually is a runtime decision" — no one ever does, by design. No compiler behavior changed anywhere in this pass. |
 | 1.4 | 2026-08-13 | IAM sync check against the newly-updated `iam_1.41.md` (a real HLD v1.41, unlike the citation checked in rev 1.1 that referenced a v1.41 which didn't exist yet). **§3.1**: `x-departments`'s cross-team note rewritten — IAM's HLD now explicitly documents the same `<department_id>:<role_level>` format this document already used, resolving the discrepancy at the HLD level; only IAM's own org-membership LLD reportedly still lags, tracked in `Notes/conf.md`, not here. No other discrepancy found against IAM's current HLD/LLDs this pass. |
 | 1.5 | 2026-08-13 | BE-for-UI/build-vs-absorb architecture review: this service absorbs connector-authoring templates and credential custody, previously assigned to BE-for-UI, a separate not-yet-designed service (new **§10.15**; §10.14 updated to match). New `/connectors/registry` (serve element-templates) and `/connectors/credentials` (write a provider credential to OpenBao, return its secret path) endpoints added to §3.2. Explicitly does **not** absorb BE-for-UI's "custom BPMN module"/"reusable authoring component" library — that stays in BE-for-UI's own database (`execution_service.md` §1.3/Appendix A.2 #31); this service's existing `callActivity`/`module_bpmn_xmls`/`Bundle()` compile-time merge mechanism (§4.1.3.3) is unchanged. |
-| 1.6 | 2026-08-21 | **BE-for-UI retired entirely** (`execution_service.md` Appendix A.2 #31, rev 1.34) — reverses rev 1.5's exclusion. This service absorbs the "custom BPMN module"/"reusable authoring component" library and a new starter/predesigned-workflow library, both with a `global`/`tenant` scope dimension (new **§10.16**; §10.15 updated to match, no longer excludes the module library). New tables `workflow_module`/`workflow_module_version`/`workflow_starter_template` (§2.1, Appendix A), a global-catalog-aware RLS function `rls_check_tenant_or_global` (Appendix A — the plain `rls_check_tenant` is `STRICT` and would silently hide every global row given a NULL `tenant_id`, so it isn't reused unmodified), and new endpoints `/modules`, `/modules/:id`, `/modules/:id/versions[/:version_id/publish]`, `/starters`, `/starters/:id`, `/starters/from-workflow-version/:version_id` (§3.2, §3.3.18, §3.3.19). Separately, new **§10.17**: the BPMN element allowlist (§4.1.2) is now sourced from a new shared export in `workflow-models` rather than only inline compiler logic, with a matching discovery endpoint `GET /bpmn/allowed-elements` (§3.3.20) for the frontend's modeler palette — UX convenience only, §4.1.2's server-side 422 remains the actual enforcement. New Appendix E (Open Items — this document's first, "Appendix C" already names the Glossary): the module/starter library's CMS-like-UI uncertainty (§10.16), and a pre-existing, independently-found gap where the shipped `WriteConnectorCredential` handler performs no role check despite §3.2 documenting `/connectors/credentials` as Admin-only. |
+| 1.6 | 2026-08-21 | **BE-for-UI retired entirely** (`execution_service.md` Appendix A.2 #31, rev 1.34) — reverses rev 1.5's exclusion. This service absorbs the "custom BPMN module"/"reusable authoring component" library and a new starter/predesigned-workflow library, both with a `global`/`tenant` scope dimension (new **§10.16**; §10.15 updated to match, no longer excludes the module library). New tables `workflow_module`/`workflow_module_version`/`workflow_template` (§2.1, Appendix A), a global-catalog-aware RLS function `rls_check_tenant_or_global` (Appendix A — the plain `rls_check_tenant` is `STRICT` and would silently hide every global row given a NULL `tenant_id`, so it isn't reused unmodified), and new endpoints `/modules`, `/modules/:id`, `/modules/:id/versions[/:version_id/publish]`, `/starters`, `/starters/:id`, `/starters/from-workflow-version/:version_id` (§3.2, §3.3.18, §3.3.19). Separately, new **§10.17**: the BPMN element allowlist (§4.1.2) is now sourced from a new shared export in `workflow-models` rather than only inline compiler logic, with a matching discovery endpoint `GET /bpmn/allowed-elements` (§3.3.20) for the frontend's modeler palette — UX convenience only, §4.1.2's server-side 422 remains the actual enforcement. New Appendix E (Open Items — this document's first, "Appendix C" already names the Glossary): the module/starter library's CMS-like-UI uncertainty (§10.16), and a pre-existing, independently-found gap where the shipped `WriteConnectorCredential` handler performs no role check despite §3.2 documenting `/connectors/credentials` as Admin-only. |
 | 1.7 | 2026-08-21 | **§7.4.2**: `department.membership.revoked` is now also documented in `api/asyncapi.yaml` as a `receive` operation (message `DepartmentMembershipRevoked`, schema `DepartmentMembershipRevokedInbound`, non-`Payload`-suffixed since Org & Membership owns registration) — this service's asyncapi coverage was previously outbound-only, mirroring the gap `execution_service.md` §7.4 already closed for its own inbound events. Code-side: `internal/adapter/inbound/http/asyncapi.go`'s render-order lists updated to surface it, and a pre-existing, independently-found bug fixed in the same pass — that handler's `Type` field couldn't unmarshal the multi-type YAML idiom (`["string", "null"]`) `promoted_from_version_id` already used, meaning `GET /asyncapi` had likely been erroring already, unrelated to this change. |
+| 1.8 | 2026-08-26 | **§10.16 and §10.17 both fully implemented** — the module/starter-template library (Module CRUD+lifecycle, Template CRUD, RLS, a genuinely new BYPASSRLS pool + `platform_operator` handler gate) and the BPMN element allowlist (real enforcement wired into `parser.go`, `GET /bpmn/allowed-elements` live) both shipped this session. Renamed `workflow_starter_template` → `workflow_template` throughout (Appendix A, §2.1, §10.16) to match this schema's existing singular-noun table-naming convention (`workflow`, `workflow_version`, `workflow_module`). **§3.2/§3.3.18**: added `GET /modules/:id/versions` and `GET /modules/:id/versions/:version_id` (not in the original endpoint list — without them a module's pending DRAFT content could never be retrieved for review before publish) and resolved a self-contradiction between the endpoint registry and §3.3.18's own prose over whether `POST /modules/:id/versions` takes a body (it does, optionally — omitted copies the active version forward, supplied replaces it). Fixed the `§10.18` cross-reference typo (should always have been §10.17) in three places. **Appendix A**: fixed two real DDL bugs found while implementing against it — `workflow_module_version` was missing `updated_at` (every sibling table has it), and `workflow_module`/`workflow_module_version` had no `BEFORE UPDATE` triggers at all (would have left `record_version`/`updated_at` frozen forever); also documented, via a new implementation note beneath the module/template RLS block, that `rls_check_tenant_or_global()`/`FORCE ROW LEVEL SECURITY`/`REVOKE ALL FROM PUBLIC`/this Appendix's `rls_violation_log` schema were never implemented for *any* table in this service (a pre-existing, platform-wide gap, not something newly introduced) and that the shipped RLS for these three tables therefore uses the same simpler inline-policy style already in production elsewhere — `rls_check_tenant_or_global()` as written would also have thrown at runtime, since its sampled violation-log insert targets columns the real `rls_violation_log` table doesn't have. **New Appendix E entry**: the `platform_operator` role/claim source is provisional and needs sign-off from the gateway/IAM claim-contract owner; the connector-credentials role-check gap (rev 1.6) and the global-catalog-write-path gap (rev 1.6) are both marked resolved. |
+| 1.9 | 2026-08-26 | Post-implementation review of rev 1.8's module/starter library found and fixed one critical and two minor gaps, none previously documented. **Critical**: `POST /modules/:id/versions/:version_id/publish` (§3.3.18) was missing the `platform_operator` gate every other `scope=global` mutation on `/modules`/`/starters` has — any `tenant_admin` could discover a global module's DRAFT version through the (correctly ungated) read endpoints and publish it, flipping a platform-wide `active_version_id`. Fixed by fetching the module and gating on scope before publishing, matching `AddModuleVersion`/`ArchiveModule`'s existing pattern. **Minor**: the `scope` query parameter on `GET /modules`/`GET /starters` (§3.3.18/§3.3.19) was cast to the `catalog_scope` enum without validation, so a bad value reached Postgres and surfaced as a 500 instead of a 422 — fixed with the same tenant/global validation `POST` already applied to its own `scope` field. Also corrected §3.3.18/§3.3.19's own query-param documentation: `scope`'s accepted values are `global`/`tenant` only, not `global`\|`tenant`\|`all` as originally written here — omitting the parameter already returns both scopes, so `all` was redundant surface not implemented in code, not a bug in the implementation. **Config**: `SYSTEM_DATABASE_URL` (rev 1.8) is now required-in-prod in `Validate()`, matching `INTERNAL_API_TOKEN`'s existing fail-fast-at-startup convention — previously a missing value would only surface as a failed write the first time a `platform_operator` created or published global-scope content. |
 
 ---
 
@@ -5319,5 +5382,6 @@ This document had no dedicated Open Items tracker before rev 1.6 — items below
 | Theme | Item | Owner |
 | --- | --- | --- |
 | Deferred | **Module/starter library's product shape (§10.16).** Designed here as "just another versioned BPMN entity" (module) or a simple CRUD row (starter). If the intended UI turns out to be CMS-like — cross-tenant search, tagging, thumbnails, marketplace-style discovery across a large catalog — that product shape could justify pulling this back into a dedicated service later, independent of the data-ownership reasoning that put it here. Not pre-built for; revisit once real product/UI requirements exist. | Definition Service team + product, once UI requirements are known |
-| Security | **`POST /connectors/credentials` has no role check despite being documented Admin-only (§3.2, `workflow_connectors.md` §4.3/§6.2).** Independently found while researching this document: the shipped `WriteConnectorCredential` handler and `connector_service.go` extract tenant context (`mustCtx`) but perform no role/permission check at all — today any authenticated tenant member, not just an admin, can write a provider credential to OpenBao. Unrelated to the BE-for-UI retirement (rev 1.6) that surfaced it; a pre-existing gap in already-shipped code. | Definition Service team |
-| Cross-team | **Global-catalog write path for `workflow_module`/`workflow_starter_template` (§10.16) needs its `platform_operator`-gated handler + `BYPASSRLS`-role wiring actually built** — the RLS DDL (§2.1, Appendix A) already structurally prevents the ordinary API role from writing a `scope='global'` row; the privileged write path itself (mirroring Org & Membership's OP-1 pattern) is designed but not yet implemented. | Definition Service team |
+| ~~Security~~ | ~~**`POST /connectors/credentials` has no role check despite being documented Admin-only (§3.2, `workflow_connectors.md` §4.3/§6.2).**~~ **Resolved 2026-08-24**: `WriteConnectorCredential` now gates on `requireAdmin` before writing, mirroring `execution_service`'s own `adminRoles`/`requireAdmin` pattern. | Definition Service team |
+| ~~Cross-team~~ | ~~**Global-catalog write path for `workflow_module`/`workflow_template` (§10.16) needs its `platform_operator`-gated handler + `BYPASSRLS`-role wiring actually built**~~ **Resolved 2026-08-26**: Module CRUD, Template CRUD, the RLS DDL, and a genuinely new second (`SYSTEM_DATABASE_URL`) pool + `platform_operator` handler-layer gate all shipped — see §10.16's "Implemented" note and Appendix A's implementation note below the module/template RLS block for the two corrections made to the original design along the way. **Not resolved**: the `platform_operator` role/claim source itself is still provisional (see §10.16) — needs sign-off from whoever owns the gateway/IAM claim contract before this path can be trusted in a real environment; tracked as a new row below. | Definition Service team |
+| Cross-team | **`platform_operator` role/claim source is unconfirmed.** `isPlatformOperator`/`requirePlatformOperator` (mirroring `isAdmin`/`requireAdmin`) check the same `rc.Roles` the gateway populates per-tenant via `x-tenant-roles` — but no code anywhere available locally (`platform-gincommon`, this service, or elsewhere) defines a `platform_operator` claim or confirms how a claim that's inherently cross-tenant would ever appear in a per-tenant header. Built as the most reasonable default; the global-write path (§10.16) isn't trustworthy in a real environment until this is confirmed one way or the other. | Gateway/IAM claim-contract owner |
