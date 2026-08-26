@@ -130,6 +130,8 @@ func newApp(cfg *config.Config) (*app, error) {
 	moduleVersionRepo := pgadapter.NewModuleVersionRepo(pool)
 	globalModuleRepo := pgadapter.NewModuleRepo(systemPool)
 	globalModuleVersionRepo := pgadapter.NewModuleVersionRepo(systemPool)
+	starterRepo := pgadapter.NewStarterRepo(pool)
+	globalStarterRepo := pgadapter.NewStarterRepo(systemPool)
 	compiler := bpmncompiler.New()
 
 	workflowSvc := service.NewWorkflowService(service.WorkflowDeps{
@@ -186,12 +188,21 @@ func newApp(cfg *config.Config) (*app, error) {
 		Log:              log,
 	})
 
+	starterSvc := service.NewStarterService(service.StarterDeps{
+		Starters:       starterRepo,
+		GlobalStarters: globalStarterRepo,
+		Versions:       versionRepo,
+		Compiler:       compiler,
+		Log:            log,
+	})
+
 	h := httphandler.New(httphandler.Services{
 		Workflows:  workflowSvc,
 		Drafts:     draftSvc,
 		Versions:   versionSvc,
 		Validation: validationSvc,
 		Modules:    moduleSvc,
+		Starters:   starterSvc,
 		// Inbound events arrive over HTTP via POST /internal/events
 		Membership: versionSvc,
 		Connectors: connectorSvc,

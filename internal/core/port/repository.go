@@ -104,6 +104,21 @@ type ModuleVersionRepository interface {
 	NextVersionNumber(ctx context.Context, moduleID uuid.UUID) (int32, error)
 }
 
+type StarterFilter struct {
+	Scope    *domain.CatalogScope
+	Category *string
+	Search   *string
+	Page     int
+	Limit    int
+}
+
+type StarterTemplateRepository interface {
+	Create(ctx context.Context, s *domain.StarterTemplate) error
+	GetByID(ctx context.Context, callerTenantID, id uuid.UUID) (*domain.StarterTemplate, error)
+	List(ctx context.Context, callerTenantID uuid.UUID, filter StarterFilter) ([]*domain.StarterTemplate, int64, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+}
+
 type WorkflowFilter struct {
 	Search      *string
 	BusinessKey *string

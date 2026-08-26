@@ -216,6 +216,45 @@ func (f *fakeModuleSvc) Archive(ctx context.Context, callerTenantID, userID, mod
 	return nil
 }
 
+type fakeStarterSvc struct {
+	list                      func(context.Context, uuid.UUID, port.StarterFilter) ([]*domain.StarterTemplate, int64, error)
+	create                    func(context.Context, uuid.UUID, uuid.UUID, service.CreateStarterReq) (*domain.StarterTemplate, error)
+	get                       func(context.Context, uuid.UUID, uuid.UUID) (*domain.StarterTemplate, error)
+	createFromWorkflowVersion func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, service.CreateFromWorkflowVersionReq) (*domain.StarterTemplate, error)
+	del                       func(context.Context, uuid.UUID, uuid.UUID) error
+}
+
+func (f *fakeStarterSvc) List(ctx context.Context, callerTenantID uuid.UUID, filter port.StarterFilter) ([]*domain.StarterTemplate, int64, error) {
+	if f.list != nil {
+		return f.list(ctx, callerTenantID, filter)
+	}
+	return nil, 0, nil
+}
+func (f *fakeStarterSvc) Create(ctx context.Context, callerTenantID, userID uuid.UUID, req service.CreateStarterReq) (*domain.StarterTemplate, error) {
+	if f.create != nil {
+		return f.create(ctx, callerTenantID, userID, req)
+	}
+	return nil, nil
+}
+func (f *fakeStarterSvc) Get(ctx context.Context, callerTenantID, id uuid.UUID) (*domain.StarterTemplate, error) {
+	if f.get != nil {
+		return f.get(ctx, callerTenantID, id)
+	}
+	return nil, nil
+}
+func (f *fakeStarterSvc) CreateFromWorkflowVersion(ctx context.Context, callerTenantID, userID, sourceVersionID uuid.UUID, req service.CreateFromWorkflowVersionReq) (*domain.StarterTemplate, error) {
+	if f.createFromWorkflowVersion != nil {
+		return f.createFromWorkflowVersion(ctx, callerTenantID, userID, sourceVersionID, req)
+	}
+	return nil, nil
+}
+func (f *fakeStarterSvc) Delete(ctx context.Context, callerTenantID, id uuid.UUID) error {
+	if f.del != nil {
+		return f.del(ctx, callerTenantID, id)
+	}
+	return nil
+}
+
 func registerRoutes(r *gin.Engine, h *handler.Handler) {
 	wf := r.Group("/api/v1/workflows")
 	wf.GET("", h.ListWorkflows)
@@ -250,6 +289,13 @@ func registerRoutes(r *gin.Engine, h *handler.Handler) {
 	mod.POST("/:id/versions", h.AddModuleVersion)
 	mod.POST("/:id/versions/:version_id/publish", h.PublishModuleVersion)
 	mod.DELETE("/:id", h.ArchiveModule)
+
+	starters := r.Group("/api/v1/starters")
+	starters.GET("", h.ListStarters)
+	starters.POST("", h.CreateStarter)
+	starters.POST("/from-workflow-version/:version_id", h.CreateStarterFromWorkflowVersion)
+	starters.GET("/:id", h.GetStarter)
+	starters.DELETE("/:id", h.DeleteStarter)
 }
 
 func newRouter(h *handler.Handler) *gin.Engine {
@@ -271,6 +317,10 @@ func newBareRouter(h *handler.Handler) *gin.Engine {
 
 func newModuleHandler(mod *fakeModuleSvc) *handler.Handler {
 	return handler.New(handler.Services{Modules: mod})
+}
+
+func newStarterHandler(st *fakeStarterSvc) *handler.Handler {
+	return handler.New(handler.Services{Starters: st})
 }
 
 func newHandler(wf *fakeWorkflowSvc, dr *fakeDraftSvc, vs *fakeVersionSvc, val *fakeValidationSvc) *handler.Handler {

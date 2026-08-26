@@ -56,12 +56,21 @@ type moduleSvc interface {
 	Archive(ctx context.Context, callerTenantID, userID, moduleID uuid.UUID) error
 }
 
+type starterSvc interface {
+	List(ctx context.Context, callerTenantID uuid.UUID, filter port.StarterFilter) ([]*domain.StarterTemplate, int64, error)
+	Create(ctx context.Context, callerTenantID, userID uuid.UUID, req service.CreateStarterReq) (*domain.StarterTemplate, error)
+	Get(ctx context.Context, callerTenantID, id uuid.UUID) (*domain.StarterTemplate, error)
+	CreateFromWorkflowVersion(ctx context.Context, callerTenantID, userID, sourceVersionID uuid.UUID, req service.CreateFromWorkflowVersionReq) (*domain.StarterTemplate, error)
+	Delete(ctx context.Context, callerTenantID, id uuid.UUID) error
+}
+
 type Handler struct {
 	workflows  workflowSvc
 	drafts     draftSvc
 	versions   versionSvc
 	validation validationSvc
 	modules    moduleSvc
+	starters   starterSvc
 	membership membershipRevoker
 	connectors connectorSvc
 	log        port.Logger
@@ -73,6 +82,7 @@ type Services struct {
 	Versions   versionSvc
 	Validation validationSvc
 	Modules    moduleSvc
+	Starters   starterSvc
 	Membership membershipRevoker
 	Connectors connectorSvc
 	Log        port.Logger
@@ -85,6 +95,7 @@ func New(s Services) *Handler {
 		versions:   s.Versions,
 		validation: s.Validation,
 		modules:    s.Modules,
+		starters:   s.Starters,
 		membership: s.Membership,
 		connectors: s.Connectors,
 		log:        s.Log,

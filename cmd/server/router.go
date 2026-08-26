@@ -116,5 +116,12 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 	mod.POST("/:id/versions/:version_id/publish", idem(h.PublishModuleVersion))
 	mod.DELETE("/:id", idem(h.ArchiveModule))
 
+	starters := api.Group("/starters")
+	starters.GET("", h.ListStarters)
+	starters.POST("", idem(h.CreateStarter))
+	starters.POST("/from-workflow-version/:version_id", idem(h.CreateStarterFromWorkflowVersion))
+	starters.GET("/:id", h.GetStarter)
+	starters.DELETE("/:id", idem(h.DeleteStarter))
+
 	return r
 }

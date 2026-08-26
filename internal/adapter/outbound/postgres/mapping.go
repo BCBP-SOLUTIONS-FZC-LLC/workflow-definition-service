@@ -194,6 +194,23 @@ func moduleVersionFromDB(row db.GetModuleVersionByIDRow) *domain.ModuleVersion {
 	}
 }
 
+func starterFromDB(row db.GetStarterByIDRow) *domain.StarterTemplate {
+	return &domain.StarterTemplate{
+		ID:                      row.ID,
+		TenantID:                fromPgtypeUUID(row.TenantID),
+		Scope:                   fromCatalogScope(row.Scope),
+		Name:                    row.Name,
+		Description:             fromPgtypeText(row.Description),
+		Category:                fromPgtypeText(row.Category),
+		BPMNXML:                 row.BpmnXml,
+		SourceWorkflowVersionID: fromPgtypeUUID(row.SourceWorkflowVersionID),
+		CreatedByUserID:         fromPgtypeUUID(row.CreatedByUserID),
+		RecordVersion:           row.RecordVersion,
+		CreatedAt:               fromPgtypeTimestamp(row.CreatedAt),
+		UpdatedAt:               fromPgtypeTimestamp(row.UpdatedAt),
+	}
+}
+
 func assigneeFromDB(row db.WorkflowNodeAssignee) *domain.NodeAssignee {
 	return &domain.NodeAssignee{
 		ID:                row.ID,

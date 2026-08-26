@@ -264,6 +264,34 @@ components:
               allOf: [{ $ref: '#/components/schemas/ModuleVersion' }]
               nullable: true
 
+    StarterTemplate:
+      type: object
+      properties:
+        id:                          { type: string, format: uuid }
+        tenant_id:                   { type: string, format: uuid, nullable: true }
+        scope:                       { $ref: '#/components/schemas/CatalogScope' }
+        name:                        { type: string }
+        description:                 { type: string }
+        category:                    { type: string }
+        bpmn_xml:                    { type: string }
+        source_workflow_version_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Informational only — the content is copied at creation time, not linked.
+        created_at:                  { type: string, format: date-time }
+        updated_at:                  { type: string, format: date-time }
+      example:
+        id: 018f1a2b-0000-7000-8000-000000000003
+        tenant_id: null
+        scope: global
+        name: Standard Onboarding
+        description: Starting point for a new-hire onboarding workflow
+        category: hr
+        bpmn_xml: "<bpmn:definitions>...</bpmn:definitions>"
+        created_at: "2026-08-20T08:00:00Z"
+        updated_at: "2026-08-20T08:00:00Z"
+
     StageDef:
       type: object
       required: [type, activity, role]
@@ -2117,6 +2145,184 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
 
+  /api/v1/starters:
+    get:
+      operationId: listStarters
+      summary: List starter templates visible to the caller (own tenant + global)
+      tags: [Starters]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: scope
+          schema: { $ref: '#/components/schemas/CatalogScope' }
+        - in: query
+          name: category
+          schema: { type: string }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Fuzzy search on name.
+      responses:
+        "200":
+          description: Paginated starter list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  starters:
+                    type: array
+                    items: { $ref: '#/components/schemas/StarterTemplate' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+
+    post:
+      operationId: createStarter
+      summary: Create a starter template directly from raw BPMN XML
+      description: >
+        Runs through the same parser/element-allowlist validation as any BPMN upload.
+        `scope: global` requires the `platform_operator` role.
+      tags: [Starters]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, bpmn_xml]
+              properties:
+                name:        { type: string, maxLength: 255 }
+                description: { type: string, maxLength: 2000 }
+                category:    { type: string, maxLength: 64 }
+                bpmn_xml:    { type: string }
+                scope:
+                  allOf: [{ $ref: '#/components/schemas/CatalogScope' }]
+                  default: tenant
+      responses:
+        "201":
+          description: Starter created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StarterTemplate' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /api/v1/starters/from-workflow-version/{version_id}:
+    post:
+      operationId: createStarterFromWorkflowVersion
+      summary: Snapshot one of the caller's own workflow versions into a tenant-scoped starter
+      description: >
+        The source version must be the caller's own (enforced by the same tenant-scoped
+        read every other endpoint uses) and must be PUBLISHED or ARCHIVED, not DRAFT.
+        Always creates a `scope: tenant` starter — the BPMN content is copied, not linked,
+        so a later edit to the source workflow never changes the starter.
+      tags: [Starters]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: version_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:        { type: string, maxLength: 255 }
+                description: { type: string, maxLength: 2000 }
+                category:    { type: string, maxLength: 64 }
+      responses:
+        "201":
+          description: Starter created from the source version's current content.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StarterTemplate' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: The source version is still in DRAFT status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  /api/v1/starters/{id}:
+    get:
+      operationId: getStarter
+      summary: Get a starter template's metadata and BPMN XML
+      tags: [Starters]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Starter detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StarterTemplate' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      operationId: deleteStarter
+      summary: Delete a starter template
+      description: Deleting a `scope=global` starter requires the `platform_operator` role.
+      tags: [Starters]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Starter deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  starter_id: { type: string, format: uuid }
+                  message:    { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
 tags:
   - name: Workflows
     description: Root workflow template management.
@@ -2132,5 +2338,7 @@ tags:
     description: Internal service-to-service endpoints (not exposed on the public gateway).
   - name: Modules
     description: Reusable BPMN module library (tenant + platform-authored global catalog).
+  - name: Starters
+    description: Starter/predesigned workflow templates (tenant + platform-authored global catalog).
   - name: BPMN
     description: BPMN modeler-support endpoints (element allowlist discovery).
