@@ -72,6 +72,7 @@ env:
 envFromSecret:
   - DATABASE_URL
   - MIGRATION_DATABASE_URL   # direct-Postgres DSN; required whenever DATABASE_URL points at PgBouncer
+  - SYSTEM_DATABASE_URL      # BYPASSRLS DSN for scope=global module/template writes
   - VALKEY_PASSWORD
   - SNS_TOPIC_ARN
   - INTERNAL_API_TOKEN       # required when APP_ENV=prod — pod crash-loops without it (config.validate())
@@ -98,6 +99,7 @@ rotationEpoch: "0"
 secretValues:
   DATABASE_URL: ""
   MIGRATION_DATABASE_URL: ""
+  SYSTEM_DATABASE_URL: ""
   VALKEY_PASSWORD: ""
   SNS_TOPIC_ARN: ""
   INTERNAL_API_TOKEN: ""

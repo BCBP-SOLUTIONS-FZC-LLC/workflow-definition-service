@@ -9,18 +9,17 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Config's fields are documented by env var in .env.example, not per-field
+// here — that file is the single source of truth for defaults/fallback
+// semantics, kept in sync with the getEnvOrDefault calls in Load() below.
 type Config struct {
 	AppEnv       string
 	BuildVersion string
 
-	HTTPPort int
-	GRPCPort int
-	// MetricsPort is deliberately a separate port from HTTPPort — /metrics is
-	// served on its own http.Server so NetworkPolicy can scope Prometheus
-	// scrape ingress independently of the API port.
+	HTTPPort    int
+	GRPCPort    int
 	MetricsPort int
 
-	// OTel — consumed by platform-gincommon.InitTracingFromEnv()
 	OTELServiceName        string
 	OTELExporterEndpoint   string
 	OTELExporterInsecure   bool
@@ -31,23 +30,15 @@ type Config struct {
 	PGMinConns             int32
 	PGSlowQueryThresholdMS int
 	PGBouncerMode          bool
-	// MigrationDatabaseURL overrides DatabaseURL for the migrate subcommand.
-	// Set to a direct Postgres DSN when DATABASE_URL points to PgBouncer —
-	// golang-migrate uses session advisory locks that PgBouncer transaction
-	// pooling drops. Falls back to DatabaseURL when unset.
-	MigrationDatabaseURL string
-	// DatabaseFallbackURL is tried at startup if the primary pool (DATABASE_URL)
-	// fails to connect. Use a direct Postgres DSN as a safety net when PgBouncer
-	// may not be ready. Startup-only — not used for runtime reconnection.
-	DatabaseFallbackURL string
+	MigrationDatabaseURL   string
+	DatabaseFallbackURL    string
+	SystemDatabaseURL      string
 
-	ValkeyAddr         string
-	ValkeyPassword     string
-	ValkeyDialTimeout  time.Duration
-	ValkeyReadTimeout  time.Duration
-	ValkeyWriteTimeout time.Duration
-	// CacheCompiledPlanTTL bounds the gRPC GetCompiledWorkflow compiled-plan cache
-	// (key wf:plan:<tenant>:<version>); entries are also deleted on state change.
+	ValkeyAddr           string
+	ValkeyPassword       string
+	ValkeyDialTimeout    time.Duration
+	ValkeyReadTimeout    time.Duration
+	ValkeyWriteTimeout   time.Duration
 	CacheCompiledPlanTTL time.Duration
 	IdempotencyTTL       time.Duration
 
@@ -61,9 +52,6 @@ type Config struct {
 	OutboxPollInterval time.Duration
 	OutboxBatchSize    int
 
-	// InternalAPIToken, when set, is required as the x-internal-token header on
-	// the internal route group (POST /internal/events). Empty disables the check
-	// (local/dev); NetworkPolicy/mesh remains the primary control.
 	InternalAPIToken string
 
 	OrgMembershipBaseURL    string
@@ -100,6 +88,7 @@ func Load() (*Config, error) {
 		PGBouncerMode:          getEnvBoolOrDefault("PG_BOUNCER_MODE", false),
 		MigrationDatabaseURL:   getEnvOrDefault("MIGRATION_DATABASE_URL", ""),
 		DatabaseFallbackURL:    getEnvOrDefault("DATABASE_FALLBACK_URL", ""),
+		SystemDatabaseURL:      getEnvOrDefault("SYSTEM_DATABASE_URL", ""),
 
 		ValkeyAddr:           getEnvOrDefault("VALKEY_ADDR", "localhost:6379"),
 		ValkeyPassword:       getEnvOrDefault("VALKEY_PASSWORD", ""),
@@ -182,6 +171,9 @@ func (c *Config) validate() error {
 	if c.AppEnv == "prod" && c.InternalAPIToken == "" {
 		return fmt.Errorf("INTERNAL_API_TOKEN is required in prod environment")
 	}
+	if c.AppEnv == "prod" && c.SystemDatabaseURL == "" {
+		return fmt.Errorf("SYSTEM_DATABASE_URL is required in prod environment")
+	}
 	if !c.AWSUseStub {
 		if c.SNSTopicARN == "" {
 			return fmt.Errorf("SNS_TOPIC_ARN is required when AWS_USE_STUB=false")
@@ -207,6 +199,15 @@ func (c *Config) validate() error {
 func (c *Config) MigrationDSN() string {
 	if c.MigrationDatabaseURL != "" {
 		return c.MigrationDatabaseURL
+	}
+	return c.DatabaseURL
+}
+
+// SystemDSN returns the DSN to use for scope=global catalog writes, falling
+// back to DatabaseURL when SYSTEM_DATABASE_URL is unset.
+func (c *Config) SystemDSN() string {
+	if c.SystemDatabaseURL != "" {
+		return c.SystemDatabaseURL
 	}
 	return c.DatabaseURL
 }

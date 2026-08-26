@@ -132,7 +132,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 	keysToBackup := []string{
 		"DATABASE_URL", "AWS_USE_STUB", "SNS_TOPIC_ARN", "APP_ENV",
 		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_ADDR",
-		"GLUE_REGISTRY_NAME", "INTERNAL_API_TOKEN",
+		"GLUE_REGISTRY_NAME", "INTERNAL_API_TOKEN", "SYSTEM_DATABASE_URL",
 		"HTTP_PORT", "GRPC_PORT", "PG_MIN_CONNS", "PG_MAX_CONNS",
 		"OTEL_TRACES_SAMPLER_RATIO", "OUTBOX_BATCH_SIZE",
 		"OUTBOX_POLL_INTERVAL", "EXECUTION_CLIENT_TIMEOUT",
@@ -229,9 +229,17 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			name: "valid in prod with internal api token set",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "APP_ENV": "prod",
-				"INTERNAL_API_TOKEN": "secret-token",
+				"INTERNAL_API_TOKEN": "secret-token", "SYSTEM_DATABASE_URL": "postgres://system-host/db",
 			},
 			wantErr: false,
+		},
+		{
+			name: "missing system database url in prod",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost", "APP_ENV": "prod",
+				"INTERNAL_API_TOKEN": "secret-token", "SYSTEM_DATABASE_URL": "",
+			},
+			wantErr: true,
 		},
 		{
 			name:    "http port below range",

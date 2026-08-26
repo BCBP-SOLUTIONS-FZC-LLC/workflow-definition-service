@@ -48,9 +48,17 @@ func newApp(cfg *config.Config) (*app, error) {
 	}
 	prometheus.MustRegister(pgmetrics.NewPoolStatsCollector(pool, cfg.OTELServiceName))
 
+	systemPool, err := newSystemDBPool(context.Background(), cfg)
+	if err != nil {
+		pool.Close()
+		tracingShutdown()
+		return nil, err
+	}
+
 	cache, redisClient, err := newCacheStore(context.Background(), cfg)
 	if err != nil {
 		pool.Close()
+		systemPool.Close()
 		tracingShutdown()
 		return nil, err
 	}
@@ -59,6 +67,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	glueCodec, err := newGlueCodec(context.Background(), cfg)
 	if err != nil {
 		pool.Close()
+		systemPool.Close()
 		closeCache()
 		tracingShutdown()
 		return nil, err
@@ -67,6 +76,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	publisher, err := newPublisher(cfg, log, glueCodec)
 	if err != nil {
 		pool.Close()
+		systemPool.Close()
 		closeCache()
 		tracingShutdown()
 		return nil, err
@@ -83,6 +93,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		executionSvc, err = outboundgrpc.NewExecutionClient(cfg.ExecutionServiceAddr, cfg.ExecutionClientTimeout)
 		if err != nil {
 			pool.Close()
+			systemPool.Close()
 			closeCache()
 			tracingShutdown()
 			return nil, fmt.Errorf("execution client: %w", err)
@@ -101,6 +112,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	})
 	if err != nil {
 		pool.Close()
+		systemPool.Close()
 		closeCache()
 		tracingShutdown()
 		return nil, fmt.Errorf("outbox runner: %w", err)
@@ -202,6 +214,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		cfg:            cfg,
 		log:            log,
 		pool:           pool,
+		systemPool:     systemPool,
 		cache:          cache,
 		httpServer:     srv,
 		metricsServer:  metricsSrv,

@@ -24,6 +24,7 @@ type app struct {
 	cfg            *config.Config
 	log            port.Logger
 	pool           *pgcommon.Pool
+	systemPool     *pgcommon.Pool
 	cache          port.CacheStore
 	httpServer     *http.Server
 	metricsServer  *http.Server
@@ -110,6 +111,9 @@ func (a *app) stopServers(ctx context.Context) {
 
 	if err := a.pool.DrainAndClose(ctx); err != nil {
 		a.log.Warn("db pool drain timed out", map[string]any{"error": err.Error()})
+	}
+	if err := a.systemPool.DrainAndClose(ctx); err != nil {
+		a.log.Warn("system db pool drain timed out", map[string]any{"error": err.Error()})
 	}
 	if err := a.cacheClose.Close(); err != nil {
 		a.log.Error("valkey close error", map[string]any{"error": err.Error()})

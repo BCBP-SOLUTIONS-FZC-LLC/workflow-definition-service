@@ -54,6 +54,22 @@ func newDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) 
 	return pool, nil
 }
 
+func newSystemDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) {
+	// Only serves scope=global module/template writes — a low-volume,
+	// admin-only path — so this pool is sized far smaller than the main one.
+	pool, err := pgcommon.NewPool(ctx, pgcommon.Config{
+		DSN:                cfg.SystemDSN(),
+		MaxConns:           3,
+		MinConns:           0,
+		SlowQueryThreshold: time.Duration(cfg.PGSlowQueryThresholdMS) * time.Millisecond,
+		PGBouncerMode:      cfg.PGBouncerMode,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("system db pool: %w", err)
+	}
+	return pool, nil
+}
+
 func newCacheStore(ctx context.Context, cfg *config.Config) (port.CacheStore, *redis.Client, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr:         cfg.ValkeyAddr,

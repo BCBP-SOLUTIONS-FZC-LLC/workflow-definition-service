@@ -49,6 +49,74 @@ CREATE TABLE workflow_node_assignee (
     created_at          TIMESTAMP DEFAULT now()
 );
 
+CREATE TABLE workflow_module (
+    id                  UUID PRIMARY KEY,
+    tenant_id           UUID,
+    scope               catalog_scope NOT NULL,
+    name                VARCHAR(255) NOT NULL,
+    description         TEXT,
+    active_version_id   UUID,
+    created_by_user_id  UUID,
+    record_version      BIGINT NOT NULL DEFAULT 1,
+    created_at          TIMESTAMP DEFAULT now(),
+    updated_at          TIMESTAMP DEFAULT now(),
+
+    CONSTRAINT chk_module_scope_tenant CHECK (
+        (scope = 'global' AND tenant_id IS NULL) OR
+        (scope = 'tenant' AND tenant_id IS NOT NULL)
+    )
+);
+
+CREATE TABLE workflow_module_version (
+    id                      UUID PRIMARY KEY,
+    module_id               UUID REFERENCES workflow_module(id) ON DELETE CASCADE,
+    tenant_id               UUID,
+    scope                   catalog_scope NOT NULL,
+    status                  workflow_version_status NOT NULL,
+    bpmn_xml                TEXT NOT NULL,
+    process_id              VARCHAR(255) NOT NULL,
+    version_number          INT,
+    is_valid                BOOLEAN NOT NULL DEFAULT true,
+    validation_errors_json  JSONB,
+    published_at            TIMESTAMP,
+    created_by_user_id      UUID,
+    record_version          BIGINT NOT NULL DEFAULT 1,
+    created_at              TIMESTAMP DEFAULT now(),
+    updated_at              TIMESTAMP DEFAULT now(),
+
+    CONSTRAINT chk_module_version_number_on_publish
+        CHECK (status = 'DRAFT' OR version_number IS NOT NULL),
+    CONSTRAINT chk_module_version_scope_tenant CHECK (
+        (scope = 'global' AND tenant_id IS NULL) OR
+        (scope = 'tenant' AND tenant_id IS NOT NULL)
+    )
+);
+
+ALTER TABLE workflow_module
+    ADD CONSTRAINT fk_module_active_version
+    FOREIGN KEY (active_version_id) REFERENCES workflow_module_version(id)
+    ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+
+CREATE TABLE workflow_template (
+    id                          UUID PRIMARY KEY,
+    tenant_id                   UUID,
+    scope                       catalog_scope NOT NULL,
+    name                        VARCHAR(255) NOT NULL,
+    description                 TEXT,
+    category                    VARCHAR(64),
+    bpmn_xml                    TEXT NOT NULL,
+    source_workflow_version_id  UUID,
+    created_by_user_id          UUID,
+    record_version              BIGINT NOT NULL DEFAULT 1,
+    created_at                  TIMESTAMP DEFAULT now(),
+    updated_at                  TIMESTAMP DEFAULT now(),
+
+    CONSTRAINT chk_template_scope_tenant CHECK (
+        (scope = 'global' AND tenant_id IS NULL) OR
+        (scope = 'tenant' AND tenant_id IS NOT NULL)
+    )
+);
+
 -- Operational dedup log, not tenant data — composite PK so the same event can
 -- be deduped independently per consumer; no RLS.
 CREATE TABLE processed_event (
@@ -108,6 +176,24 @@ CREATE TRIGGER update_workflow_meta
 
 CREATE TRIGGER update_workflow_version_meta
     BEFORE UPDATE ON workflow_version
+    FOR EACH ROW
+    WHEN (OLD.* IS DISTINCT FROM NEW.*)
+    EXECUTE PROCEDURE update_meta_columns();
+
+CREATE TRIGGER update_workflow_module_meta
+    BEFORE UPDATE ON workflow_module
+    FOR EACH ROW
+    WHEN (OLD.* IS DISTINCT FROM NEW.*)
+    EXECUTE PROCEDURE update_meta_columns();
+
+CREATE TRIGGER update_workflow_module_version_meta
+    BEFORE UPDATE ON workflow_module_version
+    FOR EACH ROW
+    WHEN (OLD.* IS DISTINCT FROM NEW.*)
+    EXECUTE PROCEDURE update_meta_columns();
+
+CREATE TRIGGER update_workflow_template_meta
+    BEFORE UPDATE ON workflow_template
     FOR EACH ROW
     WHEN (OLD.* IS DISTINCT FROM NEW.*)
     EXECUTE PROCEDURE update_meta_columns();
