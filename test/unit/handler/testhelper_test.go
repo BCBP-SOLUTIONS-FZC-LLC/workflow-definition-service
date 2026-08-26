@@ -178,6 +178,8 @@ func registerRoutes(r *gin.Engine, h *handler.Handler) {
 	conn := r.Group("/api/v1/connectors")
 	conn.GET("/registry", h.ListConnectorRegistry)
 	conn.POST("/credentials", h.WriteConnectorCredential)
+
+	r.GET("/api/v1/bpmn/allowed-elements", h.AllowedBPMNElements)
 }
 
 func newRouter(h *handler.Handler) *gin.Engine {

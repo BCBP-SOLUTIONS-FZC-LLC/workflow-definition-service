@@ -104,5 +104,7 @@ func newRouter(cfg *config.Config, pool *pgcommon.Pool, cache port.CacheStore, l
 	conn.GET("/registry", h.ListConnectorRegistry)
 	conn.POST("/credentials", idem(h.WriteConnectorCredential))
 
+	api.GET("/bpmn/allowed-elements", h.AllowedBPMNElements)
+
 	return r
 }

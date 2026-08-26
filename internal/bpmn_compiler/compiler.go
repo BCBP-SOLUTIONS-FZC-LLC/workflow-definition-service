@@ -741,3 +741,18 @@ func (c *Compiler) Hash(ctx context.Context, bpmnXML string) (string, error) {
 func (c *Compiler) Bundle(mainXML string, moduleXMLs []string) (string, error) {
 	return InjectTemplates(mainXML, moduleXMLs)
 }
+
+func (c *Compiler) ProcessID(ctx context.Context, bpmnXML string) (string, error) {
+	defs, err := parse(ctx, bpmnXML)
+	if err != nil {
+		return "", classifyParseError("process-id", err)
+	}
+	if len(defs.Processes) != 1 {
+		return "", &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
+			Code:     domain.BPMNErrMultipleProcesses,
+			Message:  fmt.Sprintf("module BPMN must contain exactly one top-level process; got %d", len(defs.Processes)),
+			Severity: domain.SeverityError,
+		}}}
+	}
+	return defs.Processes[0].ID, nil
+}

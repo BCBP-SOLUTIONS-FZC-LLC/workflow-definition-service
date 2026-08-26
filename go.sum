@@ -14,6 +14,8 @@ github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors v0.0.0-20260814044400-bb01
 github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors v0.0.0-20260814044400-bb010072f28c/go.mod h1:84EKESRmuh0vugBkmLlQK9knsapBNuM44OxlqdOad6I=
 github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.2.0-rc.1 h1:wc0ONZzlk3iNBiFOlHu+H4Ft7Ht5JafRSswB6HfPjA0=
 github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.2.0-rc.1/go.mod h1:5qVCsQ5Alfeux8OJj+cMoBOpXeaL2e4ZF1K5Swyq7Xo=
+github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.2.0-rc.3 h1:+kUL2pNNoNKFrOy1ho/p3CsFS40ZNfjxxa+0HMXu1cc=
+github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.2.0-rc.3/go.mod h1:5qVCsQ5Alfeux8OJj+cMoBOpXeaL2e4ZF1K5Swyq7Xo=
 github.com/KyleBanks/depth v1.2.1 h1:5h8fQADFrWtarTdtDudMmGsC7GPbOAu6RVB3ffsVFHc=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=

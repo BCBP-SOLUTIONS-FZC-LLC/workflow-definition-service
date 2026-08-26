@@ -1734,6 +1734,33 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
+  /api/v1/bpmn/allowed-elements:
+    get:
+      operationId: getAllowedBpmnElements
+      summary: List the recognized BPMN element vocabulary
+      description: >
+        Serves the same Tier-1 allowlist the compiler enforces, for the modeler UI's
+        palette configuration. UX convenience only — the compiler's own server-side
+        422 rejection is the actual enforcement boundary, not this endpoint.
+      tags: [BPMN]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        "200":
+          description: The recognized element list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  elements:
+                    type: array
+                    items: { type: string }
+              example:
+                elements: [definitions, process, userTask, callActivity]
+        "401": { $ref: '#/components/responses/Unauthorized' }
+
 tags:
   - name: Workflows
     description: Root workflow template management.
@@ -1747,3 +1774,5 @@ tags:
     description: Health and readiness checks.
   - name: Internal
     description: Internal service-to-service endpoints (not exposed on the public gateway).
+  - name: BPMN
+    description: BPMN modeler-support endpoints (element allowlist discovery).

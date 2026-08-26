@@ -23,8 +23,7 @@ func TestSecurityScan_EntityRejected(t *testing.T) {
 	}
 }
 
-func TestSecurityScan_LowercaseNotRejected(t *testing.T) {
-	// Lowercase variants must not bypass the check (ToUpper is applied).
+func TestSecurityScan_LowercaseVariantsRejected(t *testing.T) {
 	xmlData := `<?xml version="1.0"?><!doctype foo [<!entity x "y">]><root/>`
 	if err := securityScan(xmlData); err == nil {
 		t.Error("securityScan() should reject lowercase doctype/entity")
@@ -39,9 +38,6 @@ func TestSecurityScan_Clean(t *testing.T) {
 }
 
 func TestCountTokens_LimitExceeded(t *testing.T) {
-	// Build an XML doc with > maxTokens tokens.
-	// Each <a/> produces 2 tokens (StartElement + EndElement).
-	// maxTokens/2 + 2 elements → (maxTokens/2+2)*2 + 2 (root wrapper) tokens > maxTokens+1.
 	var b strings.Builder
 	b.WriteString("<root>")
 	for i := 0; i < maxTokens/2+2; i++ {
@@ -75,9 +71,7 @@ func TestCountTokens_ValidXML(t *testing.T) {
 	}
 }
 
-func TestParse_ForbiddenDoctype(t *testing.T) {
-	// Exercises parse()'s own early-return on securityScan failure (distinct
-	// call site from TestSecurityScan_DocTypeRejected, which calls securityScan directly).
+func TestParse_PropagatesForbiddenDoctypeFromSecurityScan(t *testing.T) {
 	xmlData := `<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY x "y">]><bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `"/>`
 	_, err := parse(context.Background(), xmlData)
 	if !errors.Is(err, errForbiddenXML) {
@@ -85,9 +79,7 @@ func TestParse_ForbiddenDoctype(t *testing.T) {
 	}
 }
 
-func TestParse_TokenLimitExceeded(t *testing.T) {
-	// Exercises parse()'s own early-return on countTokens failure (distinct
-	// call site from TestCountTokens_LimitExceeded, which calls countTokens directly).
+func TestParse_PropagatesTokenLimitFromCountTokens(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0"?><bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">`)
 	for i := 0; i < maxTokens/2+2; i++ {
@@ -110,7 +102,6 @@ func TestParse_WrongNamespace(t *testing.T) {
 }
 
 func TestParse_MissingZeebeNamespace(t *testing.T) {
-	// Valid BPMN root namespace, but the required Zeebe namespace is absent.
 	xmlData := `<?xml version="1.0"?><bpmn:definitions xmlns:bpmn="` + nsBPMN + `" id="D1"/>`
 	_, err := parse(context.Background(), xmlData)
 	if !errors.Is(err, errMissingNamespace) {
@@ -118,9 +109,7 @@ func TestParse_MissingZeebeNamespace(t *testing.T) {
 	}
 }
 
-func TestParse_MalformedXML(t *testing.T) {
-	// Declares both required namespaces so parsing reaches (and fails at) unmarshal
-	// rather than short-circuiting on a namespace check.
+func TestParse_MalformedXMLPastNamespaceCheck(t *testing.T) {
 	xmlData := `<?xml version="1.0"?><bpmn:definitions xmlns:bpmn="` + nsBPMN +
 		`" xmlns:zeebe="` + nsZeebe + `"><unclosed>`
 	_, err := parse(context.Background(), xmlData)
@@ -144,8 +133,7 @@ func TestParse_ValidMinimal(t *testing.T) {
 	}
 }
 
-func TestScanRejected_RejectedElement(t *testing.T) {
-	// serviceTask is Tier 3 (REJECTED_ELEMENT); subProcess is Tier 1 (no error).
+func TestScanRejected_ServiceTaskRejectedSubProcessAllowed(t *testing.T) {
 	xmlData := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
   <bpmn:process id="P1">
@@ -158,7 +146,6 @@ func TestScanRejected_RejectedElement(t *testing.T) {
 	if !hasCodeIn(errs, domain.BPMNErrRejectedElement) {
 		t.Fatalf("expected REJECTED_ELEMENT; got %v", errCodesOf(errs))
 	}
-	// Only serviceTask is rejected; subProcess is Tier 1.
 	if len(errs) != 1 {
 		t.Errorf("expected 1 rejected element (serviceTask); got %d: %v", len(errs), errs)
 	}
@@ -168,9 +155,6 @@ func TestScanRejected_RejectedElement(t *testing.T) {
 }
 
 func TestScanRejected_InclusiveGatewayIsUnsupported(t *testing.T) {
-	// inclusiveGateway is Tier 2 (UNSUPPORTED_ELEMENT): parsed and graph-validated
-	// but not yet compileable. Listing in unsupportedBPMNElems produces a clear
-	// error rather than silently producing an incorrect execution plan.
 	xmlData := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
   <bpmn:process id="P1">
@@ -184,8 +168,7 @@ func TestScanRejected_InclusiveGatewayIsUnsupported(t *testing.T) {
 	}
 }
 
-func TestScanRejected_ElementWithoutID(t *testing.T) {
-	// elementID falls back to the element's local name when no id attribute is present.
+func TestScanRejected_ElementWithoutIDFallsBackToLocalName(t *testing.T) {
 	xmlData := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
   <bpmn:process id="P1">
@@ -202,8 +185,6 @@ func TestScanRejected_ElementWithoutID(t *testing.T) {
 }
 
 func TestParse_SubProcessGenericTaskPromotion(t *testing.T) {
-	// unmarshal() must also promote generic <task> elements and strip empty-ref
-	// sequence flows *inside* subProcesses, not just at the top-level process.
 	xmlData := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
   <bpmn:process id="P1">
@@ -238,9 +219,7 @@ func TestParse_SubProcessGenericTaskPromotion(t *testing.T) {
 	}
 }
 
-func TestScanRejected_CleanDocument(t *testing.T) {
-	// Allowlisted BPMN elements plus a diagram-interchange element (different
-	// namespace) must not trip the nsBPMN-scoped reject scan.
+func TestScanRejected_AllowlistedElementsAndDiagramNamespaceClean(t *testing.T) {
 	xmlData := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI">
   <bpmn:process id="P1">
@@ -253,5 +232,93 @@ func TestScanRejected_CleanDocument(t *testing.T) {
 </bpmn:definitions>`
 	if errs := scanRejected(xmlData); len(errs) != 0 {
 		t.Errorf("clean document should have no rejected elements; got %v", errCodesOf(errs))
+	}
+}
+
+func TestScanRejected_EventBasedGatewayIsUnsupported(t *testing.T) {
+	xmlData := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
+  <bpmn:process id="P1">
+    <bpmn:eventBasedGateway id="EBG_1"/>
+    <bpmn:userTask id="T1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+	errs := scanRejected(xmlData)
+	if !hasCodeIn(errs, domain.BPMNErrUnsupportedElement) {
+		t.Fatalf("eventBasedGateway must produce UNSUPPORTED_ELEMENT; got %v", errCodesOf(errs))
+	}
+}
+
+func TestScanRejected_IntermediateCatchEventIsUnsupported(t *testing.T) {
+	xmlData := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
+  <bpmn:process id="P1">
+    <bpmn:intermediateCatchEvent id="ICE_1"/>
+    <bpmn:userTask id="T1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+	errs := scanRejected(xmlData)
+	if !hasCodeIn(errs, domain.BPMNErrUnsupportedElement) {
+		t.Fatalf("intermediateCatchEvent must produce UNSUPPORTED_ELEMENT; got %v", errCodesOf(errs))
+	}
+}
+
+func TestScanRejected_SignalEventDefinitionRejected(t *testing.T) {
+	xmlData := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
+  <bpmn:process id="P1">
+    <bpmn:boundaryEvent id="BE_1" attachedToRef="T1">
+      <bpmn:signalEventDefinition id="SIG_1"/>
+    </bpmn:boundaryEvent>
+    <bpmn:userTask id="T1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+	errs := scanRejected(xmlData)
+	if !hasCodeIn(errs, domain.BPMNErrRejectedElement) {
+		t.Fatalf("signalEventDefinition must produce REJECTED_ELEMENT; got %v", errCodesOf(errs))
+	}
+}
+
+func TestScanRejected_UnrecognizedElementRejected(t *testing.T) {
+	xmlData := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
+  <bpmn:process id="P1">
+    <bpmn:fooBarBaz id="X1"/>
+    <bpmn:userTask id="T1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+	errs := scanRejected(xmlData)
+	if !hasCodeIn(errs, domain.BPMNErrRejectedElement) {
+		t.Fatalf("unrecognized element must produce REJECTED_ELEMENT; got %v", errCodesOf(errs))
+	}
+	if errs[0].NodeID != "X1" {
+		t.Errorf("expected node id X1; got %q", errs[0].NodeID)
+	}
+}
+
+func TestScanRejected_ElementsAddedToAllowlistAreNotRejected(t *testing.T) {
+	xmlData := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
+  <bpmn:process id="P1">
+    <bpmn:startEvent id="S1"/>
+    <bpmn:task id="TASK_1"/>
+    <bpmn:dataStoreReference id="DS_1"/>
+    <bpmn:boundaryEvent id="BE_1" attachedToRef="TASK_1">
+      <bpmn:timerEventDefinition id="TIMER_1">
+        <bpmn:timeDuration>PT24H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="BE_2" attachedToRef="TASK_1">
+      <bpmn:errorEventDefinition id="ERR_1"/>
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="BE_3" attachedToRef="TASK_1">
+      <bpmn:messageEventDefinition id="MSG_1"/>
+    </bpmn:boundaryEvent>
+    <bpmn:endEvent id="E1"/>
+    <bpmn:sequenceFlow id="F1" sourceRef="S1" targetRef="TASK_1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+	if errs := scanRejected(xmlData); len(errs) != 0 {
+		t.Errorf("previously-missing-but-supported elements must not be rejected; got %v", errCodesOf(errs))
 	}
 }
