@@ -19,6 +19,14 @@ name: CI
 # pr-summary/push-image-ghcr both wait on every job above — they report/ship
 # the final result, so nothing before them can be skipped.
 #
+# ci-gate: lets a draft PR (or a PR labeled "skip-ci") skip the expensive
+# jobs below while iterating — never applies on push (a merge to main),
+# since github.event.pull_request.* only exists on pull_request events.
+# Gating just `generate` (the sole root every other job needs, directly or
+# transitively) is enough: GitHub Actions cascades a skip to anything that
+# needs a skipped job, reporting success rather than leaving required
+# checks pending.
+#
 on:
   pull_request:
     paths-ignore: ['**.md', 'docs/**']
@@ -42,7 +50,24 @@ permissions:
 
 jobs:
 
+  ci-gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        run: >
+          echo "run=${{
+            github.event_name != 'pull_request' ||
+            (github.event.pull_request.draft == false &&
+             !contains(github.event.pull_request.labels.*.name, 'skip-ci'))
+          }}" >> "$GITHUB_OUTPUT"
+
   generate:
+    needs: [ci-gate]
+    if: needs.ci-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -329,7 +354,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always() && github.event_name == 'pull_request'
-    needs: [generate, validate-quality, validate-test, build-image-cache, trivy-cve-scan, smoke-tests]
+    needs: [ci-gate, generate, validate-quality, validate-test, build-image-cache, trivy-cve-scan, smoke-tests]
     permissions:
       contents: read
       pull-requests: write
