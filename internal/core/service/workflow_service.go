@@ -98,7 +98,7 @@ func (s *WorkflowService) Create(
 	// The plan-quota COUNT and the inserts run in one SERIALIZABLE transaction so
 	// two concurrent creates cannot both pass the quota check (LLD §5.6.2).
 	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
-		if err := s.enforceWorkflowQuota(ctx, tenantID, planTier); err != nil {
+		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, planTier); err != nil {
 			return err
 		}
 		if err := s.workflows.Create(ctx, wf); err != nil {
@@ -137,21 +137,6 @@ func (s *WorkflowService) Get(
 	return wf, versions, nil
 }
 
-func (s *WorkflowService) enforceWorkflowQuota(ctx context.Context, tenantID uuid.UUID, planTier string) error {
-	limit := workflowQuotaLimit(planTier)
-	if limit <= 0 {
-		return nil
-	}
-	count, err := s.workflows.CountByTenant(ctx, tenantID)
-	if err != nil {
-		return fmt.Errorf("count workflows: %w", err)
-	}
-	if count >= limit {
-		return domain.ErrPlanQuotaExceeded
-	}
-	return nil
-}
-
 func (s *WorkflowService) Archive(ctx context.Context, tenantID, userID, id uuid.UUID) (err error) {
 	defer func() { wfArchiveTotal.WithLabelValues(outcomeLabel(err)).Inc() }()
 	wf, err := s.workflows.GetByID(ctx, tenantID, id)
@@ -181,13 +166,7 @@ func (s *WorkflowService) Archive(ctx context.Context, tenantID, userID, id uuid
 	}); err != nil {
 		return fmt.Errorf("archive workflow: %w", err)
 	}
-	if s.cache != nil {
-		if err := s.cache.Del(ctx, domain.CompiledPlanCacheKey(tenantID, versionID)); err != nil {
-			s.log.Warn("compiled-plan cache invalidation failed", map[string]any{
-				"version_id": versionID.String(), "error": err.Error(),
-			})
-		}
-	}
+	invalidateCompiledPlanCache(ctx, s.cache, s.log, tenantID, versionID)
 	s.log.Info("workflow archived", map[string]any{
 		"tenant_id":   tenantID.String(),
 		"user_id":     userID.String(),

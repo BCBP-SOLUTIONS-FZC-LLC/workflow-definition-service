@@ -65,19 +65,6 @@ func NewVersionService(d VersionDeps) *VersionService {
 	}
 }
 
-// invalidatePlanCache deletes a version's cached gRPC compiled-plan response after
-// its status or is_valid changes. Fail-open: a cache error is logged, not returned.
-func (s *VersionService) invalidatePlanCache(ctx context.Context, tenantID, versionID uuid.UUID) {
-	if s.cache == nil {
-		return
-	}
-	if err := s.cache.Del(ctx, domain.CompiledPlanCacheKey(tenantID, versionID)); err != nil {
-		s.log.Warn("compiled-plan cache invalidation failed", map[string]any{
-			"version_id": versionID.String(), "error": err.Error(),
-		})
-	}
-}
-
 func (s *VersionService) List(
 	ctx context.Context,
 	tenantID, workflowID uuid.UUID,
@@ -216,7 +203,7 @@ func (s *VersionService) Clone(
 	// Quota COUNT + inserts in one SERIALIZABLE tx so concurrent clones can't both
 	// pass the quota check (LLD §5.6.2).
 	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
-		if err := s.enforceWorkflowQuota(ctx, tenantID, planTier); err != nil {
+		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, planTier); err != nil {
 			return err
 		}
 		if err := s.workflows.Create(ctx, newWF); err != nil {
@@ -348,9 +335,9 @@ func (s *VersionService) Diff(
 	}
 
 	changes := computeDiff(basePlan, targetPlan)
-	changeType := "STRUCTURAL"
+	changeType := ChangeTypeStructural
 	if changes.MetadataOnly {
-		changeType = "METADATA_ONLY"
+		changeType = ChangeTypeMetadataOnly
 	}
 	return &DiffResult{
 		WorkflowID:      workflowID,
@@ -386,19 +373,4 @@ func versionLabel(v *domain.WorkflowVersion) string {
 		return fmt.Sprintf("%d", *v.VersionNumber)
 	}
 	return "draft"
-}
-
-func (s *VersionService) enforceWorkflowQuota(ctx context.Context, tenantID uuid.UUID, planTier string) error {
-	limit := workflowQuotaLimit(planTier)
-	if limit <= 0 {
-		return nil
-	}
-	count, err := s.workflows.CountByTenant(ctx, tenantID)
-	if err != nil {
-		return fmt.Errorf("count workflows: %w", err)
-	}
-	if count >= limit {
-		return domain.ErrPlanQuotaExceeded
-	}
-	return nil
 }
