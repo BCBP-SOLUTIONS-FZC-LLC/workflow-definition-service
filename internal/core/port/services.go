@@ -31,10 +31,6 @@ type PlanCompiler interface {
 	ProcessID(ctx context.Context, bpmnXML string) (string, error)
 }
 
-type Authorizer interface {
-	Authorize(userID string, roles []string, action string, resource string) error
-}
-
 type SecretsClient interface {
 	Write(ctx context.Context, path string, data map[string]string) error
 }

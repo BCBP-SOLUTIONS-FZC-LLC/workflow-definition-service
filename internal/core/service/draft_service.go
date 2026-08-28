@@ -109,48 +109,30 @@ func (s *DraftService) Update(
 	tenantID, userID, workflowID uuid.UUID,
 	req UpdateDraftReq,
 ) (*domain.WorkflowVersion, error) {
-	// Fail-open when Cache is not configured (dev/test environments).
-	if s.cache != nil {
-		lockKey := fmt.Sprintf("draft-lock:%s:%s", tenantID, workflowID)
-		acquired, err := s.cache.SetNX(ctx, lockKey, "1", 30*time.Second)
-		if err != nil {
-			return nil, fmt.Errorf("acquire draft lock: %w", err)
-		}
-		if !acquired {
-			return nil, domain.ErrDraftConcurrency
-		}
-		defer s.cache.Del(ctx, lockKey) //nolint:errcheck // lock TTL auto-expires; Del failure is non-fatal
+	releaseLock, err := s.acquireDraftLock(ctx, tenantID, workflowID)
+	if err != nil {
+		return nil, err
 	}
+	defer releaseLock()
 
 	draft, err := s.versions.GetDraft(ctx, tenantID, workflowID)
 	if err != nil {
 		return nil, fmt.Errorf(errGetDraft, err)
 	}
 
-	// Optimistic concurrency: when the client supplies a record_version, fail
-	// fast on an obvious mismatch. The authoritative guard is the SQL
-	// record_version predicate in the repo, which also catches a write that
-	// slips in between this read and the update (returns ErrDraftConcurrency).
-	if req.RecordVersion != 0 {
-		if draft.RecordVersion != req.RecordVersion {
-			return nil, domain.ErrDraftConcurrency
-		}
-		draft.RecordVersion = req.RecordVersion
+	if err := failFastOnStaleRecordVersion(draft, req.RecordVersion); err != nil {
+		return nil, err
 	}
 
 	if req.BPMNXML != nil {
 		draft.BPMNXML = *req.BPMNXML
-		// Clear stale compilation artefacts so the next publish recompiles.
-		draft.CompiledPlanJSON = nil
-		draft.ArtifactHash = ""
+		clearCompiledArtifacts(draft)
 		draft.IsValid = true
 	}
 
 	if req.ModuleBPMNXMLs != nil {
 		draft.ModuleBPMNXMLs = *req.ModuleBPMNXMLs
-		// Modules changed — cached plan is stale.
-		draft.CompiledPlanJSON = nil
-		draft.ArtifactHash = ""
+		clearCompiledArtifacts(draft)
 	}
 
 	if err := s.runUpdateTx(ctx, tenantID, workflowID, draft, req); err != nil {
@@ -171,10 +153,10 @@ func (s *DraftService) runUpdateTx(
 	draft *domain.WorkflowVersion,
 	req UpdateDraftReq,
 ) error {
-	updateMeta := req.Name != nil || req.Description != nil
+	updatesWorkflowMetadata := req.Name != nil || req.Description != nil
 
 	doUpdate := func(ctx context.Context) error {
-		if updateMeta {
+		if updatesWorkflowMetadata {
 			if err := s.updateWorkflowMeta(ctx, tenantID, workflowID, req); err != nil {
 				return err
 			}
@@ -185,12 +167,47 @@ func (s *DraftService) runUpdateTx(
 		return nil
 	}
 
-	// Wrap in a transaction only when both tables are written.
-	// Fail-open when Transactor is not configured (dev/test).
-	if updateMeta && s.transactor != nil {
+	if updatesWorkflowMetadata && s.transactor != nil {
 		return s.transactor.RunInTx(ctx, doUpdate)
 	}
 	return doUpdate(ctx)
+}
+
+// acquireDraftLock returns a no-op release when Cache isn't configured
+// (dev/test), so draft locking is best-effort rather than a hard dependency.
+func (s *DraftService) acquireDraftLock(ctx context.Context, tenantID, workflowID uuid.UUID) (release func(), err error) {
+	if s.cache == nil {
+		return func() {}, nil
+	}
+	lockKey := fmt.Sprintf("draft-lock:%s:%s", tenantID, workflowID)
+	acquired, err := s.cache.SetNX(ctx, lockKey, "1", 30*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("acquire draft lock: %w", err)
+	}
+	if !acquired {
+		return nil, domain.ErrDraftConcurrency
+	}
+	return func() { _ = s.cache.Del(ctx, lockKey) }, nil
+}
+
+// failFastOnStaleRecordVersion rejects an obvious mismatch before any write.
+// The authoritative guard is still the SQL record_version predicate in the
+// repo, which also catches a write that slips in between this check and the
+// update — this is a fast-fail complement to it, not a replacement.
+func failFastOnStaleRecordVersion(draft *domain.WorkflowVersion, recordVersion int64) error {
+	if recordVersion == 0 {
+		return nil
+	}
+	if draft.RecordVersion != recordVersion {
+		return domain.ErrDraftConcurrency
+	}
+	draft.RecordVersion = recordVersion
+	return nil
+}
+
+func clearCompiledArtifacts(draft *domain.WorkflowVersion) {
+	draft.CompiledPlanJSON = nil
+	draft.ArtifactHash = ""
 }
 
 func (s *DraftService) updateWorkflowMeta(

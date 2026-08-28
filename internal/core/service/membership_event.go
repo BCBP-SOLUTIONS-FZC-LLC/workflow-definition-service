@@ -52,11 +52,19 @@ func (s *VersionService) HandleMembershipRevoked(
 		}
 	}
 
-	// Record as processed after all side effects complete. Moving this after the
-	// work ensures a transient PauseUserTasks failure causes the consumer to retry
-	// rather than silently skip on the next delivery (at-least-once guarantee).
-	// Both invalidateVersion and PauseUserTasks are idempotent, so re-running on
-	// concurrent delivery is safe.
+	return s.recordMembershipRevokedProcessed(ctx, eventID, tenantID, userID, departmentID, len(nodesByVersion))
+}
+
+// recordMembershipRevokedProcessed must run after invalidateVersion and
+// PauseUserTasks succeed, not before: both are idempotent, so an at-least-once
+// redelivery following a transient failure here safely retries them instead
+// of a processed record silently swallowing the retry.
+func (s *VersionService) recordMembershipRevokedProcessed(
+	ctx context.Context,
+	eventID, tenantID, userID uuid.UUID,
+	departmentID string,
+	versionsAffected int,
+) error {
 	isNew, err := s.processedEvents.RecordIfNew(ctx, eventID, "membership-wf-q", "department.membership.revoked")
 	if err != nil {
 		return fmt.Errorf("record processed event: %w", err)
@@ -70,7 +78,7 @@ func (s *VersionService) HandleMembershipRevoked(
 		"tenant_id":         tenantID.String(),
 		"user_id":           userID.String(),
 		"department_id":     departmentID,
-		"versions_affected": len(nodesByVersion),
+		"versions_affected": versionsAffected,
 	})
 	return nil
 }
@@ -82,12 +90,7 @@ func (s *VersionService) invalidateVersion(
 ) error {
 	v, err := s.versions.GetByID(ctx, tenantID, versionID)
 	if err != nil {
-		// Version may have been deleted; skip rather than fail the whole handler.
-		s.log.Error("membership revoked: get version", map[string]any{
-			"version_id": versionID.String(),
-			"error":      err.Error(),
-		})
-		return nil
+		return s.skipDeletedVersion(versionID, err)
 	}
 	if v.Status == domain.VersionStatusArchived {
 		return nil
@@ -101,7 +104,18 @@ func (s *VersionService) invalidateVersion(
 	if err := s.versions.SetInvalid(ctx, tenantID, versionID, errorsJSON); err != nil {
 		return fmt.Errorf("set invalid: %w", err)
 	}
-	s.invalidatePlanCache(ctx, tenantID, versionID)
+	invalidateCompiledPlanCache(ctx, s.cache, s.log, tenantID, versionID)
+	return nil
+}
+
+// skipDeletedVersion lets HandleMembershipRevoked move on to the next
+// assignee's version instead of failing the whole delivery when GetByID
+// can't find a version that was legitimately deleted since the event fired.
+func (s *VersionService) skipDeletedVersion(versionID uuid.UUID, err error) error {
+	s.log.Error("membership revoked: get version", map[string]any{
+		"version_id": versionID.String(),
+		"error":      err.Error(),
+	})
 	return nil
 }
 
