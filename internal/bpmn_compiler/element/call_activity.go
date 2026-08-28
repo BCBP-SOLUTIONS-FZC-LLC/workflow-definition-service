@@ -24,16 +24,18 @@ func (CallActivityHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _
 	return validator.ValidateCallActivities(&bpmncore.BPMNProcess{CallActivities: []bpmncore.BPMNCallActivity{*ca}}, defs)
 }
 
+func isUnsupportedCallActivityBoundary(be bpmncore.BPMNBoundaryEvent, nodeID string) bool {
+	return be.AttachedToRef == nodeID && be.Message == nil
+}
+
 func (CallActivityHandler) Compile(nodeID string, cs *bpmncore.CompileState) error {
 	ca := bpmncore.FindCallActivity(cs.Proc, nodeID)
 	if ca == nil {
 		return fmt.Errorf("callActivity %q not found in process", nodeID)
 	}
 
-	// Timer and error boundary events on callActivities are not yet supported.
-	// Message boundary events are allowed — they are collected below as MessagePaths.
 	for _, be := range cs.Proc.BoundaryEvents {
-		if be.AttachedToRef == nodeID && be.Message == nil {
+		if isUnsupportedCallActivityBoundary(be, nodeID) {
 			return fmt.Errorf("callActivity %q: timer/error boundary events are not supported", nodeID)
 		}
 	}
@@ -96,25 +98,8 @@ func collectMessagePaths(nodeID string, cs *bpmncore.CompileState) []dsl.Message
 }
 
 func compileCalledProcess(calledProc *bpmncore.BPMNProcess, ioMapping *bpmncore.ZeebeIOMapping, deptsRemap map[string]string, cs *bpmncore.CompileState) ([]dsl.ExecutionStep, error) {
-	innerG := bpmncore.BuildGraph(calledProc)
-	innerLaneLabels := bpmncore.BuildLaneLabels(calledProc)
-	innerCondExprs := bpmncore.BuildCondExprs(calledProc)
-	innerBackEdges := map[[2]string]bool{}
-	if len(calledProc.StartEvents) > 0 {
-		innerBackEdges = bpmncore.ClassifyBackEdges(innerG, calledProc.StartEvents[0].ID)
-	}
-
-	innerState := bpmncore.NewCompileState(calledProc, innerG, innerLaneLabels, innerCondExprs, innerBackEdges, cs.StageTypes, cs.Elements, cs.Defs)
-	if len(calledProc.StartEvents) > 0 {
-		nexts := innerState.ForwardNexts(calledProc.StartEvents[0].ID)
-		if len(nexts) > 0 {
-			if err := innerState.TraverseNode(nexts[0]); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	if err := innerState.CompileBoundaryPaths(); err != nil {
+	innerState, err := compileInnerState(calledProc, cs)
+	if err != nil {
 		return nil, err
 	}
 	mergeDepts(innerState.CollectedDepts(), calledProc, ioMapping, deptsRemap, cs)
@@ -217,15 +202,23 @@ func deptIDFromIOMapping(m *bpmncore.ZeebeIOMapping) string {
 	return ""
 }
 
+// isCompilerInternalIOTarget reports whether an IO-mapping target is consumed
+// during compilation (dept_id/Depts routing) rather than passed through to
+// the execution-time IOMapping.
+func isCompilerInternalIOTarget(target string) bool {
+	return target == "dept_id" || target == "Depts"
+}
+
 func toIOMapping(m *bpmncore.ZeebeIOMapping) *dsl.IOMapping {
 	if m == nil {
 		return nil
 	}
 	result := &dsl.IOMapping{}
 	for _, in := range m.Inputs {
-		if in.Target != "dept_id" && in.Target != "Depts" { // compiler-internal, not passed to execution
-			result.Inputs = append(result.Inputs, dsl.IOVar{Source: in.Source, Target: in.Target})
+		if isCompilerInternalIOTarget(in.Target) {
+			continue
 		}
+		result.Inputs = append(result.Inputs, dsl.IOVar{Source: in.Source, Target: in.Target})
 	}
 	for _, out := range m.Outputs {
 		result.Outputs = append(result.Outputs, dsl.IOVar{Source: out.Source, Target: out.Target})

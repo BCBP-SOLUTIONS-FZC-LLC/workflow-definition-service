@@ -95,8 +95,6 @@ func ValidateDeptID(taskID string, proc *bpmncore.BPMNProcess) []domain.BPMNVali
 }
 
 func ValidateLaneMembership(taskID string, laneRefs map[string]struct{}) []domain.BPMNValidationError {
-	// When no lanes are defined (e.g. inner subprocess without a laneSet) all
-	// tasks are implicitly in scope — skip the check entirely.
 	if len(laneRefs) == 0 {
 		return nil
 	}
