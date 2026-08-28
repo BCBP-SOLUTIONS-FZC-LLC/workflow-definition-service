@@ -49,42 +49,16 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 	}
 
 	inner := bpmncore.SubProcToProcess(sp)
-	innerG := bpmncore.BuildGraph(inner)
-	innerLaneLabels := bpmncore.BuildLaneLabels(inner)
-	innerCondExprs := bpmncore.BuildCondExprs(inner)
-	innerBackEdges := map[[2]string]bool{}
-	if len(inner.StartEvents) > 0 {
-		innerBackEdges = bpmncore.ClassifyBackEdges(innerG, inner.StartEvents[0].ID)
-	}
-
-	innerState := bpmncore.NewCompileState(inner, innerG, innerLaneLabels, innerCondExprs, innerBackEdges, cs.StageTypes, cs.Elements, cs.Defs)
-	if len(inner.StartEvents) > 0 {
-		nexts := innerState.ForwardNexts(inner.StartEvents[0].ID)
-		if len(nexts) > 0 {
-			if err := innerState.TraverseNode(nexts[0]); err != nil {
-				return fmt.Errorf("subprocess %q: %w", nodeID, err)
-			}
-		}
-	}
-	if err := innerState.CompileBoundaryPaths(); err != nil {
+	innerState, err := compileInnerState(inner, cs)
+	if err != nil {
 		return fmt.Errorf("subprocess %q: %w", nodeID, err)
 	}
 
 	depts := innerState.CollectedDepts()
 	steps := innerState.CollectedSteps()
 
-	// Inner sub-process tasks have no laneSet of their own; their lane comes
-	// from the parent process (the sub-process element itself is in a lane).
 	if parentLane := bpmncore.LaneNameFor(nodeID, cs.Proc); parentLane != "" {
-		parentIAMDeptID := bpmncore.DeptIDFor(nodeID, cs.Proc)
-		for i := range depts {
-			if depts[i].ID == "" {
-				depts[i].ID = parentLane
-				depts[i].Label = parentLane
-				depts[i].IAMDepartmentID = parentIAMDeptID
-			}
-		}
-		patchEmptyDepts(steps, parentLane)
+		assignParentLaneDept(depts, steps, parentLane, bpmncore.DeptIDFor(nodeID, cs.Proc))
 	}
 
 	for _, dept := range depts {
@@ -146,6 +120,20 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 		return cs.TraverseNode(fwd[0])
 	}
 	return nil
+}
+
+// assignParentLaneDept backfills the parent lane onto any inner dept/step left
+// with no lane of its own — an inner sub-process body has no laneSet of its
+// own, so its lane is inherited from the sub-process element's own lane.
+func assignParentLaneDept(depts []dsl.DepartmentDef, steps []dsl.ExecutionStep, parentLane, parentIAMDeptID string) {
+	for i := range depts {
+		if depts[i].ID == "" {
+			depts[i].ID = parentLane
+			depts[i].Label = parentLane
+			depts[i].IAMDepartmentID = parentIAMDeptID
+		}
+	}
+	patchEmptyDepts(steps, parentLane)
 }
 
 func patchEmptyDepts(steps []dsl.ExecutionStep, lane string) {

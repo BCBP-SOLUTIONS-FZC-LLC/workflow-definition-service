@@ -49,23 +49,31 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 	errs = append(errs, ValidateConditionExprs(proc, g)...)
 	errs = append(errs, ValidateBoundaryEvents(proc, g)...)
 	errs = append(errs, ValidateMessageBoundaryNames(proc, defs)...)
+	errs = append(errs, validatePerElement(proc, g, stageTypes, elements, defs)...)
 
-	// Per-element validation via handler registry.
+	return errs
+}
+
+func validatePerElement(
+	proc *bpmncore.BPMNProcess,
+	g *bpmncore.Graph,
+	stageTypes map[string]bpmncore.StageTypeHandler,
+	elements map[bpmncore.FlowNodeType]bpmncore.ElementHandler,
+	defs *bpmncore.BPMNDefinitions,
+) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
 	laneRefs := bpmncore.BuildLaneRefSet(proc)
+
 	if h, ok := elements[bpmncore.NodeTypeUserTask]; ok {
 		for _, t := range proc.UserTasks {
 			errs = append(errs, h.Validate(t.ID, proc, g, defs, stageTypes, elements)...)
 		}
 	}
 	for _, t := range proc.SendTasks {
-		errs = append(errs, ValidateLaneMembership(t.ID, laneRefs)...)
-		errs = append(errs, ValidateOptionalAssignment(t.ID, t.ExtensionElements)...)
-		errs = append(errs, ValidateDeptID(t.ID, proc)...)
+		errs = append(errs, validateOptionalTaskMembership(t.ID, t.ExtensionElements, proc, laneRefs)...)
 	}
 	for _, t := range proc.ReceiveTasks {
-		errs = append(errs, ValidateLaneMembership(t.ID, laneRefs)...)
-		errs = append(errs, ValidateOptionalAssignment(t.ID, t.ExtensionElements)...)
-		errs = append(errs, ValidateDeptID(t.ID, proc)...)
+		errs = append(errs, validateOptionalTaskMembership(t.ID, t.ExtensionElements, proc, laneRefs)...)
 	}
 	for _, ca := range proc.CallActivities {
 		errs = append(errs, ValidateLaneMembership(ca.ID, laneRefs)...)
@@ -82,7 +90,17 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 		}
 	}
 	errs = append(errs, ValidateCallActivities(proc, defs)...)
+	return errs
+}
 
+// validateOptionalTaskMembership runs the checks shared by sendTask/receiveTask
+// nodes, whose zeebe:assignmentDefinition is optional (unlike userTask's, which
+// is required).
+func validateOptionalTaskMembership(taskID string, ext bpmncore.BPMNExtensionElements, proc *bpmncore.BPMNProcess, laneRefs map[string]struct{}) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	errs = append(errs, ValidateLaneMembership(taskID, laneRefs)...)
+	errs = append(errs, ValidateOptionalAssignment(taskID, ext)...)
+	errs = append(errs, ValidateDeptID(taskID, proc)...)
 	return errs
 }
 

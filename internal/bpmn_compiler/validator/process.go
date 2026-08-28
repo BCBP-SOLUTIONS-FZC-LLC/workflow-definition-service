@@ -7,14 +7,16 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
+func hasImplicitEntryPoint(implicitStart string) bool {
+	return implicitStart != ""
+}
+
 func ValidateCounts(proc *bpmncore.BPMNProcess, implicitStart string) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 
 	switch n := len(proc.StartEvents); {
 	case n == 0:
-		// If there is a natural root node (no incoming sequence flows) the
-		// process is triggered by a message from another pool — don't error.
-		if implicitStart == "" {
+		if !hasImplicitEntryPoint(implicitStart) {
 			errs = AppendErr(errs, domain.BPMNErrNoStartEvent, "", "process has no start event")
 		}
 	case n > 1:
@@ -24,7 +26,7 @@ func ValidateCounts(proc *bpmncore.BPMNProcess, implicitStart string) []domain.B
 		}
 	}
 
-	if len(proc.EndEvents) == 0 && implicitStart == "" {
+	if len(proc.EndEvents) == 0 && !hasImplicitEntryPoint(implicitStart) {
 		errs = AppendErr(errs, domain.BPMNErrNoEndEvent, "", "process has no end event")
 	}
 
