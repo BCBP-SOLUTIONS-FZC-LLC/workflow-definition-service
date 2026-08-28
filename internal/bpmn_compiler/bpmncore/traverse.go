@@ -60,7 +60,6 @@ func (s *CompileState) FlushSeqBuf() {
 }
 
 func (s *CompileState) TraverseNode(nodeID string) error {
-	// StopAt is set by branch states to halt at the parallel join gateway.
 	if s.StopAt != "" && nodeID == s.StopAt {
 		return nil
 	}
@@ -76,18 +75,20 @@ func (s *CompileState) TraverseNode(nodeID string) error {
 				CallPool: &dsl.CallPoolStep{Pool: pool},
 			})
 		}
-		for _, next := range s.ForwardNexts(nodeID) {
-			if err := s.TraverseNode(next); err != nil {
-				return err
-			}
-		}
-		return nil
+		return s.traverseForwardNexts(nodeID)
 	}
 
 	if h, ok := s.Elements[s.G.NodeType[nodeID]]; ok {
 		return h.Compile(nodeID, s)
 	}
-	// No handler (e.g. inclusiveGateway): pass through to successors without emitting a stage.
+	return s.traverseForwardNexts(nodeID)
+}
+
+// traverseForwardNexts continues traversal into nodeID's forward successors
+// without emitting a stage for nodeID itself — used both after an external
+// participant bridge and for a node with no registered element handler
+// (e.g. inclusiveGateway).
+func (s *CompileState) traverseForwardNexts(nodeID string) error {
 	for _, next := range s.ForwardNexts(nodeID) {
 		if err := s.TraverseNode(next); err != nil {
 			return err
@@ -377,7 +378,6 @@ func (s *CompileState) firstTaskNodeAhead(node string) (id, name string) {
 			NodeTypeParallelGateway, NodeTypeExclusiveGateway, NodeTypeInclusiveGateway,
 			NodeTypeBoundaryEvent, NodeTypeTimerBoundaryEvent, NodeTypeErrorBoundaryEvent,
 			NodeTypeMessageBoundaryEvent, NodeTypeExternalParticipant:
-			// gateway, boundary, or structural node — keep walking forward
 		}
 		fwd := s.ForwardNexts(curr)
 		if len(fwd) == 0 {
@@ -523,7 +523,6 @@ func (s *CompileState) processExclusiveNode(
 		NodeTypeParallelGateway, NodeTypeExclusiveGateway, NodeTypeInclusiveGateway,
 		NodeTypeBoundaryEvent, NodeTypeTimerBoundaryEvent, NodeTypeErrorBoundaryEvent,
 		NodeTypeMessageBoundaryEvent, NodeTypeExternalParticipant:
-		// No stage recording needed in an exclusive branch walk.
 	}
 	return nil
 }

@@ -21,13 +21,11 @@ func InjectTemplates(mainXML string, moduleXMLs []string) (string, error) {
 		return "", fmt.Errorf("inject: parse main BPMN: %w", err)
 	}
 	for i, modXML := range moduleXMLs {
-		// parse runs securityScan + countTokens + namespace validation before unmarshal.
 		modDefs, err := parse(context.Background(), modXML)
 		if err != nil {
 			return "", fmt.Errorf("inject: parse module[%d]: %w", i, err)
 		}
 		defs.Processes = append(defs.Processes, modDefs.Processes...)
-		// Diagrams intentionally NOT merged.
 	}
 	out, err := xml.Marshal(defs)
 	if err != nil {
