@@ -20,9 +20,6 @@ var internalEventsIngestTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Total internal event ingest calls, labelled by event_type and result.",
 }, []string{"event_type", "result"})
 
-// membershipRevoker is the subset of VersionService the internal event-ingest
-// endpoint drives. Kept as a local interface so the handler does not depend on
-// the concrete service type.
 type membershipRevoker interface {
 	HandleMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID, departmentID string) error
 }
@@ -33,7 +30,7 @@ type membershipRevokedPayload struct {
 	// its format is owned by the Org & Membership Service and not formally
 	// confirmed on our side — see definition_service.md §7.4.2.
 	DepartmentID string `json:"department_id"`
-	Role         string `json:"role"` // the membership role being revoked
+	Role         string `json:"role"`
 }
 
 // Consumer retry contract: 2xx = handled (incl. dedup no-op), 400 = malformed (non-retryable), 500 = transient (retry).
@@ -49,14 +46,16 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 	case "department.membership.revoked":
 		h.handleMembershipRevoked(c, env)
 	default:
-		// Unknown types are accepted and ignored so new upstream event types do
-		// not break delivery to this endpoint.
-		if h.log != nil {
-			h.log.Info("internal events: ignoring unhandled type", map[string]any{"event_type": env.Type})
-		}
-		internalEventsIngestTotal.WithLabelValues(env.Type, "ok").Inc()
-		c.Status(http.StatusOK)
+		h.acknowledgeUnknownEventType(c, env.Type)
 	}
+}
+
+func (h *Handler) acknowledgeUnknownEventType(c *gin.Context, eventType string) {
+	if h.log != nil {
+		h.log.Info("internal events: ignoring unhandled type", map[string]any{"event_type": eventType})
+	}
+	internalEventsIngestTotal.WithLabelValues(eventType, "ok").Inc()
+	c.Status(http.StatusOK)
 }
 
 func (h *Handler) handleMembershipRevoked(c *gin.Context, env events.Envelope[json.RawMessage]) {
