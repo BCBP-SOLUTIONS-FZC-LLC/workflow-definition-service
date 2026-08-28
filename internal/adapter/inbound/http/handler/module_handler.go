@@ -112,6 +112,19 @@ func parseScopeFilter(c *gin.Context, raw string) (*domain.CatalogScope, bool) {
 	}
 }
 
+// requireModuleScopeAccess loads the module and, for a global-scope module,
+// gates further mutation on the caller holding platform_operator. It writes
+// the error/forbidden response itself and reports false when the caller
+// should stop handling the request.
+func (h *Handler) requireModuleScopeAccess(c *gin.Context, tenantID, moduleID uuid.UUID) bool {
+	m, _, err := h.modules.Get(c.Request.Context(), tenantID, moduleID)
+	if err != nil {
+		errResponse(c, h.log, err)
+		return false
+	}
+	return m.Scope != domain.ScopeGlobal || requirePlatformOperator(c)
+}
+
 func (h *Handler) ListModules(c *gin.Context) {
 	tenantID, _, ok := mustCtx(c)
 	if !ok {
@@ -275,12 +288,7 @@ func (h *Handler) AddModuleVersion(c *gin.Context) {
 		return
 	}
 
-	m, _, err := h.modules.Get(c.Request.Context(), tenantID, moduleID)
-	if err != nil {
-		errResponse(c, h.log, err)
-		return
-	}
-	if m.Scope == domain.ScopeGlobal && !requirePlatformOperator(c) {
+	if !h.requireModuleScopeAccess(c, tenantID, moduleID) {
 		return
 	}
 
@@ -318,12 +326,7 @@ func (h *Handler) PublishModuleVersion(c *gin.Context) {
 		return
 	}
 
-	m, _, err := h.modules.Get(c.Request.Context(), tenantID, moduleID)
-	if err != nil {
-		errResponse(c, h.log, err)
-		return
-	}
-	if m.Scope == domain.ScopeGlobal && !requirePlatformOperator(c) {
+	if !h.requireModuleScopeAccess(c, tenantID, moduleID) {
 		return
 	}
 
@@ -352,12 +355,7 @@ func (h *Handler) ArchiveModule(c *gin.Context) {
 		return
 	}
 
-	m, _, err := h.modules.Get(c.Request.Context(), tenantID, moduleID)
-	if err != nil {
-		errResponse(c, h.log, err)
-		return
-	}
-	if m.Scope == domain.ScopeGlobal && !requirePlatformOperator(c) {
+	if !h.requireModuleScopeAccess(c, tenantID, moduleID) {
 		return
 	}
 

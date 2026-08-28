@@ -80,10 +80,7 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, 
 		}
 		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-		// Key is scoped to tenant + method + actual path (IDs substituted) + client-supplied key.
-		// Method prevents DELETE and POST to the same path sharing a cache slot on key reuse.
-		// c.Request.URL.Path includes the concrete resource IDs, preventing cross-resource collisions.
-		cacheKey := "idem:" + rc.TenantID + ":" + c.Request.Method + ":" + c.Request.URL.Path + ":" + key
+		cacheKey := idempotencyCacheKey(rc.TenantID, c.Request.Method, c.Request.URL.Path, key)
 		if replayed := replayIfCached(c, cache, cacheKey, incomingHash); replayed {
 			return
 		}
@@ -93,6 +90,12 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, 
 		h(c)
 		storeIfSuccess(c, cache, log, cacheKey, incomingHash, ttl, rec)
 	}
+}
+
+// idempotencyCacheKey scopes replay by tenant, method, and the concrete
+// request path, so a shared Idempotency-Key header can't collide across routes.
+func idempotencyCacheKey(tenantID, method, path, key string) string {
+	return "idem:" + tenantID + ":" + method + ":" + path + ":" + key
 }
 
 func drainBody(c *gin.Context) (body []byte, hash string, ok bool) {

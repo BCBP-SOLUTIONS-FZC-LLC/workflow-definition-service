@@ -54,9 +54,9 @@ type asyncSchema struct {
 	Type          string               `yaml:"type"`
 	Required      []string             `yaml:"required"`
 	Properties    map[string]asyncProp `yaml:"properties"`
-	PropertyOrder []string             // YAML insertion order; populated by UnmarshalYAML
-	AllOf         []asyncSchema        `yaml:"allOf"`
-	Ref           string               `yaml:"$ref"`
+	PropertyOrder []string
+	AllOf         []asyncSchema `yaml:"allOf"`
+	Ref           string        `yaml:"$ref"`
 }
 
 func (s *asyncSchema) UnmarshalYAML(value *yaml.Node) error {
@@ -133,9 +133,6 @@ func flattenTypeNode(n *yaml.Node) string {
 	case yaml.ScalarNode:
 		return n.Value
 	case yaml.DocumentNode, yaml.MappingNode, yaml.AliasNode:
-		// "type:" is never one of these shapes in an AsyncAPI/JSON-Schema
-		// property — fall back to empty rather than guess at n.Value's
-		// meaning for a node kind that doesn't carry a scalar value.
 		return ""
 	default:
 		return ""
@@ -261,7 +258,7 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 	if envLabel == "" {
 		envLabel = "DEV"
 	}
-	envColor := "#22c55e" // green — dev/unknown
+	envColor := "#22c55e"
 	switch strings.ToLower(env) {
 	case "prod", "production":
 		envColor = "#ec4b3c"
