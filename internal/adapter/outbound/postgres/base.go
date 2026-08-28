@@ -24,10 +24,8 @@ func exec(ctx context.Context, pool *pgcommon.Pool, fn func(db.DBTX) error) erro
 	})
 }
 
-// statusOrNotFound is called when a status-guarded UPDATE affects 0 rows.
-// It probes for the version's existence: if absent → ErrNotFound; if present
-// but in the wrong status → wrongStatusErr.
-// This keeps the happy path single-query while giving callers a precise error.
+// statusOrNotFound distinguishes "version missing" (ErrNotFound) from "version
+// exists but in the wrong status" (wrongStatusErr), without an extra happy-path query.
 func statusOrNotFound(
 	ctx context.Context,
 	dbtx db.DBTX,

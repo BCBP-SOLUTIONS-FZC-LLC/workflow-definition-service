@@ -16,8 +16,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-// maxCallAttempts bounds transient retries (1 initial try + retries) on the
-// archive guard call; only codes.Unavailable / DeadlineExceeded are retried.
+// maxCallAttempts bounds retries on transient errors (see isRetryableGRPC): 1 initial call plus up to 2 retries.
 const maxCallAttempts = 3
 
 var _ port.ExecutionService = (*ExecutionClient)(nil)

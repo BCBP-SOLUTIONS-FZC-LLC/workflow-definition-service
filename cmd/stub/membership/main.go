@@ -24,12 +24,11 @@ import (
 	"sync/atomic"
 )
 
-// ineligible is 1 when the stub should return 409, 0 for 200 eligible.
-var ineligible atomic.Int32
+var ineligible atomic.Bool
 
 func main() {
 	if os.Getenv("ELIGIBLE") == "false" {
-		ineligible.Store(1)
+		ineligible.Store(true)
 	}
 
 	addr := os.Getenv("STUB_ADDR")
@@ -49,11 +48,7 @@ func main() {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if body.Eligible {
-			ineligible.Store(0)
-		} else {
-			ineligible.Store(1)
-		}
+		ineligible.Store(!body.Eligible)
 		log.Printf("control: eligible=%v", body.Eligible)
 		w.WriteHeader(http.StatusOK)
 	})
@@ -61,7 +56,7 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s %s", r.Method, r.URL.String())
 
-		if ineligible.Load() == 1 {
+		if ineligible.Load() {
 			w.WriteHeader(http.StatusConflict)
 			return
 		}

@@ -19,10 +19,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The `migrate` subcommand applies the schema and exits, so it can run as a
-	// dedicated migration entrypoint (Kubernetes init container or pre-boot job)
-	// rather than in the service's boot path. See platform-pgcommon README
-	// §Migrations: never run migrations from the main service binary's startup.
+	// `migrate` is a dedicated subcommand (K8s init container / pre-boot job),
+	// never run from the service binary's own startup — platform-pgcommon README §Migrations.
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		log, err := logger.NewLogger(cfg.AppEnv)
 		if err != nil {
