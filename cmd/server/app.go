@@ -86,10 +86,8 @@ func (a *app) startServers() {
 			"poll_interval": a.cfg.OutboxPollInterval.String(),
 			"batch_size":    a.cfg.OutboxBatchSize,
 		})
-		// Decoupled from the request/run ctx so an in-flight SNS publish is not
-		// cancelled mid-flight on shutdown; graceful stop is driven by Stop() in
-		// stopServers (LIFO). Outbox rows are durable, so this only avoids
-		// needless redelivery, but keeps shutdown clean.
+		// Uses a fresh background context, not the shutdown ctx, so an in-flight
+		// SNS publish isn't cancelled mid-flight; stopServers drives graceful stop instead.
 		if err := a.outboxRelay.Start(context.Background()); err != nil {
 			a.log.Error("outbox relay exited", map[string]any{"error": err.Error()})
 		}

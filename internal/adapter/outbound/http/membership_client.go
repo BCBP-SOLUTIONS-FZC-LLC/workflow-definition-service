@@ -28,9 +28,10 @@ func NewMembershipClient(baseURL string, timeout time.Duration) *MembershipClien
 	}
 }
 
-// maxEligibilityAttempts bounds transient retries (1 initial try + retries) on
-// the eligibility call; only transport errors and HTTP 5xx are retried.
+// maxEligibilityAttempts bounds retries on transient failures (see tryCheckEligibility): 1 initial call plus up to 2 retries.
 const maxEligibilityAttempts = 3
+
+const notEligibleStatusCode = http.StatusConflict
 
 func (c *MembershipClient) CheckEligibility(
 	ctx context.Context,
@@ -72,8 +73,8 @@ func (c *MembershipClient) tryCheckEligibility(ctx context.Context, rawURL strin
 	defer resp.Body.Close() //nolint:errcheck
 
 	switch {
-	case resp.StatusCode == http.StatusConflict:
-		return false, false, nil // not eligible
+	case resp.StatusCode == notEligibleStatusCode:
+		return false, false, nil
 	case resp.StatusCode >= 500:
 		return false, true, fmt.Errorf("%w: membership returned %d", domain.ErrUpstreamUnavailable, resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:

@@ -31,8 +31,7 @@ import (
 	executionv1 "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/execution/v1"
 )
 
-// active is 1 when the stub should report has_active=true.
-var active atomic.Int32
+var active atomic.Bool
 
 type server struct {
 	executionv1.UnimplementedExecutionServiceServer
@@ -42,7 +41,7 @@ func (s *server) CheckActiveInstances(
 	_ context.Context,
 	req *executionv1.CheckActiveInstancesRequest,
 ) (*executionv1.CheckActiveInstancesResponse, error) {
-	hasActive := active.Load() == 1
+	hasActive := active.Load()
 	var count int32
 	if hasActive {
 		count = 1
@@ -60,21 +59,7 @@ func (s *server) PauseUserTasks(
 	return &executionv1.PauseUserTasksResponse{}, nil
 }
 
-func main() {
-	if os.Getenv("HAS_ACTIVE") == "true" {
-		active.Store(1)
-	}
-
-	addr := os.Getenv("STUB_ADDR")
-	if addr == "" {
-		addr = ":9091"
-	}
-	ctrlAddr := os.Getenv("STUB_CTRL_ADDR")
-	if ctrlAddr == "" {
-		ctrlAddr = ":9092"
-	}
-
-	// HTTP control plane — toggle has_active without restarting.
+func startControlPlane(ctrlAddr string) {
 	http.HandleFunc("/control", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -87,11 +72,7 @@ func main() {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if body.HasActive {
-			active.Store(1)
-		} else {
-			active.Store(0)
-		}
+		active.Store(body.HasActive)
 		log.Printf("control: has_active=%v", body.HasActive)
 		w.WriteHeader(http.StatusOK)
 	})
@@ -101,6 +82,23 @@ func main() {
 			log.Fatalf("ctrl serve: %v", err)
 		}
 	}()
+}
+
+func main() {
+	if os.Getenv("HAS_ACTIVE") == "true" {
+		active.Store(true)
+	}
+
+	addr := os.Getenv("STUB_ADDR")
+	if addr == "" {
+		addr = ":9091"
+	}
+	ctrlAddr := os.Getenv("STUB_CTRL_ADDR")
+	if ctrlAddr == "" {
+		ctrlAddr = ":9092"
+	}
+
+	startControlPlane(ctrlAddr)
 
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {

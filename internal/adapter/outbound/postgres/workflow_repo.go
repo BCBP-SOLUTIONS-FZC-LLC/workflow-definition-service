@@ -162,36 +162,29 @@ func (r *WorkflowRepo) List(
 	return results, total, err
 }
 
+const (
+	activeVersionJoin = "LEFT JOIN workflow_version wv_active ON wv_active.id = w.active_version_id\n"
+	draftVersionJoin  = "LEFT JOIN workflow_version wv_draft ON wv_draft.workflow_id = w.id AND wv_draft.tenant_id = w.tenant_id AND wv_draft.status = 'DRAFT'\n"
+)
+
 func listWorkflows(
 	ctx context.Context,
 	dbtx db.DBTX,
 	tenantID uuid.UUID,
 	f port.WorkflowFilter,
 ) ([]*domain.Workflow, int64, error) {
-	// args holds all query parameters in order. argN() reads the current $N
-	// placeholder for the last-appended value; nextArg(v) appends v and
-	// returns its $N. Never build a placeholder manually — always use these
-	// two helpers to keep args and $N numbering in sync.
-	args := []any{tenantID}
-	argN := func() string {
-		n := fmt.Sprintf("$%d", len(args))
-		return n
-	}
-	nextArg := func(v interface{}) string {
+	var args []any
+	nextArg := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
 
 	var joins strings.Builder
 	var where strings.Builder
-	fmt.Fprintf(&where, "WHERE w.tenant_id = %s\n", argN())
+	fmt.Fprintf(&where, "WHERE w.tenant_id = %s\n", nextArg(tenantID))
 
-	// Always join for active version number (needed for response field).
-	joins.WriteString("LEFT JOIN workflow_version wv_active ON wv_active.id = w.active_version_id\n")
-	// Always join for has_draft (needed for response field and optional filter).
-	joins.WriteString(
-		"LEFT JOIN workflow_version wv_draft ON wv_draft.workflow_id = w.id AND wv_draft.tenant_id = w.tenant_id AND wv_draft.status = 'DRAFT'\n",
-	)
+	joins.WriteString(activeVersionJoin)
+	joins.WriteString(draftVersionJoin)
 
 	if f.Search != nil {
 		p := nextArg("%" + *f.Search + "%")

@@ -19,31 +19,25 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-func newDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) {
-	// Logger is omitted: pgcommon.Config.Logger is typed as platform-pgcommon's
-	// internal port.Logger, which uses unexported port.Field in its method
-	// signatures. External consumers cannot implement that interface.
-	// SlowQueryThreshold is still recorded; slow-query log lines will appear
-	// once pgcommon exports its logger type.
-	pool, err := pgcommon.NewPool(ctx, pgcommon.Config{
-		DSN:                cfg.DatabaseURL,
+// dbPoolConfig builds a pgcommon.Config for dsn. Logger is left unset:
+// platform-pgcommon's Config.Logger needs its internal, unexported
+// port.Logger type, which external packages cannot implement.
+func dbPoolConfig(cfg *config.Config, dsn string, pgBouncerMode bool) pgcommon.Config {
+	return pgcommon.Config{
+		DSN:                dsn,
 		MaxConns:           cfg.PGMaxConns,
 		MinConns:           cfg.PGMinConns,
 		SlowQueryThreshold: time.Duration(cfg.PGSlowQueryThresholdMS) * time.Millisecond,
 		GUCProvider:        pgcommon.GUCSetFromContext,
-		PGBouncerMode:      cfg.PGBouncerMode,
-	})
+		PGBouncerMode:      pgBouncerMode,
+	}
+}
+
+func newDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) {
+	pool, err := pgcommon.NewPool(ctx, dbPoolConfig(cfg, cfg.DatabaseURL, cfg.PGBouncerMode))
 	if err != nil && cfg.DatabaseFallbackURL != "" {
-		// PgBouncer may not be ready yet (rolling deploy, startup ordering).
-		// Retry once against the direct Postgres fallback — startup only.
-		pool, err = pgcommon.NewPool(ctx, pgcommon.Config{
-			DSN:                cfg.DatabaseFallbackURL,
-			MaxConns:           cfg.PGMaxConns,
-			MinConns:           cfg.PGMinConns,
-			SlowQueryThreshold: time.Duration(cfg.PGSlowQueryThresholdMS) * time.Millisecond,
-			GUCProvider:        pgcommon.GUCSetFromContext,
-			PGBouncerMode:      false,
-		})
+		// PgBouncer may not be ready yet (rolling deploy, startup ordering); retry once direct.
+		pool, err = pgcommon.NewPool(ctx, dbPoolConfig(cfg, cfg.DatabaseFallbackURL, false))
 		if err != nil {
 			return nil, fmt.Errorf("db pool (primary and fallback both failed): %w", err)
 		}
@@ -54,12 +48,14 @@ func newDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) 
 	return pool, nil
 }
 
+// systemPoolMaxConns is small: this pool only serves low-volume, admin-only
+// scope=global module/template writes.
+const systemPoolMaxConns = 3
+
 func newSystemDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) {
-	// Only serves scope=global module/template writes — a low-volume,
-	// admin-only path — so this pool is sized far smaller than the main one.
 	pool, err := pgcommon.NewPool(ctx, pgcommon.Config{
 		DSN:                cfg.SystemDSN(),
-		MaxConns:           3,
+		MaxConns:           systemPoolMaxConns,
 		MinConns:           0,
 		SlowQueryThreshold: time.Duration(cfg.PGSlowQueryThresholdMS) * time.Millisecond,
 		PGBouncerMode:      cfg.PGBouncerMode,
