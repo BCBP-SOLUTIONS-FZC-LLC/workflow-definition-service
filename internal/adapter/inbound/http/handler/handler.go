@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -65,40 +66,46 @@ type starterSvc interface {
 }
 
 type Handler struct {
-	workflows  workflowSvc
-	drafts     draftSvc
-	versions   versionSvc
-	validation validationSvc
-	modules    moduleSvc
-	starters   starterSvc
-	membership membershipRevoker
-	connectors connectorSvc
-	log        port.Logger
+	workflows      workflowSvc
+	drafts         draftSvc
+	versions       versionSvc
+	validation     validationSvc
+	modules        moduleSvc
+	starters       starterSvc
+	membership     membershipRevoker
+	connectors     connectorSvc
+	cache          port.CacheStore
+	idempotencyTTL time.Duration
+	log            port.Logger
 }
 
 type Services struct {
-	Workflows  workflowSvc
-	Drafts     draftSvc
-	Versions   versionSvc
-	Validation validationSvc
-	Modules    moduleSvc
-	Starters   starterSvc
-	Membership membershipRevoker
-	Connectors connectorSvc
-	Log        port.Logger
+	Workflows      workflowSvc
+	Drafts         draftSvc
+	Versions       versionSvc
+	Validation     validationSvc
+	Modules        moduleSvc
+	Starters       starterSvc
+	Membership     membershipRevoker
+	Connectors     connectorSvc
+	Cache          port.CacheStore
+	IdempotencyTTL time.Duration
+	Log            port.Logger
 }
 
 func New(s Services) *Handler {
 	return &Handler{
-		workflows:  s.Workflows,
-		drafts:     s.Drafts,
-		versions:   s.Versions,
-		validation: s.Validation,
-		modules:    s.Modules,
-		starters:   s.Starters,
-		membership: s.Membership,
-		connectors: s.Connectors,
-		log:        s.Log,
+		workflows:      s.Workflows,
+		drafts:         s.Drafts,
+		versions:       s.Versions,
+		validation:     s.Validation,
+		modules:        s.Modules,
+		starters:       s.Starters,
+		membership:     s.Membership,
+		connectors:     s.Connectors,
+		cache:          s.Cache,
+		idempotencyTTL: s.IdempotencyTTL,
+		log:            s.Log,
 	}
 }
 

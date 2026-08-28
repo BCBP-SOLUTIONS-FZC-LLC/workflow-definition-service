@@ -21,6 +21,7 @@ import (
 
 	definitionv1 "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/definition/v1"
 	grpcadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/grpc"
+	inboundhttp "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http"
 	httphandler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	outboundgrpc "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/grpc"
 	outboundhttp "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/http"
@@ -204,9 +205,11 @@ func newApp(cfg *config.Config) (*app, error) {
 		Modules:    moduleSvc,
 		Starters:   starterSvc,
 		// Inbound events arrive over HTTP via POST /internal/events
-		Membership: versionSvc,
-		Connectors: connectorSvc,
-		Log:        log,
+		Membership:     versionSvc,
+		Connectors:     connectorSvc,
+		Cache:          cache,
+		IdempotencyTTL: cfg.IdempotencyTTL,
+		Log:            log,
 	})
 
 	grpcCfg := grpccommon.Config{
@@ -221,11 +224,19 @@ func newApp(cfg *config.Config) (*app, error) {
 	grpc_health_v1.RegisterHealthServer(grpcSrv, health.NewServer())
 	reflection.Register(grpcSrv)
 
-	r := newRouter(cfg, pool, cache, log, h)
+	router := inboundhttp.NewRouter(inboundhttp.RouterConfig{
+		GinConfig:        gincommon.Config{Logger: log, ServiceName: cfg.OTELServiceName, BuildVersion: version},
+		AppEnv:           cfg.AppEnv,
+		InternalAPIToken: cfg.InternalAPIToken,
+		Log:              log,
+		Handler:          h,
+		DB:               dbPinger{pool: pool},
+		Cache:            cache,
+	})
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:      r,
+		Handler:      router.Handler(),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,

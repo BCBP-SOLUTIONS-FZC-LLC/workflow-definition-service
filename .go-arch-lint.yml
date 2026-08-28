@@ -81,6 +81,7 @@ deps:
     mayDependOn:
       - domain
       - port
+      - adapter   # internal/adapter/inbound/http/router.go wires the handler + middleware sub-packages
       - service   # handlers reference service.UpdateDraftReq / CloneReq / DiffResult
       - db        # sqlc-generated types
       - gen       # proto-generated types (grpc server + execution client)
