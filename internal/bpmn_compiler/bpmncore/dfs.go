@@ -12,8 +12,8 @@ type DFSVisitor struct {
 
 func IterativeDFS(g *Graph, start string, v DFSVisitor) {
 	type frame struct {
-		id   string
-		done bool // true = all children pushed; OnExit pending
+		id          string
+		pendingExit bool
 	}
 	scheduled := make(map[string]bool)
 	scheduled[start] = true
@@ -21,9 +21,9 @@ func IterativeDFS(g *Graph, start string, v DFSVisitor) {
 
 	for len(stack) > 0 {
 		n := len(stack) - 1
-		id, done := stack[n].id, stack[n].done
+		id, pendingExit := stack[n].id, stack[n].pendingExit
 
-		if done {
+		if pendingExit {
 			stack = stack[:n]
 			if v.OnExit != nil {
 				v.OnExit(id)
@@ -31,10 +31,10 @@ func IterativeDFS(g *Graph, start string, v DFSVisitor) {
 			continue
 		}
 
-		stack[n].done = true // mark pending exit before pushing children
+		stack[n].pendingExit = true
 
 		if v.OnEnter != nil && !v.OnEnter(id) {
-			stack = stack[:n] // prune: skip children and OnExit
+			stack = stack[:n]
 			continue
 		}
 

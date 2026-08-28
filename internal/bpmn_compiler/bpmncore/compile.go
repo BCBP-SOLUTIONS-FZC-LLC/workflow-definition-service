@@ -36,8 +36,8 @@ func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string,
 			state.ExternalNodes[k] = v
 		}
 	}
-	// For implicit starts the start node itself is a real task (e.g. receiveTask),
-	// so traverse it directly rather than its successors.
+	// An implicit-start node (e.g. a receiveTask) is itself the first real
+	// task, unlike an explicit <bpmn:startEvent> whose successor is.
 	if len(proc.StartEvents) > 0 {
 		nexts := state.ForwardNexts(startID)
 		if len(nexts) > 0 {
@@ -265,10 +265,6 @@ func ResolveMessageName(messageRef string, defs *BPMNDefinitions) string {
 	return ""
 }
 
-// nodeMessageRef returns the messageRef carried by the node identified by
-// nodeID, checking send/receive tasks and message boundary events — the
-// places BPMN authors actually attach a messageRef, as opposed to the
-// <bpmn:messageFlow> element itself which is rarely annotated in practice.
 func nodeMessageRef(nodeID string, defs *BPMNDefinitions) string {
 	if nodeID == "" || defs == nil {
 		return ""

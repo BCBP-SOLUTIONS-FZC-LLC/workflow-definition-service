@@ -31,8 +31,7 @@ func canonicalHash(proc *bpmncore.BPMNProcess) (string, error) {
 	clone.BoundaryEvents = copySlice(proc.BoundaryEvents)
 	clone.CallActivities = copySlice(proc.CallActivities)
 	clone.DataStoreRefs = copySlice(proc.DataStoreRefs)
-	// SubProcesses are nested structs with their own slice fields; shallow copy is sufficient
-	// since canonicalHash does not mutate sub-process internals.
+	// Shallow copy is sufficient: canonicalHash never mutates sub-process internals.
 	clone.SubProcesses = copySlice(proc.SubProcesses)
 
 	for i := range clone.UserTasks {

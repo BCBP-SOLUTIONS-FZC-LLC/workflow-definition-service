@@ -254,7 +254,8 @@ func promoteTasks(userTasks, genericTasks, serviceTasks *[]bpmncore.BPMNUserTask
 	*serviceTasks = nil
 }
 
-// non-connector serviceTasks must never reach the compiled pipeline.
+// connectorServiceTasks is a defensive filter: only serviceTasks already
+// classified as connectors by scanRejected may reach the compiled pipeline.
 func connectorServiceTasks(tasks []bpmncore.BPMNUserTask) []bpmncore.BPMNUserTask {
 	var out []bpmncore.BPMNUserTask
 	for _, t := range tasks {
