@@ -71,13 +71,10 @@ require (
 require (
 	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon v1.1.2
 	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors v0.0.0-20260814044400-bb010072f28c
-	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.2.0-rc.3
+	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.2.0-rc.4
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.23
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.22
 	github.com/aws/aws-sdk-go-v2/service/glue v1.145.0
-	github.com/aws/aws-sdk-go-v2/service/sns v1.40.0
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.43.2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/joho/godotenv v1.5.1
 	github.com/redis/go-redis/v9 v9.20.0
@@ -96,6 +93,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/PuerkitoBio/purell v1.1.1 // indirect
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.22 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.28 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.29 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.29 // indirect
@@ -103,6 +101,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.12 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.28 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.1.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sns v1.40.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.43.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.31.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.2 // indirect
