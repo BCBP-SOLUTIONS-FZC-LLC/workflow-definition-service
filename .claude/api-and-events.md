@@ -24,12 +24,7 @@ Route is on the `/internal` group guarded by `RequireInternalToken` (`x-internal
 
 ## Outbound Event Topology
 
-Only **`workflow.template.published`** is emitted via the transactional outbox → SNS. It is a cache-warm push hint to Execution to pre-fetch the compiled plan via `GetCompiledWorkflow` gRPC before the first `StartWorkflow` call.
-
-Three events were deliberately removed:
-- `template.cloned` — clones are DRAFTs; Execution has no reason to react
-- `template.archived` — Execution checks `status=ARCHIVED` via gRPC on demand; archive is non-destructive to in-flight instances
-- `template.eligibility_invalidated` — replaced by a direct gRPC call (see below)
+This service currently emits no outbound events. The transactional outbox → SNS pipeline (`buildEnvelope` in `helpers.go`, `outbox.Enqueue` inside a `RunInTx`/`RunInTxWithRetry` callback) stays wired for whichever event is added next.
 
 ## Membership Revocation: Direct gRPC PauseUserTasks
 
@@ -98,8 +93,6 @@ The Glue schema registry codec caches the schema version ID in-memory (TTL `GLUE
 - `pr-check`'s AWS-dependent steps specifically degrade gracefully (skip, don't fail) since they run on every PR regardless of whether secrets are configured — see the "Check AWS credentials configured" step pattern (secrets can't be referenced directly in `if:` conditions, so it's piped through an `env:` + step output first).
 
 **`CI_REPO_READ_TOKEN` fallback**: every `actions/checkout` step across all workflows uses `token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}`. Confirmed necessary in iam-user-profile (same GitHub org) — the default `GITHUB_TOKEN` failed with "repository not found" in some contexts. Falls back to the default token when the secret is unset (true today) — a no-op until/unless ops configures it.
-
-The `scripts/localstack-init.sh` bootstrap (used by `make docker-up` and integration tests) reads the same `internal/eventschema/workflow_template_published.json` file to seed the fake local Glue registry, so local/CI behavior and the governed schema never drift apart.
 
 ## Swagger UI
 

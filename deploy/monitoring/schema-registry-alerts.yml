@@ -17,7 +17,7 @@
 #   registry    — value of GLUE_REGISTRY_NAME
 #
 # glue_schema_version additionally carries:
-#   schema — individual schema name (e.g. workflow.template.published)
+#   schema — individual schema name (e.g. workflow.some_event.happened)
 #   status — "created" | "new_version" | "unchanged"
 
 groups:
@@ -40,7 +40,7 @@ groups:
             {{ $value | humanize }} breaking change(s) were blocked by the CI diff check
             in Glue registry {{ $labels.registry }} ({{ $labels.environment }}).
             A developer attempted an incompatible schema change. Registration was blocked.
-            Apply a versioned event type (e.g. workflow.template.published.v2) and follow
+            Apply a versioned event type (e.g. workflow.some_event.happened.v2) and follow
             the migration protocol in api/asyncapi.yaml § "Schema Evolution Rules".
 
       # Orphaned schemas are registered in Glue but have no corresponding file in

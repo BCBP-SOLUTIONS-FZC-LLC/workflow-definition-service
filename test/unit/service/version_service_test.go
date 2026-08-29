@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/events"
 
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
@@ -113,11 +112,10 @@ func TestVersionService_Publish_OK(t *testing.T) {
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	assignees := mocks.NewMockAssigneeRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Outbox: outbox, Compiler: compiler,
+		Assignees: assignees, Compiler: compiler,
 	})
 
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
@@ -141,7 +139,6 @@ func TestVersionService_Publish_OK(t *testing.T) {
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	// No BulkInsert — empty plan produces no assignees
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
 	got, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, false)
 	if err != nil || got == nil {
@@ -248,11 +245,10 @@ func TestVersionService_Publish_ForceStructural(t *testing.T) {
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	assignees := mocks.NewMockAssigneeRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Outbox: outbox, Compiler: compiler,
+		Assignees: assignees, Compiler: compiler,
 	})
 
 	tenantID, userID, wfID, vID, activeID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
@@ -276,7 +272,6 @@ func TestVersionService_Publish_ForceStructural(t *testing.T) {
 	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h").Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
 	got, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, true)
 	if err != nil || got == nil {
@@ -296,11 +291,10 @@ func TestVersionService_Publish_NilBaselineAllowsPublish(t *testing.T) {
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	assignees := mocks.NewMockAssigneeRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Outbox: outbox, Compiler: compiler,
+		Assignees: assignees, Compiler: compiler,
 	})
 
 	tenantID, userID, wfID, vID, activeID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
@@ -325,7 +319,6 @@ func TestVersionService_Publish_NilBaselineAllowsPublish(t *testing.T) {
 	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h").Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
 	if _, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -340,11 +333,10 @@ func TestVersionService_Publish_UnreadableBaselineAllowsPublish(t *testing.T) {
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	assignees := mocks.NewMockAssigneeRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Outbox: outbox, Compiler: compiler,
+		Assignees: assignees, Compiler: compiler,
 	})
 
 	tenantID, userID, wfID, vID, activeID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
@@ -369,7 +361,6 @@ func TestVersionService_Publish_UnreadableBaselineAllowsPublish(t *testing.T) {
 	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h").Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
 	if _, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -497,12 +488,11 @@ func TestVersionService_Publish_SkipEligibilityCheck(t *testing.T) {
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	assignees := mocks.NewMockAssigneeRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
 	membership := mocks.NewMockMembershipService(ctrl) // set but must not be called
 	svc := service.NewVersionService(service.VersionDeps{
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Outbox: outbox, Compiler: compiler, Membership: membership,
+		Assignees: assignees, Compiler: compiler, Membership: membership,
 	})
 
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
@@ -521,7 +511,6 @@ func TestVersionService_Publish_SkipEligibilityCheck(t *testing.T) {
 	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
 	// forcePublishStructural=true — structural divergence bypassed; eligibility still runs (empty plan, no assignees)
 	got, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, true)
@@ -536,11 +525,10 @@ func TestVersionService_Publish_WithAssignees_BulkInsert(t *testing.T) {
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	assignees := mocks.NewMockAssigneeRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Outbox: outbox, Compiler: compiler,
+		Assignees: assignees, Compiler: compiler,
 	})
 
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
@@ -572,7 +560,6 @@ func TestVersionService_Publish_WithAssignees_BulkInsert(t *testing.T) {
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	assignees.EXPECT().BulkInsert(gomock.Any(), tenantID, vID, gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
 	got, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, false)
 	if err != nil || got == nil {
@@ -657,9 +644,8 @@ func TestVersionService_Promote_OK(t *testing.T) {
 	tx := mocks.NewMockTransactor(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
-		Transactor: tx, Workflows: wfRepo, Versions: vRepo, Outbox: outbox,
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
@@ -671,7 +657,6 @@ func TestVersionService_Promote_OK(t *testing.T) {
 	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
 	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -759,9 +744,8 @@ func TestVersionService_Promote_UpdateError(t *testing.T) {
 	tx := mocks.NewMockTransactor(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
-		Transactor: tx, Workflows: wfRepo, Versions: vRepo, Outbox: outbox,
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
@@ -783,9 +767,8 @@ func TestVersionService_Promote_WithVersionNumberAndPlan(t *testing.T) {
 	tx := mocks.NewMockTransactor(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
-		Transactor: tx, Workflows: wfRepo, Versions: vRepo, Outbox: outbox,
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
@@ -795,13 +778,12 @@ func TestVersionService_Promote_WithVersionNumberAndPlan(t *testing.T) {
 		ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished,
 		VersionNumber: &vNum, CompiledPlanJSON: &plan,
 	}, nil)
-	// No active version → promotedFrom stays nil.
+	// No active version on the target workflow.
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
 		&domain.Workflow{ID: wfID}, nil)
 	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
 	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1310,35 +1292,6 @@ func TestVersionService_Publish_UpdateActiveVersionError(t *testing.T) {
 	}
 }
 
-func TestVersionService_Publish_EnqueueError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	tx := mocks.NewMockTransactor(ctrl)
-	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
-	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	assignees := mocks.NewMockAssigneeRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
-	compiler := mocks.NewMockPlanCompiler(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{
-		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Outbox: outbox, Compiler: compiler,
-	})
-
-	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
-	publishPreFlightMocks(t, vRepo, compiler, tenantID, wfID, vID, buildPlan())
-	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
-	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-	assignees.EXPECT().DeleteByVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(errors.New("enqueue error"))
-
-	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
 func TestVersionService_Publish_InvalidAssigneeUUID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
@@ -1481,12 +1434,11 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	assignees := mocks.NewMockAssigneeRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
 	membership := mocks.NewMockMembershipService(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Outbox: outbox, Compiler: compiler, Membership: membership,
+		Assignees: assignees, Compiler: compiler, Membership: membership,
 	})
 
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
@@ -1522,7 +1474,6 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	assignees.EXPECT().BulkInsert(gomock.Any(), tenantID, vID, gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
 	got, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, false)
 	if err != nil || got == nil {
@@ -1536,11 +1487,10 @@ func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	assignees := mocks.NewMockAssigneeRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Outbox: outbox, Compiler: compiler,
+		Assignees: assignees, Compiler: compiler,
 	})
 
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
@@ -1572,7 +1522,6 @@ func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	// BulkInsert NOT called — invalid UUID skipped by extractAssignees → empty slice
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil)
 
 	// forcePublishStructural=true; no membership dep → eligibility skipped
 	got, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, true)
@@ -1673,103 +1622,5 @@ func TestVersionService_Clone_QuotaCountError(t *testing.T) {
 		service.CloneReq{NewKey: "k", NewName: "n"})
 	if err == nil {
 		t.Fatal("expected error")
-	}
-}
-
-// TestVersionService_Publish_EventPayload asserts the outbox envelope carries the
-// correct fields (WorkflowKey, ArtifactHash, VersionID, PublishedBy) and that
-// CompiledPlanJSON is NOT present in the payload (LLD §10.7 — SNS 256 KB limit).
-func TestVersionService_Publish_EventPayload(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	tx := mocks.NewMockTransactor(ctrl)
-	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
-	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	assignees := mocks.NewMockAssigneeRepository(ctrl)
-	outbox := mocks.NewMockOutboxRepository(ctrl)
-	compiler := mocks.NewMockPlanCompiler(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{
-		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Outbox: outbox, Compiler: compiler,
-	})
-
-	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	const businessKey = "invoice-approval-v2"
-	const artifactHash = "sha256-deadbeef"
-
-	draft := &domain.WorkflowVersion{
-		ID: vID, WorkflowID: wfID, TenantID: tenantID,
-		Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>",
-	}
-
-	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
-	compiler.EXPECT().Compile(gomock.Any(), "<bpmn/>").Return(buildPlan(), nil)
-	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return(artifactHash, nil)
-	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
-		&domain.Workflow{ID: wfID, BusinessKey: businessKey}, nil)
-	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(3), nil)
-	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(3), gomock.Any(), artifactHash).Return(nil)
-	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
-	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-
-	var capturedPayload events.TemplatePublishedPayload
-	outbox.EXPECT().Enqueue(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ any, env any) error {
-			// env is events.Envelope[json.RawMessage]; Payload holds the raw JSON.
-			type envelopeWithPayload struct {
-				Payload json.RawMessage `json:"data"`
-			}
-			b, err := json.Marshal(env)
-			if err != nil {
-				t.Fatalf("marshal envelope: %v", err)
-			}
-			var wrapper envelopeWithPayload
-			if err := json.Unmarshal(b, &wrapper); err != nil {
-				t.Fatalf("unmarshal envelope wrapper: %v", err)
-			}
-			if err := json.Unmarshal(wrapper.Payload, &capturedPayload); err != nil {
-				t.Fatalf("unmarshal payload: %v", err)
-			}
-			return nil
-		})
-
-	_, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if capturedPayload.WorkflowKey != businessKey {
-		t.Errorf("WorkflowKey = %q, want %q", capturedPayload.WorkflowKey, businessKey)
-	}
-	if capturedPayload.ArtifactHash != artifactHash {
-		t.Errorf("ArtifactHash = %q, want %q", capturedPayload.ArtifactHash, artifactHash)
-	}
-	if capturedPayload.VersionID != vID.String() {
-		t.Errorf("VersionID = %q, want %q", capturedPayload.VersionID, vID.String())
-	}
-	if capturedPayload.PublishedBy != userID.String() {
-		t.Errorf("PublishedBy = %q, want %q", capturedPayload.PublishedBy, userID.String())
-	}
-	if capturedPayload.VersionNumber != 3 {
-		t.Errorf("VersionNumber = %d, want 3", capturedPayload.VersionNumber)
-	}
-	if capturedPayload.PromotedFromVersionID != nil {
-		t.Errorf("PromotedFromVersionID should be nil for first publish, got %v", *capturedPayload.PromotedFromVersionID)
-	}
-
-	// Verify CompiledPlanJSON is NOT in the payload (LLD §10.7 — SNS 256 KB limit).
-	rawPayload, _ := json.Marshal(capturedPayload)
-	assertNotContains(t, string(rawPayload), "compiled_plan_json")
-}
-
-func assertNotContains(t *testing.T, s, substr string) {
-	t.Helper()
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			t.Errorf("payload must not contain %q (SNS size limit): %s", substr, s)
-			return
-		}
 	}
 }

@@ -309,7 +309,7 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 	renderServers(w, &s.Servers)
 
 	w.WriteString(`<div class="section" id="messages"><div class="section-title">Messages</div>`)
-	msgOrder := []string{"WorkflowTemplatePublished", "DepartmentMembershipRevokedInbound"}
+	msgOrder := []string{"DepartmentMembershipRevokedInbound"}
 	for _, name := range msgOrder {
 		msg, ok := s.Comps.Messages[name]
 		if !ok {
@@ -322,8 +322,6 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 	w.WriteString(`<div class="section" id="schemas"><div class="section-title">Schemas</div>`)
 	schemaOrder := []string{
 		"EventEnvelope",
-		"WorkflowTemplatePublishedPayload",
-		"WorkflowTemplatePublishedEnvelope",
 		"DepartmentMembershipRevokedInbound",
 	}
 	for _, name := range schemaOrder {

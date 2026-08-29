@@ -3,19 +3,14 @@
 package e2e_test
 
 import (
-	"context"
 	"testing"
-	"time"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/outbox"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
 
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/fixtures"
 )
 
 // minimalBPMN is the smallest BPMN that passes the real compiler.
@@ -115,38 +110,4 @@ func wireServices(t *testing.T, pool *pgcommon.Pool, cache port.CacheStore) serv
 			Compiler:   compiler,
 		}),
 	}
-}
-
-// startOutboxRunner starts the outbox relay against the given pool + LocalStack
-// and registers cleanup on t. Returns only after the runner goroutine is running.
-func startOutboxRunner(t *testing.T, ctx context.Context, pool *pgcommon.Pool, ls *fixtures.LocalStackSNSSQS) {
-	t.Helper()
-
-	publisher, err := events.NewSNSPublisher(events.SNSConfig{
-		TopicARN:    ls.TopicARN,
-		Region:      "us-east-1",
-		EndpointURL: ls.EndpointURL,
-	})
-	if err != nil {
-		t.Fatalf("NewSNSPublisher: %v", err)
-	}
-
-	runner, err := outbox.NewRunner(outbox.Config{
-		Pool:         pool,
-		Publisher:    publisher,
-		PollInterval: 100 * time.Millisecond,
-		BatchSize:    10,
-	})
-	if err != nil {
-		t.Fatalf("outbox.NewRunner: %v", err)
-	}
-
-	runnerCtx, cancel := context.WithCancel(ctx)
-	done := make(chan error, 1)
-	go func() { done <- runner.Start(runnerCtx) }()
-	t.Cleanup(func() {
-		cancel()
-		_ = runner.Stop()
-		<-done
-	})
 }

@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/enums"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/events"
 
 	"github.com/google/uuid"
 
@@ -101,7 +99,7 @@ func (s *VersionService) Publish(
 		wfPublishTotal.WithLabelValues(outcomeLabel(err)).Inc()
 		wfPublishLatency.Observe(time.Since(start).Seconds())
 	}()
-	draft, compiledJSON, artifactHash, assignees, businessKey, err :=
+	draft, compiledJSON, artifactHash, assignees, err :=
 		s.publishPreFlight(ctx, tenantID, workflowID, versionID, forcePublishStructural)
 	if err != nil {
 		return nil, err
@@ -114,20 +112,6 @@ func (s *VersionService) Publish(
 			return fmt.Errorf("next version number: %w", err)
 		}
 		versionNumber = n
-		env, err := buildEnvelope(ctx, enums.EventTypeTemplatePublished, tenantID.String(),
-			"workflows/"+workflowID.String()+"/versions/"+versionID.String(),
-			userID.String(),
-			events.TemplatePublishedPayload{
-				WorkflowID:    workflowID.String(),
-				WorkflowKey:   businessKey,
-				VersionID:     versionID.String(),
-				VersionNumber: versionNumber,
-				ArtifactHash:  artifactHash,
-				PublishedBy:   userID.String(),
-			})
-		if err != nil {
-			return fmt.Errorf("build publish event: %w", err)
-		}
 		return s.runPublishTx(ctx, publishTxInput{
 			tenantID:      tenantID,
 			workflowID:    workflowID,
@@ -136,7 +120,6 @@ func (s *VersionService) Publish(
 			compiledJSON:  compiledJSON,
 			artifactHash:  artifactHash,
 			assignees:     assignees,
-			env:           env,
 		})
 	}); err != nil {
 		return nil, fmt.Errorf("publish version: %w", err)
@@ -248,36 +231,8 @@ func (s *VersionService) Promote(
 		return v, nil
 	}
 
-	var promotedFrom *string
-	if wf.ActiveVersionID != nil {
-		av := wf.ActiveVersionID.String()
-		promotedFrom = &av
-	}
-	var versionNumber int32
-	if v.VersionNumber != nil {
-		versionNumber = *v.VersionNumber
-	}
-	env, err := buildEnvelope(ctx, enums.EventTypeTemplatePublished, tenantID.String(),
-		"workflows/"+workflowID.String()+"/versions/"+versionID.String(),
-		userID.String(),
-		events.TemplatePublishedPayload{
-			WorkflowID:            workflowID.String(),
-			WorkflowKey:           wf.BusinessKey,
-			VersionID:             versionID.String(),
-			VersionNumber:         versionNumber,
-			ArtifactHash:          v.ArtifactHash,
-			PublishedBy:           userID.String(),
-			PromotedFromVersionID: promotedFrom,
-		})
-	if err != nil {
-		return nil, fmt.Errorf("build promote event: %w", err)
-	}
-
 	if err := s.transactor.RunInTx(ctx, func(ctx context.Context) error {
-		if err := s.workflows.UpdateActiveVersion(ctx, tenantID, workflowID, &versionID); err != nil {
-			return err
-		}
-		return s.outbox.Enqueue(ctx, env)
+		return s.workflows.UpdateActiveVersion(ctx, tenantID, workflowID, &versionID)
 	}); err != nil {
 		return nil, fmt.Errorf("promote version: %w", err)
 	}

@@ -22,7 +22,7 @@ Frontend Builder ──REST──► Definition Service ──gRPC──► Exec
 | **Compilation** | Converts validated BPMN graphs into immutable JSON DSL execution plans |
 | **Versioning** | Manages DRAFT → PUBLISHED → ARCHIVED lifecycle with optimistic concurrency |
 | **Serving** | Exposes compiled DSLs to the Execution Service over high-throughput gRPC |
-| **Event publishing** | Emits `TemplatePublished`, `TemplateArchived`, `TemplateEligibilityInvalidated` events via transactional outbox |
+| **Event publishing** | Transactional-outbox → AWS SNS pipeline is wired but currently has no outbound event types defined |
 | **Membership sync** | Consumes `DepartmentMembershipRevoked` events (via `POST /internal/events`) to invalidate affected template assignees |
 
 > **Architecture** — [ARCHITECTURE.md](ARCHITECTURE.md): layer model, sequence diagrams, BPMN compiler reference, configuration reference, and error catalog. Diagram sources live in [docs/architecture/](docs/architecture/).
@@ -522,7 +522,7 @@ The GitHub Release step only runs if `deploy-gate` succeeds. **Required reposito
 
 ## Schema Governance
 
-This service publishes one outbound domain event today (`workflow.template.published`) and treats its wire contract as a versioned, governed artifact rather than an implicit side effect of whatever the Go struct happens to look like. `platform-schemagov` — a CLI distributed as a Docker image (`ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov`) — enforces this end to end: locally during development and again in CI on every push.
+This service currently defines no outbound domain events, but treats every event's wire contract as a versioned, governed artifact rather than an implicit side effect of whatever the Go struct happens to look like, from the moment one is added. `platform-schemagov` — a CLI distributed as a Docker image (`ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov`) — enforces this end to end: locally during development and again in CI on every push.
 
 ### Source of truth
 

@@ -37,6 +37,14 @@ func hashBody(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
+// Idempotent wraps fn with idempotency-key support using this Handler's own
+// cache, logger, and TTL. Route registration outside this package (router.go)
+// calls this instead of WithIdempotency directly, since cache/log/idempotencyTTL
+// are unexported Handler fields.
+func (h *Handler) Idempotent(fn gin.HandlerFunc) gin.HandlerFunc {
+	return WithIdempotency(h.cache, h.log, h.idempotencyTTL, fn)
+}
+
 // WithIdempotency wraps a Gin handler with idempotency-key support.
 //
 // On the first call with a given Idempotency-Key the handler runs normally and

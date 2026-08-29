@@ -10,7 +10,7 @@ import (
 func TestBuildEnvelope_SetsSchemaVersion(t *testing.T) {
 	env, err := buildEnvelope(
 		context.Background(),
-		"workflow.template.published",
+		"test.event.occurred",
 		"11111111-1111-1111-1111-111111111111",
 		"", // subject
 		"", // actor

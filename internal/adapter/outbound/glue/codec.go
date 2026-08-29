@@ -96,12 +96,12 @@ func (c *Codec) Decode(_ context.Context, _ string, encoded []byte) (json.RawMes
 	return json.RawMessage(encoded[glueHeaderSize:]), nil
 }
 
-// registrySchemaName converts a dotted wire event type (e.g.
-// "workflow.template.published") to the underscored form platform-schemagov's
-// register command actually uses in Glue - the JSON schema filename stem
-// (internal/eventschema/workflow_template_published.json), verbatim. There is
-// no name-override in platform-schemagov's register command, so this is the
-// only naming convention that matches what's really registered.
+// registrySchemaName converts a dotted wire event type (e.g. "foo.bar.baz")
+// to the underscored form platform-schemagov's register command actually
+// uses in Glue - the JSON schema filename stem (internal/eventschema's
+// per-event file), verbatim. There is no name-override in platform-schemagov's
+// register command, so this is the only naming convention that matches what's
+// really registered.
 func registrySchemaName(eventType string) string {
 	return strings.ReplaceAll(eventType, ".", "_")
 }

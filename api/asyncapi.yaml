@@ -3,23 +3,14 @@ info:
   title: workflow-definition-svc events
   version: 1.0.0
   description: >
-    Outbound: workflow template version publishes, sent to wf-template-events
-    (SNS → SQS fan-out). Inbound: DepartmentMembershipRevoked, consumed off the
-    shared Workflow-Events Consumer (POST /internal/events) — documented here
-    as a `receive` operation for completeness, but its payload schema is owned
+    Inbound only: DepartmentMembershipRevoked, consumed off the shared
+    Workflow-Events Consumer (POST /internal/events) — documented here as a
+    `receive` operation for completeness, but its payload schema is owned
     and registered by the producing service (Org & Membership), NOT
-    re-registered by Definition.
+    re-registered by Definition. This service currently defines no outbound
+    events.
 
 channels:
-  wf/template/events:
-    address: wf-template-events
-    bindings:
-      sns:
-        name: workflow-template-events
-    messages:
-      WorkflowTemplatePublished:
-        $ref: '#/components/messages/WorkflowTemplatePublished'
-
   # Schema below is documentation-only (no "Payload" suffix → schema-gov skips
   # it); the authoritative contract is owned/registered by the Org &
   # Membership Service.
@@ -38,12 +29,6 @@ channels:
       department.membership.revoked: { $ref: '#/components/messages/DepartmentMembershipRevokedInbound' }
 
 operations:
-  publishTemplateEvents:
-    action: send
-    channel:
-      $ref: '#/channels/wf~1template~1events'
-    messages:
-      - $ref: '#/channels/wf~1template~1events/messages/WorkflowTemplatePublished'
   receiveMembershipEvents:
     action: receive
     channel: { $ref: '#/channels/iam~1membership~1events' }
@@ -55,17 +40,6 @@ operations:
 
 components:
   messages:
-    WorkflowTemplatePublished:
-      name: WorkflowTemplatePublished
-      title: Workflow template version published
-      x-lifecycle:
-        status: active
-      x-owner:
-        team: platform-engineers
-        slack: "#workflow-engine"
-      payload:
-        $ref: '#/components/schemas/WorkflowTemplatePublishedEnvelope'
-
     DepartmentMembershipRevokedInbound:
       name: DepartmentMembershipRevoked
       x-lifecycle: { status: active }
@@ -90,8 +64,8 @@ components:
       type: object
       # trace_id excluded: conditional on an active OTel span (buildEnvelope only
       # calls WithTraceID when trace.SpanFromContext(ctx).SpanContext().IsValid()).
-      # subject/actor included: both call sites for this event always pass non-empty
-      # values (helpers.go buildEnvelope + version_service.go:133,276)
+      # This service currently emits no outbound events; kept as the shared
+      # envelope contract for whatever the first one adds (helpers.go buildEnvelope).
       required: [id, type, subject, source, tenant_id, time, specversion, actor]
       properties:
         id:
@@ -113,9 +87,9 @@ components:
         type:
           type: string
           description: >
-            Dot-separated event type name (e.g. workflow.template.published).
-            Also set as the SNS MessageAttribute `event_type` so consumers can
-            apply SNS filter policies per queue.
+            Dot-separated event type name for a future outbound event (e.g.
+            workflow.some_event.happened). Also set as the SNS MessageAttribute
+            `event_type` so consumers can apply SNS filter policies per queue.
         time:
           type: string
           format: date-time
@@ -134,56 +108,6 @@ components:
         correlation_id:
           type: string
           description: Optional correlation ID for request tracing across services
-
-    WorkflowTemplatePublishedEnvelope:
-      allOf:
-        - $ref: '#/components/schemas/EventEnvelope'
-        - type: object
-          required: [data]
-          properties:
-            data:
-              $ref: '#/components/schemas/WorkflowTemplatePublishedPayload'
-
-    # Flat, self-contained business-data schema — this is what schema-gov actually
-    # extracts/governs (matched by its "Payload" name suffix). Must stay flat: the
-    # extractor does not dereference $ref, so allOf/$ref composition here would
-    # produce a dangling reference in the extracted internal/eventschema/*.json file.
-    WorkflowTemplatePublishedPayload:
-      type: object
-      additionalProperties: true
-      required:
-        - workflow_id
-        - workflow_key
-        - version_id
-        - version_number
-        - artifact_hash
-        - published_by
-      properties:
-        workflow_id:
-          type: string
-          format: uuid
-        workflow_key:
-          type: string
-          description: business key for the workflow template
-        version_id:
-          type: string
-          format: uuid
-        version_number:
-          type: integer
-          description: Monotonically increasing version counter scoped to the workflow
-        artifact_hash:
-          type: string
-          description: SHA-256 hash of the BPMN XML — consumers use this to verify integrity
-        published_by:
-          type: string
-          format: uuid
-          description: User ID of the actor who triggered the publish
-        promoted_from_version_id:
-          type: ["string", "null"]
-          format: uuid
-          description: >
-            ID of the version that was previously active when this version
-            was promoted. Null for the first publish of a workflow.
 
     # Documentation-only, like execution_service's own *Inbound schemas: this
     # event is owned/registered by its producer (Org & Membership), not by

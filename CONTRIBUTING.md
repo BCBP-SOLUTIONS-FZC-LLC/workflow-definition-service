@@ -82,7 +82,7 @@ test/
   unit/<pkg>/       Black-box unit tests (exported API only)
   integration/      DB integration tests (testcontainers, real Postgres)
   e2e/              Service-layer end-to-end tests (full business flows, real containers, no HTTP server)
-  fixtures/         Shared NewTestPool / NewTestValkey / NewLocalStackSNSSQS helpers
+  fixtures/         Shared NewTestPool / NewTestValkey helpers
 internal/**/*_test.go  White-box tests (need unexported access)
 ```
 
@@ -174,8 +174,6 @@ Integration tests live in `test/integration/` and use **testcontainers-go** to s
 | --- | --- | --- |
 | `TestE2E_WorkflowLifecycle` | Full state machine: Create → Update → Publish → Promote → InitDraft → Publish → Archive | Postgres |
 | `TestE2E_RLSCrossTenantIsolation` | Row-Level Security: tenant A cannot read tenant B's rows | Postgres |
-| `TestE2E_Promote_EndToEnd` | Promote emits SNS event with `promoted_from_version_id` set | Postgres + LocalStack |
-| `TestE2E_SNSFilterPolicies_QueueRouting` | SNS filter routes `workflow.template.published` to correct queue | Postgres + LocalStack |
 | `TestE2E_Valkey_CacheIntegration` | `Archive()` invalidates the compiled-plan cache entry | Postgres + Valkey |
 
 ```bash

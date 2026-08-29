@@ -9,6 +9,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -44,7 +45,6 @@ type DBPinger interface {
 	Health(ctx context.Context) DBHealth
 }
 
-// RouterConfig bundles every dependency NewRouter needs.
 type RouterConfig struct {
 	GinConfig        gincommon.Config
 	AppEnv           string
@@ -57,12 +57,10 @@ type RouterConfig struct {
 	Cache Pinger
 }
 
-// Router owns the Gin engine for this service.
 type Router struct {
 	engine *gin.Engine
 }
 
-// Handler returns the http.Handler to serve.
 func (r *Router) Handler() http.Handler { return r.engine }
 
 // NewRouter builds and wires every route this service exposes: the dev-only
@@ -73,9 +71,13 @@ func NewRouter(cfg RouterConfig) *Router {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
+	h := cfg.Handler
+	idem := h.Idempotent
+
 	r := gin.New()
 	r.MaxMultipartMemory = 10 << 20 // 10 MB, matches LimitRequestBody middleware cap
 
+	r.Use(gincommon.TimeoutMiddleware(30 * time.Second))
 	for _, mw := range gincommon.ObservabilityMiddlewares(cfg.GinConfig) {
 		r.Use(mw)
 	}
@@ -104,7 +106,12 @@ func NewRouter(cfg RouterConfig) *Router {
 	internal := r.Group("/internal")
 	internal.Use(httpmiddleware.RequireInternalToken(cfg.InternalAPIToken))
 	internal.Use(httpmiddleware.InjectGUCSet(cfg.Log))
-	handler.RegisterInternalRoutes(internal, cfg.Handler)
+	internal.POST("/events", h.HandleInternalEvent)
+	internal.GET("/connector-aliases", h.ListConnectorAliases)
+	internal.POST("/connector-aliases/rest", h.WriteConnectorRestAlias)
+	internal.POST("/connector-aliases/sql", h.WriteConnectorSQLAlias)
+	internal.DELETE("/connector-aliases/rest/:alias", h.DeleteConnectorRestAlias)
+	internal.DELETE("/connector-aliases/sql/:alias", h.DeleteConnectorSQLAlias)
 
 	api := r.Group("/api/v1")
 	for _, mw := range gincommon.ProtectedMiddlewares(cfg.GinConfig) {
@@ -113,7 +120,51 @@ func NewRouter(cfg RouterConfig) *Router {
 	api.Use(httpmiddleware.InjectGUCSet(cfg.Log))
 	api.Use(httpmiddleware.LimitRequestBody())
 	api.Use(httpmiddleware.RequireJSONContentType())
-	handler.RegisterRoutes(api, cfg.Handler)
+
+	wf := api.Group("/workflows")
+	wf.GET("", h.ListWorkflows)
+	wf.POST("", idem(h.CreateWorkflow))
+	wf.POST("/validate", h.ValidateBPMN)
+	wf.GET("/:id", h.GetWorkflow)
+	wf.POST("/:id/archive", idem(h.ArchiveWorkflow))
+
+	draft := wf.Group("/:id/draft")
+	draft.GET("", h.GetDraft)
+	draft.POST("", idem(h.InitDraft))
+	draft.PUT("", idem(h.UpdateDraft))
+	draft.DELETE("", idem(h.DiscardDraft))
+
+	ver := wf.Group("/:id/versions")
+	ver.GET("", h.ListVersions)
+	ver.GET("/:version_id", h.GetVersion)
+	ver.POST("/:version_id/publish", idem(h.PublishVersion))
+	ver.POST("/:version_id/clone", idem(h.CloneVersion))
+	ver.POST("/:version_id/promote", idem(h.PromoteVersion))
+	ver.GET("/:version_id/export", h.ExportBPMN)
+	ver.GET("/:version_id/diff/:target_version_id", h.GetVersionDiff)
+
+	conn := api.Group("/connectors")
+	conn.GET("/registry", h.ListConnectorRegistry)
+	conn.POST("/credentials", idem(h.WriteConnectorCredential))
+
+	api.GET("/bpmn/allowed-elements", h.AllowedBPMNElements)
+
+	mod := api.Group("/modules")
+	mod.GET("", h.ListModules)
+	mod.POST("", idem(h.CreateModule))
+	mod.GET("/:id", h.GetModule)
+	mod.GET("/:id/versions", h.ListModuleVersions)
+	mod.GET("/:id/versions/:version_id", h.GetModuleVersion)
+	mod.POST("/:id/versions", idem(h.AddModuleVersion))
+	mod.POST("/:id/versions/:version_id/publish", idem(h.PublishModuleVersion))
+	mod.DELETE("/:id", idem(h.ArchiveModule))
+
+	starters := api.Group("/starters")
+	starters.GET("", h.ListStarters)
+	starters.POST("", idem(h.CreateStarter))
+	starters.POST("/from-workflow-version/:version_id", idem(h.CreateStarterFromWorkflowVersion))
+	starters.GET("/:id", h.GetStarter)
+	starters.DELETE("/:id", idem(h.DeleteStarter))
 
 	return &Router{engine: r}
 }

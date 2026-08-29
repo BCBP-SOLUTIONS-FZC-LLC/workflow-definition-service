@@ -11,10 +11,10 @@ import (
 )
 
 func TestCodec_Encode_StubMode(t *testing.T) {
-	codec := NewCodec(aws.Config{}, "workflow-template-events", true, "", 0)
+	codec := NewCodec(aws.Config{}, "example-events", true, "", 0)
 	payload := []byte(`{"workflow_id":"123"}`)
 
-	encoded, schemaID, err := codec.Encode(context.Background(), "WorkflowTemplatePublished", payload)
+	encoded, schemaID, err := codec.Encode(context.Background(), "ExampleEventOccurred", payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestCodec_Encode_StubMode(t *testing.T) {
 }
 
 func TestCodec_Encode_WithCachedSchema(t *testing.T) {
-	codec := NewCodec(aws.Config{}, "workflow-template-events", false, "", 0)
+	codec := NewCodec(aws.Config{}, "example-events", false, "", 0)
 	payload := []byte(`{"workflow_id":"123"}`)
 
 	mockUUID := uuid.New()
@@ -37,7 +37,7 @@ func TestCodec_Encode_WithCachedSchema(t *testing.T) {
 		t.Fatalf("marshal uuid failed: %v", err)
 	}
 
-	schemaName := "WorkflowTemplatePublished"
+	schemaName := "ExampleEventOccurred"
 	codec.cache[schemaName] = cacheEntry{
 		versionIDBytes: binaryBytes,
 		versionIDStr:   mockUUID.String(),
@@ -77,7 +77,7 @@ func TestCodec_Encode_WithCachedSchema(t *testing.T) {
 }
 
 func TestCodec_Decode_RoundTripsWithEncode(t *testing.T) {
-	codec := NewCodec(aws.Config{}, "workflow-template-events", false, "", 0)
+	codec := NewCodec(aws.Config{}, "example-events", false, "", 0)
 	payload := []byte(`{"workflow_id":"123"}`)
 
 	mockUUID := uuid.New()
@@ -86,7 +86,7 @@ func TestCodec_Decode_RoundTripsWithEncode(t *testing.T) {
 		t.Fatalf("marshal uuid failed: %v", err)
 	}
 
-	schemaName := "WorkflowTemplatePublished"
+	schemaName := "ExampleEventOccurred"
 	codec.cache[schemaName] = cacheEntry{
 		versionIDBytes: binaryBytes,
 		versionIDStr:   mockUUID.String(),
@@ -108,7 +108,7 @@ func TestCodec_Decode_RoundTripsWithEncode(t *testing.T) {
 }
 
 func TestCodec_Decode_TooShort(t *testing.T) {
-	codec := NewCodec(aws.Config{}, "workflow-template-events", false, "", 0)
+	codec := NewCodec(aws.Config{}, "example-events", false, "", 0)
 
 	_, err := codec.Decode(context.Background(), "", []byte{3, 0, 1, 2, 3})
 	if err == nil {
@@ -119,20 +119,20 @@ func TestCodec_Decode_TooShort(t *testing.T) {
 // TestRegistrySchemaName_ConvertsDotsToUnderscores is the regression test
 // for the schema-name mismatch: platform-schemagov's register command has
 // no name-override and always registers Glue schemas under the underscored
-// JSON schema filename stem (e.g. "workflow_template_published"), never the
-// dotted wire event type real callers pass in (e.g.
-// "workflow.template.published"). getSchemaVersionID must convert before
-// calling Glue's GetSchemaVersion, or every real (non-stub) publish 404s.
+// JSON schema filename stem (e.g. "foo_bar_baz"), never the dotted wire event
+// type real callers pass in (e.g. "foo.bar.baz"). getSchemaVersionID must
+// convert before calling Glue's GetSchemaVersion, or every real (non-stub)
+// publish 404s.
 func TestRegistrySchemaName_ConvertsDotsToUnderscores(t *testing.T) {
-	got := registrySchemaName("workflow.template.published")
-	want := "workflow_template_published"
+	got := registrySchemaName("foo.bar.baz")
+	want := "foo_bar_baz"
 	if got != want {
-		t.Errorf("registrySchemaName(%q) = %q, want %q", "workflow.template.published", got, want)
+		t.Errorf("registrySchemaName(%q) = %q, want %q", "foo.bar.baz", got, want)
 	}
 }
 
 func TestCodec_Decode_WrongVersionByte(t *testing.T) {
-	codec := NewCodec(aws.Config{}, "workflow-template-events", false, "", 0)
+	codec := NewCodec(aws.Config{}, "example-events", false, "", 0)
 
 	encoded := make([]byte, glueHeaderSize+len(`{}`))
 	encoded[0] = 7 // wrong version byte, want 3
