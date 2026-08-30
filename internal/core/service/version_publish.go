@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
 
 type publishTxInput struct {
@@ -45,7 +46,7 @@ func (s *VersionService) publishPreFlight(
 	}
 	compileStart := time.Now()
 	plan, err := s.compiler.Compile(ctx, bundled)
-	wfCompileDuration.Observe(time.Since(compileStart).Seconds())
+	observability.ObserveHistogram(observability.WFCompileDurationSeconds, time.Since(compileStart).Seconds())
 	if err != nil {
 		return nil, "", "", nil, fmt.Errorf("compile bpmn: %w", err)
 	}

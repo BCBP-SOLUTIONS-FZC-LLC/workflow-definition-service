@@ -35,6 +35,13 @@ components:
     in: "internal/bpmn_compiler/validator/**"
   config:
     in: "internal/config/**"
+  # Prometheus metric vars (internal/core/service, adapter/inbound/grpc and
+  # adapter/inbound/http/handler all record through it) plus the
+  # platform-pgcommon pool-stats registration folded in from cmd/server/wire.go.
+  # A peer-level leaf like domain/port, not nested under adapter, mirroring
+  # execution_service's own internal/observability component.
+  observability:
+    in: "internal/observability/**"
   # postgres/db is sqlc-generated code; declared separately so adapter can import it
   db:
     in: "internal/adapter/outbound/postgres/db/**"
@@ -54,10 +61,16 @@ deps:
     mayDependOn:
       - domain
       - port
+  observability:
+    # external test files (package observability_test) import observability
+    # itself (self-reference), same as port/mocks above
+    mayDependOn:
+      - observability
   service:
     mayDependOn:
       - domain
       - port
+      - observability # workflow_service.go/version_service.go/validation_service.go record the centralized metrics
   bpmncore:
     mayDependOn:
       - domain
@@ -85,6 +98,7 @@ deps:
       - service   # handlers reference service.UpdateDraftReq / CloneReq / DiffResult
       - db        # sqlc-generated types
       - gen       # proto-generated types (grpc server + execution client)
+      - observability # grpc/server.go + http/handler/internal_events.go record the centralized metrics
   cmd:
     mayDependOn:
       - domain
@@ -95,3 +109,4 @@ deps:
       - bpmn_compiler
       - gen
       - db_migrations
+      - observability # wire.go calls Register() at boot

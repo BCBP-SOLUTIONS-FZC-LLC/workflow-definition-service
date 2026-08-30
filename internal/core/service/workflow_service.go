@@ -8,6 +8,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
 
 type WorkflowDeps struct {
@@ -59,7 +60,7 @@ func (s *WorkflowService) Create(
 	tenantID, userID uuid.UUID,
 	businessKey, name, description, bpmnXML, planTier string,
 ) (wf *domain.Workflow, v *domain.WorkflowVersion, err error) {
-	defer func() { wfSubmissionsTotal.WithLabelValues(outcomeLabel(err)).Inc() }()
+	defer func() { observability.IncCounterVec(observability.WFSubmissionsTotal, observability.OutcomeLabel(err)) }()
 	if s.compiler != nil {
 		errs, err := s.compiler.Validate(ctx, bpmnXML)
 		if err != nil {
@@ -138,7 +139,7 @@ func (s *WorkflowService) Get(
 }
 
 func (s *WorkflowService) Archive(ctx context.Context, tenantID, userID, id uuid.UUID) (err error) {
-	defer func() { wfArchiveTotal.WithLabelValues(outcomeLabel(err)).Inc() }()
+	defer func() { observability.IncCounterVec(observability.WFArchiveTotal, observability.OutcomeLabel(err)) }()
 	wf, err := s.workflows.GetByID(ctx, tenantID, id)
 	if err != nil {
 		return fmt.Errorf("get workflow: %w", err)

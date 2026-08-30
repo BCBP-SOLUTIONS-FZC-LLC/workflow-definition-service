@@ -6,6 +6,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
 
 type ValidationDeps struct {
@@ -40,7 +41,7 @@ func (s *ValidationService) Validate(
 		return false, nil, fmt.Errorf("validate bpmn: %w", err)
 	}
 	if hasBlockingError(validationErrs) {
-		wfValidationFailuresTotal.Inc()
+		observability.IncCounter(observability.WFValidationFailuresTotal)
 		return false, validationErrs, nil
 	}
 	return true, validationErrs, nil

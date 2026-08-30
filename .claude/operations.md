@@ -12,8 +12,8 @@ metadata:
 | Module | Version | Notes |
 |---|---|---|
 | `platform-events` | v1.4.0 | `outbox.NewRunner` returns `(*Runner, error)`. Envelope carries `actor`/`subject` fields. `events.WithCodec` moves Glue Schema Registry wire-format encoding to SNS-publish time (`cmd/server/infra.go`'s `newPublisher`), not outbox-enqueue time — keeps the outbox's `json.Marshal(env)` working on a plain-JSON payload. |
-| `platform-gincommon` | v1.2.0 | `pgcommon.Config.Logger` / `Config.Tracer` use unexported `port.Field` — cannot be wired externally. |
-| `platform-pgcommon` | v1.1.1 | `port.Transactor` exposes `RunInTxWithRetry` (SERIALIZABLE + 40001/40P01 retry). gRPC health check registered for K8s liveness probes. |
+| `platform-gincommon` | v1.3.0 | `gincommon.MetricsRegisterer()`/`MetricsConstLabels()` expose the registerer/const-labels gincommon's own HTTP metrics use, so `internal/observability.Register()` registers this service's custom collectors against the same registerer instead of guessing `prometheus.DefaultRegisterer`. |
+| `platform-pgcommon` | v1.2.1 | `port.Transactor` exposes `RunInTxWithRetry` (SERIALIZABLE + 40001/40P01 retry). gRPC health check registered for K8s liveness probes. `Config.Logger` / `migrate.Runner.Logger` are now typed against the public `pkg/domain.Logger` (since v1.2.0) — `cmd/server/pglogger.go`'s `pgCommonLogger` adapts this service's `port.Logger` to it. |
 | `workflow-models` | v1.1.0 | `pkg/dsl` types are field-for-field identical to the deleted `internal/core/domain/compiled_plan.go`; `pkg/enums` holds the shared `StageType*` constants. `CompiledCollaboration.SchemaVersion` (v1.1.0) feeds Execution's DSL-compatibility layer. |
 
 Fetch / upgrade:
@@ -60,6 +60,8 @@ Coverage is **merged** across suites: `make test` writes `.coverage/unit.out`, `
 
 ## Prometheus Metrics
 
+All metrics are centralized in `internal/observability` (`Register()`, called once from `cmd/server/wire.go`'s composition root) — not scattered `promauto` calls per package. Metric vars are nil until `Register` runs; call sites go through the package's nil-safe `IncCounter`/`IncCounterVec`/`ObserveHistogram` helpers instead of calling `.Inc()`/`.Observe()` directly, so a unit test that never calls `Register` (most of them) doesn't panic.
+
 Key metrics emitted by the service:
 
 | Metric | Type | Labels | Description |
@@ -76,9 +78,9 @@ Key metrics emitted by the service:
 | `wf_cache_hits_total` | Counter | — | gRPC compiled-plan cache hits |
 | `wf_cache_misses_total` | Counter | — | gRPC compiled-plan cache misses |
 
-Outcome labels use `outcomeLabel(err)` helper: `"ok"` when err is nil, `"err"` otherwise.
+Outcome labels use `observability.OutcomeLabel(err)`: `"ok"` when err is nil, `"err"` otherwise.
 
-DB connection-pool gauges (`pgmetrics.PoolStatsCollector`, registered in `cmd/server/wire.go` against the live pool): `pgcommon_pool_total_conns`, `pgcommon_pool_idle_conns`, `pgcommon_pool_acquired_conns`, `pgcommon_pool_max_conns`, `pgcommon_pool_constructing_conns`, `pgcommon_pool_empty_acquire_total` — all labelled with a constant `service` label.
+`internal/observability.Register` also folds in what used to be two standalone calls in `cmd/server/wire.go`: `pgmetrics.InitWithRegisterer(serviceName, buildVersion, reg)` and `reg.MustRegister(pgmetrics.NewPoolStatsCollector(pool, serviceName))`, both against `gincommon.MetricsRegisterer()` (`reg`) rather than the default registry directly. This registers the DB connection-pool gauges: `pgcommon_pool_total_conns`, `pgcommon_pool_idle_conns`, `pgcommon_pool_acquired_conns`, `pgcommon_pool_max_conns`, `pgcommon_pool_constructing_conns`, `pgcommon_pool_empty_acquire_total` — all labelled with a constant `service` label.
 
 Metrics are served at `GET /metrics` (Prometheus scrape endpoint, no auth — access control is enforced by network policy/ingress at deploy time, not the app).
 
