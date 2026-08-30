@@ -12,6 +12,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
 
 const (
@@ -96,8 +97,8 @@ func (s *VersionService) Publish(
 ) (v *domain.WorkflowVersion, err error) {
 	start := time.Now()
 	defer func() {
-		wfPublishTotal.WithLabelValues(outcomeLabel(err)).Inc()
-		wfPublishLatency.Observe(time.Since(start).Seconds())
+		observability.IncCounterVec(observability.WFPublishTotal, observability.OutcomeLabel(err))
+		observability.ObserveHistogram(observability.WFPublishLatencySeconds, time.Since(start).Seconds())
 	}()
 	draft, compiledJSON, artifactHash, assignees, err :=
 		s.publishPreFlight(ctx, tenantID, workflowID, versionID, forcePublishStructural)
@@ -145,7 +146,7 @@ func (s *VersionService) Clone(
 	planTier string,
 	req CloneReq,
 ) (wf *domain.Workflow, v *domain.WorkflowVersion, err error) {
-	defer func() { wfCloneTotal.WithLabelValues(outcomeLabel(err)).Inc() }()
+	defer func() { observability.IncCounterVec(observability.WFCloneTotal, observability.OutcomeLabel(err)) }()
 	source, err := s.versions.GetByID(ctx, tenantID, versionID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get source version: %w", err)
@@ -211,7 +212,7 @@ func (s *VersionService) Promote(
 	ctx context.Context,
 	tenantID, userID, workflowID, versionID uuid.UUID,
 ) (v *domain.WorkflowVersion, err error) {
-	defer func() { wfPromoteTotal.WithLabelValues(outcomeLabel(err)).Inc() }()
+	defer func() { observability.IncCounterVec(observability.WFPromoteTotal, observability.OutcomeLabel(err)) }()
 	v, err = s.versions.GetByID(ctx, tenantID, versionID)
 	if err != nil {
 		return nil, fmt.Errorf(errGetVersion, err)
@@ -319,7 +320,7 @@ func (s *VersionService) resolvePlan(
 	}
 	compileStart := time.Now()
 	plan, err := s.compiler.Compile(ctx, bundled)
-	wfCompileDuration.Observe(time.Since(compileStart).Seconds())
+	observability.ObserveHistogram(observability.WFCompileDurationSeconds, time.Since(compileStart).Seconds())
 	return plan, err
 }
 

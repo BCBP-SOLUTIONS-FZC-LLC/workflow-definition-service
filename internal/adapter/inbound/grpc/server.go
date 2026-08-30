@@ -9,25 +9,13 @@ import (
 	pgdomain "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
 	"github.com/google/uuid"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	definitionv1 "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/definition/v1"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
-)
-
-var (
-	wfCacheHitsTotal = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "wf_cache_hits_total",
-		Help: "Total compiled-plan cache hits on GetCompiledWorkflow.",
-	})
-	wfCacheMissesTotal = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "wf_cache_misses_total",
-		Help: "Total compiled-plan cache misses on GetCompiledWorkflow.",
-	})
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
 
 type Server struct {
@@ -96,10 +84,10 @@ func (s *Server) GetCompiledWorkflow(
 
 	cacheKey := domain.CompiledPlanCacheKey(tenantID, versionID)
 	if resp, ok := s.readCache(ctx, cacheKey); ok {
-		wfCacheHitsTotal.Inc()
+		observability.IncCounter(observability.WFCacheHitsTotal)
 		return resp, nil
 	}
-	wfCacheMissesTotal.Inc()
+	observability.IncCounter(observability.WFCacheMissesTotal)
 
 	ctx = pgcommon.WithGUCSet(ctx, pgdomain.GUCSet{TenantID: req.TenantId})
 

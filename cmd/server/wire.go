@@ -11,8 +11,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/grpccommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgmetrics"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -30,6 +28,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
 
 func newApp(cfg *config.Config) (*app, error) {
@@ -40,16 +39,15 @@ func newApp(cfg *config.Config) (*app, error) {
 
 	tracingShutdown := gincommon.InitTracingFromEnv()
 	events.Init(cfg.OTELServiceName, cfg.BuildVersion)
-	pgmetrics.Init(cfg.OTELServiceName, cfg.BuildVersion)
 
-	pool, err := newDBPool(context.Background(), cfg)
+	pool, err := newDBPool(context.Background(), cfg, log)
 	if err != nil {
 		tracingShutdown()
 		return nil, err
 	}
-	prometheus.MustRegister(pgmetrics.NewPoolStatsCollector(pool, cfg.OTELServiceName))
+	observability.Register(cfg.OTELServiceName, cfg.BuildVersion, pool)
 
-	systemPool, err := newSystemDBPool(context.Background(), cfg)
+	systemPool, err := newSystemDBPool(context.Background(), cfg, log)
 	if err != nil {
 		pool.Close()
 		tracingShutdown()

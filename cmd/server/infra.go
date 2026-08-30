@@ -19,10 +19,10 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-// dbPoolConfig builds a pgcommon.Config for dsn. Logger is left unset:
-// platform-pgcommon's Config.Logger needs its internal, unexported
-// port.Logger type, which external packages cannot implement.
-func dbPoolConfig(cfg *config.Config, dsn string, pgBouncerMode bool) pgcommon.Config {
+// dbPoolConfig builds a pgcommon.Config for dsn. log is wrapped in
+// pgCommonLogger (pglogger.go) so pgcommon's slow-query tracer logs through
+// this service's own Zap-backed port.Logger instead of going unlogged.
+func dbPoolConfig(cfg *config.Config, dsn string, pgBouncerMode bool, log port.Logger) pgcommon.Config {
 	return pgcommon.Config{
 		DSN:                dsn,
 		MaxConns:           cfg.PGMaxConns,
@@ -30,14 +30,15 @@ func dbPoolConfig(cfg *config.Config, dsn string, pgBouncerMode bool) pgcommon.C
 		SlowQueryThreshold: time.Duration(cfg.PGSlowQueryThresholdMS) * time.Millisecond,
 		GUCProvider:        pgcommon.GUCSetFromContext,
 		PGBouncerMode:      pgBouncerMode,
+		Logger:             newPGCommonLogger(log),
 	}
 }
 
-func newDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) {
-	pool, err := pgcommon.NewPool(ctx, dbPoolConfig(cfg, cfg.DatabaseURL, cfg.PGBouncerMode))
+func newDBPool(ctx context.Context, cfg *config.Config, log port.Logger) (*pgcommon.Pool, error) {
+	pool, err := pgcommon.NewPool(ctx, dbPoolConfig(cfg, cfg.DatabaseURL, cfg.PGBouncerMode, log))
 	if err != nil && cfg.DatabaseFallbackURL != "" {
 		// PgBouncer may not be ready yet (rolling deploy, startup ordering); retry once direct.
-		pool, err = pgcommon.NewPool(ctx, dbPoolConfig(cfg, cfg.DatabaseFallbackURL, false))
+		pool, err = pgcommon.NewPool(ctx, dbPoolConfig(cfg, cfg.DatabaseFallbackURL, false, log))
 		if err != nil {
 			return nil, fmt.Errorf("db pool (primary and fallback both failed): %w", err)
 		}
@@ -52,13 +53,14 @@ func newDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) 
 // scope=global module/template writes.
 const systemPoolMaxConns = 3
 
-func newSystemDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) {
+func newSystemDBPool(ctx context.Context, cfg *config.Config, log port.Logger) (*pgcommon.Pool, error) {
 	pool, err := pgcommon.NewPool(ctx, pgcommon.Config{
 		DSN:                cfg.SystemDSN(),
 		MaxConns:           systemPoolMaxConns,
 		MinConns:           0,
 		SlowQueryThreshold: time.Duration(cfg.PGSlowQueryThresholdMS) * time.Millisecond,
 		PGBouncerMode:      cfg.PGBouncerMode,
+		Logger:             newPGCommonLogger(log),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("system db pool: %w", err)

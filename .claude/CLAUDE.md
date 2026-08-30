@@ -91,6 +91,7 @@ internal/
       valkey/           ← CacheStore impl
   bpmn_compiler/        ← stateless parser, validator, DSL compiler
   config/               ← env var loading
+  observability/        ← centralized Prometheus metrics (Register(), called once from cmd/server)
 test/
   fixtures/             ← shared testcontainers helper (NewTestPool)
   unit/                 ← pure unit tests by package
