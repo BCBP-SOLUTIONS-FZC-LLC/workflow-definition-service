@@ -601,6 +601,20 @@ components:
         before: { sequential: [design, planning] }
         after:  { parallel: [{dept: design, steps: []}, {dept: planning, steps: []}] }
 
+    ConnectorRegistryField:
+      type: object
+      properties:
+        name:        { type: string }
+        kind:
+          type: string
+          enum: [string, bool, int, float, enum, list, map, any, document_ref, secret_ref, timestamp]
+        required:    { type: boolean }
+        enum_values:
+          type: array
+          items: { type: string }
+        condition:   { type: string }
+        description: { type: string }
+
     ProblemDetails:
       type: object
       required: [type, title, status, detail, instance, code]
@@ -1826,6 +1840,177 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
+  /internal/connector-aliases/rest:
+    post:
+      operationId: writeConnectorRestAlias
+      summary: Create or update a REST-call connector alias
+      tags: [Internal]
+      security:
+        - InternalServiceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [alias, method, baseURL, pathTemplate]
+              properties:
+                alias:        { type: string }
+                method:       { type: string, description: HTTP method. }
+                baseURL:      { type: string }
+                pathTemplate: { type: string }
+                timeoutMs:
+                  type: integer
+                  format: int64
+                  description: Request timeout in milliseconds. Non-positive or omitted defaults to 5000ms.
+      responses:
+        "204": { description: Alias written. No response body. }
+        "400":
+          description: Missing required field, or a domain validation failure (e.g. invalid method).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401":
+          description: Missing or invalid internal service credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  /internal/connector-aliases/sql:
+    post:
+      operationId: writeConnectorSQLAlias
+      summary: Create or update a SQL-query connector alias
+      tags: [Internal]
+      security:
+        - InternalServiceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [alias, baseURL, path, queryId]
+              properties:
+                alias:      { type: string }
+                baseURL:    { type: string }
+                path:       { type: string }
+                queryId:    { type: string }
+                paramCount: { type: integer, minimum: 0 }
+                timeoutMs:
+                  type: integer
+                  format: int64
+                  description: Request timeout in milliseconds. Non-positive or omitted defaults to 5000ms.
+      responses:
+        "204": { description: Alias written. No response body. }
+        "400":
+          description: Missing required field, or a domain validation failure (e.g. negative paramCount).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401":
+          description: Missing or invalid internal service credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  /internal/connector-aliases:
+    get:
+      operationId: listConnectorAliases
+      summary: List all REST and SQL connector aliases
+      tags: [Internal]
+      security:
+        - InternalServiceAuth: []
+      responses:
+        "200":
+          description: All currently configured connector aliases.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: integer, example: 1 }
+                  restCall:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        alias:        { type: string }
+                        method:       { type: string }
+                        baseURL:      { type: string }
+                        pathTemplate: { type: string }
+                        timeout:      { type: integer, format: int64, description: Nanoseconds (raw time.Duration, not a formatted string). }
+                  sqlQuery:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        alias:      { type: string }
+                        baseURL:    { type: string }
+                        path:       { type: string }
+                        queryId:    { type: string }
+                        paramCount: { type: integer }
+                        timeout:    { type: integer, format: int64, description: Nanoseconds (raw time.Duration, not a formatted string). }
+        "401":
+          description: Missing or invalid internal service credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  /internal/connector-aliases/rest/{alias}:
+    delete:
+      operationId: deleteConnectorRestAlias
+      summary: Delete a REST-call connector alias
+      tags: [Internal]
+      security:
+        - InternalServiceAuth: []
+      parameters:
+        - in: path
+          name: alias
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Alias deleted. No response body. }
+        "401":
+          description: Missing or invalid internal service credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "404":
+          description: No alias with that name exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
+  /internal/connector-aliases/sql/{alias}:
+    delete:
+      operationId: deleteConnectorSQLAlias
+      summary: Delete a SQL-query connector alias
+      tags: [Internal]
+      security:
+        - InternalServiceAuth: []
+      parameters:
+        - in: path
+          name: alias
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Alias deleted. No response body. }
+        "401":
+          description: Missing or invalid internal service credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "404":
+          description: No alias with that name exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
   /api/v1/bpmn/allowed-elements:
     get:
       operationId: getAllowedBpmnElements
@@ -1852,6 +2037,123 @@ paths:
               example:
                 elements: [definitions, process, userTask, callActivity]
         "401": { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/connectors/registry:
+    get:
+      operationId: listConnectorRegistry
+      summary: List the connector type registry
+      description: >
+        Static metadata for every registered connector type (currently storage,
+        send-email, rest-call, chat-notify) — field definitions for the modeler
+        UI's connector-task configuration form.
+      tags: [Connectors]
+      security:
+        - GatewayTenantContext: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        "200":
+          description: The connector registry.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connectors:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        type:         { type: string }
+                        display_name: { type: string }
+                        description:  { type: string }
+                        inputs:
+                          type: array
+                          items: { $ref: '#/components/schemas/ConnectorRegistryField' }
+                        outputs:
+                          type: array
+                          items: { $ref: '#/components/schemas/ConnectorRegistryField' }
+                        retry:
+                          type: string
+                          enum: [safe, unsafe, conditional]
+              example:
+                connectors:
+                  rest-call:
+                    type: rest-call
+                    display_name: REST Call
+                    description: Invoke an external HTTP endpoint via a pre-registered alias.
+                    inputs:
+                      - name: provider
+                        kind: enum
+                        required: false
+                        enum_values: [aws-s3, azure-blob, gcp-gcs, google-drive]
+                        description: Backend provider for this call. Required — no default.
+                    outputs: []
+                    retry: conditional
+        "401": { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/connectors/credentials:
+    post:
+      operationId: writeConnectorCredential
+      summary: Write a connector credential field to the secret store
+      description: >
+        Writes one field of a connector's credential material to OpenBao at
+        connectors/<tenantID>/<connector_type>/<field_name>. Requires
+        tenant_admin or tenant_owner.
+      tags: [Connectors]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connector_type, field_name, value]
+              properties:
+                connector_type: { type: string, description: Must match a registered connector type. }
+                field_name:     { type: string, pattern: '^[a-zA-Z0-9_-]+$' }
+                value:          { type: string }
+      responses:
+        "201":
+          description: Credential field written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret_path: { type: string, example: "connectors/018f1a2b-.../rest-call/api_key" }
+        "400":
+          description: Missing required field, unrecognized connector_type, or invalid field_name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "413":
+          description: Payload exceeds 10 MB limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "415":
+          description: Content-Type is not application/json.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503":
+          description: The secret store (OpenBao) is unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   /api/v1/modules:
     get:
@@ -2342,3 +2644,5 @@ tags:
     description: Starter/predesigned workflow templates (tenant + platform-authored global catalog).
   - name: BPMN
     description: BPMN modeler-support endpoints (element allowlist discovery).
+  - name: Connectors
+    description: Connector type registry and per-tenant credential management.
