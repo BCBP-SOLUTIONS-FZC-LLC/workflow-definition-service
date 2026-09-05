@@ -26,7 +26,7 @@ channels:
             deadLetterQueue: { name: membership-wf-q-dlq }
             maxReceiveCount: 5
     messages:
-      department.membership.revoked: { $ref: '#/components/messages/DepartmentMembershipRevokedInbound' }
+      DepartmentMembershipRevoked: { $ref: '#/components/messages/DepartmentMembershipRevokedInbound' }
 
 operations:
   receiveMembershipEvents:

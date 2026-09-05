@@ -72,7 +72,7 @@ func TestRegister_EveryMetricIsScrapable(t *testing.T) {
 	observability.ObserveHistogram(observability.WFCompileDurationSeconds, 0.1)
 	observability.IncCounter(observability.WFCacheHitsTotal)
 	observability.IncCounter(observability.WFCacheMissesTotal)
-	observability.IncCounterVec(observability.InternalEventsIngestTotal, "department.membership.revoked", "ok")
+	observability.IncCounterVec(observability.InternalEventsIngestTotal, "DepartmentMembershipRevoked", "ok")
 
 	body := scrape(t)
 

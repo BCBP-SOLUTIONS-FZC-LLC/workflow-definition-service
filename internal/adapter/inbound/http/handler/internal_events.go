@@ -38,7 +38,7 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 	}
 
 	switch env.Type {
-	case "department.membership.revoked":
+	case "DepartmentMembershipRevoked":
 		h.handleMembershipRevoked(c, env)
 	default:
 		h.acknowledgeUnknownEventType(c, env.Type)
@@ -54,11 +54,11 @@ func (h *Handler) acknowledgeUnknownEventType(c *gin.Context, eventType string) 
 }
 
 func (h *Handler) handleMembershipRevoked(c *gin.Context, env events.Envelope[json.RawMessage]) {
-	const evtType = "department.membership.revoked"
+	const evtType = "DepartmentMembershipRevoked"
 	var p membershipRevokedPayload
 	if err := json.Unmarshal(env.Payload, &p); err != nil {
 		observability.IncCounterVec(observability.InternalEventsIngestTotal, evtType, "bad_payload")
-		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid department.membership.revoked payload", nil)
+		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid DepartmentMembershipRevoked payload", nil)
 		return
 	}
 	eventID, err := uuid.Parse(env.ID)

@@ -65,7 +65,7 @@ func (s *VersionService) recordMembershipRevokedProcessed(
 	departmentID string,
 	versionsAffected int,
 ) error {
-	isNew, err := s.processedEvents.RecordIfNew(ctx, eventID, "membership-wf-q", "department.membership.revoked")
+	isNew, err := s.processedEvents.RecordIfNew(ctx, eventID, "membership-wf-q", "DepartmentMembershipRevoked")
 	if err != nil {
 		return fmt.Errorf("record processed event: %w", err)
 	}

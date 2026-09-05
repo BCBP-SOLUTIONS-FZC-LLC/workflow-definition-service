@@ -77,7 +77,7 @@ func envelope(eventType, eventID, tenantID string, payload any) map[string]any {
 
 func TestInternalEvents_HappyPath(t *testing.T) {
 	rev := &fakeMembershipRevoker{}
-	w := postEvent(rev, envelope("department.membership.revoked", ieEventID.String(), ieTenantID.String(),
+	w := postEvent(rev, envelope("DepartmentMembershipRevoked", ieEventID.String(), ieTenantID.String(),
 		map[string]string{"user_id": ieUserID.String(), "department_id": ieDeptID, "role": "reviewer"}))
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -111,7 +111,7 @@ func TestInternalEvents_MalformedEnvelope_400(t *testing.T) {
 func TestInternalEvents_InvalidPayload_400(t *testing.T) {
 	rev := &fakeMembershipRevoker{}
 	// type is known but payload user_id is not a UUID
-	w := postEvent(rev, envelope("department.membership.revoked", ieEventID.String(), ieTenantID.String(),
+	w := postEvent(rev, envelope("DepartmentMembershipRevoked", ieEventID.String(), ieTenantID.String(),
 		map[string]string{"user_id": "not-a-uuid", "department_id": ieDeptID}))
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -120,7 +120,7 @@ func TestInternalEvents_InvalidPayload_400(t *testing.T) {
 
 func TestInternalEvents_InvalidTenantID_400(t *testing.T) {
 	rev := &fakeMembershipRevoker{}
-	w := postEvent(rev, envelope("department.membership.revoked", ieEventID.String(), "not-a-uuid",
+	w := postEvent(rev, envelope("DepartmentMembershipRevoked", ieEventID.String(), "not-a-uuid",
 		map[string]string{"user_id": ieUserID.String(), "department_id": ieDeptID}))
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -129,7 +129,7 @@ func TestInternalEvents_InvalidTenantID_400(t *testing.T) {
 
 func TestInternalEvents_ServiceError_500(t *testing.T) {
 	rev := &fakeMembershipRevoker{err: errors.New("db failure")}
-	w := postEvent(rev, envelope("department.membership.revoked", ieEventID.String(), ieTenantID.String(),
+	w := postEvent(rev, envelope("DepartmentMembershipRevoked", ieEventID.String(), ieTenantID.String(),
 		map[string]string{"user_id": ieUserID.String(), "department_id": ieDeptID}))
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -138,7 +138,7 @@ func TestInternalEvents_ServiceError_500(t *testing.T) {
 
 func TestInternalEvents_InvalidEventID_400(t *testing.T) {
 	rev := &fakeMembershipRevoker{}
-	w := postEvent(rev, envelope("department.membership.revoked", "not-a-uuid", ieTenantID.String(),
+	w := postEvent(rev, envelope("DepartmentMembershipRevoked", "not-a-uuid", ieTenantID.String(),
 		map[string]string{"user_id": ieUserID.String(), "department_id": ieDeptID}))
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -148,7 +148,7 @@ func TestInternalEvents_InvalidEventID_400(t *testing.T) {
 func TestInternalEvents_InvalidPayloadJSON_400(t *testing.T) {
 	rev := &fakeMembershipRevoker{}
 	// Payload is a JSON number, which cannot unmarshal into membershipRevokedPayload struct.
-	w := postEvent(rev, envelope("department.membership.revoked", ieEventID.String(), ieTenantID.String(), 123))
+	w := postEvent(rev, envelope("DepartmentMembershipRevoked", ieEventID.String(), ieTenantID.String(), 123))
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.False(t, rev.called)
