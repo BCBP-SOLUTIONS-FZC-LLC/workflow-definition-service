@@ -28,7 +28,5 @@ CREATE POLICY tenant_isolation_policy ON workflow_template
     USING      (scope = 'global' OR tenant_id = current_setting('app.tenant_id', true)::uuid)
     WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
 
--- processed_event carries no tenant_id (operational dedup log, not tenant
--- data, composite (event_id, consumer) PK) — no RLS here, matches rls_violation_log.
--- connector_rest_alias/connector_sql_alias are org-owned internal service
--- config, not tenant data either — same reasoning, no RLS.
+-- connector_rest_alias is an org-owned internal service config table, not
+-- tenant data — no RLS here, matches rls_violation_log.

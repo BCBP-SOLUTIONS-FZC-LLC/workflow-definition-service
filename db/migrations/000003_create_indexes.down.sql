@@ -6,7 +6,6 @@ DROP INDEX IF EXISTS idx_mv_module_id;
 DROP INDEX IF EXISTS idx_module_active_version;
 DROP INDEX IF EXISTS idx_module_scope_tenant;
 DROP INDEX IF EXISTS idx_module_name_trgm;
-DROP INDEX IF EXISTS idx_processed_event_processed_at;
 DROP INDEX IF EXISTS idx_wnas_version;
 DROP INDEX IF EXISTS idx_wnas_user_tenant;
 DROP INDEX IF EXISTS uq_workflow_version_published;

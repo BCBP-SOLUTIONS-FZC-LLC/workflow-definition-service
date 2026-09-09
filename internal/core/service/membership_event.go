@@ -52,33 +52,12 @@ func (s *VersionService) HandleMembershipRevoked(
 		}
 	}
 
-	return s.recordMembershipRevokedProcessed(ctx, eventID, tenantID, userID, departmentID, len(nodesByVersion))
-}
-
-// recordMembershipRevokedProcessed must run after invalidateVersion and
-// PauseUserTasks succeed, not before: both are idempotent, so an at-least-once
-// redelivery following a transient failure here safely retries them instead
-// of a processed record silently swallowing the retry.
-func (s *VersionService) recordMembershipRevokedProcessed(
-	ctx context.Context,
-	eventID, tenantID, userID uuid.UUID,
-	departmentID string,
-	versionsAffected int,
-) error {
-	isNew, err := s.processedEvents.RecordIfNew(ctx, eventID, "membership-wf-q", "DepartmentMembershipRevoked")
-	if err != nil {
-		return fmt.Errorf("record processed event: %w", err)
-	}
-	if !isNew {
-		return nil
-	}
-
 	s.log.Info("membership revoked handled", map[string]any{
 		"event_id":          eventID.String(),
 		"tenant_id":         tenantID.String(),
 		"user_id":           userID.String(),
 		"department_id":     departmentID,
-		"versions_affected": versionsAffected,
+		"versions_affected": len(nodesByVersion),
 	})
 	return nil
 }

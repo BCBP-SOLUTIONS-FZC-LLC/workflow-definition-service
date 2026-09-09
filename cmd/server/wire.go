@@ -123,7 +123,6 @@ func newApp(cfg *config.Config) (*app, error) {
 	versionRepo := pgadapter.NewWorkflowVersionRepo(pool)
 	assigneeRepo := pgadapter.NewAssigneeRepo(pool)
 	outboxRepo := pgadapter.NewOutboxRepo(pool)
-	processedEventRepo := pgadapter.NewProcessedEventRepo(pool)
 	connectorAliasRepo := pgadapter.NewConnectorAliasRepo(pool)
 	moduleRepo := pgadapter.NewModuleRepo(pool)
 	moduleVersionRepo := pgadapter.NewModuleVersionRepo(pool)
@@ -152,17 +151,16 @@ func newApp(cfg *config.Config) (*app, error) {
 		Log:        log,
 	})
 	versionSvc := service.NewVersionService(service.VersionDeps{
-		Transactor:      transactor,
-		Workflows:       workflowRepo,
-		Versions:        versionRepo,
-		Assignees:       assigneeRepo,
-		Outbox:          outboxRepo,
-		ProcessedEvents: processedEventRepo,
-		Membership:      membershipSvc,
-		Execution:       executionSvc,
-		Compiler:        compiler,
-		Cache:           cache,
-		Log:             log,
+		Transactor: transactor,
+		Workflows:  workflowRepo,
+		Versions:   versionRepo,
+		Assignees:  assigneeRepo,
+		Outbox:     outboxRepo,
+		Membership: membershipSvc,
+		Execution:  executionSvc,
+		Compiler:   compiler,
+		Cache:      cache,
+		Log:        log,
 	})
 
 	validationSvc := service.NewValidationService(service.ValidationDeps{

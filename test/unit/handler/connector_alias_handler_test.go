@@ -20,18 +20,14 @@ func aliasRouter(h *handler.Handler) *gin.Engine {
 	r := gin.New()
 	r.GET("/internal/connector-aliases", h.ListConnectorAliases)
 	r.POST("/internal/connector-aliases/rest", h.WriteConnectorRestAlias)
-	r.POST("/internal/connector-aliases/sql", h.WriteConnectorSQLAlias)
 	r.DELETE("/internal/connector-aliases/rest/:alias", h.DeleteConnectorRestAlias)
-	r.DELETE("/internal/connector-aliases/sql/:alias", h.DeleteConnectorSQLAlias)
 	return r
 }
 
 func TestListConnectorAliases(t *testing.T) {
 	conn := &fakeConnectorSvc{
-		listAliasesFn: func(_ context.Context) ([]domain.ConnectorRestAlias, []domain.ConnectorSQLAlias, error) {
-			return []domain.ConnectorRestAlias{{Alias: "tender-get", Method: "GET", BaseURL: "http://tender-service.internal", PathTemplate: "/x", Timeout: 5 * time.Second}},
-				[]domain.ConnectorSQLAlias{{Alias: "get-active-tenants", BaseURL: "http://tender-service.internal", Path: "/q", QueryID: "q1", ParamCount: 1, Timeout: 5 * time.Second}},
-				nil
+		listAliasesFn: func(_ context.Context) ([]domain.ConnectorRestAlias, error) {
+			return []domain.ConnectorRestAlias{{Alias: "tender-get", Method: "GET", BaseURL: "http://tender-service.internal", PathTemplate: "/x", Timeout: 5 * time.Second}}, nil
 		},
 	}
 	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodGet, "/internal/connector-aliases", nil))
@@ -40,7 +36,6 @@ func TestListConnectorAliases(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.Len(t, resp["restCall"], 1)
-	assert.Len(t, resp["sqlQuery"], 1)
 }
 
 func TestWriteConnectorRestAlias_Success(t *testing.T) {
@@ -77,60 +72,12 @@ func TestDeleteConnectorRestAlias_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestDeleteConnectorSQLAlias_Success(t *testing.T) {
-	conn := &fakeConnectorSvc{
-		deleteSQLFn: func(context.Context, string) (bool, error) { return true, nil },
-	}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodDelete, "/internal/connector-aliases/sql/get-active-tenants", nil))
-	assert.Equal(t, http.StatusNoContent, w.Code)
-}
-
-func TestDeleteConnectorSQLAlias_NotFound(t *testing.T) {
-	conn := &fakeConnectorSvc{
-		deleteSQLFn: func(context.Context, string) (bool, error) { return false, nil },
-	}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodDelete, "/internal/connector-aliases/sql/missing", nil))
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 func TestDeleteConnectorRestAlias_Success(t *testing.T) {
 	conn := &fakeConnectorSvc{
 		deleteRestFn: func(context.Context, string) (bool, error) { return true, nil },
 	}
 	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodDelete, "/internal/connector-aliases/rest/tender-get", nil))
 	assert.Equal(t, http.StatusNoContent, w.Code)
-}
-
-func TestWriteConnectorSQLAlias_Success(t *testing.T) {
-	var got domain.ConnectorSQLAlias
-	conn := &fakeConnectorSvc{
-		writeSQLFn: func(_ context.Context, q domain.ConnectorSQLAlias) error {
-			got = q
-			return nil
-		},
-	}
-	body := map[string]any{"alias": "get-active-tenants", "baseURL": "http://tender-service.internal", "path": "/q", "queryId": "q1", "paramCount": 1, "timeoutMs": 2000}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/internal/connector-aliases/sql", body))
-	assert.Equal(t, http.StatusNoContent, w.Code)
-	assert.Equal(t, "get-active-tenants", got.Alias)
-	assert.Equal(t, 2*time.Second, got.Timeout)
-}
-
-func TestWriteConnectorSQLAlias_BindError(t *testing.T) {
-	conn := &fakeConnectorSvc{}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/internal/connector-aliases/sql", map[string]any{"alias": "x"}))
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestWriteConnectorSQLAlias_ValidationError(t *testing.T) {
-	conn := &fakeConnectorSvc{
-		writeSQLFn: func(_ context.Context, q domain.ConnectorSQLAlias) error {
-			return q.Validate()
-		},
-	}
-	body := map[string]any{"alias": "x", "baseURL": "http://x", "path": "/y", "queryId": "q1", "paramCount": -1}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/internal/connector-aliases/sql", body))
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestWriteConnectorRestAlias_BindError(t *testing.T) {
@@ -141,8 +88,8 @@ func TestWriteConnectorRestAlias_BindError(t *testing.T) {
 
 func TestListConnectorAliases_Error(t *testing.T) {
 	conn := &fakeConnectorSvc{
-		listAliasesFn: func(context.Context) ([]domain.ConnectorRestAlias, []domain.ConnectorSQLAlias, error) {
-			return nil, nil, domain.ErrUpstreamUnavailable
+		listAliasesFn: func(context.Context) ([]domain.ConnectorRestAlias, error) {
+			return nil, domain.ErrUpstreamUnavailable
 		},
 	}
 	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodGet, "/internal/connector-aliases", nil))

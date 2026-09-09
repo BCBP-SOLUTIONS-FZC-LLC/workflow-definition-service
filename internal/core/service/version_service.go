@@ -21,46 +21,43 @@ const (
 )
 
 type VersionDeps struct {
-	Transactor      port.Transactor
-	Workflows       port.WorkflowRepository
-	Versions        port.WorkflowVersionRepository
-	Assignees       port.AssigneeRepository
-	Outbox          port.OutboxRepository
-	ProcessedEvents port.ProcessedEventRepository
-	Membership      port.MembershipService
-	Execution       port.ExecutionService
-	Compiler        port.PlanCompiler
-	Cache           port.CacheStore
-	Log             port.Logger
+	Transactor port.Transactor
+	Workflows  port.WorkflowRepository
+	Versions   port.WorkflowVersionRepository
+	Assignees  port.AssigneeRepository
+	Outbox     port.OutboxRepository
+	Membership port.MembershipService
+	Execution  port.ExecutionService
+	Compiler   port.PlanCompiler
+	Cache      port.CacheStore
+	Log        port.Logger
 }
 
 type VersionService struct {
-	transactor      port.Transactor
-	workflows       port.WorkflowRepository
-	versions        port.WorkflowVersionRepository
-	assignees       port.AssigneeRepository
-	outbox          port.OutboxRepository
-	processedEvents port.ProcessedEventRepository
-	membership      port.MembershipService
-	execution       port.ExecutionService
-	compiler        port.PlanCompiler
-	cache           port.CacheStore
-	log             port.Logger
+	transactor port.Transactor
+	workflows  port.WorkflowRepository
+	versions   port.WorkflowVersionRepository
+	assignees  port.AssigneeRepository
+	outbox     port.OutboxRepository
+	membership port.MembershipService
+	execution  port.ExecutionService
+	compiler   port.PlanCompiler
+	cache      port.CacheStore
+	log        port.Logger
 }
 
 func NewVersionService(d VersionDeps) *VersionService {
 	return &VersionService{
-		transactor:      d.Transactor,
-		workflows:       d.Workflows,
-		versions:        d.Versions,
-		assignees:       d.Assignees,
-		outbox:          d.Outbox,
-		processedEvents: d.ProcessedEvents,
-		membership:      d.Membership,
-		execution:       d.Execution,
-		compiler:        d.Compiler,
-		cache:           d.Cache,
-		log:             logOrNoop(d.Log),
+		transactor: d.Transactor,
+		workflows:  d.Workflows,
+		versions:   d.Versions,
+		assignees:  d.Assignees,
+		outbox:     d.Outbox,
+		membership: d.Membership,
+		execution:  d.Execution,
+		compiler:   d.Compiler,
+		cache:      d.Cache,
+		log:        logOrNoop(d.Log),
 	}
 }
 

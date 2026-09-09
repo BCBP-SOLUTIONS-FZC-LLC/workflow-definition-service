@@ -83,34 +83,20 @@ func TestConnectorService_WriteCredential_UpstreamUnavailable(t *testing.T) {
 }
 
 type fakeAliasRepo struct {
-	rest       []domain.ConnectorRestAlias
-	sql        []domain.ConnectorSQLAlias
-	upserts    []domain.ConnectorRestAlias
-	sqlUpserts []domain.ConnectorSQLAlias
-	deleted    []string
-	sqlDeleted []string
+	rest    []domain.ConnectorRestAlias
+	upserts []domain.ConnectorRestAlias
+	deleted []string
 }
 
 func (f *fakeAliasRepo) ListRest(context.Context) ([]domain.ConnectorRestAlias, error) {
 	return f.rest, nil
 }
-func (f *fakeAliasRepo) ListSQL(context.Context) ([]domain.ConnectorSQLAlias, error) {
-	return f.sql, nil
-}
 func (f *fakeAliasRepo) UpsertRest(_ context.Context, a domain.ConnectorRestAlias) error {
 	f.upserts = append(f.upserts, a)
 	return nil
 }
-func (f *fakeAliasRepo) UpsertSQL(_ context.Context, q domain.ConnectorSQLAlias) error {
-	f.sqlUpserts = append(f.sqlUpserts, q)
-	return nil
-}
 func (f *fakeAliasRepo) DeleteRest(_ context.Context, alias string) (bool, error) {
 	f.deleted = append(f.deleted, alias)
-	return true, nil
-}
-func (f *fakeAliasRepo) DeleteSQL(_ context.Context, alias string) (bool, error) {
-	f.sqlDeleted = append(f.sqlDeleted, alias)
 	return true, nil
 }
 
@@ -141,14 +127,12 @@ func TestConnectorService_WriteRestAlias_Success(t *testing.T) {
 func TestConnectorService_ListAliases(t *testing.T) {
 	repo := &fakeAliasRepo{
 		rest: []domain.ConnectorRestAlias{{Alias: "a"}},
-		sql:  []domain.ConnectorSQLAlias{{Alias: "b"}},
 	}
 	svc := service.NewConnectorService(service.ConnectorDeps{Aliases: repo})
 
-	rest, sql, err := svc.ListAliases(context.Background())
+	rest, err := svc.ListAliases(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, rest, 1)
-	assert.Len(t, sql, 1)
 }
 
 func TestConnectorService_DeleteRestAlias(t *testing.T) {
@@ -159,39 +143,6 @@ func TestConnectorService_DeleteRestAlias(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, deleted)
 	assert.Equal(t, []string{"tender-get"}, repo.deleted)
-}
-
-func TestConnectorService_WriteSQLAlias_RejectsMissingQueryID(t *testing.T) {
-	repo := &fakeAliasRepo{}
-	svc := service.NewConnectorService(service.ConnectorDeps{Aliases: repo})
-
-	err := svc.WriteSQLAlias(context.Background(), domain.ConnectorSQLAlias{
-		Alias: "x", BaseURL: "http://x", Path: "/y",
-	})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, domain.ErrInvalidConnectorAliasInput))
-	assert.Empty(t, repo.sqlUpserts)
-}
-
-func TestConnectorService_WriteSQLAlias_Success(t *testing.T) {
-	repo := &fakeAliasRepo{}
-	svc := service.NewConnectorService(service.ConnectorDeps{Aliases: repo})
-
-	err := svc.WriteSQLAlias(context.Background(), domain.ConnectorSQLAlias{
-		Alias: "get-active-tenants", BaseURL: "http://tender-service.internal", Path: "/q", QueryID: "q1",
-	})
-	require.NoError(t, err)
-	require.Len(t, repo.sqlUpserts, 1)
-}
-
-func TestConnectorService_DeleteSQLAlias(t *testing.T) {
-	repo := &fakeAliasRepo{}
-	svc := service.NewConnectorService(service.ConnectorDeps{Aliases: repo})
-
-	deleted, err := svc.DeleteSQLAlias(context.Background(), "get-active-tenants")
-	require.NoError(t, err)
-	assert.True(t, deleted)
-	assert.Equal(t, []string{"get-active-tenants"}, repo.sqlDeleted)
 }
 
 func TestConnectorService_Registry(t *testing.T) {

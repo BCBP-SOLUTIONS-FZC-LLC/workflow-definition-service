@@ -14,8 +14,6 @@ CREATE UNIQUE INDEX uq_workflow_version_published ON workflow_version(workflow_i
 CREATE INDEX idx_wnas_user_tenant ON workflow_node_assignee(user_id, tenant_id);
 CREATE INDEX idx_wnas_version ON workflow_node_assignee(workflow_version_id);
 
-CREATE INDEX idx_processed_event_processed_at ON processed_event(processed_at);
-
 CREATE INDEX idx_module_name_trgm ON workflow_module USING gin (name gin_trgm_ops);
 CREATE INDEX idx_module_scope_tenant ON workflow_module(scope, tenant_id);
 CREATE INDEX idx_module_active_version ON workflow_module(active_version_id) WHERE active_version_id IS NOT NULL;

@@ -43,29 +43,6 @@ func (r *ConnectorAliasRepo) ListRest(ctx context.Context) ([]domain.ConnectorRe
 	return out, err
 }
 
-func (r *ConnectorAliasRepo) ListSQL(ctx context.Context) ([]domain.ConnectorSQLAlias, error) {
-	var out []domain.ConnectorSQLAlias
-	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		rows, err := db.New(dbtx).ListSQLAliases(ctx)
-		if err != nil {
-			return mapErr(err)
-		}
-		out = make([]domain.ConnectorSQLAlias, len(rows))
-		for i, row := range rows {
-			out[i] = domain.ConnectorSQLAlias{
-				Alias:      row.Alias,
-				BaseURL:    row.BaseUrl,
-				Path:       row.Path,
-				QueryID:    row.QueryID,
-				ParamCount: int(row.ParamCount),
-				Timeout:    time.Duration(row.TimeoutMs) * time.Millisecond,
-			}
-		}
-		return nil
-	})
-	return out, err
-}
-
 func (r *ConnectorAliasRepo) UpsertRest(ctx context.Context, a domain.ConnectorRestAlias) error {
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		return mapErr(db.New(dbtx).UpsertRestAlias(ctx, db.UpsertRestAliasParams{
@@ -78,36 +55,10 @@ func (r *ConnectorAliasRepo) UpsertRest(ctx context.Context, a domain.ConnectorR
 	})
 }
 
-func (r *ConnectorAliasRepo) UpsertSQL(ctx context.Context, q domain.ConnectorSQLAlias) error {
-	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		return mapErr(db.New(dbtx).UpsertSQLAlias(ctx, db.UpsertSQLAliasParams{
-			Alias:      q.Alias,
-			BaseUrl:    q.BaseURL,
-			Path:       q.Path,
-			QueryID:    q.QueryID,
-			ParamCount: int32(q.ParamCount),
-			TimeoutMs:  int32(q.Timeout.Milliseconds()),
-		}))
-	})
-}
-
 func (r *ConnectorAliasRepo) DeleteRest(ctx context.Context, alias string) (bool, error) {
 	var deleted bool
 	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		n, err := db.New(dbtx).DeleteRestAlias(ctx, alias)
-		if err != nil {
-			return mapErr(err)
-		}
-		deleted = n > 0
-		return nil
-	})
-	return deleted, err
-}
-
-func (r *ConnectorAliasRepo) DeleteSQL(ctx context.Context, alias string) (bool, error) {
-	var deleted bool
-	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		n, err := db.New(dbtx).DeleteSQLAlias(ctx, alias)
 		if err != nil {
 			return mapErr(err)
 		}
