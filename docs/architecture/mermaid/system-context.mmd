@@ -1,0 +1,19 @@
+flowchart LR
+    FE["Frontend\nWorkflow Builder"]
+    DEF["workflow-definition-service\n(this repo)\nHTTP :8080 · gRPC :9090"]
+    EXEC["workflow-execution-service\ngRPC :9090"]
+    DB[("PostgreSQL 18\nworkflow_definition")]
+    CACHE[("Valkey 8\nidempotency · cache")]
+    SNS["AWS SNS\nwf.template.events"]
+    CONSUMER["shared workflow-events\nconsumer (membership-wf-q)"]
+    IAM["iam-service\norg membership API"]
+    DOWNSTREAM["downstream consumers\n(execution, analytics)"]
+
+    FE -->|"REST"| DEF
+    EXEC -->|"GetCompiledWorkflow\ngRPC"| DEF
+    DEF -->|"read/write"| DB
+    DEF -->|"idempotency · quota cache"| CACHE
+    DEF -->|"domain events"| SNS
+    SNS --> DOWNSTREAM
+    CONSUMER -->|"POST /internal/events\n(DepartmentMembershipRevoked)"| DEF
+    DEF -->|"eligibility check"| IAM

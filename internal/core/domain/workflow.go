@@ -15,15 +15,17 @@ const (
 )
 
 type Workflow struct {
-	ID              uuid.UUID
-	TenantID        uuid.UUID
-	CreatedByUserID uuid.UUID
-	BusinessKey     string
-	Name            string
-	Description     string
-	ActiveVersionID *uuid.UUID
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                  uuid.UUID
+	TenantID            uuid.UUID
+	CreatedByUserID     uuid.UUID
+	BusinessKey         string
+	Name                string
+	Description         string
+	ActiveVersionID     *uuid.UUID
+	ActiveVersionNumber *int32
+	HasDraft            bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type WorkflowVersion struct {
@@ -41,6 +43,10 @@ type WorkflowVersion struct {
 	ValidationErrorsJSON *string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+	// RecordVersion is the optimistic-lock token bumped by the DB trigger on
+	// every real update; supplied by clients on draft update.
+	RecordVersion  int64
+	ModuleBPMNXMLs []string // one entry per called-process BPMN; empty for most workflows
 }
 
 type NodeAssignee struct {
@@ -49,7 +55,7 @@ type NodeAssignee struct {
 	WorkflowVersionID uuid.UUID
 	NodeKey           string
 	UserID            uuid.UUID
-	DepartmentID      string
+	DepartmentID      uuid.UUID
 	Role              string
 	CreatedAt         time.Time
 }

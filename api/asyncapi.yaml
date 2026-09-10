@@ -1,0 +1,132 @@
+asyncapi: 3.0.0
+info:
+  title: workflow-definition-svc events
+  version: 1.0.0
+  description: >
+    Inbound only: DepartmentMembershipRevoked, consumed off the shared
+    Workflow-Events Consumer (POST /api/v1/internal/events) — documented here as a
+    `receive` operation for completeness, but its payload schema is owned
+    and registered by the producing service (Org & Membership), NOT
+    re-registered by Definition. This service currently defines no outbound
+    events.
+
+channels:
+  # Schema below is documentation-only (no "Payload" suffix → schema-gov skips
+  # it); the authoritative contract is owned/registered by the Org &
+  # Membership Service.
+  iam/membership/events:
+    address: iam-membership-events
+    description: Consumed off membership-wf-q (dedup consumer `membership-wf-q`).
+    bindings:
+      sqs:
+        queue:
+          name: membership-wf-q
+          fifoQueue: false
+          redrivePolicy:
+            deadLetterQueue: { name: membership-wf-q-dlq }
+            maxReceiveCount: 5
+    messages:
+      DepartmentMembershipRevoked: { $ref: '#/components/messages/DepartmentMembershipRevokedInbound' }
+
+operations:
+  receiveMembershipEvents:
+    action: receive
+    channel: { $ref: '#/channels/iam~1membership~1events' }
+    description: >
+      Invalidates any workflow version whose default-assignee node targets the
+      revoked user+department pair (marks the version invalid with a per-node
+      error), and pauses the user's active tasks in Execution if wired. Dedup
+      consumer `membership-wf-q`.
+
+components:
+  messages:
+    DepartmentMembershipRevokedInbound:
+      name: DepartmentMembershipRevoked
+      x-lifecycle: { status: active }
+      title: Department membership revoked (owned by Org & Membership Service)
+      description: >
+        Consumed to invalidate any workflow version whose default-assignee
+        node targets this user+department pair, and to pause the user's
+        active Execution tasks if wired. Recorded as processed only after
+        both side effects complete, so a transient failure causes a retry
+        rather than a silent skip.
+      x-schema-owner: iam-org-membership
+      payload: { $ref: '#/components/schemas/DepartmentMembershipRevokedInbound' }
+
+  schemas:
+    # Shared event envelope fields emitted by every outbox event.
+    # The envelope is serialised by platform-events (v1.3+) with CloudEvents-aligned
+    # JSON keys. Consumers receive a JSON object where these fields appear at the top
+    # level alongside `data`. Documentation/allOf-composition only — schema-gov's
+    # extract only governs schemas whose name ends in "Payload", so this schema is
+    # never itself extracted into internal/eventschema/.
+    EventEnvelope:
+      type: object
+      # trace_id excluded: conditional on an active OTel span (buildEnvelope only
+      # calls WithTraceID when trace.SpanFromContext(ctx).SpanContext().IsValid()).
+      # This service currently emits no outbound events; kept as the shared
+      # envelope contract for whatever the first one adds (helpers.go buildEnvelope).
+      required: [id, type, subject, source, tenant_id, time, specversion, actor]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUID v7 message identifier (used for consumer deduplication)
+        source:
+          type: string
+          const: workflow-definition-svc
+        tenant_id:
+          type: string
+          format: uuid
+        trace_id:
+          type: string
+          description: OTel trace context propagated from the publisher context
+        specversion:
+          type: string
+          description: Schema version; incremented on additive payload schema changes (CloudEvents specversion)
+        type:
+          type: string
+          description: >
+            Dot-separated event type name for a future outbound event (e.g.
+            workflow.some_event.happened). Also set as the SNS MessageAttribute
+            `event_type` so consumers can apply SNS filter policies per queue.
+        time:
+          type: string
+          format: date-time
+          description: UTC timestamp at which the event was created (CloudEvents time)
+        subject:
+          type: string
+          description: >
+            Resource URI identifying the subject of the event
+            (e.g. "workflows/{workflow_id}/versions/{version_id}").
+            Forwarded as an SNS message attribute `Subject` for filter-policy routing.
+        actor:
+          type: string
+          description: >
+            Identity that caused the event (user UUID or service-account name).
+            Audit trail field — not forwarded as an SNS attribute.
+        correlation_id:
+          type: string
+          description: Optional correlation ID for request tracing across services
+
+    # Documentation-only, like execution_service's own *Inbound schemas: this
+    # event is owned/registered by its producer (Org & Membership), not by
+    # Definition, so the name deliberately omits the "Payload" suffix
+    # schema-gov's extractor matches on.
+    DepartmentMembershipRevokedInbound:
+      type: object
+      additionalProperties: true
+      required: [user_id, department_id, role]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        department_id:
+          type: string
+          description: >
+            Format owned by the Org & Membership Service. HandleMembershipRevoked
+            parses it as a UUID today, but that shape is not formally confirmed
+            on Definition's side — see definition_service.md §7.4.2.
+        role:
+          type: string
+          description: The membership role being revoked.

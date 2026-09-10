@@ -1,0 +1,14 @@
+sequenceDiagram
+    participant ExecSvc as Execution Service
+    participant GRPCSrv as adapter/inbound/grpc
+    participant Pool as pgcommon.Pool
+    participant Repo as VersionRepo.GetCompiledPlan
+
+    ExecSvc ->>+ GRPCSrv: GetCompiledWorkflow{tenant_id, workflow_id}
+    GRPCSrv ->> GRPCSrv: pgcommon.WithGUCSet(ctx, GUCSet{TenantID: req.TenantId})
+    Note right of GRPCSrv: RLS GUC injection — manual on gRPC path
+    GRPCSrv ->>+ Pool: WithConn
+    Pool ->>+ Repo: SELECT compiled_plan_json WHERE ... AND status='PUBLISHED'
+    Repo -->>- Pool: CompiledPlan bytes
+    Pool -->>- GRPCSrv: ok
+    GRPCSrv -->>- ExecSvc: GetCompiledWorkflowResponse{plan}
