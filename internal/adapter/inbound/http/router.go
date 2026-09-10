@@ -103,7 +103,10 @@ func NewRouter(cfg RouterConfig) *Router {
 
 	// Internal service-to-service routes, not exposed on the public gateway.
 	// handler injects the RLS GUC from the request envelope's tenant_id.
-	internal := r.Group("/internal")
+	// Versioned under /api/v1/internal to match execution_service's own
+	// convention — event_consumer's forwarder targets one shared path shape
+	// across every service it forwards to.
+	internal := r.Group("/api/v1/internal")
 	internal.Use(httpmiddleware.RequireInternalToken(cfg.InternalAPIToken))
 	internal.Use(httpmiddleware.InjectGUCSet(cfg.Log))
 	internal.POST("/events", h.HandleInternalEvent)

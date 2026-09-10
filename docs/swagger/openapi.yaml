@@ -1794,7 +1794,7 @@ paths:
                 instance: "/readyz"
                 code: "DATABASE_DISCONNECTED"
 
-  /internal/events:
+  /api/v1/internal/events:
     post:
       operationId: ingestInternalEvent
       summary: Ingest a forwarded domain-event envelope
@@ -1840,7 +1840,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
-  /internal/connector-aliases/rest:
+  /api/v1/internal/connector-aliases/rest:
     post:
       operationId: writeConnectorRestAlias
       summary: Create or update a REST-call connector alias
@@ -1877,7 +1877,7 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
 
-  /internal/connector-aliases/sql:
+  /api/v1/internal/connector-aliases/sql:
     post:
       operationId: writeConnectorSQLAlias
       summary: Create or update a SQL-query connector alias
@@ -1915,7 +1915,7 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
 
-  /internal/connector-aliases:
+  /api/v1/internal/connector-aliases:
     get:
       operationId: listConnectorAliases
       summary: List all REST and SQL connector aliases
@@ -1959,7 +1959,7 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
 
-  /internal/connector-aliases/rest/{alias}:
+  /api/v1/internal/connector-aliases/rest/{alias}:
     delete:
       operationId: deleteConnectorRestAlias
       summary: Delete a REST-call connector alias
@@ -1985,7 +1985,7 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
 
-  /internal/connector-aliases/sql/{alias}:
+  /api/v1/internal/connector-aliases/sql/{alias}:
     delete:
       operationId: deleteConnectorSQLAlias
       summary: Delete a SQL-query connector alias

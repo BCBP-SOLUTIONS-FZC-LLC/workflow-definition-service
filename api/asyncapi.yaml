@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: >
     Inbound only: DepartmentMembershipRevoked, consumed off the shared
-    Workflow-Events Consumer (POST /internal/events) — documented here as a
+    Workflow-Events Consumer (POST /api/v1/internal/events) — documented here as a
     `receive` operation for completeness, but its payload schema is owned
     and registered by the producing service (Org & Membership), NOT
     re-registered by Definition. This service currently defines no outbound

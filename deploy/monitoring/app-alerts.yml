@@ -285,9 +285,9 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: POST /internal/events is rejecting or failing on inbound events
+          summary: POST /api/v1/internal/events is rejecting or failing on inbound events
           description: >-
-            More than 5 bad_payload/error results on /internal/events in 15 minutes —
+            More than 5 bad_payload/error results on /api/v1/internal/events in 15 minutes —
             either the shared workflow-events consumer's envelope contract has drifted,
             or the downstream HandleMembershipRevoked call is failing.
 

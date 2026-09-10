@@ -2,7 +2,7 @@
 # Full automated end-to-end smoke test for the definition service.
 #
 # Covers every HTTP route, the gRPC GetCompiledWorkflow endpoint, and the
-# internal /internal/events endpoint (DepartmentMembershipRevoked).
+# internal /api/v1/internal/events endpoint (DepartmentMembershipRevoked).
 #
 # Prerequisites (all must be running before this script):
 #   make docker-up                             # postgres + valkey + localstack
@@ -523,7 +523,7 @@ fi
 section "11 · Internal Events — DepartmentMembershipRevoked"
 
 # The shared workflow-events consumer forwards DepartmentMembershipRevoked to
-# POST /internal/events. This section simulates that by calling the endpoint
+# POST /api/v1/internal/events. This section simulates that by calling the endpoint
 # directly (no SQS dependency). Set INTERNAL_TOKEN to match INTERNAL_API_TOKEN
 # in the server config if the token check is enabled.
 
@@ -553,23 +553,23 @@ JSON
 )
 
 IE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-  "${HTTP}/internal/events" \
+  "${HTTP}/api/v1/internal/events" \
   -H "Content-Type: application/json" \
   ${INTERNAL_TOKEN:+-H "x-internal-token: ${INTERNAL_TOKEN}"} \
   -d "$REVOKE_MSG")
 [ "$IE_STATUS" = "200" ] || [ "$IE_STATUS" = "204" ] \
-  && pass "POST /internal/events DepartmentMembershipRevoked → ${IE_STATUS}" \
-  || fail "POST /internal/events → ${IE_STATUS} (want 200/204)"
+  && pass "POST /api/v1/internal/events DepartmentMembershipRevoked → ${IE_STATUS}" \
+  || fail "POST /api/v1/internal/events → ${IE_STATUS} (want 200/204)"
 
 # Re-send same event_id — must be idempotent (dedup via processed_events table)
 IE_STATUS2=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-  "${HTTP}/internal/events" \
+  "${HTTP}/api/v1/internal/events" \
   -H "Content-Type: application/json" \
   ${INTERNAL_TOKEN:+-H "x-internal-token: ${INTERNAL_TOKEN}"} \
   -d "$REVOKE_MSG")
 [ "$IE_STATUS2" = "200" ] || [ "$IE_STATUS2" = "204" ] \
-  && pass "POST /internal/events re-send (dedup) → ${IE_STATUS2}" \
-  || fail "POST /internal/events dedup → ${IE_STATUS2} (want 200/204)"
+  && pass "POST /api/v1/internal/events re-send (dedup) → ${IE_STATUS2}" \
+  || fail "POST /api/v1/internal/events dedup → ${IE_STATUS2} (want 200/204)"
 
 if [ "$HAS_PSQL" = true ]; then
   IS_VALID=$(psql "$DB_URL" -tAc \
@@ -621,13 +621,13 @@ JSON
 )
 
 IE_STATUS3=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-  "${HTTP}/internal/events" \
+  "${HTTP}/api/v1/internal/events" \
   -H "Content-Type: application/json" \
   ${INTERNAL_TOKEN:+-H "x-internal-token: ${INTERNAL_TOKEN}"} \
   -d "$REVOKE_MSG2")
 [ "$IE_STATUS3" = "200" ] || [ "$IE_STATUS3" = "204" ] \
-  && pass "POST /internal/events (PUBLISHED version revoke) → ${IE_STATUS3}" \
-  || fail "POST /internal/events published-revoke → ${IE_STATUS3}"
+  && pass "POST /api/v1/internal/events (PUBLISHED version revoke) → ${IE_STATUS3}" \
+  || fail "POST /api/v1/internal/events published-revoke → ${IE_STATUS3}"
 
 if [ "$HAS_PSQL" = true ]; then
   PUB_VALID=$(psql "$DB_URL" -tAc \
