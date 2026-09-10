@@ -67,6 +67,28 @@ func (s *ConnectorService) WriteCredential(
 	return secretPath, nil
 }
 
+// RevokeCredential permanently destroys a connector credential from OpenBao
+// (design/LLD/workflow_connectors.md §9's credential-rotation/cleanup gap) —
+// rotation is just re-calling WriteCredential on the same path (OpenBao
+// KV-v2 versions on overwrite), so this only needed to close the missing
+// revoke/delete half.
+func (s *ConnectorService) RevokeCredential(ctx context.Context, tenantID uuid.UUID, connectorType, fieldName string) error {
+	if _, ok := registry.All()[connectorType]; !ok {
+		return fmt.Errorf("%w: unrecognized connector_type %q", domain.ErrInvalidConnectorCredentialInput, connectorType)
+	}
+	if !validConnectorSegment.MatchString(fieldName) {
+		return fmt.Errorf("%w: field_name must match %s", domain.ErrInvalidConnectorCredentialInput, validConnectorSegment.String())
+	}
+	if s.secrets == nil {
+		return fmt.Errorf("%w: OpenBao is not configured", domain.ErrUpstreamUnavailable)
+	}
+	secretPath := fmt.Sprintf("connectors/%s/%s/%s", tenantID, connectorType, fieldName)
+	if err := s.secrets.Delete(ctx, secretPath); err != nil {
+		return fmt.Errorf("revoke credential: %w", err)
+	}
+	return nil
+}
+
 func (s *ConnectorService) ListAliases(ctx context.Context) ([]domain.ConnectorRestAlias, error) {
 	return s.aliases.ListRest(ctx)
 }

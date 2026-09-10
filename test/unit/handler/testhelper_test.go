@@ -277,6 +277,7 @@ func registerRoutes(r *gin.Engine, h *handler.Handler) {
 	conn := r.Group("/api/v1/connectors")
 	conn.GET("/registry", h.ListConnectorRegistry)
 	conn.POST("/credentials", h.WriteConnectorCredential)
+	conn.DELETE("/credentials/:connector_type/:field_name", h.RevokeConnectorCredential)
 
 	r.GET("/api/v1/bpmn/allowed-elements", h.AllowedBPMNElements)
 

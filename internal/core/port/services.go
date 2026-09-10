@@ -33,4 +33,8 @@ type PlanCompiler interface {
 
 type SecretsClient interface {
 	Write(ctx context.Context, path string, data map[string]string) error
+	// Delete permanently destroys every version of the secret at path (OpenBao
+	// KV-v2's metadata-delete, not the data-delete soft-delete which leaves it
+	// recoverable) — a genuine revoke, not a reversible mark.
+	Delete(ctx context.Context, path string) error
 }

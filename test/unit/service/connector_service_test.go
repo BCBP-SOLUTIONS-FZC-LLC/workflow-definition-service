@@ -14,14 +14,24 @@ import (
 )
 
 type fakeSecretsClient struct {
-	writeFn func(ctx context.Context, path string, data map[string]string) error
-	written []string
+	writeFn  func(ctx context.Context, path string, data map[string]string) error
+	deleteFn func(ctx context.Context, path string) error
+	written  []string
+	deleted  []string
 }
 
 func (f *fakeSecretsClient) Write(ctx context.Context, path string, data map[string]string) error {
 	f.written = append(f.written, path)
 	if f.writeFn != nil {
 		return f.writeFn(ctx, path, data)
+	}
+	return nil
+}
+
+func (f *fakeSecretsClient) Delete(ctx context.Context, path string) error {
+	f.deleted = append(f.deleted, path)
+	if f.deleteFn != nil {
+		return f.deleteFn(ctx, path)
 	}
 	return nil
 }
@@ -79,6 +89,61 @@ func TestConnectorService_WriteCredential_UpstreamUnavailable(t *testing.T) {
 	svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
 
 	_, err := svc.WriteCredential(context.Background(), uuid.New(), "send-email", "apiKey", "x")
+	require.Error(t, err)
+}
+
+func TestConnectorService_RevokeCredential_Success(t *testing.T) {
+	secrets := &fakeSecretsClient{}
+	svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
+
+	tenantID := uuid.New()
+	err := svc.RevokeCredential(context.Background(), tenantID, "send-email", "apiKey")
+	require.NoError(t, err)
+	require.Len(t, secrets.deleted, 1)
+	assert.Contains(t, secrets.deleted[0], "send-email/apiKey")
+}
+
+// TestConnectorService_RevokeCredential_PathTraversal mirrors
+// TestConnectorService_WriteCredential_PathTraversal — the same
+// connectorType/fieldName values are interpolated into the same OpenBao
+// path, so they need the same validation on the revoke side too.
+func TestConnectorService_RevokeCredential_PathTraversal(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name          string
+		connectorType string
+		fieldName     string
+	}{
+		{"traversal in field_name", "send-email", "../other-tenant/apiKey"},
+		{"slash in field_name", "send-email", "a/b"},
+		{"traversal in connector_type", "../other-tenant", "apiKey"},
+		{"unregistered connector_type", "not-a-real-connector", "apiKey"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			secrets := &fakeSecretsClient{}
+			svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
+
+			err := svc.RevokeCredential(context.Background(), uuid.New(), tc.connectorType, tc.fieldName)
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, domain.ErrInvalidConnectorCredentialInput), "got: %v", err)
+			assert.Empty(t, secrets.deleted, "rejected input must never reach SecretsClient.Delete")
+		})
+	}
+}
+
+func TestConnectorService_RevokeCredential_UpstreamUnavailable(t *testing.T) {
+	secrets := &fakeSecretsClient{
+		deleteFn: func(context.Context, string) error {
+			return errors.New("connection refused: dial tcp 10.0.0.5:8200")
+		},
+	}
+	svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
+
+	err := svc.RevokeCredential(context.Background(), uuid.New(), "send-email", "apiKey")
 	require.Error(t, err)
 }
 

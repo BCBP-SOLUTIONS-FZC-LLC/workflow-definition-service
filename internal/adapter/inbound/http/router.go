@@ -144,6 +144,7 @@ func NewRouter(cfg RouterConfig) *Router {
 	conn := api.Group("/connectors")
 	conn.GET("/registry", h.ListConnectorRegistry)
 	conn.POST("/credentials", idem(h.WriteConnectorCredential))
+	conn.DELETE("/credentials/:connector_type/:field_name", h.RevokeConnectorCredential)
 
 	api.GET("/bpmn/allowed-elements", h.AllowedBPMNElements)
 

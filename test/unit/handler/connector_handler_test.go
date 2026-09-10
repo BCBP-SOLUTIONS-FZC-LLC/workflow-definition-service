@@ -19,6 +19,7 @@ import (
 type fakeConnectorSvc struct {
 	registryFn    func(context.Context) map[string]registry.Definition
 	writeFn       func(context.Context, uuid.UUID, string, string, string) (string, error)
+	revokeFn      func(context.Context, uuid.UUID, string, string) error
 	listAliasesFn func(context.Context) ([]domain.ConnectorRestAlias, error)
 	writeRestFn   func(context.Context, domain.ConnectorRestAlias) error
 	deleteRestFn  func(context.Context, string) (bool, error)
@@ -36,6 +37,13 @@ func (f *fakeConnectorSvc) WriteCredential(ctx context.Context, tenantID uuid.UU
 		return f.writeFn(ctx, tenantID, connectorType, fieldName, value)
 	}
 	return "", nil
+}
+
+func (f *fakeConnectorSvc) RevokeCredential(ctx context.Context, tenantID uuid.UUID, connectorType, fieldName string) error {
+	if f.revokeFn != nil {
+		return f.revokeFn(ctx, tenantID, connectorType, fieldName)
+	}
+	return nil
 }
 
 func (f *fakeConnectorSvc) ListAliases(ctx context.Context) ([]domain.ConnectorRestAlias, error) {
@@ -132,6 +140,41 @@ func TestWriteConnectorCredential_UpstreamUnavailable(t *testing.T) {
 
 	body := map[string]any{"connector_type": "send-email", "field_name": "apiKey", "value": "x"}
 	r := req(http.MethodPost, "/api/v1/connectors/credentials", body)
+	r.Header.Set("x-tenant-roles", "tenant_admin")
+	w := do(newRouter(h), r)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestRevokeConnectorCredential_Success(t *testing.T) {
+	h := newConnectorHandler(&fakeConnectorSvc{
+		revokeFn: func(_ context.Context, tenantID uuid.UUID, connectorType, fieldName string) error {
+			assert.Equal(t, testTenantID, tenantID)
+			assert.Equal(t, "send-email", connectorType)
+			assert.Equal(t, "apiKey", fieldName)
+			return nil
+		},
+	})
+
+	r := req(http.MethodDelete, "/api/v1/connectors/credentials/send-email/apiKey", nil)
+	r.Header.Set("x-tenant-roles", "tenant_admin")
+	w := do(newRouter(h), r)
+	assert.Equal(t, http.StatusNoContent, w.Code)
+}
+
+func TestRevokeConnectorCredential_Forbidden(t *testing.T) {
+	h := newConnectorHandler(&fakeConnectorSvc{})
+	w := do(newRouter(h), req(http.MethodDelete, "/api/v1/connectors/credentials/send-email/apiKey", nil))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestRevokeConnectorCredential_UpstreamUnavailable(t *testing.T) {
+	h := newConnectorHandler(&fakeConnectorSvc{
+		revokeFn: func(context.Context, uuid.UUID, string, string) error {
+			return domain.ErrUpstreamUnavailable
+		},
+	})
+
+	r := req(http.MethodDelete, "/api/v1/connectors/credentials/send-email/apiKey", nil)
 	r.Header.Set("x-tenant-roles", "tenant_admin")
 	w := do(newRouter(h), r)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
