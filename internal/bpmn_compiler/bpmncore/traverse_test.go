@@ -266,7 +266,11 @@ func TestHandleGateway_SplitWithJoin(t *testing.T) {
 	}
 }
 
-func TestHandleSingleForwardWithReverts_SubprocessForward(t *testing.T) {
+// The forward branch of a single-forward-with-reverts gateway must name no
+// target. Its path is compiled as the steps that follow, so a Target here
+// would make the Execution Service dispatch that department twice — once
+// from this branch and once from the continuation step.
+func TestHandleSingleForwardWithReverts_ForwardBranchNamesNoTarget(t *testing.T) {
 	s := newMinimalState()
 	s.G.NodeType["sp1"] = NodeTypeSubProcess
 	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"sp1"}}}
@@ -279,8 +283,12 @@ func TestHandleSingleForwardWithReverts_SubprocessForward(t *testing.T) {
 	if len(steps) != 1 || len(steps[0].Exclusive) != 1 {
 		t.Fatalf("expected 1 step with 1 exclusive branch; got %v", steps)
 	}
-	if steps[0].Exclusive[0].TargetNodeID != "sp1" {
-		t.Errorf("TargetNodeID = %q; want sp1", steps[0].Exclusive[0].TargetNodeID)
+	branch := steps[0].Exclusive[0]
+	if branch.Target != "" || branch.TargetStage != "" || branch.TargetNodeID != "" || branch.TargetName != "" {
+		t.Errorf("forward branch names a target (%+v); the continuation steps are the forward path", branch)
+	}
+	if !s.IsVisited("sp1") {
+		t.Error("expected the forward node to be traversed into its own steps")
 	}
 }
 

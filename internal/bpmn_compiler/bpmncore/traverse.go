@@ -126,19 +126,17 @@ func (s *CompileState) handleSingleForwardWithReverts(
 ) error {
 	step := dsl.ExecutionStep{}
 	if len(fwd) == 1 {
-		dept, stage := s.firstTaskAhead(fwd[0])
-		terminates := s.G.NodeType[fwd[0]] == NodeTypeEndEvent
-		nodeID0, name0 := "", ""
-		if !terminates && (stage == "sub_workflow" || stage == "") {
-			nodeID0, name0 = s.firstTaskNodeAhead(fwd[0])
-		}
+		// The forward path is emitted as its own subsequent steps by the
+		// TraverseNode(fwd[0]) call below, so this branch carries no Target:
+		// it exists only to let the gateway tell "go forward" apart from
+		// "send back". Naming a Target here as well would dispatch the
+		// forward department twice — once from this branch and once from the
+		// continuation step. The split shapes differ and do set a Target:
+		// their branches diverge, and their continuation starts at the join,
+		// after the branch departments rather than on top of them.
 		step.Exclusive = append(step.Exclusive, dsl.ExclusiveBranch{
-			Target:              dept,
-			TargetStage:         stage,
-			TargetNodeID:        nodeID0,
-			TargetName:          name0,
 			ConditionExpression: s.condExprs[[2]string{nodeID, fwd[0]}],
-			Terminates:          terminates,
+			Terminates:          s.G.NodeType[fwd[0]] == NodeTypeEndEvent,
 		})
 	}
 	step.Exclusive = append(step.Exclusive, s.revertBranches(nodeID, backTargets)...)
