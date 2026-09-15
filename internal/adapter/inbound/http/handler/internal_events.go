@@ -17,6 +17,7 @@ import (
 
 type membershipRevoker interface {
 	HandleMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID, departmentID string) error
+	HandleTenantMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID) error
 }
 
 type membershipRevokedPayload struct {
@@ -40,6 +41,8 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 	switch env.Type {
 	case "DepartmentMembershipRevoked":
 		h.handleMembershipRevoked(c, env)
+	case "MembershipRevoked":
+		h.handleTenantMembershipRevoked(c, env)
 	default:
 		h.acknowledgeUnknownEventType(c, env.Type)
 	}
@@ -53,45 +56,78 @@ func (h *Handler) acknowledgeUnknownEventType(c *gin.Context, eventType string) 
 	c.Status(http.StatusOK)
 }
 
-func (h *Handler) handleMembershipRevoked(c *gin.Context, env events.Envelope[json.RawMessage]) {
-	const evtType = "DepartmentMembershipRevoked"
+// revocationIdentity is the (event, tenant, user) triple both revocation
+// events carry. ok=false means a 4xx has already been written.
+type revocationIdentity struct {
+	eventID, tenantID, userID uuid.UUID
+	departmentID              string
+	ctx                       context.Context
+}
+
+func (h *Handler) parseRevocation(c *gin.Context, env events.Envelope[json.RawMessage], evtType string) (revocationIdentity, bool) {
+	badPayload := func(msg string) (revocationIdentity, bool) {
+		observability.IncCounterVec(observability.InternalEventsIngestTotal, evtType, "bad_payload")
+		writeProblem(c, http.StatusBadRequest, CodeBadRequest, msg, nil)
+		return revocationIdentity{}, false
+	}
+
 	var p membershipRevokedPayload
 	if err := json.Unmarshal(env.Payload, &p); err != nil {
-		observability.IncCounterVec(observability.InternalEventsIngestTotal, evtType, "bad_payload")
-		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid DepartmentMembershipRevoked payload", nil)
-		return
+		return badPayload("invalid " + evtType + " payload")
 	}
 	eventID, err := uuid.Parse(env.ID)
 	if err != nil {
-		observability.IncCounterVec(observability.InternalEventsIngestTotal, evtType, "bad_payload")
-		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid event id", nil)
-		return
+		return badPayload("invalid event id")
 	}
 	tenantID, err := uuid.Parse(env.TenantID)
 	if err != nil {
-		observability.IncCounterVec(observability.InternalEventsIngestTotal, evtType, "bad_payload")
-		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid tenant_id", nil)
-		return
+		return badPayload("invalid tenant_id")
 	}
 	userID, err := uuid.Parse(p.UserID)
 	if err != nil {
-		observability.IncCounterVec(observability.InternalEventsIngestTotal, evtType, "bad_payload")
-		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid user_id in payload", nil)
-		return
+		return badPayload("invalid user_id in payload")
 	}
 
-	// Service-to-service call: no gateway identity headers, so inject the RLS GUC
-	// from the envelope tenant_id directly (mirrors the gRPC path, §14).
-	ctx := pgcommon.WithGUCSet(c.Request.Context(), pgdomain.GUCSet{TenantID: env.TenantID})
+	return revocationIdentity{
+		eventID: eventID, tenantID: tenantID, userID: userID, departmentID: p.DepartmentID,
+		// Service-to-service call: no gateway identity headers, so inject the RLS GUC
+		// from the envelope tenant_id directly (mirrors the gRPC path, §14).
+		ctx: pgcommon.WithGUCSet(c.Request.Context(), pgdomain.GUCSet{TenantID: env.TenantID}),
+	}, true
+}
 
-	if err := h.membership.HandleMembershipRevoked(ctx, eventID, tenantID, userID, p.DepartmentID); err != nil {
+func (h *Handler) finishRevocation(c *gin.Context, evtType, logMsg string, err error) {
+	if err != nil {
 		observability.IncCounterVec(observability.InternalEventsIngestTotal, evtType, "error")
 		if h.log != nil {
-			h.log.Error("internal events: HandleMembershipRevoked failed", map[string]any{"error": err.Error()})
+			h.log.Error(logMsg, map[string]any{"error": err.Error()})
 		}
 		writeProblem(c, http.StatusInternalServerError, CodeInternal, "failed to process event", nil)
 		return
 	}
 	observability.IncCounterVec(observability.InternalEventsIngestTotal, evtType, "ok")
 	c.Status(http.StatusOK)
+}
+
+func (h *Handler) handleMembershipRevoked(c *gin.Context, env events.Envelope[json.RawMessage]) {
+	const evtType = "DepartmentMembershipRevoked"
+	in, ok := h.parseRevocation(c, env, evtType)
+	if !ok {
+		return
+	}
+	err := h.membership.HandleMembershipRevoked(in.ctx, in.eventID, in.tenantID, in.userID, in.departmentID)
+	h.finishRevocation(c, evtType, "internal events: HandleMembershipRevoked failed", err)
+}
+
+// handleTenantMembershipRevoked handles IAM's tenant-level MembershipRevoked.
+// It carries no department_id — the user left the tenant outright — so it
+// deliberately does not reuse the department-scoped handler above.
+func (h *Handler) handleTenantMembershipRevoked(c *gin.Context, env events.Envelope[json.RawMessage]) {
+	const evtType = "MembershipRevoked"
+	in, ok := h.parseRevocation(c, env, evtType)
+	if !ok {
+		return
+	}
+	err := h.membership.HandleTenantMembershipRevoked(in.ctx, in.eventID, in.tenantID, in.userID)
+	h.finishRevocation(c, evtType, "internal events: HandleTenantMembershipRevoked failed", err)
 }

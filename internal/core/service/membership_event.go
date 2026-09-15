@@ -17,6 +17,8 @@ type invalidationError struct {
 
 const invalidationMsg = "Default assignee is no longer eligible: Department membership revoked"
 
+// HandleMembershipRevoked handles DepartmentMembershipRevoked: the user lost
+// one department, so only that department's assignee rows are invalidated.
 func (s *VersionService) HandleMembershipRevoked(
 	ctx context.Context,
 	eventID, tenantID, userID uuid.UUID,
@@ -32,9 +34,45 @@ func (s *VersionService) HandleMembershipRevoked(
 		return fmt.Errorf("invalid department id %q: %w", departmentID, err)
 	}
 
+	return s.invalidateAssigneeVersions(ctx, eventID, tenantID, userID, assignees, &deptUUID, departmentID)
+}
+
+// HandleTenantMembershipRevoked handles MembershipRevoked — IAM's
+// tenant-level removal, emitted unconditionally whenever a user is removed
+// from a tenant, and a different event from the per-department one above.
+//
+// The user is gone from the tenant entirely, so there is no department to
+// filter on: every version they are a default assignee on is invalidated,
+// whichever department the assignment sits in. Filtering by department here
+// (the shape the department-level handler needs) would silently invalidate
+// nothing.
+func (s *VersionService) HandleTenantMembershipRevoked(
+	ctx context.Context,
+	eventID, tenantID, userID uuid.UUID,
+) error {
+	assignees, err := s.assignees.ListByUser(ctx, tenantID, userID)
+	if err != nil {
+		return fmt.Errorf("list assignees: %w", err)
+	}
+	return s.invalidateAssigneeVersions(ctx, eventID, tenantID, userID, assignees, nil, "")
+}
+
+// invalidateAssigneeVersions is both handlers' shared body. A nil
+// departmentID means tenant-wide (no filter).
+//
+// PauseUserTasks is called either way and regardless of how many versions
+// matched: Execution may hold active tasks for this user even when no
+// template names them as a default assignee.
+func (s *VersionService) invalidateAssigneeVersions(
+	ctx context.Context,
+	eventID, tenantID, userID uuid.UUID,
+	assignees []*domain.NodeAssignee,
+	departmentID *uuid.UUID,
+	departmentLogValue string,
+) error {
 	nodesByVersion := make(map[uuid.UUID][]string)
 	for _, a := range assignees {
-		if a.DepartmentID != deptUUID {
+		if departmentID != nil && a.DepartmentID != *departmentID {
 			continue
 		}
 		nodesByVersion[a.WorkflowVersionID] = append(nodesByVersion[a.WorkflowVersionID], a.NodeKey)
@@ -52,11 +90,16 @@ func (s *VersionService) HandleMembershipRevoked(
 		}
 	}
 
+	scope := "tenant"
+	if departmentID != nil {
+		scope = "department"
+	}
 	s.log.Info("membership revoked handled", map[string]any{
 		"event_id":          eventID.String(),
 		"tenant_id":         tenantID.String(),
 		"user_id":           userID.String(),
-		"department_id":     departmentID,
+		"scope":             scope,
+		"department_id":     departmentLogValue,
 		"versions_affected": len(nodesByVersion),
 	})
 	return nil

@@ -109,6 +109,58 @@ func TestHandleMembershipRevoked_NoMatchingAssignees(t *testing.T) {
 	}
 }
 
+// TestHandleTenantMembershipRevoked_InvalidatesEveryDepartment is the
+// difference that makes IAM's tenant-level MembershipRevoked a separate
+// handler rather than a call into the department-scoped one: the user has
+// left the tenant entirely, so assignments in EVERY department must be
+// invalidated. Reusing the department-scoped path would filter on a
+// department this event does not carry and invalidate nothing at all.
+func TestHandleTenantMembershipRevoked_InvalidatesEveryDepartment(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	aRepo := mocks.NewMockAssigneeRepository(ctrl)
+	outbox := mocks.NewMockOutboxRepository(ctrl)
+	tx := mocks.NewMockTransactor(ctrl)
+	exec := mocks.NewMockExecutionService(ctrl)
+
+	otherVerID := uuid.New()
+	otherDeptID := "018e1f2a-0000-7000-8000-000000000020"
+	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).
+		Return([]*domain.NodeAssignee{
+			assignee(mVerID, "task-1", mDeptID),
+			assignee(otherVerID, "task-2", otherDeptID),
+		}, nil)
+
+	// Both versions invalidated — not just the one in mDeptID.
+	for _, id := range []uuid.UUID{mVerID, otherVerID} {
+		vRepo.EXPECT().GetByID(gomock.Any(), mTenantID, id).
+			Return(&domain.WorkflowVersion{ID: id, WorkflowID: uuid.New(), Status: domain.VersionStatusPublished}, nil)
+		vRepo.EXPECT().SetInvalid(gomock.Any(), mTenantID, id, gomock.Any()).Return(nil)
+	}
+	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
+
+	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
+	if err := svc.HandleTenantMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestHandleTenantMembershipRevoked_ListByUserError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	aRepo := mocks.NewMockAssigneeRepository(ctrl)
+	outbox := mocks.NewMockOutboxRepository(ctrl)
+	tx := mocks.NewMockTransactor(ctrl)
+	exec := mocks.NewMockExecutionService(ctrl)
+
+	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).Return(nil, errors.New("db error"))
+
+	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
+	if err := svc.HandleTenantMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID); err == nil {
+		t.Fatal("expected the list failure to propagate so the delivery is retried")
+	}
+}
+
 func TestHandleMembershipRevoked_DraftVersion(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)

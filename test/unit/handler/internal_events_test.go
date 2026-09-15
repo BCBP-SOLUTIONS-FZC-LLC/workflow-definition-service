@@ -18,13 +18,25 @@ import (
 )
 
 type fakeMembershipRevoker struct {
-	called bool
-	err    error
+	called       bool
+	tenantCalled bool
+	err          error
 
 	gotEventID  uuid.UUID
 	gotTenantID uuid.UUID
 	gotUserID   uuid.UUID
 	gotDeptID   string
+}
+
+func (f *fakeMembershipRevoker) HandleTenantMembershipRevoked(
+	_ context.Context,
+	eventID, tenantID, userID uuid.UUID,
+) error {
+	f.tenantCalled = true
+	f.gotEventID = eventID
+	f.gotTenantID = tenantID
+	f.gotUserID = userID
+	return f.err
 }
 
 func (f *fakeMembershipRevoker) HandleMembershipRevoked(
@@ -88,12 +100,50 @@ func TestInternalEvents_HappyPath(t *testing.T) {
 	assert.Equal(t, ieDeptID, rev.gotDeptID)
 }
 
+// TestInternalEvents_TenantMembershipRevoked covers IAM's tenant-level
+// MembershipRevoked, which is a different event from the department-level
+// DepartmentMembershipRevoked above and carries no department_id. Before it
+// was handled it fell through to the unknown-type branch and was answered
+// 200 with no side effects at all, so a user removed from a tenant kept
+// their tasks and stayed a live default assignee.
+func TestInternalEvents_TenantMembershipRevoked(t *testing.T) {
+	rev := &fakeMembershipRevoker{}
+	w := postEvent(rev, envelope("MembershipRevoked", ieEventID.String(), ieTenantID.String(),
+		map[string]string{"user_id": ieUserID.String()}))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, rev.tenantCalled, "MembershipRevoked must reach the tenant-wide handler")
+	assert.False(t, rev.called, "it must NOT be routed to the department-scoped handler")
+	assert.Equal(t, ieEventID, rev.gotEventID)
+	assert.Equal(t, ieTenantID, rev.gotTenantID)
+	assert.Equal(t, ieUserID, rev.gotUserID)
+}
+
+func TestInternalEvents_TenantMembershipRevoked_BadUserID(t *testing.T) {
+	rev := &fakeMembershipRevoker{}
+	w := postEvent(rev, envelope("MembershipRevoked", ieEventID.String(), ieTenantID.String(),
+		map[string]string{"user_id": "not-a-uuid"}))
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.False(t, rev.tenantCalled)
+}
+
+func TestInternalEvents_TenantMembershipRevoked_HandlerError(t *testing.T) {
+	rev := &fakeMembershipRevoker{err: assert.AnError}
+	w := postEvent(rev, envelope("MembershipRevoked", ieEventID.String(), ieTenantID.String(),
+		map[string]string{"user_id": ieUserID.String()}))
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code,
+		"a transient failure must be retryable, not acknowledged")
+}
+
 func TestInternalEvents_UnhandledType_OK(t *testing.T) {
 	rev := &fakeMembershipRevoker{}
 	w := postEvent(rev, envelope("SomeOtherEvent", ieEventID.String(), ieTenantID.String(), map[string]any{}))
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.False(t, rev.called, "unhandled types must not call the revoker")
+	assert.False(t, rev.tenantCalled)
 }
 
 func TestInternalEvents_MalformedEnvelope_400(t *testing.T) {
