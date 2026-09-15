@@ -127,6 +127,16 @@ components:
 
   schemas:
 
+    ConnectorRestAlias:
+      type: object
+      required: [alias, method, baseURL, pathTemplate]
+      properties:
+        alias:        { type: string }
+        method:       { type: string }
+        baseURL:      { type: string }
+        pathTemplate: { type: string }
+        timeoutMs:    { type: integer, format: int64 }
+
     VersionStatus:
       type: string
       enum: [DRAFT, PUBLISHED, ARCHIVED]
@@ -1840,6 +1850,35 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
+  /api/v1/internal/connector-aliases:
+    get:
+      operationId: listConnectorAliases
+      summary: List every connector alias
+      description: >
+        The connector worker calls this at start-up and on each refresh tick to
+        build its alias registry. An alias added or edited after a worker
+        starts becomes visible on that worker's next refresh.
+      tags: [Internal]
+      security:
+        - InternalServiceAuth: []
+      responses:
+        "200":
+          description: The full alias registry.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restCall:
+                    type: array
+                    items: { $ref: '#/components/schemas/ConnectorRestAlias' }
+        "401":
+          description: Missing or invalid internal service credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
   /api/v1/internal/connector-aliases/rest:
     post:
       operationId: writeConnectorRestAlias
@@ -1857,7 +1896,16 @@ paths:
               properties:
                 alias:        { type: string }
                 method:       { type: string, description: HTTP method. }
-                baseURL:      { type: string }
+                baseURL:
+                  type: string
+                  description: >
+                    Must be http(s) and its host must appear in the configured
+                    internal-host allowlist. Dispatch sends the caller's real
+                    internal service token and department headers to this host,
+                    so an unlisted one is rejected rather than trusted. The
+                    check is fail-closed: with no allowlist configured, every
+                    baseURL is rejected. Credentials embedded in the URL
+                    (user:password@) are rejected outright.
                 pathTemplate: { type: string }
                 timeoutMs:
                   type: integer
@@ -1866,92 +1914,13 @@ paths:
       responses:
         "204": { description: Alias written. No response body. }
         "400":
-          description: Missing required field, or a domain validation failure (e.g. invalid method).
+          description: >
+            Missing required field, or a domain validation failure — an invalid
+            method, or a baseURL whose scheme, credentials, or host the
+            allowlist rejects.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "401":
-          description: Missing or invalid internal service credential.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "500": { $ref: '#/components/responses/InternalError' }
-
-  /api/v1/internal/connector-aliases/sql:
-    post:
-      operationId: writeConnectorSQLAlias
-      summary: Create or update a SQL-query connector alias
-      tags: [Internal]
-      security:
-        - InternalServiceAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [alias, baseURL, path, queryId]
-              properties:
-                alias:      { type: string }
-                baseURL:    { type: string }
-                path:       { type: string }
-                queryId:    { type: string }
-                paramCount: { type: integer, minimum: 0 }
-                timeoutMs:
-                  type: integer
-                  format: int64
-                  description: Request timeout in milliseconds. Non-positive or omitted defaults to 5000ms.
-      responses:
-        "204": { description: Alias written. No response body. }
-        "400":
-          description: Missing required field, or a domain validation failure (e.g. negative paramCount).
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "401":
-          description: Missing or invalid internal service credential.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "500": { $ref: '#/components/responses/InternalError' }
-
-  /api/v1/internal/connector-aliases:
-    get:
-      operationId: listConnectorAliases
-      summary: List all REST and SQL connector aliases
-      tags: [Internal]
-      security:
-        - InternalServiceAuth: []
-      responses:
-        "200":
-          description: All currently configured connector aliases.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  version: { type: integer, example: 1 }
-                  restCall:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        alias:        { type: string }
-                        method:       { type: string }
-                        baseURL:      { type: string }
-                        pathTemplate: { type: string }
-                        timeout:      { type: integer, format: int64, description: Nanoseconds (raw time.Duration, not a formatted string). }
-                  sqlQuery:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        alias:      { type: string }
-                        baseURL:    { type: string }
-                        path:       { type: string }
-                        queryId:    { type: string }
-                        paramCount: { type: integer }
-                        timeout:    { type: integer, format: int64, description: Nanoseconds (raw time.Duration, not a formatted string). }
         "401":
           description: Missing or invalid internal service credential.
           content:
@@ -1972,40 +1941,9 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        "204": { description: Alias deleted. No response body. }
+        "204": { description: Alias deleted, or no alias by that name existed. No response body. }
         "401":
           description: Missing or invalid internal service credential.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "404":
-          description: No alias with that name exists.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "500": { $ref: '#/components/responses/InternalError' }
-
-  /api/v1/internal/connector-aliases/sql/{alias}:
-    delete:
-      operationId: deleteConnectorSQLAlias
-      summary: Delete a SQL-query connector alias
-      tags: [Internal]
-      security:
-        - InternalServiceAuth: []
-      parameters:
-        - in: path
-          name: alias
-          required: true
-          schema: { type: string }
-      responses:
-        "204": { description: Alias deleted. No response body. }
-        "401":
-          description: Missing or invalid internal service credential.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "404":
-          description: No alias with that name exists.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2148,6 +2086,50 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503":
+          description: The secret store (OpenBao) is unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  /api/v1/connectors/credentials/{connector_type}/{field_name}:
+    delete:
+      operationId: revokeConnectorCredential
+      summary: Revoke a connector credential field
+      description: >
+        Deletes the OpenBao metadata at
+        connectors/<tenantID>/<connector_type>/<field_name>, destroying every
+        version of that field. This is not a recoverable soft-delete. Rotation
+        does not use this endpoint — KV-v2 versions on overwrite, so writing
+        the field again is what rotates it. Requires tenant_admin or
+        tenant_owner.
+      tags: [Connectors]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - in: path
+          name: connector_type
+          required: true
+          schema: { type: string }
+          description: Must match a registered connector type.
+        - in: path
+          name: field_name
+          required: true
+          schema: { type: string, pattern: '^[a-zA-Z0-9_-]+$' }
+      responses:
+        "204": { description: Credential field revoked. No response body. }
+        "400":
+          description: Unrecognized connector_type, or an invalid field_name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
         "500": { $ref: '#/components/responses/InternalError' }
         "503":
           description: The secret store (OpenBao) is unavailable.

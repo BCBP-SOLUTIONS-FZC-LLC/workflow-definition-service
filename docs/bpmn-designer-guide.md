@@ -97,6 +97,8 @@ Each outgoing flow needs a condition expression. See [Condition Expressions](#co
 
 The back-edge (revert path) returns to a previous task. No condition expressions are needed — the Execution Service routes based on whether the user approved or rejected the task. The gateway must always have at least one forward exit even when a rejection path exists.
 
+The loop can run as many times as the reviewer keeps rejecting — every rejection sends the work back again, and the gateway is re-checked each time the reworked task is completed. There is one safety limit: after **50** trips around the same loop the instance stops with an error rather than continuing. A real process never comes close, so hitting it means something is wrong with the workflow and an operator needs to look. Draw the loop as you want it to behave; there is nothing to configure.
+
 ### Parallel Gateway (AND) — all paths fire
 
 Splits the flow into simultaneous branches. All branches must converge at a matching AND join. Use when multiple departments work at the same time.
