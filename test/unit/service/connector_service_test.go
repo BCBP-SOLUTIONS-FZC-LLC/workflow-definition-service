@@ -179,7 +179,10 @@ func TestConnectorService_WriteRestAlias_RejectsInvalidMethod(t *testing.T) {
 
 func TestConnectorService_WriteRestAlias_Success(t *testing.T) {
 	repo := &fakeAliasRepo{}
-	svc := service.NewConnectorService(service.ConnectorDeps{Aliases: repo})
+	svc := service.NewConnectorService(service.ConnectorDeps{
+		Aliases:           repo,
+		AliasAllowedHosts: []string{"tender-service.internal"},
+	})
 
 	err := svc.WriteRestAlias(context.Background(), domain.ConnectorRestAlias{
 		Alias: "tender-get", Method: "GET", BaseURL: "http://tender-service.internal", PathTemplate: "/x",
@@ -187,6 +190,71 @@ func TestConnectorService_WriteRestAlias_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, repo.upserts, 1)
 	assert.Equal(t, "tender-get", repo.upserts[0].Alias)
+}
+
+// restcall.Execute attaches the real x-internal-token and x-departments
+// headers to whatever host an alias names, so an alias pointing outward
+// hands a valid internal credential to that host. These cases are the
+// control that stops it.
+func TestConnectorService_WriteRestAlias_RejectsNonAllowlistedHost(t *testing.T) {
+	cases := []struct {
+		name    string
+		baseURL string
+		allowed []string
+	}{
+		{name: "external host", baseURL: "https://evil.example.com", allowed: []string{"tender-service.internal"}},
+		{
+			// A suffix match must anchor on a dot, or "notinternal" would
+			// satisfy an allowlist of "internal".
+			name:    "host merely ending in an allowed name",
+			baseURL: "http://evil-tender-service.internal.attacker.com",
+			allowed: []string{"tender-service.internal"},
+		},
+		{name: "suffix rule does not match a different domain", baseURL: "http://svc.attacker.com", allowed: []string{".svc.cluster.local"}},
+		{name: "non-http scheme", baseURL: "file:///etc/passwd", allowed: []string{"tender-service.internal"}},
+		{name: "embedded credentials", baseURL: "http://user:pass@tender-service.internal", allowed: []string{"tender-service.internal"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeAliasRepo{}
+			svc := service.NewConnectorService(service.ConnectorDeps{Aliases: repo, AliasAllowedHosts: tc.allowed})
+
+			err := svc.WriteRestAlias(context.Background(), domain.ConnectorRestAlias{
+				Alias: "x", Method: "GET", BaseURL: tc.baseURL, PathTemplate: "/y",
+			})
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, domain.ErrInvalidConnectorAliasInput))
+			assert.Empty(t, repo.upserts, "a rejected alias must never reach the repository")
+		})
+	}
+}
+
+// Fail closed: an unconfigured deployment must not accept any alias at all,
+// rather than silently accepting every host.
+func TestConnectorService_WriteRestAlias_EmptyAllowlistRejectsEverything(t *testing.T) {
+	repo := &fakeAliasRepo{}
+	svc := service.NewConnectorService(service.ConnectorDeps{Aliases: repo})
+
+	err := svc.WriteRestAlias(context.Background(), domain.ConnectorRestAlias{
+		Alias: "x", Method: "GET", BaseURL: "http://tender-service.internal", PathTemplate: "/y",
+	})
+	require.Error(t, err)
+	assert.Empty(t, repo.upserts)
+}
+
+func TestConnectorService_WriteRestAlias_SuffixRuleMatches(t *testing.T) {
+	repo := &fakeAliasRepo{}
+	svc := service.NewConnectorService(service.ConnectorDeps{
+		Aliases:           repo,
+		AliasAllowedHosts: []string{".svc.cluster.local"},
+	})
+
+	err := svc.WriteRestAlias(context.Background(), domain.ConnectorRestAlias{
+		Alias: "tender-get", Method: "GET",
+		BaseURL: "http://tender-service.workflow-app.svc.cluster.local:8080", PathTemplate: "/x",
+	})
+	require.NoError(t, err)
+	assert.Len(t, repo.upserts, 1)
 }
 
 func TestConnectorService_ListAliases(t *testing.T) {

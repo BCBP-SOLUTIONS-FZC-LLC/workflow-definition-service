@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -63,6 +64,14 @@ type Config struct {
 	OpenBaoToken         string
 	OpenBaoMount         string
 	SecretsClientTimeout time.Duration
+
+	// ConnectorAliasAllowedHosts bounds which hosts a rest-call alias's
+	// BaseURL may point at. restcall.Execute attaches the real internal
+	// service token to every call, so an alias aimed at an external host
+	// would leak that credential. An entry beginning with "." is a suffix
+	// rule (".svc.cluster.local"); anything else must match the host
+	// exactly. Empty means no alias may be written at all — fail closed.
+	ConnectorAliasAllowedHosts []string
 }
 
 func Load() (*Config, error) {
@@ -119,6 +128,8 @@ func Load() (*Config, error) {
 		OpenBaoToken:         getEnvOrDefault("OPENBAO_TOKEN", ""),
 		OpenBaoMount:         getEnvOrDefault("OPENBAO_MOUNT", "secret"),
 		SecretsClientTimeout: getEnvDurationOrDefault("SECRETS_CLIENT_TIMEOUT", 5*time.Second),
+
+		ConnectorAliasAllowedHosts: getEnvCSV("CONNECTOR_ALIAS_ALLOWED_HOSTS"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -217,6 +228,23 @@ func getEnvOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// getEnvCSV reads a comma-separated list, dropping empty entries so a
+// trailing comma or a blank value yields an empty slice rather than a list
+// containing "".
+func getEnvCSV(key string) []string {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func getEnvIntOrDefault(key string, fallback int) int {

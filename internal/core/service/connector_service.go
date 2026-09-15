@@ -23,19 +23,24 @@ type ConnectorDeps struct {
 	Secrets port.SecretsClient
 	Aliases port.ConnectorAliasRepository
 	Log     port.Logger
+	// AliasAllowedHosts bounds a rest-call alias's BaseURL. Empty rejects
+	// every alias write — see domain.ValidateBaseURLHost.
+	AliasAllowedHosts []string
 }
 
 type ConnectorService struct {
-	secrets port.SecretsClient
-	aliases port.ConnectorAliasRepository
-	log     port.Logger
+	secrets           port.SecretsClient
+	aliases           port.ConnectorAliasRepository
+	log               port.Logger
+	aliasAllowedHosts []string
 }
 
 func NewConnectorService(d ConnectorDeps) *ConnectorService {
 	return &ConnectorService{
-		secrets: d.Secrets,
-		aliases: d.Aliases,
-		log:     logOrNoop(d.Log),
+		secrets:           d.Secrets,
+		aliases:           d.Aliases,
+		log:               logOrNoop(d.Log),
+		aliasAllowedHosts: d.AliasAllowedHosts,
 	}
 }
 
@@ -95,6 +100,11 @@ func (s *ConnectorService) ListAliases(ctx context.Context) ([]domain.ConnectorR
 
 func (s *ConnectorService) WriteRestAlias(ctx context.Context, a domain.ConnectorRestAlias) error {
 	if err := a.Validate(); err != nil {
+		return err
+	}
+	// Checked here rather than in Validate: the allowlist is deployment
+	// configuration, and domain types take no config.
+	if err := domain.ValidateBaseURLHost(a.BaseURL, s.aliasAllowedHosts); err != nil {
 		return err
 	}
 	return s.aliases.UpsertRest(ctx, a)

@@ -169,9 +169,10 @@ func newApp(cfg *config.Config) (*app, error) {
 	})
 
 	connectorSvc := service.NewConnectorService(service.ConnectorDeps{
-		Secrets: secretsSvc,
-		Aliases: connectorAliasRepo,
-		Log:     log,
+		Secrets:           secretsSvc,
+		Aliases:           connectorAliasRepo,
+		Log:               log,
+		AliasAllowedHosts: cfg.ConnectorAliasAllowedHosts,
 	})
 
 	moduleSvc := service.NewModuleService(service.ModuleDeps{

@@ -412,3 +412,67 @@ func TestLoad_InvalidValues_FallBackToDefaults(t *testing.T) {
 		t.Errorf("OutboxPollInterval fallback = %v, want 500ms", cfg.OutboxPollInterval)
 	}
 }
+
+// SystemDSN backs scope=global catalog writes. Production requires its own
+// DSN (Load rejects a prod config without one); everywhere else it falls
+// back to DATABASE_URL so a local run needs one connection string, not two.
+func TestSystemDSN(t *testing.T) {
+	tests := []struct {
+		name     string
+		system   string
+		database string
+		want     string
+	}{
+		{"falls back to DATABASE_URL when unset", "", "postgres://app", "postgres://app"},
+		{"uses SYSTEM_DATABASE_URL when set", "postgres://system", "postgres://app", "postgres://system"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", tt.database)
+			t.Setenv("SYSTEM_DATABASE_URL", tt.system)
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load() unexpected error: %v", err)
+			}
+			if got := cfg.SystemDSN(); got != tt.want {
+				t.Errorf("SystemDSN() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// The connector-alias allowlist is read as CSV. Blank entries are dropped so
+// a trailing comma cannot smuggle an empty host into the list — an empty
+// entry that reached ValidateBaseURLHost would be skipped there too, but the
+// list is also what operators read back, so it must be clean at the source.
+func TestLoad_ConnectorAliasAllowedHosts(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"unset yields no hosts, which fails closed downstream", "", nil},
+		{"single host", "api.internal", []string{"api.internal"}},
+		{"trims surrounding whitespace", " api.internal , .svc.cluster.local ", []string{"api.internal", ".svc.cluster.local"}},
+		{"drops blank entries from a trailing comma", "api.internal,,", []string{"api.internal"}},
+		{"a list of only separators yields no hosts", " , , ", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://localhost")
+			t.Setenv("CONNECTOR_ALIAS_ALLOWED_HOSTS", tt.raw)
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load() unexpected error: %v", err)
+			}
+			if len(cfg.ConnectorAliasAllowedHosts) != len(tt.want) {
+				t.Fatalf("ConnectorAliasAllowedHosts = %#v, want %#v", cfg.ConnectorAliasAllowedHosts, tt.want)
+			}
+			for i, host := range tt.want {
+				if cfg.ConnectorAliasAllowedHosts[i] != host {
+					t.Errorf("host[%d] = %q, want %q", i, cfg.ConnectorAliasAllowedHosts[i], host)
+				}
+			}
+		})
+	}
+}
