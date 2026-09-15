@@ -1,0 +1,23 @@
+sequenceDiagram
+    participant Caller
+    participant Pool
+    participant pgxpool
+    participant Hook as PrepareConn hook
+    participant DB as PostgreSQL
+
+    Caller ->>+ Pool: WithConn(ctx, fn)
+    Pool   ->>+ pgxpool: Acquire(ctx)
+    pgxpool ->>+ Hook: PrepareConn(ctx, conn)
+    alt GUCProvider set and GUCSet non-zero
+        Hook ->> Hook: GUCProvider(ctx) → GUCSet
+        Hook ->> Hook: g.Validate()
+        Hook ->>  DB: batch set_config(user_id, tenant_id, tenant_roles, is_local=false)
+        Hook -->> pgxpool: true, nil
+    else no GUCProvider or zero GUCSet
+        Hook -->> pgxpool: true, nil
+    end
+    pgxpool -->>- Pool: *pgxpool.Conn
+    Pool   ->>+ Caller: fn(ctx, conn)
+    Caller -->>- Pool: error or nil
+    Pool   ->> pgxpool: conn.Release()
+    Pool -->>- Caller: return error

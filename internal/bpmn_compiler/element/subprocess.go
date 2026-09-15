@@ -1,0 +1,178 @@
+package element
+
+import (
+	"fmt"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/validator"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+)
+
+type SubProcessHandler struct{}
+
+func (SubProcessHandler) NodeType() bpmncore.FlowNodeType { return bpmncore.NodeTypeSubProcess }
+
+func (SubProcessHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *bpmncore.Graph, defs *bpmncore.BPMNDefinitions, stageTypes map[string]bpmncore.StageTypeHandler, elements map[bpmncore.FlowNodeType]bpmncore.ElementHandler) []domain.BPMNValidationError {
+	sp := bpmncore.FindSubProcess(proc, nodeID)
+	if sp == nil {
+		return nil
+	}
+
+	errorIDs := make(map[string]struct{}, len(defs.Errors))
+	for _, e := range defs.Errors {
+		errorIDs[e.ID] = struct{}{}
+	}
+
+	inner := bpmncore.SubProcToProcess(sp)
+	innerG := bpmncore.BuildGraph(inner)
+	var errs []domain.BPMNValidationError
+	errs = append(errs, validator.Validate(inner, innerG, stageTypes, elements, defs)...)
+
+	for _, be := range proc.BoundaryEvents {
+		if be.AttachedToRef != sp.ID || be.Error == nil || be.Error.ErrorRef == "" {
+			continue
+		}
+		if _, ok := errorIDs[be.Error.ErrorRef]; !ok {
+			errs = validator.AppendErr(errs, domain.BPMNErrInvalidBoundaryAttachment, be.ID,
+				fmt.Sprintf("error boundary event errorRef %q does not reference a known bpmn:error element", be.Error.ErrorRef))
+		}
+	}
+	return errs
+}
+
+func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error {
+	sp := bpmncore.FindSubProcess(cs.Proc, nodeID)
+	if sp == nil {
+		return fmt.Errorf("subprocess %q not found in process", nodeID)
+	}
+
+	inner := bpmncore.SubProcToProcess(sp)
+	innerState, err := compileInnerState(inner, cs)
+	if err != nil {
+		return fmt.Errorf("subprocess %q: %w", nodeID, err)
+	}
+
+	depts := innerState.CollectedDepts()
+	steps := innerState.CollectedSteps()
+
+	if parentLane := bpmncore.LaneNameFor(nodeID, cs.Proc); parentLane != "" {
+		assignParentLaneDept(depts, steps, parentLane, bpmncore.DeptIDFor(nodeID, cs.Proc))
+	}
+
+	for _, dept := range depts {
+		cs.EnsureDept(dept.ID, dept.Label, dept.IAMDepartmentID)
+		for _, stage := range dept.Stages {
+			cs.AppendStage(dept.ID, stage)
+		}
+	}
+
+	var errorPaths []dsl.ErrorPath
+	var timerPaths []dsl.TimerPath
+	var messagePaths []dsl.MessagePath
+	for _, be := range cs.Proc.BoundaryEvents {
+		if be.AttachedToRef != nodeID {
+			continue
+		}
+		targetDept := cs.FirstDeptAhead(bpmncore.OutgoingTargetOf(be.ID, cs.Proc))
+		if be.Error != nil {
+			errorCode := cs.ResolveErrorCode(be.Error.ErrorRef)
+			errorPaths = append(errorPaths, dsl.ErrorPath{
+				ErrorCode:  errorCode,
+				TargetDept: targetDept,
+			})
+		}
+		if be.Timer != nil {
+			timerPaths = append(timerPaths, dsl.TimerPath{
+				Duration:     be.Timer.Duration,
+				Interrupting: be.CancelActivity != "false",
+				TargetDept:   targetDept,
+			})
+		}
+		if be.Message != nil {
+			msgName := bpmncore.ResolveMessageName(be.Message.MessageRef, cs.Defs)
+			if msgName == "" {
+				msgName = bpmncore.ResolveMessageFlowTarget(be.ID, cs.Defs)
+			}
+			messagePaths = append(messagePaths, dsl.MessagePath{
+				MessageName:  msgName,
+				Interrupting: be.CancelActivity != "false",
+				TargetDept:   targetDept,
+			})
+		}
+	}
+
+	cs.FlushSeqBuf()
+	cs.AppendStep(dsl.ExecutionStep{
+		SubWorkflow: &dsl.SubWorkflowStep{
+			NodeID:       sp.ID,
+			Name:         sp.Name,
+			Plan:         dsl.ExecutionPlan{Steps: steps},
+			ErrorPaths:   errorPaths,
+			TimerPaths:   timerPaths,
+			MessagePaths: messagePaths,
+		},
+	})
+
+	fwd := cs.ForwardNexts(nodeID)
+	if len(fwd) > 0 {
+		return cs.TraverseNode(fwd[0])
+	}
+	return nil
+}
+
+// assignParentLaneDept backfills the parent lane onto any inner dept/step left
+// with no lane of its own — an inner sub-process body has no laneSet of its
+// own, so its lane is inherited from the sub-process element's own lane.
+func assignParentLaneDept(depts []dsl.DepartmentDef, steps []dsl.ExecutionStep, parentLane, parentIAMDeptID string) {
+	for i := range depts {
+		if depts[i].ID == "" {
+			depts[i].ID = parentLane
+			depts[i].Label = parentLane
+			depts[i].IAMDepartmentID = parentIAMDeptID
+		}
+	}
+	patchEmptyDepts(steps, parentLane)
+}
+
+func patchEmptyDepts(steps []dsl.ExecutionStep, lane string) {
+	for i := range steps {
+		for j := range steps[i].Sequential {
+			if steps[i].Sequential[j] == "" {
+				steps[i].Sequential[j] = lane
+			}
+		}
+		for j := range steps[i].Parallel {
+			if steps[i].Parallel[j].DeptID == "" {
+				steps[i].Parallel[j].DeptID = lane
+			}
+			patchEmptyDepts(steps[i].Parallel[j].Steps, lane)
+		}
+		for j := range steps[i].Exclusive {
+			b := &steps[i].Exclusive[j]
+			if b.RevertToStage != "" || b.RevertToDept != "" {
+				if b.RevertToDept == "" {
+					b.RevertToDept = lane
+				}
+			} else if !b.Terminates {
+				if b.Target == "" {
+					b.Target = lane
+				}
+			}
+		}
+		if sw := steps[i].SubWorkflow; sw != nil {
+			patchEmptyDepts(sw.Plan.Steps, lane)
+			for k := range sw.ErrorPaths {
+				if sw.ErrorPaths[k].TargetDept == "" {
+					sw.ErrorPaths[k].TargetDept = lane
+				}
+			}
+			for k := range sw.TimerPaths {
+				if sw.TimerPaths[k].TargetDept == "" {
+					sw.TimerPaths[k].TargetDept = lane
+				}
+			}
+		}
+	}
+}

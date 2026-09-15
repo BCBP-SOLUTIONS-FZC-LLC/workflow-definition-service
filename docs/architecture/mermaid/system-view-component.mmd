@@ -1,0 +1,50 @@
+---
+config:
+  layout: elk
+---
+graph TD
+    UI[Frontend Modeler]
+    Gateway[Envoy API Gateway]
+    ExecSvc[Execution Svc / Workers]
+
+    subgraph Workflow_Definition_Service [Workflow Definition Service]
+        API[Gin HTTP API]
+        gRPC[gRPC API]
+        Parser[BPMN Parser]
+        Compiler[DSL Compiler]
+        Validator[Validation Engine]
+        InternalEvents[POST /internal/events]
+        OutboxRelay[Outbox Background Worker]
+
+        API --> Validator
+        API --> Parser
+        gRPC --> Compiler
+        Parser --> Compiler
+    end
+
+    subgraph Persistence [RDS PostgreSQL]
+        DB[(workflow_definition DB)]
+        OutboxTable[(outbox)]
+    end
+
+    subgraph External_Integrations [External Services]
+        OrgMembership[Org & Membership Service]
+        SNS[SNS: wf.template.events]
+        EventsConsumer[Shared Workflow-Events Consumer]
+        SQS_Membership[SQS: membership-wf-q]
+    end
+
+    UI -->|1. Get Eligible Users per Node| OrgMembership
+    UI -->|2. Upload BPMN| Gateway
+    Gateway -->|Headers: x-tenant-id, etc.| API
+    ExecSvc -->|gRPC: GetCompiledWorkflow| gRPC
+
+    Compiler -->|3. Validate Assignee Eligibility| OrgMembership
+    Compiler -->|4. Store Draft/Publish| DB
+    API -->|5. Insert Outbox Event| OutboxTable
+    SQS_Membership -.->|6. Consume Revocation Events| EventsConsumer
+    EventsConsumer -->|7. POST /internal/events| InternalEvents
+    InternalEvents -->|Invalidate Affected Templates| DB
+
+    OutboxRelay -->|8. Read Pending Events| OutboxTable
+    OutboxRelay -->|9. Publish Event| SNS

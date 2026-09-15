@@ -7,11 +7,20 @@ ifneq ($(wildcard .env),)
   export
 endif
 
-SQLC_VERSION       := latest
-GOOSE_VERSION      := latest
-BUF_VERSION        := latest
-MOCKGEN_VERSION    := latest
-GOLANGCI_VERSION   := latest
+SQLC_VERSION         := v1.31.1
+BUF_VERSION          := v1.50.0
+MOCKGEN_VERSION      := v0.6.0
+GOLANGCI_VERSION     := v2.12.2
+GOVULNCHECK_VERSION  := v1.1.4
+GOARCHLINT_VERSION   := v1.15.0
+HADOLINT_VERSION     := v2.12.0
+TRIVY_VERSION        := 0.71.2
+
+# Docker images pulled by integration tests via testcontainers-go.
+# Run `make tools-integration` once to warm the local Docker image cache.
+TESTCONTAINERS_POSTGRES_IMAGE    := postgres:18-alpine
+TESTCONTAINERS_LOCALSTACK_IMAGE  := localstack/localstack:3
+TESTCONTAINERS_VALKEY_IMAGE      := valkey/valkey:8-alpine
 
 TOOLS_DIR          := .tools
 BIN_DIR            := bin
@@ -19,25 +28,50 @@ COVERAGE_DIR       := .coverage
 MODULE             := github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service
 
 SQLC               := $(TOOLS_DIR)/sqlc
-GOOSE              := $(TOOLS_DIR)/goose
 BUF                := $(TOOLS_DIR)/buf
 MOCKGEN            := $(TOOLS_DIR)/mockgen
 GOLANGCI           := $(TOOLS_DIR)/golangci-lint
+GOVULNCHECK        := $(TOOLS_DIR)/govulncheck
+GOARCHLINT         := $(TOOLS_DIR)/go-arch-lint
+HADOLINT           := $(TOOLS_DIR)/hadolint
+TRIVY              := $(TOOLS_DIR)/trivy
 
 BUILD_VERSION      ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS            := -X main.version=$(BUILD_VERSION)
 
 COVER_PROFILE      := $(COVERAGE_DIR)/coverage.out
 COVER_HTML         := $(COVERAGE_DIR)/coverage.html
-COVER_THRESHOLD    := 70
+# Exclude generated packages (sqlc db/, mockgen mocks/), the postgres adapter
+# (integration-tested separately), and the glue codec (requires a live AWS Glue
+# endpoint — not unit-testable) from the coverage denominator.
+# COVER_EXCLUDE_PKG: end-anchored, used to filter `go list` package paths.
+# COVER_EXCLUDE_FILE: path-prefix form, used to filter coverage profile lines (which
+#   contain /package/file.go:... rather than ending at the package name).
+COVER_EXCLUDE_PKG  := /postgres/db$$\|/postgres$$\|/mocks$$\|/glue$$\|/inbound/http$$
+COVER_EXCLUDE_FILE := /postgres/db/\|/postgres/\|/mocks/\|/glue/\|/service/noop_logger.go\|/inbound/http/asyncapi.go\|/inbound/http/swagger
+COVER_THRESHOLD    := 95  # target 97%; postgres adapter, generated pkgs, and glue codec excluded
+# Per-package floors: packages not listed must meet COVER_THRESHOLD.
+# gRPC adapters are excluded because server-reflection and transport-level paths
+# require a live gRPC connection and are covered by integration tests instead.
+# internal/adapter/inbound/http: AsyncAPI renderer is 500 lines of HTML template
+# logic only exercisable via a live dev server; swagger handlers are trivially tested.
+COVER_PKG_FLOORS   := internal/adapter/inbound/grpc:75 \
+                      internal/adapter/inbound/http:3 \
+                      internal/adapter/outbound/grpc:90 \
+                      internal/adapter/outbound/http:85 \
+                      internal/bpmn_compiler:90 \
+                      internal/bpmn_compiler/element:75 \
+                      internal/config:90
 
-.PHONY: all tools generate generate-proto generate-sqlc mock \
-        migrate-up migrate-down \
-        build test test-integration \
-        cover cover-html cover-check \
-        lint lint-fix \
-        docs-serve docs-build \
+.PHONY: all tools tools-integration generate generate-proto generate-sqlc mock \
+        build migrate test test-integration test-ci merge-coverage \
+        cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
+        arch-lint lint lint-fix vuln \
+        tidy fmt-check fix check \
+        setup install-hooks \
         docker-up docker-down \
+        docker-build docker-lint docker-trivy docker-check pin-base-images \
+        schema-pull extract-schemas schema-validate schema-diff schema-register schema-prune \
         clean help
 
 all: generate build
@@ -47,12 +81,39 @@ all: generate build
 tools:
 	@mkdir -p $(TOOLS_DIR)
 	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
-	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/pressly/goose/v3/cmd/goose@$(GOOSE_VERSION)
 	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION)
 	GOBIN=$(PWD)/$(TOOLS_DIR) go install go.uber.org/mock/mockgen@$(MOCKGEN_VERSION)
 	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
 		| sh -s -- -b $(PWD)/$(TOOLS_DIR) $(GOLANGCI_VERSION)
+	GOBIN=$(PWD)/$(TOOLS_DIR) go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/fe3dback/go-arch-lint@$(GOARCHLINT_VERSION)
+	@OS=$$(uname -s); ARCH=$$(uname -m); \
+	if [ "$$OS" = "Darwin" ]; then \
+	    if command -v brew >/dev/null 2>&1; then \
+	        brew install hadolint >/dev/null && cp "$$(brew --prefix)/bin/hadolint" $(TOOLS_DIR)/hadolint; \
+	    else \
+	        echo "hadolint: brew not found on macOS — install manually: brew install hadolint"; exit 1; \
+	    fi; \
+	else \
+	    curl -sLo $(TOOLS_DIR)/hadolint \
+	      "https://github.com/hadolint/hadolint/releases/download/$(HADOLINT_VERSION)/hadolint-$$OS-$$ARCH" && \
+	    chmod +x $(TOOLS_DIR)/hadolint; \
+	fi
+	@OS=$$(uname -s); ARCH=$$(uname -m); \
+	if [ "$$OS" = "Darwin" ] && [ "$$ARCH" = "arm64" ]; then TRIVY_OS_ARCH="macOS-ARM64"; \
+	elif [ "$$OS" = "Darwin" ]; then TRIVY_OS_ARCH="macOS-64bit"; \
+	else TRIVY_OS_ARCH="Linux-$$ARCH"; fi; \
+	curl -sLo /tmp/trivy.tar.gz \
+	  "https://github.com/aquasecurity/trivy/releases/download/v$(TRIVY_VERSION)/trivy_$(TRIVY_VERSION)_$$TRIVY_OS_ARCH.tar.gz" && \
+	tar -xzf /tmp/trivy.tar.gz -C $(TOOLS_DIR) trivy && rm /tmp/trivy.tar.gz
 	@echo "✓ tools installed to $(TOOLS_DIR)/"
+
+## tools-integration: Pre-pull Docker images used by integration tests (testcontainers-go)
+tools-integration:
+	docker pull $(TESTCONTAINERS_POSTGRES_IMAGE)
+	docker pull $(TESTCONTAINERS_LOCALSTACK_IMAGE)
+	docker pull $(TESTCONTAINERS_VALKEY_IMAGE)
+	@echo "✓ Docker images ready for integration tests"
 
 
 ## generate: Run buf (proto → gen/) and sqlc (queries → postgres/db/)
@@ -84,16 +145,10 @@ mock:
 	$(MOCKGEN) -source=internal/core/port/services.go \
 	           -destination=internal/core/port/mocks/services_mock.go \
 	           -package=mocks
+	$(MOCKGEN) -source=internal/core/port/transactor.go \
+	           -destination=internal/core/port/mocks/transactor_mock.go \
+	           -package=mocks
 	@echo "✓ mocks written to internal/core/port/mocks/"
-
-
-## migrate-up: Apply all pending Goose migrations
-migrate-up:
-	$(GOOSE) -dir db/migrations postgres "$(DATABASE_URL)" up
-
-## migrate-down: Roll back the last applied Goose migration
-migrate-down:
-	$(GOOSE) -dir db/migrations postgres "$(DATABASE_URL)" down
 
 
 ## build: Compile server binary to bin/server
@@ -102,55 +157,276 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/server ./cmd/server
 	@echo "✓ binary: $(BIN_DIR)/server"
 
+## migrate: Apply DB schema migrations (outbox + domain) and exit. Run before the server.
+migrate:
+	go run ./cmd/server migrate
 
-## test: Run unit tests with race detector
+## dev: Run the server locally (requires .env to be populated).
+dev:
+	go run ./cmd/server
+
+## test: Run unit tests with race detector and coverage (internal + test/unit)
 test:
-	go test -race -count=1 ./...
-
-## test-integration: Run integration tests (requires running infra)
-test-integration:
-	go test -race -count=1 -tags=integration ./...
-
-## cover: Run tests and print per-package coverage summary
-cover:
 	@mkdir -p $(COVERAGE_DIR)
-	go test -race -count=1 -coverprofile=$(COVER_PROFILE) -covermode=atomic ./...
-	@go tool cover -func=$(COVER_PROFILE) | tail -1
+	go test -race -count=1 \
+	    -coverpkg=$$(go list ./internal/... ./cmd/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
+	    -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
+	    ./internal/... ./test/unit/...
+	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/unit.out > $(COVERAGE_DIR)/unit.out.filtered && mv $(COVERAGE_DIR)/unit.out.filtered $(COVERAGE_DIR)/unit.out
+	@go tool cover -func=$(COVERAGE_DIR)/unit.out | awk '/^total:/{print "total:", $$NF}'
 
-## cover-html: Open an HTML coverage report in the browser
-cover-html: cover
+## test-integration: Run integration tests — spins up containers via testcontainers-go (no make docker-up needed)
+test-integration:
+	@mkdir -p $(COVERAGE_DIR)
+	AWS_ACCESS_KEY_ID=test \
+	AWS_SECRET_ACCESS_KEY=test \
+	AWS_EC2_METADATA_DISABLED=true \
+	TESTCONTAINERS_RYUK_DISABLED=true \
+	go test -race -count=1 -tags integration \
+	    -coverpkg=$$(go list ./internal/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
+	    -coverprofile=$(COVERAGE_DIR)/integration.out \
+	    -covermode=atomic \
+	    ./test/integration/... ./test/e2e/...
+	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/integration.out > $(COVERAGE_DIR)/integration.out.filtered && mv $(COVERAGE_DIR)/integration.out.filtered $(COVERAGE_DIR)/integration.out
+	@go tool cover -func=$(COVERAGE_DIR)/integration.out | tail -1
+
+## merge-coverage: Merge unit + integration profiles into coverage.out (max-count-per-block strategy)
+merge-coverage:
+	@python3 scripts/merge_coverage.py $(COVERAGE_DIR)/unit.out $(COVERAGE_DIR)/integration.out > $(COVER_PROFILE)
+	@echo "✓ $(COVER_PROFILE) merged from unit + integration suites"
+
+## test-ci: Run unit + integration suites and merge coverage
+test-ci: test test-integration merge-coverage
+	@go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print "total:", $$NF}'
+
+## cover: Print total coverage from last test run (run 'make test-ci' first)
+cover:
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
+	@go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print "total:", $$NF}'
+
+## cover-func: Print per-function coverage breakdown (run 'make test-ci' first)
+cover-func:
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
+	@go tool cover -func=$(COVER_PROFILE)
+
+## cover-gaps: Show uncovered and partially-covered functions (run 'make test-ci' first)
+cover-gaps:
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
+	@./scripts/uncovered.sh $(COVER_PROFILE)
+
+## cover-html: Open HTML coverage report in the browser (run 'make test-ci' first)
+cover-html:
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
 	go tool cover -html=$(COVER_PROFILE) -o $(COVER_HTML)
 	@echo "✓ report: $(COVER_HTML)"
 	@open $(COVER_HTML) 2>/dev/null || xdg-open $(COVER_HTML) 2>/dev/null || true
 
-## cover-check: Fail if total coverage is below COVER_THRESHOLD (default 70%)
-cover-check: cover
-	@TOTAL=$$(go tool cover -func=$(COVER_PROFILE) | tail -1 | awk '{print $$3}' | tr -d '%'); \
-	echo "Coverage: $${TOTAL}% (threshold: $(COVER_THRESHOLD)%)"; \
+## cover-check-pkg: Per-package coverage gate — each package must meet its floor (run 'make test-ci' first)
+cover-check-pkg:
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
+	@awk \
+	  -v module="$(MODULE)/" \
+	  -v floors="$(subst \,,$(COVER_PKG_FLOORS))" \
+	  -v global="$(COVER_THRESHOLD)" \
+	  'BEGIN { \
+	    n=split(floors,pairs," "); \
+	    for(i=1;i<=n;i++){split(pairs[i],kv,":");thresh[kv[1]]=kv[2]+0} \
+	  } \
+	  /^mode:/{next} \
+	  { \
+	    key=$$1; stmts=$$2+0; count=$$3+0; \
+	    blk_stmts[key]=stmts; blk_count[key]+=count; \
+	    path=key; sub(/:.*$$/,"",path); sub(module,"",path); sub(/\/[^\/]+$$/,"",path); \
+	    blk_pkg[key]=path \
+	  } \
+	  END { \
+	    for(key in blk_stmts){ \
+	      pkg=blk_pkg[key]; \
+	      tot[pkg]+=blk_stmts[key]; \
+	      if(blk_count[key]>0) cov[pkg]+=blk_stmts[key] \
+	    } \
+	    fail=0; \
+	    for(pkg in tot){ \
+	      if(tot[pkg]==0)continue; \
+	      pct=cov[pkg]*100/tot[pkg]; \
+	      floor=(pkg in thresh)?thresh[pkg]:global; \
+	      if(pct<floor){printf "✗  %-58s %5.1f%% (need %d%%)\n",pkg,pct,floor; fail=1} \
+	      else{printf "✓  %-58s %5.1f%%\n",pkg,pct} \
+	    } \
+	    exit fail \
+	  }' $(COVER_PROFILE)
+
+## cover-check: Global + per-package coverage gate (runs unit + integration tests automatically)
+cover-check: test-ci cover-check-pkg
+	@TOTAL=$$(go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print $$NF}' | tr -d '%'); \
+	echo "total: $${TOTAL}% (floor: $(COVER_THRESHOLD)%)"; \
 	if [ $$(echo "$${TOTAL} < $(COVER_THRESHOLD)" | bc -l) -eq 1 ]; then \
-		echo "✗ coverage below $(COVER_THRESHOLD)%"; exit 1; \
+		echo "✗ total coverage below $(COVER_THRESHOLD)%"; exit 1; \
 	else \
 		echo "✓ coverage ok"; \
 	fi
 
 
-## lint: Run golangci-lint
+## tidy: Run go mod tidy
+tidy:
+	go mod tidy
+
+## fmt-check: Verify gofmt formatting (read-only; exits non-zero on violations)
+fmt-check:
+	@files=$$(gofmt -l cmd/ internal/ test/); if [ -n "$$files" ]; then echo "gofmt violations (run 'make fix'):"; echo "$$files"; exit 1; fi
+
+## fix: Auto-fix formatting (gofmt) and lint issues (golangci-lint --fix)
+fix:
+	@echo "==> gofmt (auto-fix)"
+	gofmt -w cmd/ internal/ test/
+	@echo "==> lint (auto-fix)"
+	$(GOLANGCI) run --fix ./...
+	@echo "✓ formatting and lint fixes applied"
+
+## check: Verify formatting/lint (read-only), run vet, tests, and coverage gate — full local CI pass
+check:
+	@echo "==> gofmt"
+	@$(MAKE) fmt-check
+	@echo "==> lint"
+	$(GOLANGCI) run ./cmd/... ./internal/... ./test/...
+	@echo "==> go vet"
+	go vet ./cmd/... ./internal/...
+	@echo "==> arch-lint"
+	$(MAKE) arch-lint
+	@echo "==> test-ci (unit + integration, merged coverage gate)"
+	$(MAKE) cover-check
+	@echo "✓ all checks passed"
+
+## arch-lint: Enforce Clean Architecture import direction via go-arch-lint
+arch-lint:
+	$(GOARCHLINT) check --project-path .
+
+## lint: Run golangci-lint (read-only; exits non-zero on violations)
 lint:
-	$(GOLANGCI) run ./...
+	$(GOLANGCI) run ./cmd/... ./internal/... ./test/...
 
 ## lint-fix: Run golangci-lint with auto-fix
 lint-fix:
-	$(GOLANGCI) run --fix ./...
+	$(GOLANGCI) run --fix ./cmd/... ./internal/... ./test/...
+
+## vuln: Run govulncheck to detect known vulnerabilities in dependencies
+vuln:
+	$(GOVULNCHECK) ./...
 
 
-## docs-serve: Serve MkDocs locally at http://localhost:8001  (requires: brew install mkdocs)
-docs-serve:
-	mkdocs serve --dev-addr 0.0.0.0:8001
 
-## docs-build: Build static MkDocs site to site/
-docs-build:
-	mkdocs build
 
+IMAGE_TAG ?= local
+
+## docker-build: Build the service container image (requires GO_PRIVATE_TOKEN in env)
+docker-build:
+	docker buildx build \
+	  --secret id=go_private_token,env=GO_PRIVATE_TOKEN \
+	  --build-arg BUILD_VERSION=$(IMAGE_TAG) \
+	  --load \
+	  -t workflow-definition-service:$(IMAGE_TAG) .
+
+## docker-lint: Lint Dockerfile with Hadolint (run 'make tools' to install)
+docker-lint:
+	$(HADOLINT) --config .hadolint.yaml Dockerfile
+
+## docker-trivy: Scan source and dependencies for HIGH/CRITICAL CVEs (run 'make tools' to install)
+docker-trivy:
+	$(TRIVY) fs . \
+	  --severity HIGH,CRITICAL \
+	  --ignore-unfixed \
+	  --exit-code 1 \
+	  --skip-dirs vendor \
+	  --skip-dirs platform-libs \
+	  --skip-dirs .design
+
+## docker-check: Run Dockerfile lint + dependency CVE scan (no image build required)
+docker-check: docker-lint docker-trivy
+	@echo "✓ all container checks passed"
+
+## pin-base-images: Resolve current digests for Dockerfile base images and pin them (writes .docker-digests)
+pin-base-images:
+	@GOLANG_DIGEST=$$(docker buildx imagetools inspect golang:1.26-alpine | awk '/^Digest:/{print $$2; exit}'); \
+	DISTROLESS_DIGEST=$$(docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot | awk '/^Digest:/{print $$2; exit}'); \
+	sed -i.bak "s|FROM golang:1.26-alpine.*AS builder|FROM golang:1.26-alpine@$$GOLANG_DIGEST AS builder|" Dockerfile; \
+	sed -i.bak "s|FROM gcr.io/distroless/static-debian12:nonroot.*|FROM gcr.io/distroless/static-debian12:nonroot@$$DISTROLESS_DIGEST|" Dockerfile; \
+	rm -f Dockerfile.bak; \
+	printf 'golang:1.26-alpine@%s\ngcr.io/distroless/static-debian12:nonroot@%s\n' "$$GOLANG_DIGEST" "$$DISTROLESS_DIGEST" > .docker-digests; \
+	echo "Pinned base images — see .docker-digests"
+
+
+# platform-schemagov — CI-time event schema governance (validate/register/prune).
+# CLI flags confirmed against iam-user-profile's working Makefile/CLAUDE.md —
+# see .claude/api-and-events.md. Do not reintroduce a --workspace flag; it
+# does not exist on this CLI.
+SCHEMA_GOV_IMAGE ?= ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov:0.4
+
+## schema-pull: Pull the platform-schemagov image
+schema-pull:
+	docker pull "$(SCHEMA_GOV_IMAGE)"
+
+## extract-schemas: Derive internal/eventschema/*.json from api/asyncapi.yaml
+extract-schemas:
+	docker run --rm -v "$(CURDIR)":/workspace "$(SCHEMA_GOV_IMAGE)" extract \
+	  --asyncapi   api/asyncapi.yaml \
+	  --schema-dir internal/eventschema
+
+## schema-validate: Run structural/lifecycle/drift checks against api/asyncapi.yaml + internal/eventschema (no AWS required)
+schema-validate: extract-schemas
+	docker run --rm -v "$(CURDIR)":/workspace "$(SCHEMA_GOV_IMAGE)" validate \
+	  --asyncapi   api/asyncapi.yaml \
+	  --schema-dir internal/eventschema
+
+## schema-diff: Diff two JSON Schema files — usage: make schema-diff CURRENT=<current.json> PROPOSED=<proposed.json> [SCHEMA_NAME=<name>]
+schema-diff:
+	@test -n "$(CURRENT)" && test -n "$(PROPOSED)" || { \
+	  echo "Usage: make schema-diff CURRENT=<current.json> PROPOSED=<proposed.json> [SCHEMA_NAME=<name>]"; \
+	  exit 1; \
+	}
+	docker run --rm -v "$(CURDIR)":/workspace "$(SCHEMA_GOV_IMAGE)" diff \
+	  --current     "$(CURRENT)" \
+	  --proposed    "$(PROPOSED)" \
+	  --schema-name "$(or $(SCHEMA_NAME),$(notdir $(basename $(PROPOSED))))"
+
+## schema-register: Register schemas in AWS Glue (requires AWS creds or LocalStack via AWS_ENDPOINT_URL)
+schema-register:
+	@test -n "$(GLUE_REGISTRY_NAME)" || { \
+	  echo "GLUE_REGISTRY_NAME is not set — add it to .env or pass on the command line"; \
+	  exit 1; \
+	}
+	docker run --rm -v "$(CURDIR)":/workspace \
+	  -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_ENDPOINT_URL \
+	  "$(SCHEMA_GOV_IMAGE)" register \
+	  --registry   "$(GLUE_REGISTRY_NAME)" \
+	  --schema-dir internal/eventschema
+
+## schema-prune: Report orphaned Glue schemas (set EXECUTE=true to actually delete)
+schema-prune:
+	@test -n "$(GLUE_REGISTRY_NAME)" || { \
+	  echo "GLUE_REGISTRY_NAME is not set — add it to .env or pass on the command line"; \
+	  exit 1; \
+	}
+	docker run --rm -v "$(CURDIR)":/workspace \
+	  -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_ENDPOINT_URL \
+	  "$(SCHEMA_GOV_IMAGE)" prune \
+	  --registry "$(GLUE_REGISTRY_NAME)" \
+	  $(if $(filter true,$(EXECUTE)),--execute,)
+
+
+## setup: First-time onboarding — copy .env.example → .env and install git hooks
+setup:
+	@test -f .env || cp .env.example .env
+	@mkdir -p .git/hooks
+	@cp .githooks/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "✓ Environment ready (.env) and git hooks installed"
+
+## install-hooks: (Re)install the local pre-commit hook — run after .githooks/pre-commit changes
+install-hooks:
+	@mkdir -p .git/hooks
+	@cp .githooks/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "✓ Installed git hooks"
 
 ## docker-up: Start local infra (PostgreSQL + Valkey)
 docker-up:
@@ -166,7 +442,6 @@ docker-down:
 clean:
 	rm -rf $(BIN_DIR)
 	rm -rf $(COVERAGE_DIR)
-	rm -rf site/
 	rm -rf gen/
 	rm -rf internal/adapter/outbound/postgres/db/
 	rm -rf internal/core/port/mocks/

@@ -1,0 +1,19 @@
+flowchart TD
+    A([Runner.Start]) --> P[pollOnce - immediate first poll]
+    P --> C[SELECT FOR UPDATE SKIP LOCKED\nWHERE published_at IS NULL AND scheduled_at <= NOW]
+    C -- 0 rows --> B[wait PollInterval]
+    B --> C
+    C -- rows --> L[UPDATE scheduled_at = NOW + claimLease\nclaim lease to prevent duplicate processing]
+    L --> D[for each OutboxRecord]
+    D --> E[Unmarshal Payload to Envelope]
+    E -- error --> F[MarkFailed: attempts++\nif attempts >= MaxAttempts: dead-letter]
+    F --> D
+    E -- ok --> G[Publisher.Publish to SNS]
+    G -- success --> H[MarkPublished: published_at = NOW]
+    H --> D
+    G -- error --> I[MarkFailed: attempts++\nrelease lease]
+    I --> J{attempts >= MaxAttempts?}
+    J -- yes --> K[INSERT outbox_dead_letters\nDELETE outbox_events]
+    J -- no --> D
+    K --> D
+    D -- done --> B

@@ -1,0 +1,111 @@
+name: Validate Test
+
+# Reusable workflow — called by ci.yml and release.yml. Unit + integration
+# tests (race + coverage, merged into one profile), arch-lint. Requires a
+# sibling `generate` job to run first in the caller workflow and upload a
+# `generated` artifact (proto/sqlc/mocks), which this workflow downloads
+# rather than regenerating. See validate-quality.yml for the static-check
+# counterpart (fmt/tidy/vet/lint/vuln/Dockerfile pin).
+
+"on":
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to check out (leave empty to use the caller ref)'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  packages: read   # pull ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+  GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+      DOCKER_HOST: unix:///var/run/docker.sock
+      AWS_ACCESS_KEY_ID: test # pragma: allowlist secret
+      AWS_SECRET_ACCESS_KEY: test # pragma: allowlist secret
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      - name: Configure private module access
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: .github/scripts/configure-private-module-access.sh
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Architecture lint (import direction)
+        run: .github/scripts/arch-lint.sh
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Event schema sync check
+        run: .github/scripts/schema-extract-check.sh
+
+      - name: Restore Docker image cache
+        id: docker-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/docker-images.tar.gz
+          key: docker-${{ hashFiles('.github/docker-image-versions') }}
+
+      - name: Load or pull testcontainers images
+        env:
+          DOCKER_CACHE_HIT: ${{ steps.docker-cache.outputs.cache-hit }}
+        run: .github/scripts/pull-test-images.sh
+
+      - name: Unit tests & coverage
+        run: make test
+
+      - name: Integration tests & coverage
+        run: make test-integration
+
+      - name: Merge unit + integration coverage
+        run: make merge-coverage
+
+      - name: Enforce per-package coverage floors
+        run: make cover-check-pkg
+
+      - name: Enforce global coverage threshold (≥ 95%)
+        run: .github/scripts/coverage-gate.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: .coverage/coverage.out
+          if-no-files-found: ignore

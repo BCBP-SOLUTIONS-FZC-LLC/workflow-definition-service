@@ -1,0 +1,82 @@
+---
+config:
+  layout: elk
+---
+classDiagram
+    direction LR
+    class HTTPHandler {
+        +CreateWorkflow()
+        +GetWorkflowById()
+        +PublishDraft()
+        +ArchiveWorkflow()
+        +CloneWorkflow()
+        +ValidateWorkflow()
+    }
+
+    class HTTPMiddleware {
+        +TenantContext()
+        +ValidatePlanQuotas()
+    }
+
+    class PublisherService {
+        +PublishDraft()
+        +CreateDraft()
+        +ArchiveWorkflow()
+        -validateAndCompile()
+        -applyStructuralGuard()
+        -validateAssignees()
+    }
+
+    class Validator {
+        +ValidateBPMN()
+        -checkCycles()
+        -validateExtensions()
+    }
+
+    class DraftCompiler {
+        +CompileToDSL()
+        -buildGraph()
+        -resolveSequenceFlows()
+        -processGateways()
+    }
+
+    class PlanService {
+        <<interface>>
+        +EnforcePlanQuotas()
+    }
+
+    class MembershipService {
+        <<interface>>
+        +ValidateAssigneeEligibility()
+    }
+
+    class WorkflowRepository {
+        <<interface>>
+        +CreateWorkflowVersion()
+        +GetWorkflowVersion()
+        +UpdateActiveVersion()
+        +ArchiveVersion()
+    }
+
+    class OutboxRepository {
+        <<interface>>
+        +Enqueue()
+    }
+
+    class OutboxRelay {
+        +ProcessOutbox()
+        -publishToSNS()
+    }
+
+    HTTPHandler --> HTTPMiddleware : Uses middleware chain
+    HTTPHandler --> PublisherService : Dispatches requests
+    HTTPHandler --> Validator : Calls stateless validation
+
+    PublisherService --> Validator : Validates BPMN
+    PublisherService --> DraftCompiler : Compiles execution plan
+    PublisherService --> PlanService : Verifies template quotas
+    PublisherService --> MembershipService : Verifies assignee eligibility
+    PublisherService --> WorkflowRepository : Persists workflow and versions
+    PublisherService --> OutboxRepository : Transactionally enqueues events
+
+    OutboxRelay --> OutboxRepository : Polls and updates pending events

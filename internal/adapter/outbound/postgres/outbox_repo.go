@@ -2,16 +2,13 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"fmt"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/outbox"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
@@ -25,31 +22,14 @@ func NewOutboxRepo(pool *pgcommon.Pool) *OutboxRepo {
 	return &OutboxRepo{pool: pool}
 }
 
-func (r *OutboxRepo) Enqueue(ctx context.Context, event *domain.OutboxEvent) error {
-	err := r.pool.WithConn(ctx, func(ctx context.Context, conn *pgxpool.Conn) error {
-		queries := db.New(conn)
-		return queries.EnqueueEvent(ctx, db.EnqueueEventParams{
-			ID:        event.ID,
-			EventType: event.Topic,
-			Payload:   event.PayloadJSON,
-			TenantID:  event.TenantID.String(),
-			TraceID:   "",
-		})
-	})
-	if err != nil {
-		return fmt.Errorf("outbox enqueue: %w", err)
+// Enqueue writes env to the outbox_events table within the transaction stored
+// in ctx. The caller must be inside a Transactor.RunInTx callback; enqueueing
+// outside a transaction is rejected because the outbox insert and the business
+// write must be atomic.
+func (r *OutboxRepo) Enqueue(ctx context.Context, env events.Envelope[json.RawMessage]) error {
+	tx, ok := txFromContext(ctx)
+	if !ok {
+		return errors.New("outbox: Enqueue must be called inside a transaction — use Transactor.RunInTx")
 	}
-	return nil
-}
-
-func (r *OutboxRepo) FetchPending(_ context.Context, _ int) ([]*domain.OutboxEvent, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (r *OutboxRepo) MarkSent(_ context.Context, _ uuid.UUID) error {
-	return errors.New("not implemented")
-}
-
-func (r *OutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
-	return errors.New("not implemented")
+	return outbox.Enqueue(ctx, tx, env) //nolint:wrapcheck
 }

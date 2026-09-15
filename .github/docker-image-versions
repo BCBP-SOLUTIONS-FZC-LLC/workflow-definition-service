@@ -1,0 +1,3 @@
+postgres:18-alpine
+localstack/localstack:3
+valkey/valkey:8-alpine

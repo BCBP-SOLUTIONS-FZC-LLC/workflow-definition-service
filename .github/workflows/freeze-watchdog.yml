@@ -1,0 +1,65 @@
+name: Schema Freeze Watchdog
+
+# Guards against a forgotten SCHEMA_FREEZE environment variable silently
+# blocking schema registration indefinitely. Reads GitHub Environment
+# variables only — no AWS credentials required.
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      warn_hours:
+        description: 'Hours before warning'
+        default: '48'
+      fail_hours:
+        description: 'Hours before failing'
+        default: '168'
+
+permissions:
+  actions: read   # required to query environment/repo variables via GitHub API
+  contents: read
+
+jobs:
+  watchdog:
+    name: Check SCHEMA_FREEZE age
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check freeze variable age (staging + production)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WARN_HOURS: ${{ github.event.inputs.warn_hours || '48' }}
+          FAIL_HOURS: ${{ github.event.inputs.fail_hours || '168' }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          FAILED=0
+          for ENVIRONMENT in staging production; do
+            RESPONSE=$(gh api "repos/${{ github.repository }}/environments/${ENVIRONMENT}/variables/SCHEMA_FREEZE" 2>/dev/null || echo '')
+            if [ -z "$RESPONSE" ] || [ "$(echo "$RESPONSE" | jq -r '.value // ""')" = "" ]; then
+              # Fall back to the repo-level variable if no environment-level override exists.
+              RESPONSE=$(gh api "repos/${{ github.repository }}/actions/variables/SCHEMA_FREEZE" 2>/dev/null || echo '')
+            fi
+            if [ -z "$RESPONSE" ] || [ "$(echo "$RESPONSE" | jq -r '.value // ""')" != "true" ]; then
+              echo "No active SCHEMA_FREEZE for $ENVIRONMENT — nothing to watch."
+              continue
+            fi
+            UPDATED_AT=$(echo "$RESPONSE" | jq -r '.updated_at')
+            UPDATED_EPOCH=$(date -d "$UPDATED_AT" +%s)
+            NOW_EPOCH=$(date -u +%s)
+            AGE_HOURS=$(( (NOW_EPOCH - UPDATED_EPOCH) / 3600 ))
+            echo "SCHEMA_FREEZE for $ENVIRONMENT is ${AGE_HOURS}h old"
+            if [ "$AGE_HOURS" -ge "$FAIL_HOURS" ]; then
+              echo "::error::SCHEMA_FREEZE on $ENVIRONMENT has been active for ${AGE_HOURS}h (>= ${FAIL_HOURS}h) — investigate and lift it"
+              FAILED=1
+              if [ -n "$SLACK_WEBHOOK_URL" ]; then
+                curl -sf -X POST -H 'Content-Type: application/json' \
+                  -d "{\"text\":\"SCHEMA_FREEZE watchdog failed for ${ENVIRONMENT} — see ${RUN_URL}\"}" \
+                  "$SLACK_WEBHOOK_URL"
+              fi
+            elif [ "$AGE_HOURS" -ge "$WARN_HOURS" ]; then
+              echo "::warning::SCHEMA_FREEZE on $ENVIRONMENT has been active for ${AGE_HOURS}h (>= ${WARN_HOURS}h)"
+            fi
+          done
+          exit $FAILED

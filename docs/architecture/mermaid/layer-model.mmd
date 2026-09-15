@@ -1,0 +1,34 @@
+flowchart TD
+    subgraph cmd["cmd/server — bootstrap + DI"]
+        main["main · app · wire · router · infra"]
+    end
+
+    subgraph adapter["internal/adapter"]
+        subgraph inbound["inbound"]
+            http["http/handler\nGin handlers + middleware\nidempotency · authz · POST /internal/events"]
+            grpc_in["grpc/server\nGetCompiledWorkflow impl"]
+        end
+        subgraph outbound["outbound"]
+            postgres["postgres/\nsqlc repo adapters\nTransactor · RunInTx"]
+            valkey["valkey/\nCacheStore impl"]
+            grpc_out["grpc/ExecutionClient"]
+            http_out["http/MembershipClient"]
+        end
+    end
+
+    subgraph core["internal/core"]
+        service["service/\nWorkflowService · DraftService\nVersionService · ValidationService"]
+        port["port/\ninterface contracts\n(Repository, Transactor, CacheStore, …)"]
+        domain["domain/\nentities · enums · error sentinels\nBPMN error codes"]
+    end
+
+    compiler["internal/bpmn_compiler\nstateless BPMN parser\nvalidator · DSL compiler"]
+
+    cmd --> adapter
+    cmd --> core
+    adapter --> port
+    adapter --> domain
+    service --> port
+    service --> domain
+    service --> compiler
+    port --> domain

@@ -1,0 +1,10 @@
+sequenceDiagram
+    participant Relay as outbox.Runner (platform-events)
+    participant DB as outbox_events table
+    participant SNS as AWS SNS
+
+    loop every PollInterval (default 500 ms)
+        Relay ->> DB: SELECT id, payload WHERE status='PENDING' LIMIT BatchSize
+        Relay ->> SNS: Publish(envelope)
+        Relay ->> DB: UPDATE status='SENT' WHERE id=...
+    end

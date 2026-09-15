@@ -1,0 +1,33 @@
+# Version control
+.git/
+.github/
+
+# Local dev tooling and build artifacts
+.tools/
+bin/
+.coverage/
+site/
+
+# Local reference copies — never imported, not needed in image
+platform-libs/
+.design/
+
+# Documentation
+docs/
+*.md
+mkdocs.yml
+.claude/
+
+# Tests and scripts — not part of the server binary
+test/
+scripts/
+
+
+# Environment files — secrets must be passed via build args or runtime env
+.env
+.env.*
+
+# Editor and OS artifacts
+.DS_Store
+*.swp
+*.swo

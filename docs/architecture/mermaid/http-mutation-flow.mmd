@@ -1,0 +1,25 @@
+sequenceDiagram
+    participant Client
+    participant Middleware as Gin Middleware
+    participant Handler as http/handler
+    participant Service as core/service
+    participant Tx as Transactor.RunInTx
+    participant Repo as postgres repo
+    participant Outbox as OutboxRepo.Enqueue
+
+    Note over Middleware: OTel · authz · idempotency-key
+    Client ->>+ Middleware: POST /versions/:id/publish
+    Middleware ->> Middleware: extract x-tenant-id · x-user-id → RequestContext
+    Middleware ->> Middleware: Idempotency-Key check (Valkey cache)
+    Middleware ->>+ Handler: handler func
+    Handler ->>+ Service: VersionService.Publish(ctx, ...)
+    Service ->>+ Tx: RunInTx(ctx, fn)
+    Tx ->>+ Repo: VersionRepo.Publish(ctx, ...)  [status-guarded SQL]
+    Repo -->>- Tx: ok
+    Tx ->>+ Outbox: OutboxRepo.Enqueue(ctx, envelope)
+    Outbox -->>- Tx: ok
+    Tx -->>- Service: commit
+    Service -->>- Handler: PublishedVersion
+    Handler -->>- Middleware: 200 JSON
+    Middleware ->> Middleware: cache response under Idempotency-Key (24 h TTL, 2xx only)
+    Middleware -->>- Client: response
