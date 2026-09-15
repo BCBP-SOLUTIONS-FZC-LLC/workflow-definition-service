@@ -129,13 +129,18 @@ components:
 
     ConnectorRestAlias:
       type: object
-      required: [alias, method, baseURL, pathTemplate]
+      required: [alias, method, baseURL, pathTemplate, timeout]
       properties:
         alias:        { type: string }
         method:       { type: string }
         baseURL:      { type: string }
         pathTemplate: { type: string }
-        timeoutMs:    { type: integer, format: int64 }
+        timeout:
+          type: integer
+          format: int64
+          description: >
+            Nanoseconds — a raw Go time.Duration, not a formatted string and not
+            the milliseconds the write request takes as timeoutMs.
 
     VersionStatus:
       type: string
@@ -1869,6 +1874,7 @@ paths:
               schema:
                 type: object
                 properties:
+                  version: { type: integer, example: 1 }
                   restCall:
                     type: array
                     items: { $ref: '#/components/schemas/ConnectorRestAlias' }
