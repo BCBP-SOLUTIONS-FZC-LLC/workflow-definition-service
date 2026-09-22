@@ -15,7 +15,7 @@
     },
     "department_id": {
       "type": "string",
-      "description": "Format owned by the Org & Membership Service. HandleMembershipRevoked parses it as a UUID today, but that shape is not formally confirmed on Definition's side — see definition_service.md §7.4.2."
+      "description": "Format owned by the Org & Membership Service. HandleDepartmentMembershipRevoked parses it as a UUID today, but that shape is not formally confirmed on Definition's side — see definition_service.md §7.4.2."
     },
     "role": {
       "type": "string",

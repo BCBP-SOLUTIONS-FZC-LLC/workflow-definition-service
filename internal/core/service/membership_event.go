@@ -17,9 +17,9 @@ type invalidationError struct {
 
 const invalidationMsg = "Default assignee is no longer eligible: Department membership revoked"
 
-// HandleMembershipRevoked handles DepartmentMembershipRevoked: the user lost
+// HandleDepartmentMembershipRevoked handles DepartmentMembershipRevoked: the user lost
 // one department, so only that department's assignee rows are invalidated.
-func (s *VersionService) HandleMembershipRevoked(
+func (s *VersionService) HandleDepartmentMembershipRevoked(
 	ctx context.Context,
 	eventID, tenantID, userID uuid.UUID,
 	departmentID string,
@@ -130,7 +130,7 @@ func (s *VersionService) invalidateVersion(
 	return nil
 }
 
-// skipDeletedVersion lets HandleMembershipRevoked move on to the next
+// skipDeletedVersion lets HandleDepartmentMembershipRevoked move on to the next
 // assignee's version instead of failing the whole delivery when GetByID
 // can't find a version that was legitimately deleted since the event fired.
 func (s *VersionService) skipDeletedVersion(versionID uuid.UUID, err error) error {

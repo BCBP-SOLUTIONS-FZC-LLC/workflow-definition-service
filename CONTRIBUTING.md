@@ -211,7 +211,8 @@ repo.EXPECT().GetByID(gomock.Any(), tenantID, workflowID).Return(wf, nil)
 ```go
 // test/unit/handler/internal_events_test.go
 type fakeMembershipRevoker struct { err error }
-func (f *fakeMembershipRevoker) HandleMembershipRevoked(...) error { return f.err }
+func (f *fakeMembershipRevoker) HandleDepartmentMembershipRevoked(...) error { return f.err }
+func (f *fakeMembershipRevoker) HandleTenantMembershipRevoked(...) error    { return f.err }
 ```
 
 Use GoMock for service-layer tests that orchestrate multiple dependencies; use hand-rolled fakes for adapter dispatch code with a single interface dependency.

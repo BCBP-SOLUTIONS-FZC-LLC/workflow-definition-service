@@ -52,6 +52,7 @@ const (
 	BPMNWarnConnectorTaskHasAssignment  BPMNErrorCode = "CONNECTOR_TASK_HAS_ASSIGNMENT"
 	BPMNErrTaskNotInLane                BPMNErrorCode = "TASK_NOT_IN_LANE"
 	BPMNErrCandidateGroupsEmpty         BPMNErrorCode = "CANDIDATE_GROUPS_EMPTY"
+	BPMNErrCandidateUsersEmpty          BPMNErrorCode = "CANDIDATE_USERS_EMPTY"
 	BPMNErrInvalidCandidateUser         BPMNErrorCode = "INVALID_CANDIDATE_USER"
 	BPMNErrInvalidSLADuration           BPMNErrorCode = "INVALID_SLA_DURATION"
 	BPMNErrInvalidConditionExpression   BPMNErrorCode = "INVALID_CONDITION_EXPRESSION"

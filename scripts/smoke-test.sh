@@ -146,7 +146,7 @@ BPMN_VALID='<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_prep" name="Design Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
         <zeebe:properties>
           <zeebe:property name="dept_id" value="design"/>
           <zeebe:property name="role" value="preparer"/>
@@ -158,7 +158,7 @@ BPMN_VALID='<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_review" name="Design Review">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
         <zeebe:properties>
           <zeebe:property name="dept_id" value="design"/>
           <zeebe:property name="role" value="reviewer"/>
@@ -561,15 +561,16 @@ IE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
   && pass "POST /api/v1/internal/events DepartmentMembershipRevoked → ${IE_STATUS}" \
   || fail "POST /api/v1/internal/events → ${IE_STATUS} (want 200/204)"
 
-# Re-send same event_id — must be idempotent (dedup via processed_events table)
+# Re-send same event_id — must be idempotent. There is no dedup table: both
+# revocation handlers converge on the same state when reprocessed (LLD §2.3.1).
 IE_STATUS2=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
   "${HTTP}/api/v1/internal/events" \
   -H "Content-Type: application/json" \
   ${INTERNAL_TOKEN:+-H "x-internal-token: ${INTERNAL_TOKEN}"} \
   -d "$REVOKE_MSG")
 [ "$IE_STATUS2" = "200" ] || [ "$IE_STATUS2" = "204" ] \
-  && pass "POST /api/v1/internal/events re-send (dedup) → ${IE_STATUS2}" \
-  || fail "POST /api/v1/internal/events dedup → ${IE_STATUS2} (want 200/204)"
+  && pass "POST /api/v1/internal/events re-send → ${IE_STATUS2}" \
+  || fail "POST /api/v1/internal/events re-send → ${IE_STATUS2} (want 200/204)"
 
 if [ "$HAS_PSQL" = true ]; then
   IS_VALID=$(psql "$DB_URL" -tAc \
@@ -577,19 +578,6 @@ if [ "$HAS_PSQL" = true ]; then
   [ "$IS_VALID" = "t" ] || [ "$IS_VALID" = "true" ] \
     && pass "DRAFT version is_valid unchanged (assignees only stored at publish)" \
     || fail "DRAFT version is_valid='${IS_VALID}' (want true — draft was never published)"
-
-  PROC_COUNT=$(psql "$DB_URL" -tAc \
-    "SELECT COUNT(*) FROM processed_event WHERE event_id='${EVENT1_ID}'" 2>/dev/null || echo "?")
-  [ "$PROC_COUNT" = "1" ] \
-    && pass "processed_event contains event_id=${EVENT1_ID}" \
-    || fail "processed_event count=${PROC_COUNT} (want 1)"
-
-  # Second send must not add a second processed_event row
-  PROC_AFTER=$(psql "$DB_URL" -tAc \
-    "SELECT COUNT(*) FROM processed_event WHERE event_id='${EVENT1_ID}'" 2>/dev/null || echo "?")
-  [ "$PROC_AFTER" = "1" ] \
-    && pass "processed_event still exactly 1 row after re-delivery (idempotent)" \
-    || fail "processed_event count=${PROC_AFTER} after re-delivery (want 1)"
 else
   skip "DB assertions" "brew install postgresql"
 fi
@@ -641,6 +629,28 @@ if [ "$HAS_PSQL" = true ]; then
   [ "$PUB_OUTBOX" = "1" ] \
     && pass "Outbox event created for PUBLISHED invalidation" \
     || fail "outbox_events count=${PUB_OUTBOX} for PUBLISHED version (want 1)"
+
+  # Redelivery converges on the same state — the property that stands in for a
+  # dedup registry (LLD §2.3.1). Re-send the same envelope and assert the
+  # invalidation payload is byte-identical, which needs ListAssigneesByUser's
+  # ORDER BY to hold.
+  PUB_ERRS=$(psql "$DB_URL" -tAc \
+    "SELECT validation_errors_json FROM workflow_version WHERE id='${V3_DRAFT_ID}'" 2>/dev/null || echo "?")
+  curl -s -o /dev/null -X POST "${HTTP}/api/v1/internal/events" \
+    -H "Content-Type: application/json" \
+    ${INTERNAL_TOKEN:+-H "x-internal-token: ${INTERNAL_TOKEN}"} \
+    -d "$REVOKE_MSG2"
+  PUB_ERRS2=$(psql "$DB_URL" -tAc \
+    "SELECT validation_errors_json FROM workflow_version WHERE id='${V3_DRAFT_ID}'" 2>/dev/null || echo "?")
+  [ "$PUB_ERRS2" = "$PUB_ERRS" ] \
+    && pass "re-delivery rewrote an identical validation_errors_json" \
+    || fail "re-delivery changed validation_errors_json: '${PUB_ERRS}' -> '${PUB_ERRS2}'"
+
+  PUB_VALID2=$(psql "$DB_URL" -tAc \
+    "SELECT is_valid FROM workflow_version WHERE id='${V3_DRAFT_ID}'" 2>/dev/null || echo "?")
+  [ "$PUB_VALID2" = "$PUB_VALID" ] \
+    && pass "re-delivery left is_valid=false (converged, no dedup table)" \
+    || fail "re-delivery changed is_valid '${PUB_VALID}' -> '${PUB_VALID2}'"
 fi
 
 section "12 · Archive workflow"

@@ -16,7 +16,7 @@ channels:
   # Membership Service.
   iam/membership/events:
     address: iam-membership-events
-    description: Consumed off membership-wf-q (dedup consumer `membership-wf-q`).
+    description: Consumed off membership-wf-q.
     bindings:
       sqs:
         queue:
@@ -35,8 +35,8 @@ operations:
     description: >
       Invalidates any workflow version whose default-assignee node targets the
       revoked user+department pair (marks the version invalid with a per-node
-      error), and pauses the user's active tasks in Execution if wired. Dedup
-      consumer `membership-wf-q`.
+      error), and pauses the user's active tasks in Execution if wired. A
+      redelivery reprocesses and converges on the same state.
 
 components:
   messages:
@@ -71,7 +71,7 @@ components:
         id:
           type: string
           format: uuid
-          description: UUID v7 message identifier (used for consumer deduplication)
+          description: UUID v7 message identifier (logged for correlation)
         source:
           type: string
           const: workflow-definition-svc
@@ -124,7 +124,7 @@ components:
         department_id:
           type: string
           description: >
-            Format owned by the Org & Membership Service. HandleMembershipRevoked
+            Format owned by the Org & Membership Service. HandleDepartmentMembershipRevoked
             parses it as a UUID today, but that shape is not formally confirmed
             on Definition's side — see definition_service.md §7.4.2.
         role:

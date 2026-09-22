@@ -57,7 +57,7 @@ idx_wv_single_draft ON workflow_version(workflow_id) WHERE status = 'DRAFT'
 `ErrDraftAlreadyExists` is returned on violation.
 
 ### `is_valid` semantics
-`workflow_version.is_valid` reflects **assignee validity**, not BPMN structural validity. Set to `false` by `HandleMembershipRevoked` when a default assignee's department membership is revoked. `GetCompiledWorkflow` gRPC returns `is_valid` so Execution can reject `StartWorkflow` calls on invalid templates.
+`workflow_version.is_valid` reflects **assignee validity**, not BPMN structural validity. Set to `false` by `HandleDepartmentMembershipRevoked` when a default assignee's department membership is revoked. `GetCompiledWorkflow` gRPC returns `is_valid` so Execution can reject `StartWorkflow` calls on invalid templates.
 
 ### `record_version` optimistic lock
 `workflow` and `workflow_version` carry `record_version BIGINT NOT NULL DEFAULT 1`, bumped by the `update_meta_columns` BEFORE UPDATE trigger (guarded by `WHEN (OLD.* IS DISTINCT FROM NEW.*)`).
@@ -82,12 +82,10 @@ PL/pgSQL functions need no `StatementBegin/End` wrappers — pgx/v5 runs each fi
 
 **PgBouncer note:** When `DATABASE_URL` points to PgBouncer, set `MIGRATION_DATABASE_URL` to a direct Postgres DSN — golang-migrate uses session advisory locks that PgBouncer transaction pooling drops.
 
-## Inbound Event Deduplication
+## Inbound Event Redelivery
 
-`HandleMembershipRevoked` calls `processedEvents.RecordIfNew(ctx, eventID, "membership-wf-q", "DepartmentMembershipRevoked")` before any processing, keyed on the forwarded envelope `id`.
-
-`processed_event` has composite PK `(event_id, consumer)`, no `tenant_id`, and **no RLS** — it is an operational dedup log, not tenant data.
+There is no dedup registry. Both consumed types converge on the same state when reprocessed: `SetVersionInvalid` rewrites an identical `is_valid = false`, and no query returns a PUBLISHED version to valid, while `PauseUserTasks` signals only `RUNNING` instances. Adding an inbound type that is not idempotent by construction means introducing the registry with it (LLD §2.3.1, §10.9).
 
 ## Operational Table Cleanup
 
-The service does NOT run an in-process pruner. `processed_event`, `outbox_events`, and `outbox_dead_letters` are cleaned by an external periodic job (lambda / cron) running under `BYPASSRLS=true` per LLD §7.1.2. Until that job ships, these tables grow unbounded (GAP-11).
+The service does NOT run an in-process pruner. `outbox_events` and `outbox_dead_letters` are cleaned by an external periodic job (lambda / cron) running under `BYPASSRLS=true` per LLD §7.1.2. Until that job ships, these tables grow unbounded (GAP-11).

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -107,4 +108,52 @@ func TestValidateBPMN_MissingCtx(t *testing.T) {
 	body := map[string]any{"bpmn_xml": "<definitions/>"}
 	w := do(newBareRouter(h), req(http.MethodPost, "/api/v1/workflows/validate", body))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestGetVersionValidation_ReportsStoredVersionIssues(t *testing.T) {
+	versionID := uuid.New()
+	versions := &fakeVersionSvc{
+		get: func(_ context.Context, _, _, gotVersionID uuid.UUID) (*domain.WorkflowVersion, error) {
+			assert.Equal(t, versionID, gotVersionID)
+			return &domain.WorkflowVersion{
+				ID: versionID, Status: domain.VersionStatusPublished,
+				BPMNXML: "<definitions/>", ModuleBPMNXMLs: []string{"<module/>"},
+			}, nil
+		},
+	}
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, versions, &fakeValidationSvc{
+		validate: func(_ context.Context, bpmnXML string, moduleXMLs []string) (bool, []domain.BPMNValidationError, error) {
+			assert.Equal(t, "<definitions/>", bpmnXML, "the stored version's own BPMN is validated")
+			assert.Equal(t, []string{"<module/>"}, moduleXMLs)
+			return false, []domain.BPMNValidationError{
+				{Code: domain.BPMNErrCandidateUsersEmpty, NodeID: "Activity_1", Message: "no candidateUsers", Severity: domain.SeverityError},
+			}, nil
+		},
+	})
+
+	path := "/api/v1/workflows/" + uuid.New().String() + "/versions/" + versionID.String() + "/validation"
+	w := do(newRouter(h), req(http.MethodGet, path, nil))
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, false, resp["is_valid"])
+	assert.Equal(t, string(domain.VersionStatusPublished), resp["status"], "a published version keeps its status")
+	issues := resp["issues"].([]any)
+	require.Len(t, issues, 1)
+	assert.Equal(t, string(domain.BPMNErrCandidateUsersEmpty), issues[0].(map[string]any)["code"])
+	assert.Equal(t, "Activity_1", issues[0].(map[string]any)["node_id"])
+}
+
+func TestGetVersionValidation_UnknownVersion404(t *testing.T) {
+	versions := &fakeVersionSvc{
+		get: func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error) {
+			return nil, domain.ErrNotFound
+		},
+	}
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, versions, &fakeValidationSvc{})
+
+	path := "/api/v1/workflows/" + uuid.New().String() + "/versions/" + uuid.New().String() + "/validation"
+	w := do(newRouter(h), req(http.MethodGet, path, nil))
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

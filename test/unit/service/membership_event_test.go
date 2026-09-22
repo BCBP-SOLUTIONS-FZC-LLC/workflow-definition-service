@@ -53,7 +53,7 @@ func assignee(versionID uuid.UUID, nodeKey, deptID string) *domain.NodeAssignee 
 
 // ListByUser fails before any other side effect is reached — the consumer can
 // retry the full handler.
-func TestHandleMembershipRevoked_ListByUserError(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_ListByUserError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -64,12 +64,12 @@ func TestHandleMembershipRevoked_ListByUserError(t *testing.T) {
 	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).Return(nil, errors.New("db error"))
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err == nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err == nil {
 		t.Fatal("expected error from ListByUser, got nil")
 	}
 }
 
-func TestHandleMembershipRevoked_VersionGetByIDError(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_VersionGetByIDError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -84,12 +84,12 @@ func TestHandleMembershipRevoked_VersionGetByIDError(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
 		t.Fatalf("expected nil (silent skip), got %v", err)
 	}
 }
 
-func TestHandleMembershipRevoked_NoMatchingAssignees(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_NoMatchingAssignees(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -104,7 +104,7 @@ func TestHandleMembershipRevoked_NoMatchingAssignees(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 }
@@ -161,7 +161,7 @@ func TestHandleTenantMembershipRevoked_ListByUserError(t *testing.T) {
 	}
 }
 
-func TestHandleMembershipRevoked_DraftVersion(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_DraftVersion(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -181,14 +181,14 @@ func TestHandleMembershipRevoked_DraftVersion(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 // Published versions are invalidated directly (SetInvalid) and Execution is
 // notified via gRPC PauseUserTasks — no outbox event is emitted.
-func TestHandleMembershipRevoked_PublishedVersion(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_PublishedVersion(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -208,12 +208,12 @@ func TestHandleMembershipRevoked_PublishedVersion(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestHandleMembershipRevoked_DeduplicatesVersion(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_DeduplicatesVersion(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -237,12 +237,12 @@ func TestHandleMembershipRevoked_DeduplicatesVersion(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestHandleMembershipRevoked_ArchivedVersionSkipped(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_ArchivedVersionSkipped(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -262,12 +262,12 @@ func TestHandleMembershipRevoked_ArchivedVersionSkipped(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestHandleMembershipRevoked_SetInvalidError(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_SetInvalidError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -286,12 +286,12 @@ func TestHandleMembershipRevoked_SetInvalidError(t *testing.T) {
 	vRepo.EXPECT().SetInvalid(gomock.Any(), mTenantID, mVerID, gomock.Any()).Return(errors.New("db error"))
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err == nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
 
-func TestHandleMembershipRevoked_PauseUserTasksError(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_PauseUserTasksError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -311,14 +311,14 @@ func TestHandleMembershipRevoked_PauseUserTasksError(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(domain.ErrUpstreamUnavailable)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err == nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err == nil {
 		t.Fatal("expected error from PauseUserTasks, got nil")
 	}
 }
 
 // NilExecution: when ExecutionServiceAddr is not configured, s.execution is nil.
 // PauseUserTasks must be skipped (not panicked).
-func TestHandleMembershipRevoked_NilExecution(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_NilExecution(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -344,12 +344,12 @@ func TestHandleMembershipRevoked_NilExecution(t *testing.T) {
 		Execution:  nil, // not configured
 		Log:        testkit.FakeLogger{},
 	})
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
 		t.Fatalf("unexpected error with nil execution: %v", err)
 	}
 }
 
-func TestHandleMembershipRevoked_MultipleVersions(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_MultipleVersions(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -375,12 +375,12 @@ func TestHandleMembershipRevoked_MultipleVersions(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, outbox, exec)
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestHandleMembershipRevoked_CacheDelError_LogsAndContinues(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_CacheDelError_LogsAndContinues(t *testing.T) {
 	// invalidatePlanCache: when cache.Del fails the error is logged only, not returned.
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
@@ -403,7 +403,7 @@ func TestHandleMembershipRevoked_CacheDelError_LogsAndContinues(t *testing.T) {
 		Cache:     cache,
 		Log:       testkit.FakeLogger{},
 	})
-	if err := svc.HandleMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
 		t.Fatalf("cache Del error must not propagate: %v", err)
 	}
 }

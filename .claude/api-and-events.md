@@ -15,10 +15,10 @@ metadata:
 
 ## Inbound Events: `POST /internal/events`
 
-The service does **not** consume SQS in-process. The shared workflow-events consumer (separate service) forwards each `events.Envelope[json.RawMessage]` to this endpoint, which dispatches by `env.Type` to `versionSvc.HandleMembershipRevoked`.
+The service does **not** consume SQS in-process. The shared workflow-events consumer (separate service) forwards each `events.Envelope[json.RawMessage]` to this endpoint, which dispatches by `env.Type` to `versionSvc.HandleDepartmentMembershipRevoked` or `versionSvc.HandleTenantMembershipRevoked`.
 
 Route is on the `/internal` group guarded by `RequireInternalToken` (`x-internal-token` vs `INTERNAL_API_TOKEN`, skipped when unset). Consumer retry contract:
-- `2xx` — handled (incl. dedup no-op)
+- `2xx` — handled (a redelivery reprocesses and converges; there is no dedup table)
 - `400` — malformed (non-retryable)
 - `5xx` — transient (consumer should retry)
 
@@ -28,7 +28,7 @@ This service currently emits no outbound events. The transactional outbox → SN
 
 ## Membership Revocation: Direct gRPC PauseUserTasks
 
-When `HandleMembershipRevoked` finishes marking template versions `is_valid=false`, it calls `ExecutionClient.PauseUserTasks(ctx, tenantID, userID)` via gRPC. Execution pauses all active task assignments for that user scoped to that tenant.
+When `HandleDepartmentMembershipRevoked` finishes marking template versions `is_valid=false`, it calls `ExecutionClient.PauseUserTasks(ctx, tenantID, userID)` via gRPC. Execution pauses all active task assignments for that user scoped to that tenant.
 
 - If the call fails the HTTP handler returns 5xx so the shared consumer retries the whole event.
 - `invalidateVersion` silently skips versions that are absent or ARCHIVED — one missing version does not block others.

@@ -16,20 +16,20 @@ import (
 )
 
 type membershipRevoker interface {
-	HandleMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID, departmentID string) error
+	HandleDepartmentMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID, departmentID string) error
 	HandleTenantMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID) error
 }
 
 type membershipRevokedPayload struct {
 	UserID string `json:"user_id"`
-	// DepartmentID is parsed as a UUID by HandleMembershipRevoked today, but
+	// DepartmentID is parsed as a UUID by HandleDepartmentMembershipRevoked today, but
 	// its format is owned by the Org & Membership Service and not formally
 	// confirmed on our side — see definition_service.md §7.4.2.
 	DepartmentID string `json:"department_id"`
 	Role         string `json:"role"`
 }
 
-// Consumer retry contract: 2xx = handled (incl. dedup no-op), 400 = malformed (non-retryable), 500 = transient (retry).
+// Consumer retry contract: 2xx = handled, 400 = malformed (non-retryable), 500 = transient (retry).
 func (h *Handler) HandleInternalEvent(c *gin.Context) {
 	var env events.Envelope[json.RawMessage]
 	if err := c.ShouldBindJSON(&env); err != nil {
@@ -40,7 +40,7 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 
 	switch env.Type {
 	case "DepartmentMembershipRevoked":
-		h.handleMembershipRevoked(c, env)
+		h.handleDepartmentMembershipRevoked(c, env)
 	case "MembershipRevoked":
 		h.handleTenantMembershipRevoked(c, env)
 	default:
@@ -109,14 +109,14 @@ func (h *Handler) finishRevocation(c *gin.Context, evtType, logMsg string, err e
 	c.Status(http.StatusOK)
 }
 
-func (h *Handler) handleMembershipRevoked(c *gin.Context, env events.Envelope[json.RawMessage]) {
+func (h *Handler) handleDepartmentMembershipRevoked(c *gin.Context, env events.Envelope[json.RawMessage]) {
 	const evtType = "DepartmentMembershipRevoked"
 	in, ok := h.parseRevocation(c, env, evtType)
 	if !ok {
 		return
 	}
-	err := h.membership.HandleMembershipRevoked(in.ctx, in.eventID, in.tenantID, in.userID, in.departmentID)
-	h.finishRevocation(c, evtType, "internal events: HandleMembershipRevoked failed", err)
+	err := h.membership.HandleDepartmentMembershipRevoked(in.ctx, in.eventID, in.tenantID, in.userID, in.departmentID)
+	h.finishRevocation(c, evtType, "internal events: HandleDepartmentMembershipRevoked failed", err)
 }
 
 // handleTenantMembershipRevoked handles IAM's tenant-level MembershipRevoked.

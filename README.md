@@ -667,7 +667,6 @@ Database: PostgreSQL 18, schema `workflow_definition`. Multi-tenancy is enforced
 | `workflow_node_assignee` | Denormalised reverse index: user → versions that reference them as default assignees |
 | `outbox_events` | Transactional event queue for SNS delivery (published_at = NULL → NOW()) |
 | `outbox_dead_letters` | Failed events that exhausted max attempts |
-| `processed_event` | Inbound-event idempotency registry — composite PK `(event_id, consumer)`, no RLS |
 
 See full DDL in [`db/migrations/`](db/migrations/).
 

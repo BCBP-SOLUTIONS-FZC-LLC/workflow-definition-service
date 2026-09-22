@@ -141,6 +141,7 @@ func NewRouter(cfg RouterConfig) *Router {
 	ver.POST("/:version_id/publish", idem(h.PublishVersion))
 	ver.POST("/:version_id/clone", idem(h.CloneVersion))
 	ver.POST("/:version_id/promote", idem(h.PromoteVersion))
+	ver.GET("/:version_id/validation", h.GetVersionValidation)
 	ver.GET("/:version_id/export", h.ExportBPMN)
 	ver.GET("/:version_id/diff/:target_version_id", h.GetVersionDiff)
 

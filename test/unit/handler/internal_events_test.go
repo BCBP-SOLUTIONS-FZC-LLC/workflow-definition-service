@@ -39,7 +39,7 @@ func (f *fakeMembershipRevoker) HandleTenantMembershipRevoked(
 	return f.err
 }
 
-func (f *fakeMembershipRevoker) HandleMembershipRevoked(
+func (f *fakeMembershipRevoker) HandleDepartmentMembershipRevoked(
 	_ context.Context,
 	eventID, tenantID, userID uuid.UUID,
 	departmentID string,

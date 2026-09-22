@@ -289,7 +289,7 @@ groups:
           description: >-
             More than 5 bad_payload/error results on /api/v1/internal/events in 15 minutes —
             either the shared workflow-events consumer's envelope contract has drifted,
-            or the downstream HandleMembershipRevoked call is failing.
+            or the downstream HandleDepartmentMembershipRevoked call is failing.
 
   - name: workflow_definition_service_database
     rules:

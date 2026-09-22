@@ -126,7 +126,7 @@ CREATE TABLE connector_rest_alias (
     timeout_ms    INTEGER NOT NULL DEFAULT 5000
 );
 
--- Operational audit log (same class as processed_event, outbox_events); no
+-- Operational audit log (same class as outbox_events); no
 -- RLS. Populated by DB-level triggers on RLS violations, not application code.
 -- Cleaned by the external periodic job per LLD §7.1.2 (GAP-11).
 CREATE TABLE rls_violation_log (

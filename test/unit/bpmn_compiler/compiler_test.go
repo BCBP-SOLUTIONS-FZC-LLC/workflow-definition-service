@@ -264,6 +264,24 @@ func TestValidate_ExtensionElementRules(t *testing.T) {
 			wantCode: domain.BPMNErrCandidateGroupsEmpty,
 		},
 		{
+			name: "candidateUsers naming nobody",
+			taskXML: `<bpmn:userTask id="Task_1" name="T">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="prep"/>
+          <zeebe:assignmentDefinition candidateGroups="preparer"/>
+        </bpmn:extensionElements></bpmn:userTask>`,
+			wantCode: domain.BPMNErrCandidateUsersEmpty,
+		},
+		{
+			name: "candidateUsers whitespace only",
+			taskXML: `<bpmn:userTask id="Task_1" name="T">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="prep"/>
+          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="   "/>
+        </bpmn:extensionElements></bpmn:userTask>`,
+			wantCode: domain.BPMNErrCandidateUsersEmpty,
+		},
+		{
 			name: "invalid candidateUser UUID",
 			taskXML: `<bpmn:userTask id="Task_1" name="T">
         <bpmn:extensionElements>

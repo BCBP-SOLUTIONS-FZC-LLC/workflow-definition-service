@@ -271,6 +271,7 @@ func registerRoutes(r *gin.Engine, h *handler.Handler) {
 	wf.POST("/:id/versions/:version_id/publish", h.PublishVersion)
 	wf.POST("/:id/versions/:version_id/clone", h.CloneVersion)
 	wf.POST("/:id/versions/:version_id/promote", h.PromoteVersion)
+	wf.GET("/:id/versions/:version_id/validation", h.GetVersionValidation)
 	wf.GET("/:id/versions/:version_id/export", h.ExportBPMN)
 	wf.GET("/:id/versions/:version_id/diff/:target_version_id", h.GetVersionDiff)
 

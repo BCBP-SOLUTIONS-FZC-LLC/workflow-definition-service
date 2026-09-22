@@ -158,6 +158,62 @@ func TestValidateTaskExtensions_CandidateGroupsTooLong(t *testing.T) {
 	}
 }
 
+// The end-to-end path is covered by TestValidate_ExtensionElementRules in
+// test/unit/bpmn_compiler; this pins the rule itself.
+func TestValidateDefaultAssignee_CandidateUsersEmpty(t *testing.T) {
+	tests := []struct {
+		name           string
+		candidateUsers string
+	}{
+		{name: "absent", candidateUsers: ""},
+		{name: "whitespace only", candidateUsers: "   "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ext := bpmncore.BPMNExtensionElements{
+				TaskDefinition: &bpmncore.ZeebeTaskDefinition{Type: "prep"},
+				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{
+					CandidateGroups: "preparer",
+					CandidateUsers:  tt.candidateUsers,
+				},
+			}
+			errs := validator.ValidateDefaultAssignee("T1", ext)
+			if !hasCodeIn(errs, domain.BPMNErrCandidateUsersEmpty) {
+				t.Errorf("expected CANDIDATE_USERS_EMPTY for a userTask naming a role but nobody; got %v", errCodesOf(errs))
+			}
+		})
+	}
+}
+
+func TestValidateDefaultAssignee_NamedAssigneePasses(t *testing.T) {
+	ext := bpmncore.BPMNExtensionElements{
+		AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{
+			CandidateGroups: "preparer", CandidateUsers: aliceUUID,
+		},
+	}
+	if errs := validator.ValidateDefaultAssignee("T1", ext); len(errs) != 0 {
+		t.Errorf("a named assignee must pass; got %v", errCodesOf(errs))
+	}
+}
+
+// A message task carrying an assignmentDefinition still needs no default
+// assignee: the interpreter resolves it through the message buffer and creates
+// no task, so requiring one would reject a legal plan.
+func TestValidateOptionalAssignment_NoDefaultAssigneeRequired(t *testing.T) {
+	ext := bpmncore.BPMNExtensionElements{
+		AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "preparer"},
+	}
+	if errs := validator.ValidateOptionalAssignment("T1", ext); hasCodeIn(errs, domain.BPMNErrCandidateUsersEmpty) {
+		t.Errorf("sendTask/receiveTask must not require candidateUsers; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateDefaultAssignee_NoAssignmentDefinitionIsOtherRulesConcern(t *testing.T) {
+	if errs := validator.ValidateDefaultAssignee("T1", bpmncore.BPMNExtensionElements{}); len(errs) != 0 {
+		t.Errorf("a missing assignmentDefinition is MISSING_ASSIGNMENT_DEFINITION's to report; got %v", errCodesOf(errs))
+	}
+}
+
 func TestValidateTaskExtensions_InvalidCandidateUser(t *testing.T) {
 	proc := &bpmncore.BPMNProcess{
 		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{

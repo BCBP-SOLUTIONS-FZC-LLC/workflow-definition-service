@@ -785,7 +785,7 @@ components:
         tenant_id (the RLS GUC is set from this field), and id is the idempotency anchor.
       required: [id, type, tenant_id, data]
       properties:
-        id:        { type: string, format: uuid, description: "Unique event id; dedup anchor in processed_event." }
+        id:        { type: string, format: uuid, description: "Unique event id; logged for correlation. Redelivery is absorbed by handler idempotency, not by a dedup registry." }
         type:      { type: string, example: DepartmentMembershipRevoked, description: "Event type used for dispatch. Unknown types are accepted and ignored." }
         tenant_id: { type: string, format: uuid, description: "Tenant the event applies to; used to set the RLS GUC." }
         data:      { type: object, additionalProperties: true, description: "Type-specific payload (e.g. user_id, department_id, role). CloudEvents data field." }
@@ -1686,6 +1686,51 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
 
   # 3.13
+  /api/v1/workflows/{id}/versions/{version_id}/validation:
+    get:
+      operationId: getVersionValidation
+      summary: Re-run structural validation against a stored version
+      description: >-
+        Validates a stored version's own BPMN, in any status, and writes nothing.
+        A validator rule added after a version was published does not
+        retroactively invalidate it, so this is how an operator finds a template
+        that still holds a defect rather than discovering it when the Execution
+        Service refuses to instantiate.
+      tags: [Versions]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        "200":
+          description: Validation result for the stored version.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version_id, status, is_valid, issues]
+                properties:
+                  version_id: { type: string, format: uuid }
+                  status:     { type: string, example: PUBLISHED }
+                  is_valid:   { type: boolean }
+                  issues:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        node_id:  { type: string, example: Activity_0abc123 }
+                        code:     { type: string, example: CANDIDATE_USERS_EMPTY }
+                        message:  { type: string }
+                        severity: { type: string, enum: [ERROR, WARNING] }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+
   /api/v1/workflows/{id}/versions/{version_id}/export:
     get:
       operationId: exportBpmn
@@ -1830,13 +1875,13 @@ paths:
             schema: { $ref: '#/components/schemas/EventEnvelope' }
       responses:
         "200":
-          description: Event processed, or an idempotent no-op for an already-seen envelope id.
+          description: Event processed. A redelivered envelope id is reprocessed and converges on the same state.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  status: { type: string, example: "processed", enum: [processed, deduplicated, ignored] }
+                  status: { type: string, example: "processed", enum: [processed, ignored] }
         "204":
           description: Event accepted with no response body (alternative to 200).
         "400":

@@ -127,9 +127,9 @@ Below is a detailed breakdown of each internal module within the Workflow Defini
   - **Output**: SNS event dispatch (to the `wf.template.events` topic) and a subsequent SQL update to flag records as published (or move to `outbox_dead_letters` after retries).
 
 - **Internal Event Ingest Handler (`POST /internal/events`)**
-  - **Responsibility**: Receives domain-event envelopes forwarded over HTTP by the shared workflow-events consumer, dispatches by `env.Type`, and drives the `HandleMembershipRevoked` invalidation logic. Idempotent via the `processed_event` dedup keyed on the envelope `id`; injects the RLS GUC from the envelope `tenant_id` (the gRPC pattern, §1.7.2 / §14).
+  - **Responsibility**: Receives domain-event envelopes forwarded over HTTP by the shared workflow-events consumer, dispatches by `env.Type`, and drives the `HandleDepartmentMembershipRevoked` invalidation logic. Redelivery is absorbed by handler idempotency (§2.3.1, §10.9); injects the RLS GUC from the envelope `tenant_id` (the gRPC pattern, §1.7.2 / §14).
   - **Input**: `events.Envelope[json.RawMessage]` JSON body on the internal (non-gateway) route group, authenticated by service-to-service auth.
-  - **Output**: 2xx on success (incl. dedup no-op), 4xx on malformed payload, 5xx on transient error (signals the consumer to retry).
+  - **Output**: 2xx on success, 4xx on malformed payload, 5xx on transient error (signals the consumer to retry).
 
 ### 1.5 Internal Package Layout
 
@@ -585,7 +585,7 @@ runner := outbox.NewRunner(outbox.Config{
 
 #### 1.8.3 Inbound Event Ingest (HTTP)
 
-Inbound domain events are consumed by the shared workflow-events consumer service, which forwards each envelope over HTTP to `POST /internal/events`. The handler injects the RLS tenant context (`pgcommon.WithGUCSet`) from the envelope `tenant_id` — the same manual-injection pattern used by the gRPC `GetCompiledWorkflow` path (§1.7.2 / §14) — and dispatches by `env.Type` to the existing handler logic (e.g. `HandleMembershipRevoked`). Idempotency is preserved by the `processed_event` dedup keyed on the envelope `id`. See §7.4 for the full flow.
+Inbound domain events are consumed by the shared workflow-events consumer service, which forwards each envelope over HTTP to `POST /internal/events`. The handler injects the RLS tenant context (`pgcommon.WithGUCSet`) from the envelope `tenant_id` — the same manual-injection pattern used by the gRPC `GetCompiledWorkflow` path (§1.7.2 / §14) — and dispatches by `env.Type` to the existing handler logic (e.g. `HandleDepartmentMembershipRevoked`). Redelivery is absorbed by handler idempotency (§2.3.1, §10.9). See §7.4 for the full flow.
 
 #### 1.8.4 Environment Variables
 
@@ -770,7 +770,7 @@ The compiled-plan cache is populated lazily: on the first `GetCompiledWorkflow` 
 - **Workflow list / metadata** — `GET /workflows`, `GET /workflows/:id` always reads from Postgres.
 - **Raw `bpmn_xml`** — stored only in Postgres; never cached.
 - **Workflow version history** — always from Postgres.
-- **Outbox events and `processed_event` records** — DB-only for durability and dedup guarantees.
+- **Outbox events** — DB-only for durability guarantees.
 - **Assignee eligibility** — checked live against Org & Membership at publish time; not cached.
 
 #### 1.9.3 Cache Failure Behaviour
@@ -1065,21 +1065,6 @@ Stores failed outbox events that exhausted maximum retries.
 
 ---
 
-#### `processed_event`
-
-Stores event IDs processed by SQS consumers to ensure idempotency.
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| `event_id` | UUID | Part of composite PK — the unique event envelope ID |
-| `consumer` | TEXT | Part of composite PK — consumer name (e.g. `membership-wf-q`) |
-| `event_type` | TEXT | Event type for observability/forensics (e.g. `DepartmentMembershipRevoked`); nullable for legacy rows |
-| `processed_at` | TIMESTAMP | Timestamp when the event was successfully processed |
-
-Composite PK `(event_id, consumer)` allows the same event to be consumed by multiple independent consumers without collision.
-
----
-
 ### 2.2.2 Table and Column Details
 
 1. workflow Table
@@ -1174,23 +1159,13 @@ Composite PK `(event_id, consumer)` allows the same event to be consumed by mult
 
     workflow_version_id (UUID): References the specific workflow version template. Deletes cascade to clean up mappings when templates are deleted.
 
-    node_key (VARCHAR): Represents the specific task node element ID from the BPMN definition.
+    node_key (VARCHAR): Identifies one node of the compiled plan, composed as `<department id>/<BPMN element id>` — the same composition the Execution Service uses for task and override node keys, so one node carries one name across both services. The element id rather than the stage type, because a department may hold two stages of the same type and the type alone would name them both.
 
     user_id (UUID): Represents one of the assigned eligible users for the node. One row per (node_key, user_id) pair. Checked for invalidation when memberships change.
 
     department_id (VARCHAR): Represents the department context of the assignment (using the string slug identifier, e.g. "design", "qa-hse").
 
     role (VARCHAR): The functional role level required for the assignment (e.g. preparator, reviewer, approver).
-
-6. processed_event Table
-
-    event_id (UUID): Part of the composite primary key `(event_id, consumer)`. The unique event envelope ID from the SQS message — the dedup anchor that prevents the same event from being processed twice by the same consumer.
-
-    consumer (TEXT): Part of the composite primary key. The name of the SQS consumer queue (e.g. `membership-wf-q`). The composite PK allows the same event to be independently processed by multiple consumers without collision.
-
-    event_type (TEXT, nullable): The event type string (e.g. `DepartmentMembershipRevoked`). Nullable for backward compatibility with older rows. Stored for observability and forensic queries.
-
-    processed_at (TIMESTAMP): Logs when the event was processed, allowing TTL-based records cleanup.
 
 ---
 
@@ -1245,42 +1220,18 @@ A background transactional outbox runner (`outbox.Runner`) polls the `outbox_eve
 
 ### 2.3.1 Consumer Idempotency
 
-To achieve exact-once processing semantics, inbound event processing must track successfully processed event IDs in a dedicated local `processed_event` table. In the Definition Service this dedup runs inside the `POST /internal/events` handler (keyed on the envelope `id` forwarded by the shared consumer), not in an in-process SQS consumer:
+The Definition Service keeps no dedup registry. At-least-once delivery is absorbed by the handlers themselves: every inbound type this service consumes converges on the same state when reprocessed, so a redelivered envelope needs no `processed_event` row to detect it (§10.9).
 
-```sql
-CREATE TABLE processed_event (
-    event_id     UUID         NOT NULL,
-    consumer     TEXT         NOT NULL,
-    event_type   TEXT,
-    processed_at TIMESTAMP    NOT NULL DEFAULT now(),
-    PRIMARY KEY (event_id, consumer)
-);
-```
+Both consumed types — `DepartmentMembershipRevoked` and `MembershipRevoked` (§7.4.2, §7.4.5) — reduce to two writes:
 
-#### Consumer Processing Loop
+- `SetVersionInvalid` replaces `is_valid` with `false` and replaces `validation_errors_json` with the same value. The payload is built from the revoked user's assignee rows, which a redelivery does not change, and `ListAssigneesByUser` orders by `(workflow_version_id, node_key)`, so each version's rendered array follows `node_key` order rather than the heap's.
+- `PauseUserTasks` (gRPC, Execution Service) signals `instance-pause` only for instances it reads as `RUNNING`. The status transition is applied asynchronously by Temporal, so a redelivery arriving inside that window re-sends the signal; the interpreter's own pause handling absorbs the repeat.
 
-Upon receiving a message, the consumer first executes an optimistic idempotency check:
+**A redelivery cannot undo an operator's recovery.** Recovery from an invalidation is a new version (§7.4.3 Flow A), never a revalidation of the invalidated one: no query sets `is_valid = true` on a PUBLISHED row. `UpdateDraftVersion` is guarded on `status = 'DRAFT'`, `CreateWorkflowVersion` inserts only DRAFT rows, and `PublishVersion` does not touch the column.
 
-```go
-// Attempt to register the event ID in the database
-result, err := tx.ExecContext(ctx, `
-    INSERT INTO processed_event (event_id, consumer, event_type)
-    VALUES ($1, $2, $3)
-    ON CONFLICT DO NOTHING
-`, eventID, "membership-wf-q", "DepartmentMembershipRevoked")
-if err != nil {
-    return err
-}
+Reprocessing is not bit-for-bit inert. `SetVersionInvalid` writes `updated_at = now()`, which defeats the update trigger's `OLD.* IS DISTINCT FROM NEW.*` guard and bumps `record_version`. That token is the optimistic-lock guard for **draft** mutations (§9.1), and an invalidated version is PUBLISHED, so no client edit path holds a token against the row — the bump is observable in the row and consequential nowhere.
 
-rowsAffected, _ := result.RowsAffected()
-if rowsAffected == 0 {
-    // Event was already processed; safely ignore payload and ack the message
-    return nil
-}
-```
-
-- **Duplicate Detection**: If the `INSERT` statement affects `0` rows (due to `ON CONFLICT DO NOTHING`), the event has already been successfully processed. The `POST /internal/events` handler returns a `2xx` no-op so the shared consumer treats the message as handled and does not retry.
-- **TTL Pruning**: To prevent the idempotency registry from growing indefinitely, a background cron job runs daily to purge `processed_event` logs older than 7 days (matching the SQS message retention limit).
+**This property belongs to these two handlers, not to the endpoint.** A new inbound type whose handler is not idempotent by construction needs the dedup registry introduced with it — tracked in Appendix E.
 
 ---
 
@@ -1301,7 +1252,6 @@ if rowsAffected == 0 {
 | `outbox` | `idx_outbox_pending` | Relay worker polling (with `SKIP LOCKED`) |
 | `outbox` | `idx_outbox_tenant_pending` | Tenant-scoped partitioning / parallel relay |
 | `outbox` | `idx_outbox_processed_at` | TTL cleanup job (`processed_at < NOW() - INTERVAL '7 days'`) |
-| `processed_event` | `idx_processed_event_processed_at` | Daily TTL cleanup job (`processed_at < NOW() - INTERVAL '7 days'`) |
 
 ### 2.5 Triggers — `updated_at` and `record_version`
 
@@ -1751,64 +1701,70 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
    - **Trigger Scenario**: The `candidateUsers` attribute on `<zeebe:assignmentDefinition>` is present but is not a single valid UUID v7.
    - **Trigger Logic**: A dedicated validator function (`validateCandidateUser`) parses the value as a UUID v7. If parsing fails or the value contains a comma (multi-user not yet supported), this error is emitted. The named function is the single change point when multi-user support is introduced.
 
-8. **`TASK_LIMIT_EXCEEDED`**
+8. **`CANDIDATE_USERS_EMPTY`**
+   - **Trigger Scenario**: A user task carries a `<zeebe:assignmentDefinition>` whose `candidateUsers` is absent or empty, naming a role but nobody.
+   - **Trigger Logic**: `ValidateDefaultAssignee` emits this error when the value is empty after trimming. It is a separate function from `validateCandidateUser`, which continues to check only the format of a value that is present, and from the `CANDIDATE_GROUPS_EMPTY` rule that requires the role — the split is what keeps the presence requirement off `sendTask`/`receiveTask`, which share the format rules.
+   - **Why it is an error and not a warning**: the Execution Service creates the task with `assignee_mode = "single"` and no assignment rows, and its claim path requires both `assignee_mode = "all"` and an existing assignment row for the caller. Neither holds, so the task can be neither claimed nor completed and the instance never advances. A template naming a role but no default assignee has no reachable runtime behaviour (execution LLD §5.5).
+   - **Scope**: user tasks only. `sendTask`/`receiveTask` keep an optional `assignmentDefinition` — the interpreter resolves them through the message buffer and creates no task, so they need no assignee.
+
+9. **`TASK_LIMIT_EXCEEDED`**
    - **Trigger Scenario**: The process model contains more than 1000 user task nodes.
    - **Trigger Logic**: The parser counts the total occurrences of `<bpmn:userTask>` in the process definition. If the count exceeds 1000, it halts validation and rejects the model to prevent system exhaustion.
 
-9. **`LANE_LIMIT_EXCEEDED`**
+10. **`LANE_LIMIT_EXCEEDED`**
    - **Trigger Scenario**: The process contains more than 100 lanes.
    - **Trigger Logic**: The parser counts `<bpmn:lane>` elements. If `len(lanes) > 100`, it fails validation.
 
-10. **`MULTIPLE_START_EVENTS`**
+11. **`MULTIPLE_START_EVENTS`**
     - **Trigger Scenario**: The XML defines more than one `<bpmn:startEvent>` in the process flow.
     - **Trigger Logic**: The process structure validator counts start event nodes. If `count > 1`, validation fails because execution cannot have ambiguous entry points.
 
-11. **`MULTIPLE_END_EVENTS`**
+12. **`MULTIPLE_END_EVENTS`**
     - **Trigger Scenario**: The XML defines more than one `<bpmn:endEvent>`.
     - **Trigger Logic**: The process validator counts end event nodes. If `count > 1`, validation fails to keep the execution termination path deterministic in the MVP.
 
-12. **`NO_START_EVENT`**
+13. **`NO_START_EVENT`**
     - **Trigger Scenario**: There is no `<bpmn:startEvent>` in the process.
     - **Trigger Logic**: The validator checks if a start event exists. If `count == 0`, the model is rejected.
 
-13. **`NO_END_EVENT`**
+14. **`NO_END_EVENT`**
     - **Trigger Scenario**: There is no `<bpmn:endEvent>` in the process.
     - **Trigger Logic**: The validator checks if an end event exists. If `count == 0`, the model is rejected.
 
-14. **`DANGLING_NODE`**
+15. **`DANGLING_NODE`**
     - **Trigger Scenario**: A task, gateway, or start/end event has no sequence flow connections.
     - **Trigger Logic**: The validator checks if each node ID has at least one incoming sequence flow and at least one outgoing sequence flow (except start/end events). If a node has no sequence flows associated with it, it is marked as dangling.
 
-15. **`UNREACHABLE_NODE`**
+16. **`UNREACHABLE_NODE`**
     - **Trigger Scenario**: A node exists in the model but is unreachable from the Start Event.
     - **Trigger Logic**: The validator runs a Depth-First Search (DFS) traversal starting from the single `<bpmn:startEvent>`. Any node that is not visited in the traversal is flagged as unreachable.
 
-16. **`CYCLE_DETECTED` / `UNGUARDED_LOOP`** *(redefined — see §4.4 Guarded-Loop Enforcement)*
+17. **`CYCLE_DETECTED` / `UNGUARDED_LOOP`** *(redefined — see §4.4 Guarded-Loop Enforcement)*
     - **Trigger Scenario**: The sequence flows create an **unguarded** cyclic loop — a cycle that cannot be exited. Guarded rework loops (a back-edge from a diverging exclusive gateway that also has a forward exit branch) are **valid** and no longer trigger this error.
     - **Trigger Logic** (`CYCLE_DETECTED`): The compiler classifies back-edges via DFS and runs Tarjan's SCC over the graph to enumerate loops. A loop (SCC with more than one node) is rejected when it has no guarded exit; i.e. it contains no exclusive gateway with an outgoing edge leaving the SCC.
     - **`UNGUARDED_LOOP`**: A separate code emitted when a back-edge is structurally illegal; its source is not a diverging exclusive gateway, an exclusive gateway's outgoing edges are all back-edges (no forward exit), or a node has a self-edge (`u → u`). The validator checks each back-edge's source node type and confirms its originating exclusive gateway retains at least one forward branch. (A self-edge forms an SCC of size 1, so it is caught here rather than by SCC size.)
 
-17. **`UNMATCHED_GATEWAY`**
+18. **`UNMATCHED_GATEWAY`**
     - **Trigger Scenario**: A split gateway (e.g. Exclusive, Parallel) does not have a corresponding join gateway to merge the execution branches.
     - **Trigger Logic**: The compiler maps split-to-join routing blocks. It traces all path permutations from a split gateway. If any branch terminates or merges at an mismatched gateway type, the gateway is flagged.
 
-18. **`INVALID_SEQUENCE_FLOW_REF`**
+19. **`INVALID_SEQUENCE_FLOW_REF`**
     - **Trigger Scenario**: A `<bpmn:sequenceFlow>` references a non-existent `sourceRef` or `targetRef` ID.
     - **Trigger Logic**: The parser parses sequence flows and builds an adjacency list. If `sourceRef` or `targetRef` does not correspond to a parsed element ID, the reference is invalid.
 
-19. **`MULTIPLE_PROCESSES`**
+20. **`MULTIPLE_PROCESSES`**
     - **Trigger Scenario**: Multiple `<bpmn:process>` elements exist outside of a `<bpmn:collaboration>` wrapper, or a collaboration contains more executable processes than there are declared participants.
     - **Trigger Logic**: When no `<bpmn:collaboration>` is present, the parser rejects any definitions with `count > 1`. Inside a collaboration, each `isExecutable="true"` participant is allowed exactly one process — if a process ID is referenced by more than one participant, or a process exists with no matching participant, validation fails.
 
-20. **`INVALID_SLA_DURATION`**
+21. **`INVALID_SLA_DURATION`**
     - **Trigger Scenario**: A timer boundary event or intermediate timer catch event declares a duration in an invalid format.
     - **Trigger Logic**: The unified duration converter (`parseDuration`) is applied to the `timeDuration` value. Accepted formats: ISO 8601 (`P3D`, `PT72H`) or Go duration (`72h`, `3h30m`). Any other format emits this error against the boundary event or intermediate catch event node ID. The legacy `sla_duration` Zeebe property is not read; SLA is modelled exclusively via timer boundary events.
 
-21. **`INVALID_BOUNDARY_ATTACHMENT`**
+22. **`INVALID_BOUNDARY_ATTACHMENT`**
     - **Trigger Scenario**: A boundary event is attached to a node that does not legally host that boundary type. Specifically: an error boundary event attached to anything other than `bpmn:subProcess` or `bpmn:callActivity`, or a timer boundary event whose host is anything other than `bpmn:userTask` or `bpmn:subProcess`. Message boundary events may attach to `bpmn:userTask`, `bpmn:subProcess`, or `bpmn:callActivity`. Note: error and timer boundary events pass this attachment check on `bpmn:callActivity` per the rule above, but still fail separately at compile time (see §callActivity) — `bpmn:callActivity` never legally *executes* a timer/error boundary, only a message one.
     - **Trigger Logic**: `ValidateBoundaryEvents` in `bpmn_compiler/validator/boundary.go` iterates all boundary events. If `attachedToRef` resolves to an unsupported host element, this error is emitted against the boundary event node ID.
 
-22. **`UNSUPPORTED_ELEMENT`**
+23. **`UNSUPPORTED_ELEMENT`**
     - **Trigger Scenario**: The uploaded XML contains a Tier 2 element that is on the roadmap but not yet supported (§4.1.2 / §4.1.4). Examples: `<bpmn:intermediateCatchEvent>` with a message or signal definition.
     - **Trigger Logic**: `parser.go` checks each scoped element against an `unsupportedElements` map. If a match is found, this error is emitted against the element ID. Distinct from `REJECTED_ELEMENT` — signals "this will be supported in a future version" rather than "permanently rejected".
 
@@ -1820,35 +1776,35 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Scenario**: A node or sequence flow in the process has no corresponding `<bpmndi:BPMNShape>` or `<bpmndi:BPMNEdge>` entry in the diagram interchange section.
     - **Trigger Logic**: `ValidateDiagramCompleteness` builds a set of all shape/edge `bpmnElement` refs in the `BPMNDiagram`. For each activity, gateway, event, and sequence flow it checks that a corresponding shape/edge exists; any missing shape or edge emits this error with the missing element ID as the node ID.
 
-23. **`MISSING_ASSIGNMENT_DEFINITION`**
+24. **`MISSING_ASSIGNMENT_DEFINITION`**
     - **Trigger Scenario**: A `<bpmn:userTask>` lacks a `<zeebe:assignmentDefinition>` extension element.
     - **Trigger Logic**: The validator checks each `userTask` for a `zeebe:assignmentDefinition` child inside `extensionElements`. If absent, this error is emitted against the task node ID.
 
-24. **`INVALID_ZEEBE_PROPERTY`**
+25. **`INVALID_ZEEBE_PROPERTY`**
     - **Trigger Scenario**: A `<zeebe:property>` element carries an unrecognized name or a structurally invalid value for a property the compiler actively validates.
     - **Trigger Logic**: *Warning severity* — on a `callActivity`: a `target="Depts"` input is present but its source value is not valid JSON (cannot be parsed as `map[string]string`). Compilation continues; the malformed mapping is ignored. (Every `zeebe:property` on a userTask is forwarded verbatim into `StageDef.Extras` without validation; the compiler does not special-case any property name.)
 
-25. **`MISSING_MESSAGE_DEFINITION`** *(warning severity)*
+26. **`MISSING_MESSAGE_DEFINITION`** *(warning severity)*
     - **Trigger Scenario**: A `<bpmn:messageFlow>`, `<bpmn:receiveTask>`, or `<bpmn:sendTask>` references a message ID that is not declared as a `<bpmn:message>` in the root `<bpmn:definitions>`; or a message boundary event's name cannot be resolved from `<bpmn:message>` definitions or collaboration message flows.
     - **Trigger Logic**: Two cases emit this code as a **warning** (compilation proceeds). (a) *Collaboration-level*: the validator builds a set of all declared message IDs; if any `messageRef` attribute on a `messageFlow`, `receiveTask`, or `sendTask` points to an undeclared ID, this warning is emitted. (b) *Boundary event*: the validator calls `ResolveMessageName` (by `messageRef`) and falls back to `resolveMessageNameFromFlows` (by element ID in collaboration message flows); if the name cannot be resolved by either path, this warning is emitted against the boundary event node ID in `bpmn_compiler/validator/boundary.go`.
 
-26. **`UNMATCHED_MESSAGE_FLOW`**
+27. **`UNMATCHED_MESSAGE_FLOW`**
     - **Trigger Scenario**: A `<bpmn:messageFlow>` references a source or target node that does not exist in the collaboration.
     - **Trigger Logic**: The validator resolves `messageFlow.sourceRef` and `messageFlow.targetRef` against all known element IDs. Any dangling reference triggers this error.
 
-27. **`MAX_DEPTH_EXCEEDED`**
+28. **`MAX_DEPTH_EXCEEDED`**
     - **Trigger Scenario**: The longest forward path from the start event to the end event exceeds the maximum node depth (2000), guarding against stack exhaustion / DoS during recursive graph compilation (§4.4). Subprocess paths are counted independently.
     - **Trigger Logic**: After back-edges are stripped, the validator computes the longest forward path (memoised DFS). If it exceeds `maxPathDepth` (2000), this error is emitted against the start event.
 
-28. **`UNRESOLVED_CALLED_ELEMENT`**
+29. **`UNRESOLVED_CALLED_ELEMENT`**
     - **Trigger Scenario**: A `<bpmn:callActivity>` is missing its `<zeebe:calledElement processId="...">` extension element, or the `processId` references a process that is not defined in the same BPMN document.
     - **Trigger Logic**: `ValidateCallActivities` in `bpmn_compiler/validator/call_activity.go` checks each callActivity for a non-empty `processId` that resolves to a sibling `<bpmn:process>` in the same definitions. The called process must be embedded in the document (injected by the thin BE before upload); remote references are not supported.
 
-29. **`NESTED_SUBPROCESS_NOT_SUPPORTED`**
+30. **`NESTED_SUBPROCESS_NOT_SUPPORTED`**
     - **Trigger Scenario**: A `<bpmn:subProcess>` element contains another `<bpmn:subProcess>` directly.
     - **Trigger Logic**: `ValidateProcess` in `bpmn_compiler/validator/validator.go` checks each subProcess for nested child subProcess elements. Only one level of subprocess nesting is supported.
 
-30. **`MISSING_DEPT_INPUT_FOR_MODULE`**
+31. **`MISSING_DEPT_INPUT_FOR_MODULE`**
     - **Trigger Scenario**: A `<bpmn:callActivity>` references a called process that has no lanes, but the callActivity's `<zeebe:ioMapping>` does not include a `dept_id` input or a `target="Depts"` dict-injection input.
     - **Trigger Logic**: `ValidateCallActivities` in `bpmn_compiler/validator/call_activity.go` checks whether the called process has a laneSet. If not, it verifies that either a `dept_id` input or a `target="Depts"` input is present in the callActivity's ioMapping. Absent → `MISSING_DEPT_INPUT_FOR_MODULE`.
 
@@ -1874,6 +1830,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 | `/workflows/:id/versions/:version_id/clone` | `POST` | Admin | Clone a published/archived version into a new workflow key (as a new draft) |
 | `/workflows/:id/versions/:version_id/promote` | `POST` | Admin | Promote an older published version to active (rollback/rollforward) |
 | `/workflows/validate` | `POST` | Any | Validate raw BPMN XML on-the-fly (stateless validation) |
+| `/workflows/:id/versions/:version_id/validation` | `GET` | Any | Re-run the structural validator against a stored version's own BPMN, read-only (§3.3.12.1) |
 | `/workflows/:id/versions/:version_id/export` | `GET` | Any | Export raw BPMN XML file attachment (supports DRAFT & published versions) |
 | `/workflows/:id/versions/:version_id/diff/:target_version_id` | `GET` | Any | Get structural and metadata diff between two versions |
 | `/connectors/registry` | `GET` | Any | Serve the modeler-facing element-template (authoring form) list/detail for each registered connector type, generated from `pkg/registry` (§10.14/§10.15) |
@@ -2086,6 +2043,14 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
   }
   ```
 
+#### 3.3.12.1 Stored Version Validation
+
+- **GET** `/workflows/:id/versions/:version_id/validation`
+- **Semantics**: Re-runs the structural validator against a stored version's own BPMN, in any status. Read-only — nothing is written, and a version already `PUBLISHED` keeps its status and its `is_valid` flag.
+- **Why it exists**: a validator rule added after a version was published does not retroactively invalidate it, so a template published under the older rules can still hold a defect that only surfaces when the Execution Service refuses to instantiate it. This endpoint lets an operator find those templates first, one version at a time, and the fix is an ordinary new version (§7.4.3 Flow A).
+- **Response (`200 OK`)**: `{"version_id", "status", "is_valid", "issues"}`. The `issues` array carries the same element shape §3.3.12 returns, so one renderer serves both lists; `version_id` and `status` identify which stored version the result describes, which the stateless endpoint has no need of.
+- **Implementation**: composes two paths that already exist — the version read and the raw-validation service — and adds no service method of its own.
+
 #### 3.3.13 Export Workflow BPMN
 
 - **GET** `/workflows/:id/versions/:version_id/export`
@@ -2125,7 +2090,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 
 - **POST** `/internal/events`
 - **Caller**: The shared workflow-events consumer (service-to-service). Mounted on an internal route group — **not** behind `ProtectedMiddlewares` and **not** exposed through the Envoy gateway. Authenticated by service-to-service auth (shared-secret header / mTLS / network policy).
-- **Semantics**: Accepts a single `events.Envelope[json.RawMessage]`, injects the RLS GUC from the envelope `tenant_id` (`pgcommon.WithGUCSet`, §14), and dispatches on `type`. Today it handles `DepartmentMembershipRevoked` → `HandleMembershipRevoked` (the full flow is in §7.4.2). Idempotent via `processed_event` keyed on the envelope `id`.
+- **Semantics**: Accepts a single `events.Envelope[json.RawMessage]`, injects the RLS GUC from the envelope `tenant_id` (`pgcommon.WithGUCSet`, §14), and dispatches on `type`. Today it handles `DepartmentMembershipRevoked` → `HandleDepartmentMembershipRevoked` (the full flow is in §7.4.2). Redelivery is absorbed by handler idempotency (§2.3.1, §10.9).
 - **Request body**:
 
   ```json
@@ -2138,7 +2103,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
   ```
 
 - **Responses**:
-  - `200 OK` / `204 No Content` — processed, or an idempotent no-op for an already-seen `id`. The consumer marks the message handled.
+  - `200 OK` / `204 No Content` — processed. A redelivered `id` is reprocessed and converges on the same state (§2.3.1). The consumer marks the message handled.
   - `400 Bad Request` — malformed envelope/payload or unknown required field. Non-retryable; the consumer routes the message to its DLQ.
   - `500 Internal Server Error` — transient failure (DB/transaction). The consumer retries and eventually DLQs per its `maxReceiveCount`.
 - **Note**: Unknown `type` values are accepted and ignored (logged, `2xx`) so adding new event types upstream does not break delivery.
@@ -3307,14 +3272,13 @@ VALUES
 -- Repeated for each user_id in the node's default_assignees list
 ```
 
-**Invalidation query** — filters by both `user_id` and `department_id` because a `DepartmentMembershipRevoked` event is scoped to a single department. Using `user_id` alone would over-invalidate (revoking a user from Engineering would incorrectly flag their assignments in Design):
+**Invalidation read** — the query selects the revoked user's rows within the tenant, ordered so a redelivery rebuilds a byte-identical payload (§2.3.1). A `DepartmentMembershipRevoked` event is scoped to one department, and that narrowing is applied in the service rather than the query, because the tenant-level handler (§7.4.5) shares this read and passes no department. Narrowing matters: revoking a user from Engineering must not flag their assignments in Design.
 
 ```sql
-SELECT DISTINCT workflow_version_id, node_key
+SELECT id, tenant_id, workflow_version_id, node_key, user_id, department_id, role, created_at
 FROM workflow_node_assignee
-WHERE user_id      = :revoked_user_id
-  AND department_id = :revoked_department_id
-  AND tenant_id    = :tenant_id;
+WHERE tenant_id = :tenant_id AND user_id = :revoked_user_id
+ORDER BY workflow_version_id, node_key;
 ```
 
 ### 4.5.4 Concurrency Semantics
@@ -3339,12 +3303,13 @@ The Definition Service is only responsible for defining the signal contract. The
 
 ### 4.5.5 Validation Rules
 
-The following rules apply specifically to multi-assignee nodes and are enforced at publish time:
+The following rules apply specifically to multi-assignee nodes. The first three are structural and run in the validator, so they surface on `POST /workflows/validate` and on the version-validation read (§3.3) as well as at publish, which recompiles. The eligibility rule needs Org & Membership and runs at publish only.
 
 | Rule | Error Code |
 | --- | --- |
 | `zeebe:assignmentDefinition` must be present | `MISSING_ASSIGNMENT_DEFINITION` |
 | `candidateGroups` must be non-empty and ≤ 256 chars | `CANDIDATE_GROUPS_EMPTY` |
+| `candidateUsers` must be present and non-empty | `CANDIDATE_USERS_EMPTY` |
 | `candidateUsers` must be a single valid UUID v7 | `INVALID_CANDIDATE_USER` |
 | UUID in `candidateUsers` must pass Org & Membership eligibility check | `ASSIGNEE_INELIGIBLE` |
 
@@ -3957,10 +3922,9 @@ stateDiagram-v2
 
 #### 7.1.2 Database Pruning and Cleanup (TTL)
 
-To prevent transaction logs and processed message histories from growing indefinitely, two background cron jobs run daily (during off-peak hours):
+To prevent transaction logs from growing indefinitely, a background cron job runs daily (during off-peak hours):
 
 - **Outbox Cleanup**: Physically deletes `SENT` outbox records older than 7 days, and explicitly flags old `FAILED_EXHAUSTED` records for manual operator review or archival.
-- **Idempotency Log Cleanup**: Physically deletes `processed_event` records older than 7 days (corresponds to the maximum SQS message retention limit).
 
 ### 7.2 Event Payload Schemas
 
@@ -4007,7 +3971,8 @@ The queue topology (`membership-wf-q`, its `membership-wf-q-dlq` DLQ, visibility
 
 - The consumer POSTs the full `events.Envelope[json.RawMessage]` (carrying `id`, `type`, `tenant_id`, `data`) to `/internal/events`.
 - The endpoint is on an **internal route group** (service-to-service auth — shared-secret header / mTLS / network policy), **not** the gateway-authenticated public API. It is never exposed through the Envoy gateway.
-- **Retry contract**: `2xx` (incl. an idempotent dedup no-op) marks the message handled; `4xx` (malformed payload) is treated as non-retryable by the consumer and routed to its DLQ; `5xx`/timeouts cause the consumer to retry and eventually DLQ per its `maxReceiveCount`.
+- **Unknown types are acknowledged with `200` and ignored**, counted against the ingest metric with the received type as its label. A producer adding an event type this service has no handler for never breaks delivery.
+- **Retry contract**: `2xx` marks the message handled; `4xx` (malformed payload) is treated as non-retryable by the consumer and routed to its DLQ; `5xx`/timeouts cause the consumer to retry and eventually DLQ per its `maxReceiveCount`.
 
 #### 7.4.2 Handling `DepartmentMembershipRevoked` Event
 
@@ -4035,29 +4000,23 @@ The queue topology (`membership-wf-q`, its `membership-wf-q-dlq` DLQ, visibility
 
 - **What and How Happens** (executed by the `POST /internal/events` handler after dispatching on `env.Type`):
 
-  1. **Idempotency Check**: The handler records the event in the `processed_event` table to verify it has not been processed (the dedup remains in the Definition Service, keyed on the forwarded envelope `id`):
+  1. **Set Tenant Context**: The handler injects the RLS GUC from the envelope `tenant_id` via `pgcommon.WithGUCSet` (`SET LOCAL app.tenant_id = :tenant_id`) — the manual-injection pattern shared with the gRPC path (§14), since this is a service-to-service call without gateway identity headers.
+
+  2. **Find Affected Versions**: Read the revoked user's assignee rows, ordered so the invalidation payload is deterministic across a redelivery (§2.3.1):
 
      ```sql
-     INSERT INTO processed_event (event_id, consumer, event_type) 
-     VALUES (:event_id, 'membership-wf-q', 'DepartmentMembershipRevoked') ON CONFLICT DO NOTHING;
+     SELECT id, tenant_id, workflow_version_id, node_key, user_id, department_id, role, created_at
+     FROM workflow_node_assignee
+     WHERE tenant_id = :tenant_id AND user_id = :user_id
+     ORDER BY workflow_version_id, node_key;
      ```
 
-     If 0 rows are affected, the event was already processed — return `2xx` (no-op) so the consumer does not retry.
+     The department narrowing is applied in the service, not the query: the tenant-level handler (§7.4.5) shares this read and passes no department.
 
-  2. **Set Tenant Context**: The handler injects the RLS GUC from the envelope `tenant_id` via `pgcommon.WithGUCSet` (`SET LOCAL app.tenant_id = :tenant_id`) — the manual-injection pattern shared with the gRPC path (§14), since this is a service-to-service call without gateway identity headers.
-
-  3. **Find Affected Drafts and Templates**: Query the `workflow_node_assignee` table to identify affected workflow versions:
-
-     ```sql
-     SELECT DISTINCT workflow_version_id, node_key
-     FROM workflow_node_assignee 
-     WHERE user_id = :user_id AND department_id = :department_id;
-     ```
-
-  4. **Invalidate Versions**: For each identified `workflow_version_id`:
+  3. **Invalidate Versions**: For each identified `workflow_version_id`:
 
      - Set `is_valid = false` on `workflow_version`.
-     - Append a structured error object to the version's `validation_errors_json` array:
+     - Replace the version's `validation_errors_json` with one structured error object per affected node:
 
         ```json
         {
@@ -4066,13 +4025,13 @@ The queue topology (`membership-wf-q`, its `membership-wf-q-dlq` DLQ, visibility
         }
         ```
 
-  5. **Notify Execution Service**: After the DB transaction commits, call `ExecutionClient.PauseUserTasks(ctx, tenantID, userID)` via gRPC. Execution queries its own runtime task records for active assignments where `assignee_user_id = revoked_user_id` and pauses them. This is a synchronous call with retries (3 attempts, bounded backoff); if Execution is unreachable after retries, the handler returns `5xx` so the shared consumer retries the full event and Execution is notified on the next attempt. **Why a direct gRPC call instead of SNS:** avoids requiring Execution to maintain a separate SQS subscription to `wf.template.events`; Execution targets by `user_id` (runtime assignment data it owns) rather than `version_id` (a template-design-time concept), so the derived event carried no useful extra information.
+  4. **Notify Execution Service**: After the DB transaction commits, call `ExecutionClient.PauseUserTasks(ctx, tenantID, userID)` via gRPC. Execution queries its own runtime task records for active assignments where `assignee_user_id = revoked_user_id` and pauses them. This is a synchronous call with retries (3 attempts, bounded backoff); if Execution is unreachable after retries, the handler returns `5xx` so the shared consumer retries the full event and Execution is notified on the next attempt. **Why a direct gRPC call instead of SNS:** avoids requiring Execution to maintain a separate SQS subscription to `wf.template.events`; Execution targets by `user_id` (runtime assignment data it owns) rather than `version_id` (a template-design-time concept), so the derived event carried no useful extra information.
 
-  6. **User Deletion Safety Net Handling**: When a user is deleted from the platform, the Org & Membership Service automatically revokes all of their department memberships, emitting individual `DepartmentMembershipRevoked` events. As a result, the Definition Service does not need to consume `UserDeleted` events directly; any template containing the deleted user as a default assignee will be transitively invalidated via the membership revocation flow.
+  5. **User Deletion Safety Net Handling**: When a user is deleted from the platform, the Org & Membership Service automatically revokes all of their department memberships, emitting individual `DepartmentMembershipRevoked` events. As a result, the Definition Service does not need to consume `UserDeleted` events directly; any template containing the deleted user as a default assignee will be transitively invalidated via the membership revocation flow.
 
-  7. **Impact on Running Instances (Execution Service cross-reference)**: Step 5 instructs Execution to pause active task assignments for the revoked user. Execution uses `user_id` to locate affected tasks in its own runtime store — this is more precise than a version-scoped pause, which would over-pause tasks that had already been reassigned to a different user. An admin must use `POST /tasks/{id}/reassign` on the Execution Service to assign a new eligible user and unblock paused tasks. See Execution Service LLD §4.5 (Task Assignee Lifecycle) for the full reassignment flow.
+  6. **Impact on Running Instances (Execution Service cross-reference)**: Step 4 instructs Execution to pause active task assignments for the revoked user. Execution uses `user_id` to locate affected tasks in its own runtime store — this is more precise than a version-scoped pause, which would over-pause tasks that had already been reassigned to a different user. An admin must use `POST /tasks/{id}/reassign` on the Execution Service to assign a new eligible user and unblock paused tasks. See Execution Service LLD §4.5 (Task Assignee Lifecycle) for the full reassignment flow.
 
-  8. **Admin Recovery Path**: To restore the ability to start new instances:
+  7. **Admin Recovery Path**: To restore the ability to start new instances:
      1. Admin creates a new draft from the invalidated version (inheriting the BPMN XML).
      2. Admin updates the default assignee in the BPMN XML to a new eligible user.
      3. Admin publishes the new version — this triggers a fresh eligibility check and creates new `workflow_node_assignee` rows (publish itself emits no event, §7.2).
@@ -4106,28 +4065,29 @@ This is the automated path triggered when an assignee loses their department mem
 
 #### Out of Scope for the Definition Service — Runtime Reassignment
 
-The following IAM events from the HLD event catalog affect **live task assignments on running instances**. These events are not consumed by the Definition Service. They route to the Execution Service via `user-wf-q` and `tender-wf-q`:
+The following IAM events from the HLD event catalog affect **live task assignments on running instances**. These events are not consumed by the Definition Service. They reach the Execution Service through `event_consumer`, which polls `membership-wf-q` and `user-wf-q`:
 
 | Event | Source | Runtime Effect |
 | --- | --- | --- |
 | `UserAvailabilityChanged` | User Profile | Reroutes pending tasks based on OOO status |
 | `DelegationStarted` / `DelegationEnded` | Org & Membership | Temporarily reassigns pending activities to the delegate and back |
-| `TenderAssigneeOverridden` | Tender Service / Admin | Overrides the assignee on a specific task within a running instance |
 | `UserDeleted` | User Profile | Triggers membership revocations (handled transitively via `DepartmentMembershipRevoked`) and pauses affected live instances |
+
+`TenderAssigneeOverridden` reaches no consumer in the Workflow Engine. The Execution Service applies an assignee override synchronously through its own node-override endpoint, so `event_consumer`'s routing table declares the type with an empty target list, dropping it rather than letting it fall through to the broadcast default. Its consumers elsewhere on the platform are Audit and Notification (`event_consumer`'s routing table records this). The event is owned by IAM's Org & Membership service and published on `iam.membership.events` (confirmed with IAM's Tender question set, item 17).
 
 Runtime reassignment flows — including the `POST /tasks/{id}/reassign` admin endpoint, the `AssigneeOverrideSignal` to Temporal, and the `workflow_task_assignment` audit trail — will be documented in the Execution Service LLD §4.5 (Task Assignee Lifecycle).
 
 #### 7.4.4 Exclusion of Tenant Lifecycle Events
 
-The Definition Service intentionally does **not** subscribe to the `tenant-wf-q` or consume tenant lifecycle events (such as `TenantAccessSuspended` or `TenantAccessRevoked`). Because the Definition Service only handles design-time template compilation and version drafts, active tenant locks are instead enforced upstream at the API Gateway (which rejects incoming user requests for suspended tenants) and downstream in the Execution Service (which handles pausing in-flight Temporal workflow executions).
+The Definition Service consumes no tenant lifecycle event. `event_consumer`'s routing table sends `TenantStateChanged` and `TenantMembershipsPurged` to the Execution Service alone, and any other tenant-lifecycle type delivered to this service's `/internal/events` endpoint is acknowledged and ignored by the unknown-type default (§7.4.1). Because the Definition Service only handles design-time template compilation and version drafts, active tenant locks are instead enforced upstream at the API Gateway (which rejects incoming user requests for suspended tenants) and downstream in the Execution Service (which handles pausing in-flight Temporal workflow executions).
 
 ---
 
 #### 7.4.5 Handling `MembershipRevoked` Event
 
 - **Event Type**: `MembershipRevoked` — Org & Membership emits it unconditionally whenever a user is removed from a tenant. Its payload carries `user_id` and no `department_id`: the removal is tenant-wide, not scoped to one department.
-- **Effect**: every published version in that tenant where the user is a default assignee is marked `is_valid=false`, with no department filter, followed by the same `PauseUserTasks` gRPC call the department-scoped handler makes. `HandleMembershipRevoked`'s department filter is optional for exactly this reason — the two events share one implementation, differing only in whether a department narrows the invalidation set.
-- **Dedup**: the same `processed_event(event_id, consumer)` row and `membership-wf-q` consumer string as every other inbound type.
+- **Effect**: every published version in that tenant where the user is a default assignee is marked `is_valid=false`, with no department filter, followed by the same `PauseUserTasks` gRPC call the department-scoped handler makes. `HandleDepartmentMembershipRevoked`'s department filter is optional for exactly this reason — the two events share one implementation, differing only in whether a department narrows the invalidation set.
+- **Redelivery**: absorbed by the same handler-idempotency argument as `DepartmentMembershipRevoked` (§2.3.1) — this handler shares that one's implementation.
 - **Why both handlers exist**: `DepartmentMembershipRevoked` is one department losing one member; `MembershipRevoked` is the user leaving the tenant entirely. A removal that emitted only the tenant-level event would otherwise leave every affected template valid and every live task assigned.
 
 ### 7.5 Contract with Execution Service (DSL Schema)
@@ -4227,7 +4187,7 @@ To ensure optimal connection management, the service connects to PostgreSQL thro
 | **SNS (outbox publisher)** | Down / throttled | Outbox rows accumulate with `published_at IS NULL`. The relay retries with exponential backoff. After `MaxAttempts` (default 5), rows move to `outbox_dead_letters` and alert fires. No HTTP request fails due to SNS unavailability — the write completes before the relay runs. | None — events are durable in `outbox_events` until delivered. Dead-lettered events require manual reprocessing via `ReprocessDeadLetters`. |
 | **Glue Schema Registry** | Down / unreachable | The AWS Glue SDK caches schema versions locally after the first fetch; a short-term outage is transparent. On a cold start (no cached version), encode fails → outbox publish is blocked → outbox rows accumulate; alert via `outbox_dead_letters_total`. Schema version cache TTL should be ≥ 5 min to ride out transient Glue unavailability. | None — events remain buffered in `outbox_events`. |
 | **Execution Service gRPC** | Down / timeout | `ArchiveWorkflow` calls `GetActiveExecutions` to check for running instances before archiving. On timeout (default 5 s), the handler returns `503 UPSTREAM_UNAVAILABLE`. No archive proceeds. The workflow remains in its current state. | None. |
-| **Inbound event ingest** (`POST /internal/events`) | Definition pod down, or shared consumer down | The shared consumer holds `DepartmentMembershipRevoked` messages on `membership-wf-q` (SQS retention: 14 days) and retries the HTTP POST until the Definition Service is healthy. On recovery, events are reprocessed idempotently via `processed_event`. `is_valid` flags may be stale for the duration of the outage. | None — SQS retains the messages and the consumer retries; the `processed_event` dedup prevents double-processing. |
+| **Inbound event ingest** (`POST /internal/events`) | Definition pod down, or shared consumer down | The shared consumer holds `DepartmentMembershipRevoked` messages on `membership-wf-q` (SQS retention: 14 days) and retries the HTTP POST until the Definition Service is healthy. On recovery, events are reprocessed; the handlers converge on the same state either way (§2.3.1). `is_valid` flags may be stale for the duration of the outage. | None — SQS retains the messages and the consumer retries. |
 | **Org & Membership eligibility endpoint** | Down at publish time | Publish calls the membership eligibility check for each assignee. On timeout/5xx, publish returns `503 UPSTREAM_UNAVAILABLE`. The draft is not promoted. | None. |
 
 ### 9.3 Service-Level Objectives
@@ -4319,11 +4279,13 @@ This section captures the key architectural and design decisions made for the Wo
 
 - **Rationale**: `platform-pgcommon` v1.1.1 includes `RunInTxWithRetry` and `RunInTxWithRetryOpts` in `retry.go` — both retry automatically on `40001`/`40P01`. The service layer uses the `Transactor` port (`internal/core/port/transactor.go`) which currently only wraps `RunInTx`. To expose retry semantics, the port interface needs a `RunInTxWithRetry` method (or a `TxOptions` parameter that enables retry). The publish path is the only transaction in this service that warrants it — all other transactions do not use `SERIALIZABLE` isolation. In practice, concurrent publishes on the same version are rare (only one DRAFT per workflow), but SERIALIZABLE failures are non-deterministic and should not surface as 500 errors to the caller.
 
-### 10.9 `processed_event` — No Tenant Scope on Operational Tables
+### 10.9 No Dedup Registry — Inbound Handlers Absorb Redelivery
 
-- **Decision**: The `processed_event` table has no `tenant_id` column and no RLS policy. It is an operational/infrastructure table (SQS dedup log), not a tenant-scoped data table.
+- **Decision**: This service keeps no `processed_event` table. At-least-once delivery on `POST /internal/events` is absorbed by handler idempotency (§2.3.1). The Execution Service, whose inbound surface includes types that are not idempotent by construction, carries the registry instead.
 
-- **Rationale**: Consistent with the pattern established in `user_service.md` — operational tables that serve as infrastructure primitives (dedup logs, pruning targets) are not tenant-scoped. The dedup guard is the `(event_id, consumer)` composite primary key — a globally unique event ID scoped per consumer. There is no legitimate use case for querying `processed_event` filtered by tenant. The pruner runs by age (`processed_at < NOW() - INTERVAL '7 days'`) across all rows regardless of origin. Applying RLS to an operational table adds policy complexity with no security benefit.
+- **Rationale**: Both consumed types are revocations that converge on the same terminal state (§2.3.1). `SetVersionInvalid` replaces `is_valid` and `validation_errors_json` with the same values, and no query sets `is_valid = true` on a PUBLISHED row, so a redelivery cannot undo an operator's recovery — recovery is a new version (§7.4.3 Flow A). `PauseUserTasks` signals only instances it reads as `RUNNING`. A registry would add a table, an index, a daily pruner and a write on the hot path of every inbound event to detect a duplicate whose only trace is a bumped `record_version` on a row no client edit path locks against.
+
+- **Constraint this places on future work**: the property belongs to these two handlers, not to the endpoint. Adding an inbound type whose handler is not idempotent by construction means introducing the registry alongside it (Appendix E).
 
 ### 10.10 `workflow_node_assignee` — Single-Column FK, No Composite Tenant Guard
 
@@ -4408,7 +4370,7 @@ This section captures the key architectural and design decisions made for the Wo
 Valkey is a pure operational cache — it holds no primary data and contributes nothing to the RPO. The service uses it for three purposes (§1.9):
 
 - Compiled plan cache_ (`wf:plan:<tenantID>:<versionID>`, 1 h TTL): On failover or cold-start, the cache is empty. The first `GetCompiledWorkflow` gRPC call for each version triggers a DB fallback and repopulates the entry; subsequent calls are served from cache. No data is lost — the compiled plan is always re-derivable from `compiled_plan_json` in `workflow_version`.
-- Idempotency keys_ (`idem:<tenantID>:<routePath>:<key>`, 24 h TTL): A cache outage opens a window where duplicate HTTP mutations from the same `Idempotency-Key` may be re-applied. The window is bounded by the cache downtime. For SQS-delivered events, `processed_event` deduplication (§7.4) remains intact because it lives in Postgres.
+- Idempotency keys_ (`idem:<tenantID>:<routePath>:<key>`, 24 h TTL): A cache outage opens a window where duplicate HTTP mutations from the same `Idempotency-Key` may be re-applied. The window is bounded by the cache downtime. SQS-delivered events are unaffected: their redelivery safety is a property of the handlers themselves (§2.3.1), not of the cache.
 - Draft-edit locks_ (`wf:draft:lock:<tenantID>:<workflowID>`, 30 s sliding TTL): Locks expire naturally. After a cache failure, concurrent PUT /draft calls to the same draft may both succeed for up to 30 s, but the `record_version` optimistic-lock check in Postgres is the hard backstop — only one will commit.
 
 ElastiCache Multi-AZ replication (with automatic failover) is the primary mitigation. RTO for the cache tier matches ElastiCache's automatic replica promotion, typically under 60 seconds.
@@ -4432,7 +4394,7 @@ All automated tests live under `test/` (black-box) or co-located `_test.go` file
 | Unit — `core/service`, `core/domain` | Pure Go; ports mocked with GoMock (`make mock`) | BPMN sub-error codes fire on correct invalid input; plan quota enforcement (Starter 5, Pro 50, Enterprise unlimited — skips DB count); optimistic `record_version` conflict → `ErrDraftConcurrency`; `business_key` pattern `^[a-z0-9]+(-[a-z0-9]+)*$`; `buildEnvelope` attaches `WithTraceID` only when OTel span is valid |
 | Unit — BPMN compiler (`internal/bpmn_compiler`) | Pure Go; no DB or network | All 24 sub-error codes fire; cycle detection (SCC); split/join gateway pairing; well-formed BPMN produces expected DSL shape; XXE entity and XML token bomb rejected; empty process → `NO_START_EVENT` |
 | Unit — HTTP handlers (`test/unit/handler`) | Hand-rolled fakes; `gincommon.ProtectedMiddlewares` for request context | Each handler maps domain errors to correct HTTP status + RFC-9457 code; missing `x-tenant-id` → 401; non-admin role → 403; idempotency header absent → passes through; `record_version` absent on PUT /draft → 400 |
-| Unit — SQS handler (`test/unit/sqshandler`) | Hand-rolled `fakeMembershipRevoker` + `fakeLogger` | `HandleMembershipRevoked` marks affected versions `is_valid=false`; silently skips version on `GetByID` error; `RecordIfNew` dedup — second delivery is no-op |
+| Unit — inbound event handler (`test/unit/handler`) | Hand-rolled `fakeMembershipRevoker` + `fakeLogger` | `HandleDepartmentMembershipRevoked` marks affected versions `is_valid=false`; silently skips version on `GetByID` error; a redelivered envelope reprocesses to the same result |
 | Unit — outbound clients | Real local gRPC server (`net.Listen("tcp","127.0.0.1:0")`) / `httptest.NewServer` | `ExecutionClient` returns plan on success; `MembershipClient` returns eligibility; both return `ErrUpstreamUnavailable` on connection failure |
 | Integration — repository (`test/integration/postgres`) | testcontainers real Postgres; `outbox.ApplySchema` + `migrate.Runner` applied | RLS: cross-tenant read with foreign GUC returns zero rows; `WITH CHECK` rejects INSERT with foreign `tenant_id`; single-draft partial-unique index blocks second DRAFT row; `record_version` trigger increments on every UPDATE; `statusOrNotFound` returns correct sentinel (absent vs wrong-status) |
 | Integration — outbox atomicity | testcontainers Postgres | Business write + outbox row commit in same `RunInTx`; `Enqueue` called outside a transaction returns error |
@@ -4630,15 +4592,6 @@ CREATE TABLE outbox_dead_letters (
     failed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Log table representing processed SQS event ids to enforce idempotency
-CREATE TABLE processed_event (
-    event_id     UUID      NOT NULL,
-    consumer     TEXT      NOT NULL,
-    event_type   TEXT,
-    processed_at TIMESTAMP NOT NULL DEFAULT now(),
-    PRIMARY KEY (event_id, consumer)
-);
-
 -- BEFORE UPDATE Trigger: manages updated_at and increments record_version
 -- The WHEN guard skips no-op updates (no WAL write, no spurious record_version bump)
 CREATE OR REPLACE FUNCTION update_workflow_meta_column()
@@ -4826,7 +4779,6 @@ CREATE INDEX idx_starter_name_trgm ON workflow_template USING gin (name gin_trgm
 CREATE INDEX idx_starter_scope_tenant_category ON workflow_template(scope, tenant_id, category);
 CREATE INDEX idx_outbox_events_pending ON outbox_events (scheduled_at, id) WHERE published_at IS NULL;
 CREATE INDEX idx_outbox_dead_letters_failed_at ON outbox_dead_letters (failed_at DESC);
-CREATE INDEX idx_processed_event_processed_at ON processed_event(processed_at);
 
 -- RLS violation audit log
 -- Captures sampled cross-tenant or missing-GUC access attempts for security monitoring.
@@ -5213,7 +5165,6 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 | --- | --- | --- |
 | **Artifact Hash** | Database | A canonical SHA-256 hash of normalized BPMN XML, used for change detection and diff comparisons. Computed at publish time and stored in `workflow_version.artifact_hash`. |
 | **Outbox Table** | Database | A transactional event queue (`outbox`) storing domain events awaiting delivery to SNS. Events are inserted in the same transaction as state changes, then asynchronously published by the `OutboxRelay` worker. |
-| **Processed Event Table** | Database | A deduplication log (`processed_event`) tracking successfully processed SQS event IDs. Enables idempotent consumption of inbound membership revocation events. |
 | **Workflow Node Assignee Table** | Database | A denormalized reverse index (`workflow_node_assignee`) mapping users to workflow versions. Enables fast lookup of affected templates when a user loses department membership. Populated atomically during publish; never updated independently. |
 | **sqlc** | Database | A Go code generator that produces type-safe database query functions from hand-written SQL. Eliminates runtime SQL errors and provides compile-time type checking. |
 | **migrate.Runner** | Database | `platform-pgcommon/pkg/migrate.Runner` — a golang-migrate wrapper that applies service schema migrations (`db/migrations/NNNN_name.up.sql` / `.down.sql`) at process startup, tracked under `wf_definition_migrations`. |
@@ -5277,7 +5228,7 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 | Term | Category | Definition |
 | --- | --- | --- |
 | **Audit Trail** | Compliance | A complete, immutable record of all state-changing operations (create, publish, archive, clone, promote). Includes actor, timestamp, and action details. Enables regulatory compliance and forensic investigation. |
-| **Data Retention** | Compliance | Outbox events are retained for 7 days post-processing; processed event logs are purged after 7 days (matching SQS retention). Enables replay and debugging while preventing unbounded storage growth. |
+| **Data Retention** | Compliance | Outbox events are retained for 7 days post-processing. Enables replay and debugging while preventing unbounded storage growth. |
 | **Encryption at Rest** | Compliance | BPMN XML and compiled DSL are encrypted at the AWS RDS layer. No field-level encryption is applied; RLS and database-level encryption provide sufficient protection. |
 | **Tenant Isolation** | Compliance | Strict enforcement of tenant boundaries at three layers (gateway, database, orchestrator). Prevents any cross-tenant data leaks or unauthorized access. |
 
@@ -5328,6 +5279,8 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.13 | 2026-09-10 | Seven residual dotted-lowercase IAM event names corrected to PascalCase in §7.4.2 and the §7.4 consumed-events table (`user.deleted` → `UserDeleted`, `user.availability.changed` → `UserAvailabilityChanged`, `delegation.started`/`delegation.ended` → `DelegationStarted`/`DelegationEnded`, `department.membership.revoked` → `DepartmentMembershipRevoked`). Rev 1.12 fixed the handler dispatch, the AsyncAPI channel key, and the `processed_event` label, but left these prose/table citations behind. Documentation-only; no code or contract change. |
 | 1.14 | 2026-09-15 | **`MembershipRevoked` is consumed** (new §7.4.5, Appendix E). A tenant-wide membership removal arrives as `MembershipRevoked`, carries no `department_id`, and previously had no handler — every affected published version stayed valid and every live task stayed assigned. It now invalidates each version where the user is a default assignee, unfiltered by department, and calls the same `PauseUserTasks` gRPC the department-scoped handler does; `HandleMembershipRevoked`'s department filter is optional so both events share one implementation. The Appendix E row asking whether Org & Membership also fans out per-department events narrows accordingly: it now decides only whether the department-scoped handler is redundant, not whether the removal is seen. **Connector credential lifecycle and the alias-host allowlist specified** (§10.15). Rotation needs no operation of its own — OpenBao KV-v2 versions on overwrite and the read side always resolves the latest — and revocation destroys every version through the metadata endpoint rather than soft-deleting. No credential table exists in Postgres, so nothing sweeps a secret whose owning task or version is gone; on-demand cleanup only, tracked in `workflow_connectors.md` §9. A `rest-call` alias write now requires its `BaseURL` host to be on `CONNECTOR_ALIAS_ALLOWED_HOSTS` and fails closed on an empty allowlist: dispatch attaches the caller's real internal-service token to whatever host an alias names, and the registry is org-wide with no RLS, so an unbounded registry is a credential-exfiltration path. The same section records the path-injection bound on `connector_type`/`field_name`, both of which are interpolated into the OpenBao path. |
 | 1.15 | 2026-09-15 | **A gateway with one forward exit and revert back-edges compiles its forward branch with no target** (§4 compiler, §5.2 revert branches). The forward path is already emitted as the steps that follow it, so naming a target on the branch as well made the Execution Service dispatch that department twice — once from the branch, once from the continuation. The split shapes are unchanged: their branches diverge and their continuation begins at the join. The revert-loop bound is also stated plainly rather than left as something Execution "may need to define": Execution re-enters the gateway after each revert resolves and fails the instance after 50 cycles, and nothing in the compiled plan carries or configures that bound (`execution_service.md` §2.6). |
+| 1.16 | 2026-09-22 | **The `processed_event` dedup registry is removed from the design — it was specified across this document and never built.** Execution Service carries one; this service's migrations never created the table, and the envelope `id` reaches the handler only to be logged. Rather than build it, §10.9 is rewritten from "no tenant scope on an operational table" to the decision itself: both consumed types absorb redelivery in the handler. `SetVersionInvalid` replaces `is_valid` and `validation_errors_json` with the same values, and no query sets `is_valid = true` on a PUBLISHED row — `UpdateDraftVersion` is `status = 'DRAFT'`-guarded, `CreateWorkflowVersion` inserts only DRAFT rows, `PublishVersion` does not touch the column — so a redelivery cannot undo an operator's recovery; recovery is a new version (§7.4.3 Flow A). `PauseUserTasks` signals only instances it reads as `RUNNING`, and Temporal applies the transition asynchronously, so a redelivery inside that window re-signals. Reprocessing is not bit-for-bit inert: `updated_at = now()` defeats the update trigger's distinct-from guard and bumps `record_version`, which no client edit path locks against on a PUBLISHED row. **Code change in support**: `ListAssigneesByUser` gains `ORDER BY (workflow_version_id, node_key)`, without which the rendered `validation_errors_json` was heap-ordered and could differ between replays. §2.3.1 rewritten around that argument; the table's DDL, its index, its schema-section entry, the daily pruner (§7.1.2, whose "two cron jobs" count is corrected to one), the glossary row, the DR-matrix, cache-outage, §1.7, §3.3 and §12 dedup claims, and §7.4.2's idempotency step (steps renumbered, the "Step 5" back-reference corrected) all removed. §7.4.2 step 3 said the handler *appends* to `validation_errors_json` where the query replaces it — corrected, since the idempotency argument rests on replacement. `README.md`, `.claude/database.md` — which described a `processedEvents.RecordIfNew` call that exists only in Execution Service — `.claude/api-and-events.md`, `db_definition.dbml`, `api/asyncapi.yaml` and its design-repo copy, `docs/swagger/openapi.yaml`, `ARCHITECTURE.md` and its mermaid source, the PR template, a migration comment in both services, `workflow_stream_gateway.md` (whose §9.2 rationale cited Definition's table), and `scripts/smoke-test.sh` — which asserted rows in the non-existent table and would have failed against the real schema, and now asserts the property that replaces it: a redelivered envelope rewrites a byte-identical `validation_errors_json` on the published version. **New Appendix E row**: the property belongs to these two handlers, not to the endpoint, so a third inbound type must either be idempotent by construction or bring the registry with it. **Handler rename**: `HandleMembershipRevoked` → `HandleDepartmentMembershipRevoked` and `handleMembershipRevoked` → `handleDepartmentMembershipRevoked`, so the name states which of the two revocation events it serves — Execution Service uses the unqualified name for the tenant-level event, and the collision made the pair unreadable across repos. A code change: handler, service, both test files and their test-function names, `api/asyncapi.yaml` and its design-repo copy, the inbound event schema, `ARCHITECTURE.md`, `CONTRIBUTING.md`, the mermaid source and both alert runbooks. The hand-rolled `fakeMembershipRevoker` keeps its name — it fakes the two-method interface, not either method. **§7.4 reconciled against `event_consumer`'s real routing table.** §7.4.1 restates the unknown-type `200`-and-ignore behaviour (already recorded in §3.3) at the transport contract, matching `acknowledgeUnknownEventType`. §7.4.3's runtime-reassignment table: `tender-wf-q` does not exist (`IAM/iam_hld.md` §9.1 catalogues no Workflow consumer on `iam.tenant.events`, and `event_consumer` declares `membership-wf-q`, `user-wf-q` and `wf-workflow-dash-q`), and `TenderAssigneeOverridden` is removed from the table — `event_consumer` declares it with an empty target list, so it reaches no consumer here; it is owned by IAM's Org & Membership service, not the Tender Service, and its only platform-wide consumers are Audit and Notification. §7.4.4: the exclusion no longer rests on not subscribing to a `tenant-wf-q` that does not exist, but on the routing table sending `TenantStateChanged`/`TenantMembershipsPurged` to Execution alone. **Appendix E**: the Org & Membership fan-out question is resolved — a single-user removal emits both events, a tenant offboarding emits only `TenantMembershipsPurged`. |
+| 1.17 | 2026-09-22 | **A user task naming a role but no default assignee is rejected** (§4 code list, §4.5.5, §3.3.12.1). The validator treated an empty `candidateUsers` as acceptable while `candidateGroups` beside it was required, so such a template compiled to an empty assignee list and published. The Execution Service then created the task with `assignee_mode = "single"` and no assignment rows, and its claim path requires both `assignee_mode = "all"` and an existing assignment row for the caller — so the task could be neither claimed nor completed and the instance never advanced. New code `CANDIDATE_USERS_EMPTY`, emitted by a new `ValidateDefaultAssignee` rather than by the publish-time eligibility check, so it surfaces on `POST /workflows/validate` as well as at publish, which recompiles. A separate function from `validateCandidateUser`, which still checks only the format of a value that is present: `sendTask`/`receiveTask` share the format rules and must keep an optional assignee, the interpreter resolving them through the message buffer without creating a task. **The Execution Service re-checks at instantiation** — a stage resolving to nobody is named in the existing `AssigneeIneligibleError`, so a version published before this rule is refused with the offending node named rather than starting an instance that cannot advance. Its skip list mirrors the interpreter's own dispatch, so message stages are exempt there too. That side is recorded in `execution_service.md` §5.5. **New read `GET /workflows/:id/versions/:version_id/validation`** (§3.3.12.1) re-runs the validator against a stored version, so an operator can find versions published before this rule rather than discovering them when an instantiation is refused; it composes the existing version read and raw-validation service and adds no service method. **`node_key` composition corrected** (§2.2.2, §4.5.3): `extractAssignees` built `<department>/<stage type>`, which names two nodes identically wherever a department holds two stages of the same type, and disagreed with the `<department>/<BPMN element id>` form the Execution Service uses for task and override keys. No migration: the column feeds a diagnostic label only, and a version already published keeps the old form since its assignee rows are written once, at publish. §4.5.3's invalidation query, like §7.4.2's, printed a `SELECT DISTINCT … department_id` form that does not exist — both now show the real read. |
 
 ---
 
@@ -5337,8 +5290,9 @@ This document had no dedicated Open Items tracker before rev 1.6 — items below
 
 | Theme | Item | Owner |
 | --- | --- | --- |
+| Constraint | **A new inbound event type needs the dedup registry introduced with it, unless its handler is idempotent by construction (§2.3.1, §10.9).** The two types consumed today converge on the same state when reprocessed, which is why no `processed_event` table exists here. That property belongs to those handlers, not to `POST /internal/events`, so it has to be re-established — or the registry built, as the Execution Service has — whenever the inbound surface grows. | Definition Service team, at the time a third inbound type is added |
 | Deferred | **Module/starter library's product shape (§10.16).** Designed here as "just another versioned BPMN entity" (module) or a simple CRUD row (starter). If the intended UI turns out to be CMS-like — cross-tenant search, tagging, thumbnails, marketplace-style discovery across a large catalog — that product shape could justify pulling this back into a dedicated service later, independent of the data-ownership reasoning that put it here. Not pre-built for; revisit once real product/UI requirements exist. | Definition Service team + product, once UI requirements are known |
 | ~~Security~~ | ~~**`POST /connectors/credentials` has no role check despite being documented Admin-only (§3.2, `workflow_connectors.md` §4.3/§6.2).**~~ **Resolved 2026-08-24**: `WriteConnectorCredential` now gates on `requireAdmin` before writing, mirroring `execution_service`'s own `adminRoles`/`requireAdmin` pattern. | Definition Service team |
 | ~~Cross-team~~ | ~~**Global-catalog write path for `workflow_module`/`workflow_template` (§10.16) needs its `platform_operator`-gated handler + `BYPASSRLS`-role wiring actually built**~~ **Resolved 2026-08-26**: Module CRUD, Template CRUD, the RLS DDL, and a genuinely new second (`SYSTEM_DATABASE_URL`) pool + `platform_operator` handler-layer gate all shipped — see §10.16's "Implemented" note and Appendix A's implementation note below the module/template RLS block for the two corrections made to the original design along the way. **Not resolved**: the `platform_operator` role/claim source itself is still provisional (see §10.16) — needs sign-off from whoever owns the gateway/IAM claim contract before this path can be trusted in a real environment; tracked as a new row below. | Definition Service team |
 | Cross-team | **`platform_operator` role/claim source is unconfirmed.** `isPlatformOperator`/`requirePlatformOperator` (mirroring `isAdmin`/`requireAdmin`) check the same `rc.Roles` the gateway populates per-tenant via `x-tenant-roles` — but no code anywhere available locally (`platform-gincommon`, this service, or elsewhere) defines a `platform_operator` claim or confirms how a claim that's inherently cross-tenant would ever appear in a per-tenant header. Built as the most reasonable default; the global-write path (§10.16) isn't trustworthy in a real environment until this is confirmed one way or the other. | Gateway/IAM claim-contract owner |
-| Cross-team | ~~§7.4.2's `UserDeleted` transitive-coverage claim is unconfirmed against IAM's own spec: a full tenant-membership removal arrives as `MembershipRevoked`, which carries no `department_id`, and this service subscribed to `DepartmentMembershipRevoked` only.~~ **Closed on this side (§7.4.5).** `MembershipRevoked` is handled directly: a tenant-wide removal invalidates every published version where the user is a default assignee, with no department filter, then calls the same `PauseUserTasks` gRPC the department-scoped handler does. Whether Org & Membership *also* emits a per-department `DepartmentMembershipRevoked` on the same removal is still unanswered, but it now only decides whether the department-scoped handler is redundant belt-and-braces, not whether the removal is seen at all | Org & Membership contract owner, for the fan-out question only |
+| ~~Cross-team~~ | ~~§7.4.2's `UserDeleted` transitive-coverage claim is unconfirmed against IAM's own spec: a full tenant-membership removal arrives as `MembershipRevoked`, which carries no `department_id`, and this service subscribed to `DepartmentMembershipRevoked` only.~~ **Closed on this side (§7.4.5).** `MembershipRevoked` is handled directly: a tenant-wide removal invalidates every published version where the user is a default assignee, with no department filter, then calls the same `PauseUserTasks` gRPC the department-scoped handler does. **RESOLVED (rev 1.16 — Org & Membership emits both).** A single-user removal emits `DepartmentMembershipRevoked` per department and `MembershipRevoked` at tenant level (confirmed with IAM's Tender question set, item 20, citing O&M §15.2.2), so the department-scoped handler is redundant belt-and-braces rather than a coverage gap. Full tenant offboarding emits only `TenantMembershipsPurged`, which this service does not consume (§7.4.4). | Closed |

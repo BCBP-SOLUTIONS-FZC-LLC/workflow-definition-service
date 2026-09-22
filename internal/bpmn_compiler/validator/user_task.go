@@ -2,6 +2,7 @@ package validator
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -20,6 +21,7 @@ func ValidateTaskExtensions(proc *bpmncore.BPMNProcess, stageTypes map[string]bp
 	for _, t := range proc.UserTasks {
 		errs = append(errs, ValidateTaskDef(t.ID, t.ExtensionElements, stageTypes)...)
 		errs = append(errs, ValidateAssignmentDef(t.ID, t.ExtensionElements)...)
+		errs = append(errs, ValidateDefaultAssignee(t.ID, t.ExtensionElements)...)
 		errs = append(errs, ValidateLaneMembership(t.ID, laneRefs)...)
 	}
 	return errs
@@ -46,6 +48,23 @@ func ValidateOptionalAssignment(taskID string, ext bpmncore.BPMNExtensionElement
 		return nil
 	}
 	return ValidateAssignmentDef(taskID, ext)
+}
+
+// ValidateDefaultAssignee rejects a userTask that names a role but nobody. Such
+// a task compiles to an empty assignee list, and Execution creates it with no
+// assignment rows and an assignee mode its claim path refuses, so the task can
+// be neither claimed nor completed and the instance never advances (execution
+// LLD §5.5). Kept out of ValidateAssignmentDef because sendTask/receiveTask
+// share that one and resolve through the message buffer without creating a task.
+func ValidateDefaultAssignee(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
+	if ext.AssignmentDefinition == nil {
+		return nil // ValidateAssignmentDef already reports the missing element
+	}
+	if strings.TrimSpace(ext.AssignmentDefinition.CandidateUsers) != "" {
+		return nil
+	}
+	return AppendErr(nil, domain.BPMNErrCandidateUsersEmpty, taskID,
+		"userTask has no candidateUsers; a task with no default assignee can never be claimed or completed")
 }
 
 func ValidateAssignmentDef(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
