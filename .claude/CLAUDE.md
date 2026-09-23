@@ -6,7 +6,9 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 `workflow-definition-service` is a Go HTTP + gRPC microservice (module: `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service`, Go 1.26) that acts as the design-time control plane for the BPMN-driven Workflow Engine. It parses, validates, versions, and serves workflow templates.
 
-Key responsibilities: BPMN ingestion, structural/semantic/topological validation, DSL compilation, DRAFT → PUBLISHED → ARCHIVED versioning, serving compiled plans to the Execution Service over gRPC, and emitting domain events via a transactional outbox (SNS).
+Key responsibilities: BPMN ingestion, structural/semantic/topological validation, DSL compilation, DRAFT → PUBLISHED → ARCHIVED versioning, and serving compiled plans to the Execution Service over gRPC.
+
+**This service publishes no events.** `api/asyncapi.yaml` documents one inbound message and no outbound channel. The outbox table, its repository, the relay started in `cmd/server/app.go`, and `VersionService`'s wired `Outbox` field all exist and nothing writes to them. Whether that apparatus is kept against a future producer or removed is undecided — do not wire an event to it without designing the contract and naming a consumer first.
 
 ---
 
