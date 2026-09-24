@@ -14,7 +14,7 @@ metadata:
 | `platform-events` | v1.4.0 | `outbox.NewRunner` returns `(*Runner, error)`. Envelope carries `actor`/`subject` fields. `events.WithCodec` moves Glue Schema Registry wire-format encoding to SNS-publish time (`cmd/server/infra.go`'s `newPublisher`), not outbox-enqueue time — keeps the outbox's `json.Marshal(env)` working on a plain-JSON payload. |
 | `platform-gincommon` | v1.3.0 | `gincommon.MetricsRegisterer()`/`MetricsConstLabels()` expose the registerer/const-labels gincommon's own HTTP metrics use, so `internal/observability.Register()` registers this service's custom collectors against the same registerer instead of guessing `prometheus.DefaultRegisterer`. |
 | `platform-pgcommon` | v1.2.1 | `port.Transactor` exposes `RunInTxWithRetry` (SERIALIZABLE + 40001/40P01 retry). gRPC health check registered for K8s liveness probes. `Config.Logger` / `migrate.Runner.Logger` are now typed against the public `pkg/domain.Logger` (since v1.2.0) — `cmd/server/pglogger.go`'s `pgCommonLogger` adapts this service's `port.Logger` to it. |
-| `workflow-models` | v1.1.0 | `pkg/dsl` types are field-for-field identical to the deleted `internal/core/domain/compiled_plan.go`; `pkg/enums` holds the shared `StageType*` constants. `CompiledCollaboration.SchemaVersion` (v1.1.0) feeds Execution's DSL-compatibility layer. |
+| `workflow-models` | v1.2.0-rc.4 | `pkg/dsl` types are field-for-field identical to the deleted `internal/core/domain/compiled_plan.go`; `pkg/enums` holds the shared `StageType*` constants. `CompiledCollaboration.SchemaVersion` (since v1.1.0) feeds Execution's DSL-compatibility layer; `CompileForPublish` stamps it on every published plan. |
 
 Fetch / upgrade:
 ```bash

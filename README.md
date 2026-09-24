@@ -382,11 +382,12 @@ Response:
 | `version_number` | `int32` | Published version number |
 | `status` | `string` | `DRAFT`, `PUBLISHED`, or `ARCHIVED` |
 | `is_valid` | `bool` | `false` if any default assignee has become ineligible |
-| `compiled_plan_json` | `string` | Pre-compiled ExecutionPlan DSL as a JSON string |
+| `compiled_plan_json` | `string` | Pre-compiled `CompiledCollaboration` DSL as a JSON string |
+| `dsl_schema_version` | `int32` | The DSL schema major version, read off the blob's `schema_version` |
 
-The version is carried on the response (`version_number`), not inside the DSL blob.
+The template's own version is carried on the response (`version_number`), not inside the DSL blob.
 
-**Compiled DSL shape (`compiled_plan_json`).** `{ name, task_queue, departments[], execution: { steps[] } }`. Each step in `execution.steps` is one of:
+**Compiled DSL shape (`compiled_plan_json`).** `{ main_plan, plans[], messages[], schema_version }`. A single-process BPMN is one plan, named by `main_plan`. Each plan is `{ name, task_queue, departments[], execution: { steps[] } }`. Each step in `execution.steps` is one of:
 
 | Step kind | Shape | Meaning |
 | --- | --- | --- |

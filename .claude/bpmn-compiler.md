@@ -55,7 +55,7 @@ See [ARCHITECTURE.md § BPMN Compiler](../ARCHITECTURE.md#bpmn-compiler).
 
 **Boundary node types**: `NodeTypeTimerBoundaryEvent`, `NodeTypeErrorBoundaryEvent`, and `NodeTypeMessageBoundaryEvent` are separate constants (all subtypes of the legacy `NodeTypeBoundaryEvent`). These drive different element handlers and validator paths. Timer boundary events on `callActivity` are rejected at compile time; error boundary events pass validation but also fail compilation. Message boundary events are supported on plain `userTask`, `subProcess`, and `callActivity` — resolved into `StageDef.BoundaryMessage`, `SubWorkflowStep.MessagePaths`, and `ExecutionStep.MessagePaths` respectively.
 
-**Canonical hash** (`hasher.go`): `canonicalHash` shallow-copies all 14 slice fields of `BPMNProcess` via `copySlice[T]` before sorting and marshalling to prevent mutating the parsed struct. The resulting SHA-256 hex is used by `Hash()`.
+**Canonical hash** (`hasher.go`): `canonicalHash` shallow-copies all 14 slice fields of `BPMNProcess` via `copySlice[T]` before sorting and marshalling to prevent mutating the parsed struct. The resulting SHA-256 hex is used by `Hash()`. A bundle with several processes (a called process, bundled modules) is hashed by `canonicalBundleHash`: each process hashed on its own, ordered by (id, hash), then hashed together. A single process's hash is exactly `canonicalHash`.
 
 **Synthetic node IDs** (`compiler.go`): collaboration bridge nodes injected by the compiler receive IDs of the form `__ext__` + 4-byte SHA-256 hex of the originating `sendTask` ID, preventing collisions.
 
@@ -107,6 +107,7 @@ The compiler accepts `<bpmn:collaboration>` with multiple `<bpmn:participant>` e
 - Each `isExecutable="true"` participant process compiles to a separate `CompiledPlan` wrapped in a `CompiledCollaboration`.
 - Message flows (`<bpmn:messageFlow>`) compile to `MessageDef` entries linking plans by message name.
 - Non-executable participants (external-party context only) are parsed for structural integrity but produce no compiled plan.
-- Single-process BPMN (no collaboration wrapper) continues to compile to `*CompiledPlan` directly — no breaking change.
+- Single-process BPMN (no collaboration wrapper) compiles to `*CompiledPlan` through `Compile`.
+- **Publish always stores a `CompiledCollaboration`**, built by `CompileForPublish`: a single root becomes a one-plan collaboration, `main_plan` is the process name (or its id when unnamed), and `schema_version` is stamped there. A collaboration BPMN validates but does not publish yet; `CompileCollaboration` has no production caller until the ignored-pool task can be completed in the Execution Service.
 
 **Message name resolution** (`ResolveMessageFlowName`, `bpmncore/compile.go`): real-world BPMN rarely annotates the `<bpmn:messageFlow>` element itself with `name`/`messageRef` — the messageRef almost always lives on the connected node instead. Resolution order: the flow's own `name` → the flow's own `messageRef` (via root `<bpmn:message>`) → the target node's `messageRef` (`nodeMessageRef`: sendTask/receiveTask attribute, or boundary event's `messageEventDefinition`) → the same lookup on the source node. `ResolveMessageFlowTarget` provides the inverse (node ID → message name) for boundary-event resolution when the boundary's own `messageRef` doesn't resolve. If nothing resolves, `validator/collab.go`'s `ValidateCollaboration` emits `MISSING_MESSAGE_DEFINITION` as a warning — the flow still compiles with an empty name.
