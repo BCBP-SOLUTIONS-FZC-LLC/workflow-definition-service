@@ -394,6 +394,133 @@ func TestValidate_CalledProcessLevelError_NamesTheProcess(t *testing.T) {
 	}
 }
 
+// doublingChain is main → Process_L0, where each Process_Li calls Process_Li+1
+// twice and the last level holds one userTask, so the plan compile flattens
+// doubles in size with every level.
+func doublingChain(levels int) string {
+	procs := make([]string, 0, levels+1)
+	for i := range levels {
+		procs = append(procs, moduleCallingTwice(fmt.Sprintf("Process_L%d", i), fmt.Sprintf("Process_L%d", i+1)))
+	}
+	procs = append(procs, moduleWithTask(fmt.Sprintf("Process_L%d", levels), validCandidateUser))
+	return callerBPMN("Process_Main", "Process_L0", procs...)
+}
+
+func TestValidate_FlattenedPlanOverTaskLimit_IsRejected(t *testing.T) {
+	// 64 levels would overflow an unbounded count.
+	for _, levels := range []int{11, 64} {
+		t.Run(fmt.Sprintf("%d levels", levels), func(t *testing.T) {
+			bpmnXML := doublingChain(levels)
+
+			errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
+			if err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			if got := findCode(errs, domain.BPMNErrTaskLimitExceeded); got == nil || got.NodeID != "Process_Main" {
+				t.Fatalf("errors = %+v, want TASK_LIMIT_EXCEEDED on Process_Main; compiling it would not finish", errs)
+			}
+			if n := countCode(errs, domain.BPMNErrTaskLimitExceeded); n != 1 {
+				t.Errorf("TASK_LIMIT_EXCEEDED reported %d times, want once, on the process that is compiled", n)
+			}
+			assertCompileRefusedWith(t, bpmnXML, domain.BPMNErrTaskLimitExceeded)
+
+			_, err = bpmn_compiler.New().CompileCollaboration(context.Background(), asCollaboration(bpmnXML))
+			var vf *domain.ValidationFailedError
+			if !errors.As(err, &vf) || !hasCode(vf.Errors, domain.BPMNErrTaskLimitExceeded) {
+				t.Errorf("CompileCollaboration err = %v, want a ValidationFailedError carrying TASK_LIMIT_EXCEEDED", err)
+			}
+		})
+	}
+}
+
+func TestValidate_FlattenedPlanUnderTaskLimit_IsValid(t *testing.T) {
+	bpmnXML := doublingChain(8)
+
+	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if blocking := blockingErrors(errs); len(blocking) > 0 {
+		t.Errorf("a plan of 767 tasks and call sites is within the limit; got %v", errCodes(blocking))
+	}
+}
+
+// moduleCallingN is a laneless process that calls `calls` from n call sites in sequence.
+func moduleCallingN(id, calls string, n int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  <bpmn:process id=%q isExecutable=\"true\">\n    <bpmn:startEvent id=\"%s_Start\"/>\n", id, id)
+	prev := id + "_Start"
+	for i := range n {
+		ca := fmt.Sprintf("%s_CA%d", id, i)
+		fmt.Fprintf(&b, `    <bpmn:callActivity id=%q><bpmn:extensionElements><zeebe:calledElement processId=%q/><zeebe:ioMapping><zeebe:input source="engineering" target="dept_id"/></zeebe:ioMapping></bpmn:extensionElements></bpmn:callActivity>
+    <bpmn:sequenceFlow id="%s_F" sourceRef=%q targetRef=%q/>
+`, ca, calls, ca, prev, ca)
+		prev = ca
+	}
+	fmt.Fprintf(&b, "    <bpmn:endEvent id=\"%[1]s_End\"/>\n    <bpmn:sequenceFlow id=\"%[1]s_FEnd\" sourceRef=%[2]q targetRef=\"%[1]s_End\"/>\n  </bpmn:process>", id, prev)
+	return b.String()
+}
+
+// emptyModule is a laneless process with no activity at all.
+func emptyModule(id string) string {
+	return fmt.Sprintf(`  <bpmn:process id="%[1]s" isExecutable="true">
+    <bpmn:startEvent id="%[1]s_Start"/>
+    <bpmn:endEvent id="%[1]s_End"/>
+    <bpmn:sequenceFlow id="%[1]s_F1" sourceRef="%[1]s_Start" targetRef="%[1]s_End"/>
+  </bpmn:process>`, id)
+}
+
+func TestValidate_InlinedCallSitesCountTowardTaskLimit(t *testing.T) {
+	cases := []struct {
+		callSites int
+		rejected  bool
+	}{
+		{callSites: 999, rejected: false}, // 1 + 999 = 1000
+		{callSites: 1000, rejected: true}, // 1 + 1000 = 1001
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%d call sites", tc.callSites), func(t *testing.T) {
+			bpmnXML := callerBPMN("Process_Main", "Process_Fan",
+				moduleCallingN("Process_Fan", "Process_Leaf", tc.callSites),
+				emptyModule("Process_Leaf"))
+			errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
+			if err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			if got := hasCode(errs, domain.BPMNErrTaskLimitExceeded); got != tc.rejected {
+				t.Errorf("TASK_LIMIT_EXCEEDED = %v, want %v; errors = %v", got, tc.rejected, errCodes(errs))
+			}
+		})
+	}
+}
+
+func TestCompileCollaboration_IgnoredPoolOverOwnTaskLimit_StillCountsItsCalls(t *testing.T) {
+	var tasks strings.Builder
+	for i := range 1001 {
+		fmt.Fprintf(&tasks, "    <bpmn:task id=\"Ign_T%d\"/>\n", i)
+	}
+	ignored := `  <bpmn:process id="Process_Ignored" isExecutable="true">
+    <bpmn:extensionElements><zeebe:properties><zeebe:property name="ignore" value="true"/></zeebe:properties></bpmn:extensionElements>
+    <bpmn:startEvent id="Ign_Start"/>
+    <bpmn:callActivity id="Ign_CA"><bpmn:extensionElements><zeebe:calledElement processId="Process_L0"/><zeebe:ioMapping><zeebe:input source="engineering" target="dept_id"/></zeebe:ioMapping></bpmn:extensionElements></bpmn:callActivity>
+    <bpmn:endEvent id="Ign_End"/>
+    <bpmn:sequenceFlow id="Ign_F1" sourceRef="Ign_Start" targetRef="Ign_CA"/>
+    <bpmn:sequenceFlow id="Ign_F2" sourceRef="Ign_CA" targetRef="Ign_End"/>
+` + tasks.String() + `  </bpmn:process>`
+	procs := []string{ignored}
+	for i := range 11 {
+		procs = append(procs, moduleCallingTwice(fmt.Sprintf("Process_L%d", i), fmt.Sprintf("Process_L%d", i+1)))
+	}
+	procs = append(procs, moduleWithTask("Process_L11", validCandidateUser))
+	bpmnXML := asCollaboration(callerBPMN("Process_Main", "Process_Other", append(procs, moduleWithTask("Process_Other", validCandidateUser))...))
+
+	_, err := bpmn_compiler.New().CompileCollaboration(context.Background(), bpmnXML)
+	var vf *domain.ValidationFailedError
+	if !errors.As(err, &vf) || !hasCode(vf.Errors, domain.BPMNErrTaskLimitExceeded) {
+		t.Errorf("CompileCollaboration err = %v, want a ValidationFailedError carrying TASK_LIMIT_EXCEEDED", err)
+	}
+}
+
 func TestValidate_UnresolvedCalledElement_ReportedOnce(t *testing.T) {
 	errs, err := bpmn_compiler.New().Validate(context.Background(), callActivityUnknownRefBPMN)
 	if err != nil {

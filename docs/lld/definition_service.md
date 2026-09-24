@@ -1708,8 +1708,8 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
    - **Scope**: user tasks only. `sendTask`/`receiveTask` keep an optional `assignmentDefinition` — the interpreter resolves them through the message buffer and creates no task, so they need no assignee.
 
 9. **`TASK_LIMIT_EXCEEDED`**
-   - **Trigger Scenario**: The process model contains more than 1000 user task nodes.
-   - **Trigger Logic**: The parser counts the total occurrences of `<bpmn:userTask>` in the process definition. If the count exceeds 1000, it halts validation and rejects the model to prevent system exhaustion.
+   - **Trigger Scenario**: The process model contains more than 1000 user task nodes, or the plan it compiles to does once its called processes are inlined.
+   - **Trigger Logic**: `ValidateCounts` counts the process's task nodes: `<bpmn:userTask>`, `<bpmn:task>` and connector `<bpmn:serviceTask>`. Above 1000 the model is rejected. Compilation inlines a called process at every call site, so `ValidateCallGraph` also counts, for each process that makes calls and that no other process calls, its own task nodes plus, for every call site, one plus the called process's count. Above 1000 the error names that process. Without it, a chain of small modules that each call the next twice stays under the per-process count while the plan doubles at every level.
 
 10. **`LANE_LIMIT_EXCEEDED`**
    - **Trigger Scenario**: The process contains more than 100 lanes.
@@ -2548,7 +2548,7 @@ Before any XML parsing begins, the service enforces the following hard limits to
 | Max upload size | 10 MB | `413 Request Entity Too Large` |
 | XXE protection | `xml.Decoder` with `Strict: true`; external entity resolution disabled | `400 Bad Request` |
 | XML Bomb (entity expansion) | Custom `TokenReader` wrapper; token count limit of 1,000,000 | `400 Bad Request` |
-| Max `<bpmn:userTask>` count | 1000 nodes per process | `422 Unprocessable Entity` |
+| Max task nodes (`userTask`, `task`, connector `serviceTask`) | 1000 per process, and 1000 task nodes plus call sites once called processes are inlined | `422 Unprocessable Entity` |
 | Max `<bpmn:lane>` count | 100 lanes per process | `422 Unprocessable Entity` |
 
 ---
@@ -5295,6 +5295,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.18 | 2026-09-24 | **The membership queue is named `membership-workflow-q`** (§1.2, §1.3, §6.1.1, §7.4, §9.2, glossary). This is the name IAM's Org \& Membership implementation, its AsyncAPI, and the shared consumer's deployment all use. The IAM HLD's `membership-wf-q` is IAM's own document to reconcile. |
 | 1.19 | 2026-09-24 | **Publish stores a `CompiledCollaboration`** (§7.5, §2.2). Publish stored a bare `CompiledPlan`, while the Execution Service and `GetCompiledWorkflow` decode a collaboration, so every instance start failed with an empty main plan and `dsl_schema_version` was always 0. A new compiler entry point, `CompileForPublish`, wraps a single root as a one-plan collaboration and stamps `schema_version`. A process without a `name` takes its `id` as the plan name, so `main_plan` is never empty. The structural-divergence check and the version diff read the main plan of the stored collaboration; assignee eligibility and extraction read the main plan just compiled. **`artifact_hash` covers every process** (§2.2): `Hash` refused any bundle with more than one process, so a draft with a called process or a bundled module could not publish. A single-process hash is unchanged. Several processes are ordered by id and then by their own hash, so the XML order never changes the result. **§4 DSL types**: `schema_version` is a field of the collaboration JSON, not a column. **Not changed**: a `<bpmn:collaboration>` BPMN still fails publish with `MULTIPLE_PROCESSES` until the Execution Service can complete an ignored pool's task (§7.5). |
 | 1.20 | 2026-09-24 | **Called processes are validated** (§4.1.2 `callActivity`, §3.1.4 codes 32–33). Only the call site was checked, so a module's own tasks published unvalidated (for example a userTask with empty `candidateUsers`), and a module that called itself, directly or through another module, recursed at compile time until the process died. Every called process reachable from the root is now validated once with the root's rules. New `CALLED_ELEMENT_CYCLE` rejects a call cycle, and new `DUPLICATE_PROCESS_ID` rejects two processes with one `id`, which a bundled module could introduce. The call-site checks (`UNRESOLVED_CALLED_ELEMENT`, `MISSING_DEPT_INPUT_FOR_MODULE`) are reported once per call site; they were reported twice. An error about a whole `subProcess` body, such as `NO_END_EVENT`, names the `subProcess`; it named no node. |
+| 1.21 | 2026-09-24 | **`TASK_LIMIT_EXCEEDED` covers the inlined plan** (§3.1.4 code 9). The 1000 limit counted each process's own user tasks, while compilation inlines a called process once per call site. So a chain of small modules that each called the next twice validated clean and compiled to millions of steps, which exhausted memory at publish. A process that makes calls now also counts one per call site plus the called process's own count. |
 
 ---
 

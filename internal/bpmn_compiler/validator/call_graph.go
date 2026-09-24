@@ -9,9 +9,11 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// ValidateCallGraph reports process ids that occur more than once, and call
-// chains that return to a process already on them. Called processes are
-// flattened into the caller's plan, so a cycle has no finite plan.
+// ValidateCallGraph reports process ids that occur more than once, call
+// chains that return to a process already on them, and plans that exceed the
+// task limit once called processes are inlined. Compilation inlines a called
+// process once per call site, so a cycle has no finite plan and a chain that
+// calls twice per level doubles the plan each level.
 func ValidateCallGraph(defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	errs := validateUniqueProcessIDs(defs)
 
@@ -21,16 +23,22 @@ func ValidateCallGraph(defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationEr
 		done
 	)
 	state := make(map[string]int, len(defs.Processes))
+	inlinedSize := make(map[string]int, len(defs.Processes))
+	isCalled := make(map[string]bool, len(defs.Processes))
+	calls := make(map[string]bool, len(defs.Processes))
 	var chain []string
 	var visit func(p *bpmncore.BPMNProcess)
 	visit = func(p *bpmncore.BPMNProcess) {
 		state[p.ID] = onChain
 		chain = append(chain, p.ID)
+		size := len(p.UserTasks)
 		for _, ca := range p.CallActivities {
 			called := calledProcess(ca, defs)
 			if called == nil {
 				continue
 			}
+			isCalled[called.ID] = true
+			calls[p.ID] = true
 			switch state[called.ID] {
 			case onChain:
 				cycle := chain[slices.Index(chain, called.ID):]
@@ -39,7 +47,9 @@ func ValidateCallGraph(defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationEr
 			case unvisited:
 				visit(called)
 			}
+			size = min(size+1+inlinedSize[called.ID], maxUserTasks+1)
 		}
+		inlinedSize[p.ID] = size
 		chain = chain[:len(chain)-1]
 		state[p.ID] = done
 	}
@@ -47,6 +57,21 @@ func ValidateCallGraph(defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationEr
 		if state[defs.Processes[i].ID] == unvisited {
 			visit(&defs.Processes[i])
 		}
+	}
+	return append(errs, validateInlinedSize(defs, inlinedSize, isCalled, calls)...)
+}
+
+// validateInlinedSize checks processes nothing calls, since a caller's count
+// includes its callees'. A process over the limit with no calls of its own is
+// left to ValidateCounts.
+func validateInlinedSize(defs *bpmncore.BPMNDefinitions, inlinedSize map[string]int, isCalled, calls map[string]bool) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	for _, p := range defs.Processes {
+		if isCalled[p.ID] || inlinedSize[p.ID] <= maxUserTasks || !calls[p.ID] {
+			continue
+		}
+		errs = AppendErr(errs, domain.BPMNErrTaskLimitExceeded, p.ID,
+			fmt.Sprintf("process exceeds the %d user task limit once its called processes are inlined, counting each call site", maxUserTasks))
 	}
 	return errs
 }

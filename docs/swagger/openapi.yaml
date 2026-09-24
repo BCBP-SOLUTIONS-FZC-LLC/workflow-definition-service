@@ -726,7 +726,7 @@ components:
         - INVALID_ZEEBE_PROPERTY        # warning severity — zeebe:ioMapping target="Depts" input source is not valid JSON / map[string]string
         - MISSING_MESSAGE_DEFINITION    # error severity when a messageFlow's messageRef references an undeclared bpmn:message; warning severity when a message boundary event's or collaboration messageFlow's name cannot be resolved at all
         - UNMATCHED_MESSAGE_FLOW        # message flow source/target does not reference a known element
-        - TASK_LIMIT_EXCEEDED           # userTask count > 1000
+        - TASK_LIMIT_EXCEEDED           # userTask count > 1000, in the process or in its plan once called processes are inlined
         - LANE_LIMIT_EXCEEDED           # lane count > 100
         - MULTIPLE_START_EVENTS         # more than one startEvent in the process
         - MULTIPLE_END_EVENTS           # deprecated: not currently raised by the compiler (multiple end events are valid)
