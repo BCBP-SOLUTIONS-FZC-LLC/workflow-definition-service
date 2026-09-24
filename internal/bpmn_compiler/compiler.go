@@ -87,18 +87,42 @@ func (c *Compiler) Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNV
 }
 
 func (c *Compiler) Compile(ctx context.Context, bpmnXML string) (*dsl.CompiledPlan, error) {
+	plan, _, err := c.compileSingleRoot(ctx, bpmnXML)
+	return plan, err
+}
+
+// CompileForPublish wraps a single root as a one-plan collaboration, the
+// shape the Execution Service decodes. A collaboration BPMN is refused by
+// compileSingleRoot until an ignored pool's call-pool task can be completed.
+func (c *Compiler) CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error) {
+	plan, root, err := c.compileSingleRoot(ctx, bpmnXML)
+	if err != nil {
+		return nil, err
+	}
+	if plan.Name == "" {
+		plan.Name = root.ID
+	}
+	return &dsl.CompiledCollaboration{
+		MainPlan:      plan.Name,
+		Plans:         []*dsl.CompiledPlan{plan},
+		Messages:      []dsl.MessageDef{},
+		SchemaVersion: dsl.CurrentSchemaVersion,
+	}, nil
+}
+
+func (c *Compiler) compileSingleRoot(ctx context.Context, bpmnXML string) (*dsl.CompiledPlan, *bpmncore.BPMNProcess, error) {
 	defs, err := parse(ctx, bpmnXML)
 	if errors.Is(err, errMissingNamespace) {
-		return nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
+		return nil, nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
 			Code: domain.BPMNErrMissingNamespace, Message: err.Error(), Severity: domain.SeverityError,
 		}}}
 	}
 	if err != nil {
-		return nil, classifyParseError("compile", err)
+		return nil, nil, classifyParseError("compile", err)
 	}
 	execProcs := executableProcesses(defs)
 	if len(execProcs) != 1 {
-		return nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
+		return nil, nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
 			Code:     domain.BPMNErrMultipleProcesses,
 			Message:  fmt.Sprintf("Compile expects a single executable process; got %d — use CompileCollaboration for multi-pool BPMN", len(execProcs)),
 			Severity: domain.SeverityError,
@@ -110,14 +134,14 @@ func (c *Compiler) Compile(ctx context.Context, bpmnXML string) (*dsl.CompiledPl
 	errs := append(scanRejected(bpmnXML), validator.Validate(proc, g, c.stageTypes, c.elements, defs)...)
 	errs = append(errs, validator.ValidateDiagramCompleteness(proc, defs)...)
 	if hasBlockingErrors(errs) {
-		return nil, &domain.ValidationFailedError{Errors: errs}
+		return nil, nil, &domain.ValidationFailedError{Errors: errs}
 	}
 
 	plan, err := bpmncore.Compile(proc, g, c.stageTypes, c.elements, defs)
 	if err != nil {
-		return nil, fmt.Errorf("bpmn compile: %w", err)
+		return nil, nil, fmt.Errorf("bpmn compile: %w", err)
 	}
-	return plan, nil
+	return plan, proc, nil
 }
 
 // executableProcesses returns the root entry-point processes to compile — see
@@ -170,10 +194,10 @@ func (c *Compiler) Hash(ctx context.Context, bpmnXML string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("bpmn hash: %w", err)
 	}
-	if len(defs.Processes) != 1 {
-		return "", fmt.Errorf("bpmn hash: expected exactly one process, got %d", len(defs.Processes))
+	if len(defs.Processes) == 0 {
+		return "", errors.New("bpmn hash: no process")
 	}
-	h, err := canonicalHash(&defs.Processes[0])
+	h, err := canonicalBundleHash(defs.Processes)
 	if err != nil {
 		return "", fmt.Errorf("bpmn hash: %w", err)
 	}

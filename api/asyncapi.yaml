@@ -16,14 +16,14 @@ channels:
   # Membership Service.
   iam/membership/events:
     address: iam-membership-events
-    description: Consumed off membership-wf-q.
+    description: Consumed off membership-workflow-q.
     bindings:
       sqs:
         queue:
-          name: membership-wf-q
+          name: membership-workflow-q
           fifoQueue: false
           redrivePolicy:
-            deadLetterQueue: { name: membership-wf-q-dlq }
+            deadLetterQueue: { name: membership-workflow-q-dlq }
             maxReceiveCount: 5
     messages:
       DepartmentMembershipRevoked: { $ref: '#/components/messages/DepartmentMembershipRevokedInbound' }

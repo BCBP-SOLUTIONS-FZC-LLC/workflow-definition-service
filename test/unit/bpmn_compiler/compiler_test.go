@@ -894,9 +894,12 @@ const multiProcessBPMN = `<?xml version="1.0" encoding="UTF-8"?>
 </bpmn:definitions>`
 
 func TestHash_MultipleProcesses(t *testing.T) {
-	_, err := bpmn_compiler.New().Hash(context.Background(), multiProcessBPMN)
-	if err == nil {
-		t.Error("Hash() should return error when definitions has multiple processes")
+	h, err := bpmn_compiler.New().Hash(context.Background(), multiProcessBPMN)
+	if err != nil {
+		t.Fatalf("Hash() error for a bundle with several processes: %v", err)
+	}
+	if h == "" {
+		t.Error("Hash() returned an empty hash")
 	}
 }
 

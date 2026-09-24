@@ -564,6 +564,26 @@ components:
         interrupting: { type: boolean, description: "true = host activity cancelled on fire; false = escalation runs concurrently." }
         target_dept:  { type: string, nullable: true, description: "Department to route to on this message path, if set." }
 
+    CompiledCollaboration:
+      type: object
+      description: "The stored compiled_plan_json. A single-process BPMN is a collaboration of one plan."
+      required: [main_plan, plans, messages, schema_version]
+      properties:
+        main_plan:      { type: string, description: "Name of the plan in `plans` that an instance starts." }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/CompiledPlan' }
+        messages:
+          type: array
+          items:
+            type: object
+            required: [name, source_plan, target_plan]
+            properties:
+              name:        { type: string }
+              source_plan: { type: string }
+              target_plan: { type: string }
+        schema_version: { type: integer, description: "DSL schema major version, stamped at publish." }
+
     CompiledPlan:
       type: object
       required: [name, departments, execution]
@@ -1202,7 +1222,7 @@ paths:
                   bpmn_xml:           { type: string }
                   module_bpmn_xmls:   { type: array, items: { type: string }, description: "Called-process BPMNs attached to this version. Empty array if none." }
                   artifact_hash:      { type: string, nullable: true, description: "SHA-256 of the BPMN XML at publish time. Absent on DRAFT versions." }
-                  compiled_plan_json: { $ref: '#/components/schemas/CompiledPlan' }
+                  compiled_plan_json: { $ref: '#/components/schemas/CompiledCollaboration' }
                   created_by_user_id: { type: string, format: uuid }
                   created_at:         { type: string, format: date-time }
                   published_at:       { type: string, format: date-time, nullable: true }
@@ -1478,7 +1498,7 @@ paths:
                   bpmn_xml:           { type: string }
                   module_bpmn_xmls:   { type: array, items: { type: string }, description: "Called-process BPMNs attached to this version. Empty array if none." }
                   artifact_hash:      { type: string, nullable: true, description: "SHA-256 of the BPMN XML at publish time. Absent on DRAFT versions." }
-                  compiled_plan_json: { $ref: '#/components/schemas/CompiledPlan' }
+                  compiled_plan_json: { $ref: '#/components/schemas/CompiledCollaboration' }
                   created_by_user_id: { type: string, format: uuid }
                   created_at:         { type: string, format: date-time }
                   published_at:       { type: string, format: date-time, nullable: true }
@@ -1860,7 +1880,7 @@ paths:
       summary: Ingest a forwarded domain-event envelope
       description: >
         Service-to-service ingest endpoint called by the shared workflow-events consumer (which
-        consumes the SQS queues, e.g. membership-wf-q). Accepts a single event envelope, sets the
+        consumes the SQS queues, e.g. membership-workflow-q). Accepts a single event envelope, sets the
         RLS GUC from the envelope tenant_id, and dispatches by type — currently
         DepartmentMembershipRevoked → template invalidation (see LLD §7.4). Idempotent: a repeated
         envelope id returns 2xx with no side effects. This route is internal-only — it is not

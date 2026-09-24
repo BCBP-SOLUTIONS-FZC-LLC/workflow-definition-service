@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  id="Def_CA" targetNamespace="http://bpmn.io/schema/bpmn">
+
+  <bpmn:process id="Process_Main" name="Main" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_main" name="management"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="92fd92cf-4b2c-58dc-bf98-f3d0af729876"/></zeebe:properties></bpmn:extensionElements>
+        <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>CA_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_1" name="Start"/>
+    <bpmn:callActivity id="CA_1" name="Prepare Response">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="Process_PrepReview" propagateAllChildVariables="false"/>
+      </bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:endEvent id="End_1" name="End"/>
+    <bpmn:sequenceFlow id="Flow_start_ca" sourceRef="Start_1" targetRef="CA_1"/>
+    <bpmn:sequenceFlow id="Flow_ca_end" sourceRef="CA_1" targetRef="End_1"/>
+  </bpmn:process>
+
+  <bpmn:process id="Process_PrepReview" name="Prepare Review" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_PR">
+      <bpmn:lane id="Lane_eng" name="engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/></zeebe:properties></bpmn:extensionElements>
+        <bpmn:flowNodeRef>PR_Start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>PR_Prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>PR_End</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="PR_Start" name="Start"/>
+    <bpmn:userTask id="PR_Prep" name="Prepare">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:endEvent id="PR_End" name="End"/>
+    <bpmn:sequenceFlow id="PR_Flow1" sourceRef="PR_Start" targetRef="PR_Prep"/>
+    <bpmn:sequenceFlow id="PR_Flow2" sourceRef="PR_Prep" targetRef="PR_End"/>
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_Main">
+      <bpmndi:BPMNShape id="Lane_main_di" bpmnElement="Lane_main"/>
+      <bpmndi:BPMNShape id="Start_1_di" bpmnElement="Start_1"/>
+      <bpmndi:BPMNShape id="CA_1_di" bpmnElement="CA_1"/>
+      <bpmndi:BPMNShape id="End_1_di" bpmnElement="End_1"/>
+      <bpmndi:BPMNEdge id="Flow_start_ca_di" bpmnElement="Flow_start_ca"/>
+      <bpmndi:BPMNEdge id="Flow_ca_end_di" bpmnElement="Flow_ca_end"/>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

@@ -20,7 +20,7 @@ flowchart LR
     DB[("PostgreSQL 18\nworkflow_definition")]
     CACHE[("Valkey 8\nidempotency · cache")]
     SNS["AWS SNS\nwf.template.events"]
-    CONSUMER["shared workflow-events\nconsumer (membership-wf-q)"]
+    CONSUMER["shared workflow-events\nconsumer (membership-workflow-q)"]
     IAM["iam-service\norg membership API"]
     DOWNSTREAM["downstream consumers\n(execution, analytics)"]
 
@@ -76,7 +76,7 @@ graph TD
         OrgMembership[Org & Membership Service]
         SNS[SNS: wf.template.events]
         EventsConsumer[Shared Workflow-Events Consumer]
-        SQS_Membership[SQS: membership-wf-q]
+        SQS_Membership[SQS: membership-workflow-q]
     end
 
     UI -->|1. Get Eligible Users per Node| OrgMembership

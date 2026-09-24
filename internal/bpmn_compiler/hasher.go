@@ -53,6 +53,36 @@ func canonicalHash(proc *bpmncore.BPMNProcess) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// canonicalBundleHash keeps a single process's hash identical to canonicalHash
+// and orders several by (process id, process hash), so element order in the
+// XML is irrelevant even when two processes share an id.
+func canonicalBundleHash(procs []bpmncore.BPMNProcess) (string, error) {
+	if len(procs) == 1 {
+		return canonicalHash(&procs[0])
+	}
+	type procHash struct{ id, hash string }
+	hashes := make([]procHash, len(procs))
+	for i := range procs {
+		h, err := canonicalHash(&procs[i])
+		if err != nil {
+			return "", fmt.Errorf("process %q: %w", procs[i].ID, err)
+		}
+		hashes[i] = procHash{id: procs[i].ID, hash: h}
+	}
+	sort.Slice(hashes, func(a, b int) bool {
+		if hashes[a].id != hashes[b].id {
+			return hashes[a].id < hashes[b].id
+		}
+		return hashes[a].hash < hashes[b].hash
+	})
+
+	bundle := sha256.New()
+	for _, ph := range hashes {
+		bundle.Write([]byte(ph.hash))
+	}
+	return hex.EncodeToString(bundle.Sum(nil)), nil
+}
+
 func sortedZeebeItems(items []bpmncore.ZeebeProperty) []bpmncore.ZeebeProperty {
 	sorted := make([]bpmncore.ZeebeProperty, len(items))
 	copy(sorted, items)

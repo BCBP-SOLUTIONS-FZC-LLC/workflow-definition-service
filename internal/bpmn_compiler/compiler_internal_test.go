@@ -1322,15 +1322,19 @@ func TestCollabImplicitStart_NoCollaboration(t *testing.T) {
 	}
 }
 
-func TestHash_MultiProcessBPMN_ReturnsError(t *testing.T) {
+func TestCompileForPublish_InvalidBPMN_ReturnsError(t *testing.T) {
+	if _, err := New().CompileForPublish(context.Background(), `<<not valid xml>>`); err == nil {
+		t.Fatal("expected an error for malformed BPMN")
+	}
+}
+
+func TestHash_NoProcess_ReturnsError(t *testing.T) {
 	bpmnXML := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
-  <bpmn:process id="P1" isExecutable="true"><bpmn:startEvent id="S1"/></bpmn:process>
-  <bpmn:process id="P2" isExecutable="true"><bpmn:startEvent id="S2"/></bpmn:process>
 </bpmn:definitions>`
 	c := New()
 	_, err := c.Hash(context.Background(), bpmnXML)
-	if err == nil {
-		t.Fatal("expected an error for a BPMN document with more than one process")
+	if err == nil || !strings.Contains(err.Error(), "no process") {
+		t.Fatalf("expected the no-process error, got %v", err)
 	}
 }

@@ -480,6 +480,10 @@ if [ "$HAS_GRPCURL" = true ]; then
     && pass "GetCompiledWorkflow (PUBLISHED) → compiled_plan_json populated" \
     || fail "GetCompiledWorkflow PUBLISHED: missing compiled_plan_json"
 
+  echo "$GRPC_RESP" | grep -qE '"dslSchemaVersion": 1([^0-9]|$)' \
+    && pass "GetCompiledWorkflow (PUBLISHED) → dsl_schema_version stamped" \
+    || fail "GetCompiledWorkflow PUBLISHED: dsl_schema_version not 1 (stored plan is not a collaboration)"
+
   # DRAFT version → no compiled plan (empty string)
   DRAFT_FOR_GRPC=$(api_post "${API}/workflows/${WF_ID}/draft" '{}')
   V_GRPC_DRAFT=$(get_version_id "$DRAFT_FOR_GRPC")

@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -306,18 +305,15 @@ func (s *VersionService) resolvePlan(
 	v *domain.WorkflowVersion,
 ) (*dsl.CompiledPlan, error) {
 	if v.CompiledPlanJSON != nil && *v.CompiledPlanJSON != "" {
-		var plan dsl.CompiledPlan
-		if err := json.Unmarshal([]byte(*v.CompiledPlanJSON), &plan); err == nil {
-			return &plan, nil
+		if plan, ok := storedMainPlan(*v.CompiledPlanJSON); ok {
+			return plan, nil
 		}
 	}
 	bundled, err := s.compiler.Bundle(v.BPMNXML, v.ModuleBPMNXMLs)
 	if err != nil {
 		return nil, fmt.Errorf("bundle modules: %w", err)
 	}
-	compileStart := time.Now()
-	plan, err := s.compiler.Compile(ctx, bundled)
-	observability.ObserveHistogram(observability.WFCompileDurationSeconds, time.Since(compileStart).Seconds())
+	_, plan, err := s.compileForPublish(ctx, bundled)
 	return plan, err
 }
 

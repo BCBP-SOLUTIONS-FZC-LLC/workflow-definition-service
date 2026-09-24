@@ -5,7 +5,7 @@ flowchart LR
     DB[("PostgreSQL 18\nworkflow_definition")]
     CACHE[("Valkey 8\nidempotency · cache")]
     SNS["AWS SNS\nwf.template.events"]
-    CONSUMER["shared workflow-events\nconsumer (membership-wf-q)"]
+    CONSUMER["shared workflow-events\nconsumer (membership-workflow-q)"]
     IAM["iam-service\norg membership API"]
     DOWNSTREAM["downstream consumers\n(execution, analytics)"]
 

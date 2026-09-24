@@ -44,11 +44,9 @@ func (s *VersionService) publishPreFlight(
 	if err != nil {
 		return nil, "", "", nil, fmt.Errorf("bundle modules: %w", err)
 	}
-	compileStart := time.Now()
-	plan, err := s.compiler.Compile(ctx, bundled)
-	observability.ObserveHistogram(observability.WFCompileDurationSeconds, time.Since(compileStart).Seconds())
+	collab, plan, err := s.compileForPublish(ctx, bundled)
 	if err != nil {
-		return nil, "", "", nil, fmt.Errorf("compile bpmn: %w", err)
+		return nil, "", "", nil, err
 	}
 	artifactHash, err := s.compiler.Hash(ctx, bundled)
 	if err != nil {
@@ -71,12 +69,29 @@ func (s *VersionService) publishPreFlight(
 		}
 	}
 
-	compiledJSON, err := marshalPlan(plan)
+	compiledJSON, err := marshalPlan(collab)
 	if err != nil {
 		return nil, "", "", nil, fmt.Errorf("marshal compiled plan: %w", err)
 	}
 
 	return draft, compiledJSON, artifactHash, extractAssignees(tenantID, versionID, plan), nil
+}
+
+func (s *VersionService) compileForPublish(
+	ctx context.Context,
+	bundledXML string,
+) (*dsl.CompiledCollaboration, *dsl.CompiledPlan, error) {
+	compileStart := time.Now()
+	collab, err := s.compiler.CompileForPublish(ctx, bundledXML)
+	observability.ObserveHistogram(observability.WFCompileDurationSeconds, time.Since(compileStart).Seconds())
+	if err != nil {
+		return nil, nil, fmt.Errorf("compile bpmn: %w", err)
+	}
+	plan := mainPlan(collab)
+	if plan == nil {
+		return nil, nil, fmt.Errorf("compile bpmn: main plan %q not among the compiled plans", collab.MainPlan)
+	}
+	return collab, plan, nil
 }
 
 func (s *VersionService) checkStructuralDivergence(
@@ -98,12 +113,12 @@ func (s *VersionService) checkStructuralDivergence(
 	if active.CompiledPlanJSON == nil || *active.CompiledPlanJSON == "" {
 		return nil // no stored baseline to compare; allow publish
 	}
-	var activePlan dsl.CompiledPlan
-	if err := json.Unmarshal([]byte(*active.CompiledPlanJSON), &activePlan); err != nil {
+	activePlan, ok := storedMainPlan(*active.CompiledPlanJSON)
+	if !ok {
 		return nil // unreadable baseline; allow publish rather than blocking
 	}
 
-	diff := computeDiff(&activePlan, draftPlan)
+	diff := computeDiff(activePlan, draftPlan)
 	if !diff.MetadataOnly && !forcePublishStructural {
 		return domain.ErrStructuralDivergence
 	}
@@ -208,8 +223,28 @@ func extractAssignees(
 	return assignees
 }
 
-func marshalPlan(plan *dsl.CompiledPlan) (string, error) {
-	b, err := json.Marshal(plan)
+func mainPlan(collab *dsl.CompiledCollaboration) *dsl.CompiledPlan {
+	for _, p := range collab.Plans {
+		if p != nil && p.Name == collab.MainPlan {
+			return p
+		}
+	}
+	return nil
+}
+
+// storedMainPlan reads compiled_plan_json as publish stores it. ok is false
+// when the blob does not decode or names no plan it carries.
+func storedMainPlan(compiledPlanJSON string) (*dsl.CompiledPlan, bool) {
+	var collab dsl.CompiledCollaboration
+	if err := json.Unmarshal([]byte(compiledPlanJSON), &collab); err != nil {
+		return nil, false
+	}
+	p := mainPlan(&collab)
+	return p, p != nil
+}
+
+func marshalPlan(collab *dsl.CompiledCollaboration) (string, error) {
+	b, err := json.Marshal(collab)
 	if err != nil {
 		return "", fmt.Errorf("marshal plan: %w", err)
 	}
