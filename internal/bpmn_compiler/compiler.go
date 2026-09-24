@@ -65,25 +65,30 @@ func (c *Compiler) Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNV
 		return nil, classifyParseError("validate", err)
 	}
 
+	callGraphErrs := validator.ValidateCallGraph(defs)
 	execProcs := executableProcesses(defs)
 	if len(execProcs) != 1 && defs.Collaboration == nil {
-		return []domain.BPMNValidationError{{
+		return append(callGraphErrs, domain.BPMNValidationError{
 			Code:     domain.BPMNErrMultipleProcesses,
 			Message:  fmt.Sprintf("definitions contains %d executable processes without a collaboration wrapper; use <bpmn:collaboration> for multi-pool BPMN", len(execProcs)),
 			Severity: domain.SeverityError,
-		}}, nil
+		}), nil
 	}
 
-	rejected := scanRejected(bpmnXML)
 	if defs.Collaboration != nil {
-		return c.validateCollaboration(rejected, defs), nil
+		return c.validateCollaboration(append(scanRejected(bpmnXML), callGraphErrs...), defs), nil
 	}
+	return append(callGraphErrs, c.validateSingleRoot(bpmnXML, execProcs[0], defs)...), nil
+}
 
-	proc := execProcs[0]
+// validateSingleRoot runs every check a single-root BPMN must pass apart from
+// ValidateCallGraph, which callers run first because it also explains a
+// MULTIPLE_PROCESSES caused by a duplicated process id.
+func (c *Compiler) validateSingleRoot(bpmnXML string, proc *bpmncore.BPMNProcess, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	g := bpmncore.BuildGraph(proc)
-	allErrs := append(rejected, validator.Validate(proc, g, c.stageTypes, c.elements, defs)...)
-	allErrs = append(allErrs, validator.ValidateDiagramCompleteness(proc, defs)...)
-	return allErrs, nil
+	errs := append(scanRejected(bpmnXML), validator.Validate(proc, g, c.stageTypes, c.elements, defs)...)
+	errs = append(errs, validator.ValidateCalledBodies(proc, c.stageTypes, c.elements, defs)...)
+	return append(errs, validator.ValidateDiagramCompleteness(proc, defs)...)
 }
 
 func (c *Compiler) Compile(ctx context.Context, bpmnXML string) (*dsl.CompiledPlan, error) {
@@ -120,24 +125,23 @@ func (c *Compiler) compileSingleRoot(ctx context.Context, bpmnXML string) (*dsl.
 	if err != nil {
 		return nil, nil, classifyParseError("compile", err)
 	}
+	callGraphErrs := validator.ValidateCallGraph(defs)
 	execProcs := executableProcesses(defs)
 	if len(execProcs) != 1 {
-		return nil, nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
+		return nil, nil, &domain.ValidationFailedError{Errors: append(callGraphErrs, domain.BPMNValidationError{
 			Code:     domain.BPMNErrMultipleProcesses,
 			Message:  fmt.Sprintf("Compile expects a single executable process; got %d — use CompileCollaboration for multi-pool BPMN", len(execProcs)),
 			Severity: domain.SeverityError,
-		}}}
+		})}
 	}
 	proc := execProcs[0]
-	g := bpmncore.BuildGraph(proc)
 
-	errs := append(scanRejected(bpmnXML), validator.Validate(proc, g, c.stageTypes, c.elements, defs)...)
-	errs = append(errs, validator.ValidateDiagramCompleteness(proc, defs)...)
+	errs := append(callGraphErrs, c.validateSingleRoot(bpmnXML, proc, defs)...)
 	if hasBlockingErrors(errs) {
 		return nil, nil, &domain.ValidationFailedError{Errors: errs}
 	}
 
-	plan, err := bpmncore.Compile(proc, g, c.stageTypes, c.elements, defs)
+	plan, err := bpmncore.Compile(proc, bpmncore.BuildGraph(proc), c.stageTypes, c.elements, defs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("bpmn compile: %w", err)
 	}

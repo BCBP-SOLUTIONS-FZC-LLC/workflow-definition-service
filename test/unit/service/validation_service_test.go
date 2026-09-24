@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port/mocks"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
@@ -87,5 +88,24 @@ func TestValidationService_Validate_CompilerError(t *testing.T) {
 	isValid, _, err := svc.Validate(context.Background(), "<broken/>", nil)
 	if err == nil || isValid {
 		t.Fatal("expected error and isValid=false")
+	}
+}
+
+func TestValidationService_Validate_InvalidModuleTask_IsInvalid(t *testing.T) {
+	svc := service.NewValidationService(service.ValidationDeps{Compiler: bpmn_compiler.New()})
+
+	isValid, errs, err := svc.Validate(context.Background(), moduleMainBPMN, []string{prepReviewModuleNoCandidateUsersBPMN})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if isValid {
+		t.Errorf("is_valid = true, want false for a module task with no candidate users")
+	}
+	found := false
+	for _, e := range errs {
+		found = found || (e.Code == domain.BPMNErrCandidateUsersEmpty && e.NodeID == "PR_Prep")
+	}
+	if !found {
+		t.Errorf("errors = %+v, want CANDIDATE_USERS_EMPTY on PR_Prep", errs)
 	}
 }

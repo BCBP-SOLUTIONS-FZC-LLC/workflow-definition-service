@@ -27,9 +27,21 @@ var callActivityBPMN string
 //go:embed testdata/bnb.bpmn
 var bnbCollaborationBPMN string
 
-// publishWithRealCompiler publishes bpmnXML through the real compiler and
-// returns the compiled_plan_json handed to the repository.
-func publishWithRealCompiler(t *testing.T, bpmnXML string) (string, error) {
+//go:embed testdata/module-main.bpmn
+var moduleMainBPMN string
+
+//go:embed testdata/module-prep-review.bpmn
+var prepReviewModuleBPMN string
+
+//go:embed testdata/module-prep-review-no-candidate-users.bpmn
+var prepReviewModuleNoCandidateUsersBPMN string
+
+//go:embed testdata/module-self-calling.bpmn
+var selfCallingModuleBPMN string
+
+// publishWithRealCompiler publishes bpmnXML, bundled with modules, through the
+// real compiler and returns the compiled_plan_json handed to the repository.
+func publishWithRealCompiler(t *testing.T, bpmnXML string, modules ...string) (string, error) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	tx := mocks.NewMockTransactor(ctrl)
@@ -44,7 +56,7 @@ func publishWithRealCompiler(t *testing.T, bpmnXML string) (string, error) {
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	draft := &domain.WorkflowVersion{
 		ID: vID, WorkflowID: wfID, TenantID: tenantID,
-		Status: domain.VersionStatusDraft, BPMNXML: bpmnXML,
+		Status: domain.VersionStatusDraft, BPMNXML: bpmnXML, ModuleBPMNXMLs: modules,
 	}
 
 	var stored string
@@ -130,4 +142,40 @@ func TestPublishContract_CollaborationWithIgnoredPool_Publishes(t *testing.T) {
 		t.Fatalf("publish: %v", err)
 	}
 	assertExecutionCanStart(t, stored)
+}
+
+func TestPublishContract_MainWithModule_Publishes(t *testing.T) {
+	stored, err := publishWithRealCompiler(t, moduleMainBPMN, prepReviewModuleBPMN)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	assertExecutionCanStart(t, stored)
+}
+
+func TestPublishContract_ModuleWithInvalidTask_IsRefused(t *testing.T) {
+	stored, err := publishWithRealCompiler(t, moduleMainBPMN, prepReviewModuleNoCandidateUsersBPMN)
+	assertRefusedWith(t, stored, err, domain.BPMNErrCandidateUsersEmpty)
+}
+
+func TestPublishContract_SelfCallingModule_IsRefused(t *testing.T) {
+	stored, err := publishWithRealCompiler(t, moduleMainBPMN, selfCallingModuleBPMN)
+	assertRefusedWith(t, stored, err, domain.BPMNErrCalledElementCycle)
+}
+
+func assertRefusedWith(t *testing.T, stored string, err error, code domain.BPMNErrorCode) {
+	t.Helper()
+	var vf *domain.ValidationFailedError
+	if !errors.As(err, &vf) {
+		t.Fatalf("publish err = %v, want a ValidationFailedError carrying %s", err, code)
+	}
+	found := false
+	for _, e := range vf.Errors {
+		found = found || e.Code == code
+	}
+	if !found {
+		t.Errorf("publish errors = %+v, want %s", vf.Errors, code)
+	}
+	if stored != "" {
+		t.Errorf("a refused publish stored compiled_plan_json")
+	}
 }

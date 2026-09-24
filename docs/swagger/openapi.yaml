@@ -746,6 +746,8 @@ components:
         - UNRESOLVED_CALLED_ELEMENT     # callActivity missing zeebe:calledElement or processId not found in same document
         - NESTED_SUBPROCESS_NOT_SUPPORTED # subProcess nested inside another subProcess
         - MISSING_DEPT_INPUT_FOR_MODULE # called process has no lanes and no dept_id input mapping was provided
+        - CALLED_ELEMENT_CYCLE          # a chain of callActivity calls returns to a process already on it
+        - DUPLICATE_PROCESS_ID          # two bpmn:process elements in the bundled document share an id
 
     BpmnValidationFailure:
       type: object

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_Module" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_PrepReview" name="Prepare Review" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_PR">
+      <bpmn:lane id="Lane_eng" name="engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/></zeebe:properties></bpmn:extensionElements>
+        <bpmn:flowNodeRef>PR_Start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>PR_Prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>PR_End</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="PR_Start" name="Start"/>
+    <bpmn:userTask id="PR_Prep" name="Prepare">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers=""/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:endEvent id="PR_End" name="End"/>
+    <bpmn:sequenceFlow id="PR_Flow1" sourceRef="PR_Start" targetRef="PR_Prep"/>
+    <bpmn:sequenceFlow id="PR_Flow2" sourceRef="PR_Prep" targetRef="PR_End"/>
+  </bpmn:process>
+</bpmn:definitions>

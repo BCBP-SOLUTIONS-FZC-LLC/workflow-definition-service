@@ -89,7 +89,6 @@ func validatePerElement(
 			errs = append(errs, h.Validate(ca.ID, proc, g, defs, stageTypes, elements)...)
 		}
 	}
-	errs = append(errs, ValidateCallActivities(proc, defs)...)
 	return errs
 }
 

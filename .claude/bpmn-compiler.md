@@ -99,6 +99,7 @@ When a called process has **no lanes**, the callActivity must include `<zeebe:io
 - `dept_id` is compiler-internal — it is NOT emitted in the compiled `ExecutionStep.IOMapping`.
 - All other inputs/outputs in `zeebe:ioMapping` ARE emitted in `ExecutionStep.IOMapping` for the Execution Service.
 - When the called process has its own lanes, the caller does NOT provide `dept_id` — the module uses its own lane names as department IDs.
+- Each called process reachable from the root is validated once with the root's rules, minus the diagram rules (`Bundle()` drops module diagrams). A call cycle is `CALLED_ELEMENT_CYCLE`, and a repeated process `id` is `DUPLICATE_PROCESS_ID` (`validator/call_graph.go`).
 
 ## Multi-Participant Collaboration
 

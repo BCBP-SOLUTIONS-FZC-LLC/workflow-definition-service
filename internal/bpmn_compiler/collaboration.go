@@ -58,13 +58,13 @@ func (c *Compiler) CompileCollaboration(ctx context.Context, bpmnXML string) (*d
 
 // validateCollaboration is Validate's collaboration path: unlike
 // validateCollaborationProcesses (CompileCollaboration's pre-check), it also
-// runs ValidateDiagramCompleteness per process, matching what the
-// single-process path below it in Validate does.
-func (c *Compiler) validateCollaboration(rejected []domain.BPMNValidationError, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
+// runs ValidateDiagramCompleteness per process. Called bodies need no separate
+// pass here, because every non-ignored process is validated as a pool.
+func (c *Compiler) validateCollaboration(upfront []domain.BPMNValidationError, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	collabErrs := validator.ValidateCollaboration(defs.Collaboration, defs)
 	ignoredProcIDs, participantNameByProcID := collaborationProcSets(defs)
 
-	allErrs := append(rejected, collabErrs...)
+	allErrs := append(upfront, collabErrs...)
 	for i := range defs.Processes {
 		proc := &defs.Processes[i]
 		if isIgnoredProcess(proc) {
@@ -102,6 +102,7 @@ func (c *Compiler) validateCollaborationProcesses(bpmnXML string, defs *bpmncore
 	var valErrs []domain.BPMNValidationError
 	valErrs = append(valErrs, scanRejected(bpmnXML)...)
 	valErrs = append(valErrs, validator.ValidateCollaboration(defs.Collaboration, defs)...)
+	valErrs = append(valErrs, validator.ValidateCallGraph(defs)...)
 	for i := range defs.Processes {
 		proc := &defs.Processes[i]
 		if isIgnoredProcess(proc) {

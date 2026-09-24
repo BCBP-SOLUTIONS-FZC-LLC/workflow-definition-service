@@ -1198,6 +1198,9 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | Called process has at least one `startEvent` | `NO_START_EVENT` (anchored on the callActivity node ID) |
 | Called process has no lanes AND callActivity ioMapping has neither a `dept_id` input nor a `target="Depts"` input containing a valid JSON object mapping lane names to dept IDs | `MISSING_DEPT_INPUT_FOR_MODULE` |
 | Timer boundary event attached to a `callActivity` | `INVALID_BOUNDARY_ATTACHMENT` |
+| No chain of calls returns to a process already on it | `CALLED_ELEMENT_CYCLE` (anchored on the callActivity that closes the cycle) |
+| No two processes in the bundled document share an `id` | `DUPLICATE_PROCESS_ID` |
+| The called process's own body passes every rule above, without the diagram rules | the body's own codes, anchored on its own nodes, or on the called process id for a whole-process rule |
 
 Note: error boundary events on `callActivity` pass validation but are rejected at compile time. Message boundary events on `callActivity` are fully supported — they pass validation and compile to `ExecutionStep.message_paths` on the flattened step.
 
@@ -1293,6 +1296,8 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `UNRESOLVED_CALLED_ELEMENT` | `callActivity` references a `processId` not found in supplied module BPMNs |
 | `NESTED_SUBPROCESS_NOT_SUPPORTED` | A `subProcess` is nested inside another `subProcess` |
 | `MISSING_DEPT_INPUT_FOR_MODULE` | Called process has no lanes and no `dept_id` input mapping was provided |
+| `CALLED_ELEMENT_CYCLE` | A chain of `callActivity` calls returns to a process already on it |
+| `DUPLICATE_PROCESS_ID` | Two processes in the bundled document share an `id` |
 | `UNSUPPORTED_ELEMENT` | Tier 2 element present (e.g. `inclusiveGateway`) — parsed but compile handler absent |
 
 > **Unparseable documents.** Documents that fail XML parsing (bad XML, `DOCTYPE`/entity injection, token-cap exceeded) return **400 `INVALID_BPMN_XML`** — not a BPMN validation code. Forbidden `DOCTYPE`/entity additionally triggers an internal security log with client IP and tenant ID; the client sees only the generic 400.

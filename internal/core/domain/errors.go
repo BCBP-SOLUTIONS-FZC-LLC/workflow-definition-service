@@ -81,6 +81,8 @@ const (
 	BPMNErrMissingDeptInputForModule    BPMNErrorCode = "MISSING_DEPT_INPUT_FOR_MODULE"
 	BPMNErrMissingDeptID                BPMNErrorCode = "MISSING_DEPT_ID"
 	BPMNErrInvalidDeptID                BPMNErrorCode = "INVALID_DEPT_ID"
+	BPMNErrCalledElementCycle           BPMNErrorCode = "CALLED_ELEMENT_CYCLE"
+	BPMNErrDuplicateProcessID           BPMNErrorCode = "DUPLICATE_PROCESS_ID"
 )
 
 type BPMNValidationSeverity string
