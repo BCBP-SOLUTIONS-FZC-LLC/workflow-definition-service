@@ -28,7 +28,7 @@ func (SubProcessHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *
 	inner := bpmncore.SubProcToProcess(sp)
 	innerG := bpmncore.BuildGraph(inner)
 	var errs []domain.BPMNValidationError
-	errs = append(errs, validator.Validate(inner, innerG, stageTypes, elements, defs)...)
+	errs = append(errs, validator.AnchorOn(sp.ID, validator.Validate(inner, innerG, stageTypes, elements, defs))...)
 
 	for _, be := range proc.BoundaryEvents {
 		if be.AttachedToRef != sp.ID || be.Error == nil || be.Error.ErrorRef == "" {

@@ -333,9 +333,44 @@ func TestValidate_CalledProcessWithoutStart_IsReportedAtTheCallSite(t *testing.T
 	if got := findCode(errs, domain.BPMNErrNoStartEvent); got == nil || got.NodeID != "CA_1" {
 		t.Errorf("errors = %+v, want NO_START_EVENT on the call site CA_1", errs)
 	}
+	if n := countCode(errs, domain.BPMNErrNoStartEvent); n != 1 {
+		t.Errorf("NO_START_EVENT reported %d times, want once, at the call site", n)
+	}
 	for _, e := range errs {
-		if e.NodeID == "" {
-			t.Errorf("%s %q names no node; the user cannot tell which process it is about", e.Code, e.Message)
+		if e.NodeID == "" || e.NodeID == "Process_C" {
+			t.Errorf("%s %q on %q: the body the call site rejects is not validated again", e.Code, e.Message, e.NodeID)
+		}
+	}
+}
+
+func TestValidate_CalledProcessSubProcessError_NamesTheSubProcess(t *testing.T) {
+	module := `  <bpmn:process id="Process_C" isExecutable="true">
+    <bpmn:startEvent id="Process_C_Start"/>
+    <bpmn:subProcess id="C_Sub">
+      <bpmn:startEvent id="C_Sub_Start"/>
+      <bpmn:userTask id="C_Sub_Task">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="prep"/>
+          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + validCandidateUser + `"/>
+        </bpmn:extensionElements>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="C_Sub_F1" sourceRef="C_Sub_Start" targetRef="C_Sub_Task"/>
+    </bpmn:subProcess>
+    <bpmn:endEvent id="Process_C_End"/>
+    <bpmn:sequenceFlow id="Process_C_F1" sourceRef="Process_C_Start" targetRef="C_Sub"/>
+    <bpmn:sequenceFlow id="Process_C_F2" sourceRef="C_Sub" targetRef="Process_C_End"/>
+  </bpmn:process>`
+
+	errs, err := bpmn_compiler.New().Validate(context.Background(), callerBPMN("Process_Main", "Process_C", module))
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if got := findCode(errs, domain.BPMNErrNoEndEvent); got == nil || got.NodeID != "C_Sub" {
+		t.Errorf("errors = %+v, want NO_END_EVENT on the subprocess C_Sub", errs)
+	}
+	for _, e := range errs {
+		if e.NodeID == "Process_C" {
+			t.Errorf("%s %q is about C_Sub but names Process_C", e.Code, e.Message)
 		}
 	}
 }

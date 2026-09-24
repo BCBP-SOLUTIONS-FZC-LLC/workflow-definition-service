@@ -58,8 +58,8 @@ func (c *Compiler) CompileCollaboration(ctx context.Context, bpmnXML string) (*d
 
 // validateCollaboration is Validate's collaboration path: unlike
 // validateCollaborationProcesses (CompileCollaboration's pre-check), it also
-// runs ValidateDiagramCompleteness per process. Called bodies need no separate
-// pass here, because every non-ignored process is validated as a pool.
+// runs ValidateDiagramCompleteness per process. It validates every non-ignored
+// process as a pool, called ones included, rather than through ValidateCalledBodies.
 func (c *Compiler) validateCollaboration(upfront []domain.BPMNValidationError, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	collabErrs := validator.ValidateCollaboration(defs.Collaboration, defs)
 	ignoredProcIDs, participantNameByProcID := collaborationProcSets(defs)

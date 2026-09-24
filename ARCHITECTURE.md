@@ -1200,7 +1200,7 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | Timer boundary event attached to a `callActivity` | `INVALID_BOUNDARY_ATTACHMENT` |
 | No chain of calls returns to a process already on it | `CALLED_ELEMENT_CYCLE` (anchored on the callActivity that closes the cycle) |
 | No two processes in the bundled document share an `id` | `DUPLICATE_PROCESS_ID` |
-| The called process's own body passes every rule above, without the diagram rules | the body's own codes, anchored on its own nodes, or on the called process id for a whole-process rule |
+| The called process's own body passes every rule in these tables, without the diagram rules | the body's own codes, anchored on its own nodes, or on the called process id for a whole-process rule |
 
 Note: error boundary events on `callActivity` pass validation but are rejected at compile time. Message boundary events on `callActivity` are fully supported — they pass validation and compile to `ExecutionStep.message_paths` on the flattened step.
 

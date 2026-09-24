@@ -65,9 +65,8 @@ func validateUniqueProcessIDs(defs *bpmncore.BPMNDefinitions) []domain.BPMNValid
 }
 
 // ValidateCalledBodies validates, once each, the processes root reaches through
-// callActivities. The diagram rules are left out because Bundle does not merge
-// module diagrams. A body with no start event is skipped: its call site already
-// reports NO_START_EVENT.
+// callActivities. It skips the diagram rules, since Bundle drops module
+// diagrams, and any body with no start event, which its call site reports.
 func ValidateCalledBodies(root *bpmncore.BPMNProcess, stageTypes map[string]bpmncore.StageTypeHandler, elements map[bpmncore.FlowNodeType]bpmncore.ElementHandler, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	visited := map[string]bool{root.ID: true}
@@ -81,19 +80,19 @@ func ValidateCalledBodies(root *bpmncore.BPMNProcess, stageTypes map[string]bpmn
 				continue
 			}
 			visited[called.ID] = true
-			errs = append(errs, anchorOnProcess(called.ID, Validate(called, bpmncore.BuildGraph(called), stageTypes, elements, defs))...)
+			errs = append(errs, AnchorOn(called.ID, Validate(called, bpmncore.BuildGraph(called), stageTypes, elements, defs))...)
 			queue = append(queue, called)
 		}
 	}
 	return errs
 }
 
-// anchorOnProcess gives process-level errors, which name no node, the id of
-// the called process they are about.
-func anchorOnProcess(processID string, errs []domain.BPMNValidationError) []domain.BPMNValidationError {
+// AnchorOn gives errors about a whole nested process, which name no node, the
+// id of the element that holds that process: a called process or a subProcess.
+func AnchorOn(nodeID string, errs []domain.BPMNValidationError) []domain.BPMNValidationError {
 	for i := range errs {
 		if errs[i].NodeID == "" {
-			errs[i].NodeID = processID
+			errs[i].NodeID = nodeID
 		}
 	}
 	return errs
