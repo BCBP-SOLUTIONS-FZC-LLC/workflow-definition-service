@@ -36,3 +36,24 @@ UPDATE workflow_module_version SET status = 'ARCHIVED' WHERE id = $1 AND status 
 -- name: NextModuleVersionNumber :one
 SELECT COALESCE(MAX(version_number), 0) + 1
 FROM workflow_module_version WHERE module_id = $1 AND status != 'DRAFT';
+
+-- name: ResolveModuleVersion :one
+-- The version a call names: sqlc.narg(version_number), or the module's active
+-- version when NULL. An archived module (no active version) resolves nothing.
+SELECT v.id, v.module_id, v.tenant_id, v.scope, v.status, v.bpmn_xml, v.process_id,
+       v.version_number, v.is_valid, v.validation_errors_json, v.published_at,
+       v.created_by_user_id, v.created_at, v.updated_at, v.record_version
+FROM workflow_module m
+JOIN workflow_module_version v ON v.module_id = m.id
+WHERE m.process_id = sqlc.arg(process_id)
+  AND (m.scope = 'global' OR m.tenant_id = sqlc.arg(tenant_id))
+  AND m.active_version_id IS NOT NULL
+  AND v.version_number IS NOT NULL
+  AND (
+      (sqlc.narg(version_number)::int IS NULL AND v.id = m.active_version_id)
+      OR v.version_number = sqlc.narg(version_number)::int
+  )
+-- Only a race between two creates gives a tenant module a global module's
+-- process id; the tenant's own is then the one it meant.
+ORDER BY (m.scope = 'tenant') DESC
+LIMIT 1;

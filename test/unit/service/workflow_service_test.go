@@ -121,6 +121,7 @@ func TestWorkflowService_Create_WithCompiler_ValidationOK(t *testing.T) {
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo, Compiler: compiler,
 	})
 
+	expectNoLibraryCalls(compiler)
 	compiler.EXPECT().Validate(gomock.Any(), "<bpmn/>").Return(nil, nil)
 	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(0), nil)
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
@@ -137,6 +138,7 @@ func TestWorkflowService_Create_WithCompiler_ValidationErrors(t *testing.T) {
 	compiler := mocks.NewMockPlanCompiler(ctrl)
 	svc := service.NewWorkflowService(service.WorkflowDeps{Compiler: compiler})
 
+	expectNoLibraryCalls(compiler)
 	compiler.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(
 		[]domain.BPMNValidationError{{Code: "MISSING_START"}}, nil)
 
@@ -152,6 +154,7 @@ func TestWorkflowService_Create_WithCompiler_ValidateError(t *testing.T) {
 	compiler := mocks.NewMockPlanCompiler(ctrl)
 	svc := service.NewWorkflowService(service.WorkflowDeps{Compiler: compiler})
 
+	expectNoLibraryCalls(compiler)
 	compiler.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil, errors.New("compiler error"))
 
 	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>", "")

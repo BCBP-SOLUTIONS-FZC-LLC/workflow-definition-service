@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_Review" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_Review" name="Review" isExecutable="true">
+    <bpmn:startEvent id="Review_Start"/>
+    <bpmn:callActivity id="Review_Check" name="Check"><bpmn:extensionElements><zeebe:calledElement processId="Process_Check"/></bpmn:extensionElements></bpmn:callActivity>
+    <bpmn:endEvent id="Review_End"/>
+    <bpmn:sequenceFlow id="Review_F1" sourceRef="Review_Start" targetRef="Review_Check"/>
+    <bpmn:sequenceFlow id="Review_F2" sourceRef="Review_Check" targetRef="Review_End"/>
+  </bpmn:process>
+</bpmn:definitions>

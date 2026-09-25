@@ -231,6 +231,9 @@ components:
         scope:             { $ref: '#/components/schemas/CatalogScope' }
         name:              { type: string }
         description:       { type: string }
+        process_id:
+          type: string
+          description: The module's `<bpmn:process>` id, fixed for every version; what a calling `callActivity`'s `calledElement processId` names.
         active_version_id: { type: string, format: uuid, nullable: true }
         created_at:        { type: string, format: date-time }
         updated_at:        { type: string, format: date-time }
@@ -240,6 +243,7 @@ components:
         scope: global
         name: Standard Approval Chain
         description: Reusable three-step approval sequence
+        process_id: ApprovalChain
         active_version_id: 018f1a2b-0000-7000-8000-000000000002
         created_at: "2026-08-20T08:00:00Z"
         updated_at: "2026-08-25T10:00:00Z"
@@ -254,7 +258,7 @@ components:
         bpmn_xml:        { type: string }
         process_id:
           type: string
-          description: The `<bpmn:process id="...">` value inside `bpmn_xml`, matched against a referencing diagram's `callActivity` `calledElement`.
+          description: The `<bpmn:process id="...">` value inside `bpmn_xml`; always its module's `process_id`.
         version_number:  { type: integer, nullable: true }
         is_valid:        { type: boolean }
         published_at:    { type: string, format: date-time, nullable: true }
@@ -269,6 +273,27 @@ components:
         is_valid: true
         published_at: "2026-08-20T09:00:00Z"
         created_at: "2026-08-20T08:00:00Z"
+
+    ModuleRef:
+      type: object
+      required: [module_id, version_id, process_id, version_number]
+      properties:
+        module_id:      { type: string, format: uuid }
+        version_id:     { type: string, format: uuid }
+        process_id:     { type: string }
+        version_number: { type: integer }
+
+    ModuleUsage:
+      type: object
+      properties:
+        workflow_id:           { type: string, format: uuid }
+        workflow_key:          { type: string }
+        workflow_name:         { type: string }
+        version_id:            { type: string, format: uuid }
+        version_number:        { type: integer, nullable: true }
+        status:                { $ref: '#/components/schemas/VersionStatus' }
+        module_version_number: { type: integer, description: "The module version this workflow version holds a snapshot of." }
+        behind:                { type: boolean, description: "True when the module's active version is newer." }
 
     ModuleDetail:
       allOf:
@@ -1120,11 +1145,6 @@ paths:
                   maxLength: 10485760
                   description: Raw BPMN 2.0 XML. Max 10 MB. Must declare bpmn and zeebe namespaces.
                   example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
-                module_bpmn_xmls:
-                  type: array
-                  items:
-                    type: string
-                  description: Optional called-process BPMNs to bundle with the main BPMN before validation.
       responses:
         "200":
           description: BPMN validation results (valid status and potential errors list).
@@ -1255,7 +1275,7 @@ paths:
                     items: { $ref: '#/components/schemas/ValidationError' }
                     nullable: true
                   bpmn_xml:           { type: string }
-                  module_bpmn_xmls:   { type: array, items: { type: string }, description: "Called-process BPMNs attached to this version. Empty array if none." }
+                  module_refs:        { type: array, items: { $ref: '#/components/schemas/ModuleRef' }, description: "Library module versions this version resolved at publish, whose snapshot it holds. Empty on drafts." }
                   artifact_hash:      { type: string, nullable: true, description: "SHA-256 of the BPMN XML at publish time. Absent on DRAFT versions." }
                   compiled_plan_json: { $ref: '#/components/schemas/CompiledCollaboration' }
                   created_by_user_id: { type: string, format: uuid }
@@ -1353,13 +1373,6 @@ paths:
                   minLength: 50
                   maxLength: 10485760
                   description: Updated BPMN 2.0 XML. Max 10 MB. Must declare bpmn and zeebe namespaces.
-                module_bpmn_xmls:
-                  type: array
-                  items:
-                    type: string
-                  description: >
-                    Called-process BPMNs to bundle with the main BPMN at compile/validate time.
-                    Omit the key to leave existing modules unchanged; send an empty array to clear all modules.
                 record_version:
                   type: integer
                   format: int64
@@ -1531,7 +1544,7 @@ paths:
                     items: { $ref: '#/components/schemas/ValidationError' }
                     nullable: true
                   bpmn_xml:           { type: string }
-                  module_bpmn_xmls:   { type: array, items: { type: string }, description: "Called-process BPMNs attached to this version. Empty array if none." }
+                  module_refs:        { type: array, items: { $ref: '#/components/schemas/ModuleRef' }, description: "Library module versions this version resolved at publish, whose snapshot it holds. Empty on drafts." }
                   artifact_hash:      { type: string, nullable: true, description: "SHA-256 of the BPMN XML at publish time. Absent on DRAFT versions." }
                   compiled_plan_json: { $ref: '#/components/schemas/CompiledCollaboration' }
                   created_by_user_id: { type: string, format: uuid }
@@ -1747,6 +1760,8 @@ paths:
       summary: Re-run structural validation against a stored version
       description: >-
         Validates a stored version's own BPMN, in any status, and writes nothing.
+        A draft's library calls resolve against the library as it is now; any
+        other version's resolve to the module versions in its `module_refs`.
         A validator rule added after a version was published does not
         retroactively invalidate it, so this is how an operator finds a template
         that still holds a defect rather than discovering it when the Execution
@@ -2324,6 +2339,11 @@ paths:
                   message:    { type: string }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
+        "409":
+          description: MODULE_PROCESS_ID_CONFLICT — the process id is used by a module the caller can call, or a new version's process id differs from its module's.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "500": { $ref: '#/components/responses/InternalError' }
 
@@ -2385,6 +2405,36 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
+  /api/v1/modules/{id}/usages:
+    get:
+      operationId: listModuleUsages
+      summary: Workflow versions that hold a snapshot of a module
+      description: >
+        The caller's workflow versions whose `module_refs` include this module, with the module
+        version each uses and whether the module has a newer active version.
+      tags: [Modules]
+      security:
+        - GatewayTenantContext: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The module's usages.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  usages:
+                    type: array
+                    items: { $ref: '#/components/schemas/ModuleUsage' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
   /api/v1/modules/{id}/versions:
     get:
       operationId: listModuleVersions
@@ -2463,6 +2513,11 @@ paths:
           description: A DRAFT version already exists for this module.
           content:
             application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "409":
+          description: MODULE_PROCESS_ID_CONFLICT — the process id is used by a module the caller can call, or a new version's process id differs from its module's.
+          content:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
 

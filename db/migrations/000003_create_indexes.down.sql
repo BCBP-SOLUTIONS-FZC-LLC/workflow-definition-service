@@ -1,3 +1,6 @@
+DROP INDEX IF EXISTS idx_workflow_version_module_refs;
+DROP INDEX IF EXISTS uq_module_process_id_tenant;
+DROP INDEX IF EXISTS uq_module_process_id_global;
 DROP INDEX IF EXISTS idx_template_scope_tenant_category;
 DROP INDEX IF EXISTS idx_template_name_trgm;
 DROP INDEX IF EXISTS uq_module_version_published;

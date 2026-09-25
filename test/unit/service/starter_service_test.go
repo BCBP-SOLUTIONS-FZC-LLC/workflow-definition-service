@@ -67,6 +67,7 @@ func TestStarterService_Create_TenantScope_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, m := newStarterService(ctrl)
 
+	expectNoLibraryCalls(m.compiler)
 	m.compiler.EXPECT().Validate(gomock.Any(), "<bpmn/>").Return(nil, nil)
 	m.starters.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
@@ -86,6 +87,7 @@ func TestStarterService_Create_GlobalScope_UsesSystemPool(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, m := newStarterService(ctrl)
 
+	expectNoLibraryCalls(m.compiler)
 	m.compiler.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil, nil)
 	m.globalStarters.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
@@ -104,6 +106,7 @@ func TestStarterService_Create_ValidationErrors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, m := newStarterService(ctrl)
 
+	expectNoLibraryCalls(m.compiler)
 	m.compiler.EXPECT().Validate(gomock.Any(), gomock.Any()).
 		Return([]domain.BPMNValidationError{{Code: "BAD"}}, nil)
 
@@ -118,6 +121,7 @@ func TestStarterService_Create_ValidateError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, m := newStarterService(ctrl)
 
+	expectNoLibraryCalls(m.compiler)
 	m.compiler.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil, errors.New("compiler error"))
 
 	_, err := svc.Create(context.Background(), uuid.New(), uuid.New(), service.CreateStarterReq{BPMNXML: "<bpmn/>"})
@@ -130,6 +134,7 @@ func TestStarterService_Create_RepoError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, m := newStarterService(ctrl)
 
+	expectNoLibraryCalls(m.compiler)
 	m.compiler.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil, nil)
 	m.starters.EXPECT().Create(gomock.Any(), gomock.Any()).Return(errors.New("insert error"))
 

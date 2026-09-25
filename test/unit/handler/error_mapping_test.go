@@ -24,7 +24,7 @@ func problemCode(t *testing.T, body []byte) string {
 }
 
 func TestValidateBPMN_Malformed_400(t *testing.T) {
-	val := &fakeValidationSvc{validate: func(context.Context, string, []string) (bool, []domain.BPMNValidationError, error) {
+	val := &fakeValidationSvc{validate: func(context.Context, uuid.UUID, string) (bool, []domain.BPMNValidationError, error) {
 		return false, nil, fmt.Errorf("validate bpmn: %w: XML decode: unexpected EOF", domain.ErrMalformedBPMN)
 	}}
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, val)
@@ -36,7 +36,7 @@ func TestValidateBPMN_Malformed_400(t *testing.T) {
 }
 
 func TestValidateBPMN_ForbiddenXML_400_Generic(t *testing.T) {
-	val := &fakeValidationSvc{validate: func(context.Context, string, []string) (bool, []domain.BPMNValidationError, error) {
+	val := &fakeValidationSvc{validate: func(context.Context, uuid.UUID, string) (bool, []domain.BPMNValidationError, error) {
 		return false, nil, fmt.Errorf("validate bpmn: %w: %w: DOCTYPE detected",
 			domain.ErrMalformedBPMN, domain.ErrForbiddenXML)
 	}}
@@ -75,7 +75,7 @@ func TestCreateWorkflow_BPMNStatusMapping(t *testing.T) {
 }
 
 func TestValidateBPMN_AllErrorsInResponse(t *testing.T) {
-	val := &fakeValidationSvc{validate: func(context.Context, string, []string) (bool, []domain.BPMNValidationError, error) {
+	val := &fakeValidationSvc{validate: func(context.Context, uuid.UUID, string) (bool, []domain.BPMNValidationError, error) {
 		return false, []domain.BPMNValidationError{
 			{Code: domain.BPMNErrCandidateGroupsEmpty, NodeID: "Task_1", Message: "missing role", Severity: domain.SeverityError},
 			{Code: domain.BPMNErrUnmatchedGateway, NodeID: "GW_1", Message: "no matching join", Severity: domain.SeverityError},

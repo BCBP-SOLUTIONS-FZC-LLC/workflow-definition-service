@@ -114,7 +114,8 @@ func moduleWithTask(id, candidateUsers string) string {
   </bpmn:process>`, id, candidateUsers)
 }
 
-// moduleDocument wraps processes as a standalone module_bpmn_xmls entry.
+// moduleDocument wraps processes as a standalone BPMN document, the shape a
+// library module version is stored in.
 func moduleDocument(procs ...string) string {
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions
@@ -529,39 +530,23 @@ func TestValidate_UnresolvedCalledElement_ReportedOnce(t *testing.T) {
 
 func TestValidate_DuplicateProcessID_IsRejected(t *testing.T) {
 	cases := []struct {
-		name    string
-		modules []string
+		name  string
+		procs []string
 	}{
-		{
-			name: "two modules share an id",
-			modules: []string{
-				moduleDocument(moduleWithTask("Process_A", validCandidateUser)),
-				moduleDocument(moduleWithTask("Process_A", "")),
-			},
-		},
-		{
-			name: "a module reuses the main process id",
-			modules: []string{
-				moduleDocument(moduleWithTask("Process_A", validCandidateUser)),
-				moduleDocument(moduleWithTask("Process_Main", validCandidateUser)),
-			},
-		},
+		{"two processes share an id", []string{moduleWithTask("Process_A", validCandidateUser), moduleWithTask("Process_A", "")}},
+		{"a process reuses the main process id", []string{moduleWithTask("Process_A", validCandidateUser), moduleWithTask("Process_Main", validCandidateUser)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := bpmn_compiler.New()
-			bundled, err := c.Bundle(callerBPMN("Process_Main", "Process_A"), tc.modules)
-			if err != nil {
-				t.Fatalf("bundle: %v", err)
-			}
-			errs, err := c.Validate(context.Background(), bundled)
+			bpmnXML := callerBPMN("Process_Main", "Process_A", tc.procs...)
+			errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
 			if err != nil {
 				t.Fatalf("validate: %v", err)
 			}
 			if !hasCode(errs, domain.BPMNErrDuplicateProcessID) {
 				t.Errorf("errors = %v, want DUPLICATE_PROCESS_ID", errCodes(errs))
 			}
-			assertCompileRefusedWith(t, bundled, domain.BPMNErrDuplicateProcessID)
+			assertCompileRefusedWith(t, bpmnXML, domain.BPMNErrDuplicateProcessID)
 		})
 	}
 }

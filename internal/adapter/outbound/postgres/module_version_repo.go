@@ -155,3 +155,21 @@ func moduleVersionStatusOrNotFound(ctx context.Context, dbtx db.DBTX, versionID 
 	}
 	return wrongStatusErr
 }
+
+func (r *ModuleVersionRepo) Resolve(ctx context.Context, callerTenantID uuid.UUID, processID string, versionNumber int32) (*domain.ModuleVersion, error) {
+	version := pgtype.Int4{Int32: versionNumber, Valid: versionNumber > 0}
+	var result *domain.ModuleVersion
+	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		row, err := db.New(dbtx).ResolveModuleVersion(ctx, db.ResolveModuleVersionParams{
+			ProcessID:     processID,
+			TenantID:      pgtype.UUID{Bytes: callerTenantID, Valid: true},
+			VersionNumber: version,
+		})
+		if err != nil {
+			return mapErr(err)
+		}
+		result = moduleVersionFromDB(db.GetModuleVersionByIDRow(row))
+		return nil
+	})
+	return result, err
+}

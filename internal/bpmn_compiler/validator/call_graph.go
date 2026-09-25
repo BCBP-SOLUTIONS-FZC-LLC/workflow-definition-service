@@ -83,14 +83,14 @@ func validateUniqueProcessIDs(defs *bpmncore.BPMNDefinitions) []domain.BPMNValid
 		count[p.ID]++
 		if count[p.ID] == 2 {
 			errs = AppendErr(errs, domain.BPMNErrDuplicateProcessID, p.ID,
-				fmt.Sprintf("more than one bpmn:process has id %q; check module_bpmn_xmls for a repeated or clashing module", p.ID))
+				fmt.Sprintf("more than one bpmn:process in this file has id %q; give each process its own id", p.ID))
 		}
 	}
 	return errs
 }
 
 // ValidateCalledBodies validates, once each, the processes root reaches through
-// callActivities. It skips the diagram rules, since Bundle drops module
+// callActivities. It skips the diagram rules, since BundleModules drops module
 // diagrams, and any body with no start event, which its call site reports.
 func ValidateCalledBodies(root *bpmncore.BPMNProcess, stageTypes map[string]bpmncore.StageTypeHandler, elements map[bpmncore.FlowNodeType]bpmncore.ElementHandler, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError

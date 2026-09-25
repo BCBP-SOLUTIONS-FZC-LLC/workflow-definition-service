@@ -14,7 +14,7 @@ import (
 func newTestModule(t *testing.T, ctx context.Context, pool *pgcommon.Pool, tenantID uuid.UUID) *domain.Module {
 	t.Helper()
 	repo := postgres.NewModuleRepo(pool)
-	m := &domain.Module{ID: uuid.New(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "M"}
+	m := &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "M"}
 	if err := repo.Create(ctx, m); err != nil {
 		t.Fatalf("create module: %v", err)
 	}

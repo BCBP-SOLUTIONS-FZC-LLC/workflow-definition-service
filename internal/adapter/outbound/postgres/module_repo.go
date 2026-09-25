@@ -32,6 +32,7 @@ func (r *ModuleRepo) Create(ctx context.Context, m *domain.Module) error {
 			Scope:           toCatalogScope(m.Scope),
 			Name:            m.Name,
 			Description:     toNullableText(m.Description),
+			ProcessID:       m.ProcessID,
 			CreatedByUserID: toPgtypeUUID(m.CreatedByUserID),
 		}))
 	})
@@ -67,6 +68,19 @@ func (r *ModuleRepo) UpdateActiveVersion(ctx context.Context, moduleID uuid.UUID
 		}
 		return nil
 	})
+}
+
+func (r *ModuleRepo) ProcessIDInUse(ctx context.Context, callerTenantID *uuid.UUID, processID string) (bool, error) {
+	var inUse bool
+	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		var err error
+		inUse, err = db.New(dbtx).ModuleProcessIDInUse(ctx, db.ModuleProcessIDInUseParams{
+			ProcessID: processID,
+			TenantID:  toPgtypeUUID(callerTenantID),
+		})
+		return mapErr(err)
+	})
+	return inUse, err
 }
 
 func (r *ModuleRepo) List(
@@ -125,7 +139,7 @@ func listModules(
 	offset := (page - 1) * limit
 
 	dataSQL := fmt.Sprintf(
-		`SELECT id, tenant_id, scope, name, description, active_version_id,
+		`SELECT id, tenant_id, scope, name, description, process_id, active_version_id,
 		        created_by_user_id, created_at, updated_at, record_version
 		 FROM workflow_module
 		 %sORDER BY created_at DESC
@@ -143,7 +157,7 @@ func listModules(
 	for rows.Next() {
 		var row db.GetModuleByIDRow
 		if err := rows.Scan(
-			&row.ID, &row.TenantID, &row.Scope, &row.Name, &row.Description,
+			&row.ID, &row.TenantID, &row.Scope, &row.Name, &row.Description, &row.ProcessID,
 			&row.ActiveVersionID, &row.CreatedByUserID, &row.CreatedAt, &row.UpdatedAt, &row.RecordVersion,
 		); err != nil {
 			return nil, 0, fmt.Errorf("list modules scan: %w", err)

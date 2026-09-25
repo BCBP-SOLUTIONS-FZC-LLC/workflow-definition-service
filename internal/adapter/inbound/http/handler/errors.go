@@ -28,6 +28,7 @@ const (
 	CodeInvalidStatus        ErrCode = "INVALID_VERSION_STATUS"
 	CodeActiveInstances      ErrCode = "ACTIVE_INSTANCES_EXIST"
 	CodeStructuralDiv        ErrCode = "STRUCTURAL_DIVERGENCE"
+	CodeModuleProcessID      ErrCode = "MODULE_PROCESS_ID_CONFLICT"
 	CodePlanQuota            ErrCode = "PLAN_QUOTA_EXCEEDED"
 	CodeAssigneeIneligible   ErrCode = "ASSIGNEE_INELIGIBLE"
 	CodeUpstream             ErrCode = "UPSTREAM_UNAVAILABLE"
@@ -86,6 +87,7 @@ var codeTitles = map[ErrCode]string{
 	CodeInvalidStatus:        "Invalid Version Status",
 	CodeActiveInstances:      "Active Instances Exist",
 	CodeStructuralDiv:        "Structural Divergence",
+	CodeModuleProcessID:      "Module Process Id Conflict",
 	CodePlanQuota:            "Plan Quota Exceeded",
 	CodeAssigneeIneligible:   "Assignee Ineligible",
 	CodeUpstream:             "Upstream Service Unavailable",
@@ -184,6 +186,8 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 		return http.StatusConflict, CodeActiveInstances, err.Error(), nil
 	case errors.Is(err, domain.ErrStructuralDivergence):
 		return http.StatusConflict, CodeStructuralDiv, err.Error(), nil
+	case errors.Is(err, domain.ErrModuleProcessIDTaken), errors.Is(err, domain.ErrModuleProcessIDChanged):
+		return http.StatusConflict, CodeModuleProcessID, err.Error(), nil
 	case errors.Is(err, domain.ErrIdempotencyKeyReplay):
 		return http.StatusConflict, CodeIdempotencyReplay, err.Error(), nil
 	case errors.Is(err, domain.ErrPlanQuotaExceeded):

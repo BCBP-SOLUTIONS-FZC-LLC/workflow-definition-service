@@ -15,24 +15,32 @@ type StarterDeps struct {
 	GlobalStarters port.StarterTemplateRepository
 	Versions       port.WorkflowVersionRepository
 	Compiler       port.PlanCompiler
-	Log            port.Logger
+	// ModuleVersions and GlobalModuleVersions resolve the library modules a
+	// tenant or global starter calls.
+	ModuleVersions       port.ModuleVersionRepository
+	GlobalModuleVersions port.ModuleVersionRepository
+	Log                  port.Logger
 }
 
 type StarterService struct {
-	starters       port.StarterTemplateRepository
-	globalStarters port.StarterTemplateRepository
-	versions       port.WorkflowVersionRepository
-	compiler       port.PlanCompiler
-	log            port.Logger
+	starters             port.StarterTemplateRepository
+	globalStarters       port.StarterTemplateRepository
+	versions             port.WorkflowVersionRepository
+	compiler             port.PlanCompiler
+	moduleVersions       port.ModuleVersionRepository
+	globalModuleVersions port.ModuleVersionRepository
+	log                  port.Logger
 }
 
 func NewStarterService(d StarterDeps) *StarterService {
 	return &StarterService{
-		starters:       d.Starters,
-		globalStarters: d.GlobalStarters,
-		versions:       d.Versions,
-		compiler:       d.Compiler,
-		log:            logOrNoop(d.Log),
+		starters:             d.Starters,
+		globalStarters:       d.GlobalStarters,
+		versions:             d.Versions,
+		compiler:             d.Compiler,
+		moduleVersions:       d.ModuleVersions,
+		globalModuleVersions: d.GlobalModuleVersions,
+		log:                  logOrNoop(d.Log),
 	}
 }
 
@@ -73,11 +81,15 @@ func (s *StarterService) Create(
 		scope = domain.ScopeTenant
 	}
 
-	errs, err := s.compiler.Validate(ctx, req.BPMNXML)
+	resolver, resolveAs := moduleResolver{compiler: s.compiler, versions: s.moduleVersions}, callerTenantID
+	if scope == domain.ScopeGlobal {
+		resolver.versions, resolveAs = s.globalModuleVersions, uuid.Nil
+	}
+	errs, err := resolver.validate(ctx, resolver.live(resolveAs), req.BPMNXML)
 	if err != nil {
 		return nil, err
 	}
-	if len(errs) > 0 {
+	if hasBlockingError(errs) {
 		return nil, &domain.ValidationFailedError{Errors: errs}
 	}
 

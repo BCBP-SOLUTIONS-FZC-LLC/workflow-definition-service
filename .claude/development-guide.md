@@ -45,6 +45,7 @@ All non-2xx HTTP responses use the RFC-9457 `problemDetails` envelope (`internal
 | `ACTIVE_INSTANCES_EXIST` | 409 | Cannot archive — Execution reports RUNNING/PAUSED instances |
 | `STRUCTURAL_DIVERGENCE` | 409 | Compiled DSL diverges from the stored artifact |
 | `IDEMPOTENCY_KEY_REPLAY` | 409 | `Idempotency-Key` reused with a different request body |
+| `MODULE_PROCESS_ID_CONFLICT` | 409 | A new module's process id is already used by a module the caller can call, or a new module version changes its module's process id |
 | `ASSIGNEE_INELIGIBLE` | 422 | Default assignee failed the Org & Membership eligibility check |
 | `BPMN_VALIDATION_FAILED` | 422 | Structural/semantic BPMN validation failed (see `invalid_params`) |
 | `INVALID_INPUT` | 422 | Request field(s) exceed maximum length |

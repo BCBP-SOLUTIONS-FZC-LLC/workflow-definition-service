@@ -139,7 +139,9 @@ func newApp(cfg *config.Config) (*app, error) {
 		Cache:      cache,
 		Execution:  executionSvc,
 		Compiler:   compiler,
-		Log:        log,
+		// ModuleVersions resolves the library modules a new workflow calls.
+		ModuleVersions: moduleVersionRepo,
+		Log:            log,
 	})
 	draftSvc := service.NewDraftService(service.DraftDeps{
 		Transactor: transactor,
@@ -159,13 +161,16 @@ func newApp(cfg *config.Config) (*app, error) {
 		Membership: membershipSvc,
 		Execution:  executionSvc,
 		Compiler:   compiler,
-		Cache:      cache,
-		Log:        log,
+		// The RLS pool: a tenant's calls resolve its own modules and the global ones.
+		ModuleVersions: moduleVersionRepo,
+		Cache:          cache,
+		Log:            log,
 	})
 
 	validationSvc := service.NewValidationService(service.ValidationDeps{
-		Compiler: compiler,
-		Log:      log,
+		Compiler:       compiler,
+		ModuleVersions: moduleVersionRepo,
+		Log:            log,
 	})
 
 	connectorSvc := service.NewConnectorService(service.ConnectorDeps{
@@ -182,6 +187,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		GlobalModules:    globalModuleRepo,
 		Versions:         moduleVersionRepo,
 		GlobalVersions:   globalModuleVersionRepo,
+		WorkflowVersions: versionRepo,
 		Compiler:         compiler,
 		Log:              log,
 	})
@@ -191,7 +197,11 @@ func newApp(cfg *config.Config) (*app, error) {
 		GlobalStarters: globalStarterRepo,
 		Versions:       versionRepo,
 		Compiler:       compiler,
-		Log:            log,
+		// A tenant starter resolves the modules it calls through RLS, a
+		// global one through the system pool.
+		ModuleVersions:       moduleVersionRepo,
+		GlobalModuleVersions: globalModuleVersionRepo,
+		Log:                  log,
 	})
 
 	h := httphandler.New(httphandler.Services{

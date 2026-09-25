@@ -25,9 +25,17 @@ type PlanCompiler interface {
 	// CompileForPublish returns the shape stored as compiled_plan_json.
 	CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error)
 	Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error)
+	// ValidateModule validates a bundled module document with the module's own
+	// process as the root, its open lanes allowed; global forbids naming users.
+	ValidateModule(ctx context.Context, bpmnXML, moduleProcessID string, global bool) ([]domain.BPMNValidationError, error)
 	Hash(ctx context.Context, bpmnXML string) (string, error)
-	// Bundle merges module BPMNs into mainXML before compile/validate.
-	Bundle(mainXML string, moduleXMLs []string) (string, error)
+	// ModuleCalls lists the calls in bpmnXML that name a library module (a
+	// versionTag pin, or a target not in the document), plus issues with calls
+	// that cannot name one.
+	ModuleCalls(ctx context.Context, bpmnXML string) ([]domain.ModuleCall, []domain.BPMNValidationError, error)
+	// BundleModules merges resolved library module versions into mainXML, each
+	// under its plan name, and points every call at the version it resolved.
+	BundleModules(mainXML string, modules []domain.ResolvedModule) (string, error)
 	// ProcessID returns bpmnXML's single top-level <bpmn:process> id, erroring
 	// if it contains zero or more than one.
 	ProcessID(ctx context.Context, bpmnXML string) (string, error)

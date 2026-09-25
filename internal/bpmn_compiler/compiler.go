@@ -231,13 +231,17 @@ func (c *Compiler) Hash(ctx context.Context, bpmnXML string) (string, error) {
 	return h, nil
 }
 
-// Bundle merges module BPMNs into mainXML. Satisfies port.PlanCompiler.
-func (c *Compiler) Bundle(mainXML string, moduleXMLs []string) (string, error) {
-	return InjectTemplates(mainXML, moduleXMLs)
+func (c *Compiler) BundleModules(mainXML string, modules []domain.ResolvedModule) (string, error) {
+	return bundleModules(mainXML, modules)
 }
 
 func (c *Compiler) ProcessID(ctx context.Context, bpmnXML string) (string, error) {
 	defs, err := parse(ctx, bpmnXML)
+	if errors.Is(err, errMissingNamespace) {
+		return "", &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
+			Code: domain.BPMNErrMissingNamespace, Message: err.Error(), Severity: domain.SeverityError,
+		}}}
+	}
 	if err != nil {
 		return "", classifyParseError("process-id", err)
 	}

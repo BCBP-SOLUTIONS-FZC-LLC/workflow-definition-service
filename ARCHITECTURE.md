@@ -824,19 +824,22 @@ Typical use: a `callActivity` is the first element in the process; an ignored po
 
 ### Module BPMNs (Called Processes)
 
-A called process referenced by `<bpmn:callActivity>` must be provided as a separate BPMN file and uploaded via the `module_bpmn_xmls` field on the draft version. The service merges all module BPMNs in-memory before compile and validate — no extra DB round-trips (via `Bundle()`).
+A `<bpmn:callActivity>` calls either a process in the same file, private to that workflow and versioned with it, or a module from the library (tenant modules plus global ones; definition LLD §3.3.18). A workflow never carries module XML of its own.
+
+**Resolution** (`service/module_resolution.go`). When a workflow or starter is created, at `/workflows/validate`, at publish and for a draft's diff, `moduleResolver` asks the compiler for the document's library calls (`ModuleCalls`: calls with a `versionTag`, and calls whose target is not a process in the file), resolves each through `ModuleVersionRepository.Resolve`, walks each resolved module's own calls the same way, and hands the versions to `BundleModules`. The bundle renames each module process to its plan name `<process_id>@v<version_number>` and rewrites every call to it, so two versions of one module can coexist. A call that does not resolve is `UNRESOLVED_CALLED_ELEMENT` on the callActivity; one inside a module is reported on the workflow's call that reached it. `GET …/versions/:version_id/validation` resolves a published version's calls to its stored `module_refs` instead of the live library, and module authoring reports a call back to the module itself at its latest version as `CALLED_ELEMENT_CYCLE`. Publish records the resolved versions in `workflow_version.module_refs`; `GET /modules/:id/usages` reads them back.
 
 **Rules:**
 
-- The main BPMN must contain `<zeebe:calledElement processId="<id>"/>` on every callActivity.
-- Each module BPMN must define the corresponding `<bpmn:process id="<id>"/>` with `isExecutable="true"`.
-- Each called process compiles **once, into its own plan** in `CompiledCollaboration.Plans`, named by its process id. Each call site compiles to an `ExecutionStep.CallPlan` naming that plan. Both services expand calls with `dsl.ExpandCalls` (workflow-models), which gives every call its own departments, `<call id>::<lane>`, so the same module called twice yields two separate sets of tasks.
+- Every callActivity carries `<zeebe:calledElement processId="<id>"/>`, a literal process id. `bindingType="versionTag" versionTag="<n>"` pins a published module version; `latest` or no binding takes the module's active version when the workflow is published. `deployment` means a process in the same file. A `versionTag` always names a library module, even when the file has a process of that id.
+- A module is created from a file with exactly one `<bpmn:process isExecutable="true">`; its id is the module's fixed `process_id`, unique among the tenant's modules and the global ones (`409 MODULE_PROCESS_ID_CONFLICT`).
+- A module is validated with its own process as the root (`ValidateModule`); only errors block. A global module names no user (`INVALID_CANDIDATE_USER`).
+- Each called process compiles **once, into its own plan** in `CompiledCollaboration.Plans`, named by its process id (a library module's by its plan name). Each call site compiles to an `ExecutionStep.CallPlan` naming that plan. Both services expand calls with `dsl.ExpandCalls` (workflow-models), which gives every call its own departments, `<call id>::<lane>`, so the same module called twice yields two separate sets of tasks.
 - **Departments.** A module lane that holds work becomes a department. With a `dept_id` property it is fixed to that department, and no call can remap it. Without one it is an open slot the call binds to one of the caller's lanes: through the `Depts` input, or by default to the callActivity's own lane when the module has exactly one open slot (a laneless module is one slot). A bound slot takes the caller lane's department and IAM id.
 - **Call-site assignees.** An optional `Assignees` input maps a module task id to a user id for this call only.
 - Message, timer and error boundary events attach to a callActivity and compile to the call step's paths.
 - Diagrams in module BPMNs are discarded — only process elements are merged.
 - Nested `<bpmn:subProcess>` inside another subProcess is not supported (`NESTED_SUBPROCESS_NOT_SUPPORTED`).
-- Modules are versioned and cloned together with the main BPMN.
+- A published workflow keeps its module snapshot: a new module version, or archiving the module, changes nothing until the workflow is republished. A clone copies only the main BPMN; its calls resolve again at publish.
 
 **Example — calling a module with two generic lanes:**
 
@@ -908,7 +911,7 @@ Limits: 1–100 lanes per process.
 | `<bpmn:exclusiveGateway>` | Routing decision → `ExclusiveBranch` list; all outgoing flows require `conditionExpression`; back-edges allowed when guarded |
 | `<bpmn:eventBasedGateway>` | Waits for the first of N intermediate catch events |
 | `<bpmn:subProcess>` | Embedded, non-event, non-ad-hoc → `SubWorkflowStep`; recursively validated; nested `subProcess` inside another `subProcess` is **not supported** (`NESTED_SUBPROCESS_NOT_SUPPORTED`) |
-| `<bpmn:callActivity>` | References a called process by `<zeebe:calledElement processId="..."/>`; the called process BPMN must be supplied in `module_bpmn_xmls` on the draft; the called process compiles once into its own plan and the call to an `ExecutionStep.CallPlan` binding its open lanes to caller lanes (see §Module BPMNs) |
+| `<bpmn:callActivity>` | References a called process by `<zeebe:calledElement processId="..."/>`; the target is a process in the same file or a library module, resolved at publish; the called process compiles once into its own plan and the call to an `ExecutionStep.CallPlan` binding its open lanes to caller lanes (see §Module BPMNs) |
 | `<bpmn:boundaryEvent cancelActivity="…">` + `timerEventDefinition` | SLA deadline → `StageDef.BoundaryTimer` (userTask), `SubWorkflowStep.TimerPaths` (subProcess) or `CallPlanStep.TimerPaths` (callActivity); `cancelActivity="false"` = non-interrupting, `"true"` = interrupting |
 | `<bpmn:boundaryEvent>` + `errorEventDefinition` | Exception catch → `SubWorkflowStep.ErrorPaths` or `CallPlanStep.ErrorPaths`; attached to `subProcess` or `callActivity` |
 | `<bpmn:boundaryEvent cancelActivity="…">` + `messageEventDefinition` | Inbound message interrupt → `StageDef.BoundaryMessage` (userTask), `SubWorkflowStep.MessagePaths` (subProcess), or `CallPlanStep.MessagePaths` (callActivity); attached to `userTask`, `subProcess`, or `callActivity`; zero outgoing flows is a valid terminal interrupt notification |
@@ -978,7 +981,7 @@ Every `<bpmn:userTask>` requires these extension elements:
 | Attribute | Required | Rules |
 |---|---|---|
 | `candidateGroups` | Yes | IAM role level name; validated against Membership Service at publish time; max 256 chars |
-| `candidateUsers` | Yes | Single UUID v7 (one assignee currently enforced; will be relaxed later) |
+| `candidateUsers` | No | Single UUID v7 (one assignee currently enforced; will be relaxed later). Absent is the `CANDIDATE_USERS_EMPTY` warning: the person must then come from the call site's `Assignees` or the instance start's `override_map`. A global module names no user. |
 
 **System semantics**: `candidateGroups` → `StageDef.Role` (passed as `?level=<role>` to Membership eligibility check). `candidateUsers` → `StageDef.DefaultAssignees` (pre-assigned when the task starts in Execution Service).
 
@@ -1156,7 +1159,7 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | Boundary event attached to a legal host node type | `INVALID_BOUNDARY_ATTACHMENT` |
 | `<bpmndi:BPMNDiagram>` element present | `MISSING_DIAGRAM` |
 | Every node and sequence flow has a corresponding diagram shape/edge | `MISSING_DIAGRAM_SHAPE` |
-| `callActivity` has `<zeebe:calledElement processId="…"/>` and the `processId` resolves to a process in the same definitions | `UNRESOLVED_CALLED_ELEMENT` |
+| `callActivity` has `<zeebe:calledElement processId="…"/>` with a literal `processId` that resolves to a process in the same definitions or to a published library module (with `versionTag`, that version) | `UNRESOLVED_CALLED_ELEMENT` |
 | `<bpmn:subProcess>` does not contain a nested `<bpmn:subProcess>` | `NESTED_SUBPROCESS_NOT_SUPPORTED` |
 
 **`DANGLING_NODE` exceptions:** A `<bpmn:boundaryEvent>` with `messageEventDefinition` and zero outgoing sequence flows is **valid** — treated as a terminal interrupt; no `DANGLING_NODE` error is raised. Timer and error boundary events with zero outgoing flows continue to emit `DANGLING_NODE`. A `callActivity` or `subProcess` with no incoming sequence flow is **valid** when it is the only entry node in a process with no explicit `<bpmn:startEvent>` (implicit root, via `FindImplicitStart`) — exempt from the no-incoming check.
@@ -1170,7 +1173,8 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | Task appears in exactly one lane via `<bpmn:flowNodeRef>` | `TASK_NOT_IN_LANE` |
 | `zeebe:assignmentDefinition` present | `MISSING_ASSIGNMENT_DEFINITION` |
 | `candidateGroups` present, ≤ 256 chars | `CANDIDATE_GROUPS_EMPTY` |
-| `candidateUsers` is a single valid UUID v7 | `INVALID_CANDIDATE_USER` |
+| `candidateUsers` present | `CANDIDATE_USERS_EMPTY` *(warning)* |
+| `candidateUsers` is a single valid UUID v7, and is not set at all in a global module | `INVALID_CANDIDATE_USER` |
 
 **Metadata — sendTask / receiveTask**
 
@@ -1184,7 +1188,7 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 
 | Rule | Error code |
 | --- | --- |
-| `<zeebe:calledElement processId="…"/>` present and `processId` resolves to a supplied module process | `UNRESOLVED_CALLED_ELEMENT` |
+| `<zeebe:calledElement processId="…"/>` present and `processId` resolves to a process in the file or a library module | `UNRESOLVED_CALLED_ELEMENT` |
 | Called process has at least one `startEvent` | `NO_START_EVENT` (anchored on the callActivity node ID) |
 | Every open lane (no `dept_id`) of the called process is bound, by `Depts` or, for a single open lane, by default to the call's lane | `MISSING_DEPT_INPUT_FOR_MODULE` |
 | `Depts`/`Assignees` are JSON objects of strings naming lanes and tasks that exist; no `dept_id` input | `INVALID_ZEEBE_PROPERTY` |
@@ -1259,7 +1263,8 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `UNKNOWN_STAGE_TYPE` | *(warning severity)* `type` attribute value not in the registered `StageTypeHandler` set; compilation continues |
 | `TASK_NOT_IN_LANE` | `userTask` not referenced by any `<bpmn:flowNodeRef>` |
 | `CANDIDATE_GROUPS_EMPTY` | `candidateGroups` absent or exceeds 256 chars |
-| `INVALID_CANDIDATE_USER` | `candidateUsers` is not a valid UUID v7 |
+| `CANDIDATE_USERS_EMPTY` | *(warning severity)* `candidateUsers` absent; the assignee must be supplied at the call site or at instance start |
+| `INVALID_CANDIDATE_USER` | `candidateUsers` is not a valid UUID v7, or a global module names a user |
 | `INVALID_CONDITION_EXPRESSION` | Condition expression exceeds 4096 chars |
 | `INVALID_ZEEBE_PROPERTY` | callActivity: malformed `Depts`/`Assignees` input, an unknown lane or task in them, or a retired `dept_id` input |
 | `INVALID_SLA_DURATION` | Timer boundary duration is not valid ISO 8601 or Go duration |
@@ -1282,7 +1287,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `INVALID_BOUNDARY_ATTACHMENT` | Boundary event attached to an unsupported element type |
 | `MISSING_DIAGRAM` | No `<bpmndi:BPMNDiagram>` found in the BPMN document |
 | `MISSING_DIAGRAM_SHAPE` | A BPMN element has no corresponding `<bpmndi:BPMNShape>` in the diagram |
-| `UNRESOLVED_CALLED_ELEMENT` | `callActivity` references a `processId` not found in supplied module BPMNs |
+| `UNRESOLVED_CALLED_ELEMENT` | `callActivity` names a `processId` that is an expression, is not in the file, or is not a published, unarchived library module the tenant can call (or not that `versionTag`); or its `versionTag`/`bindingType` is invalid |
 | `NESTED_SUBPROCESS_NOT_SUPPORTED` | A `subProcess` is nested inside another `subProcess` |
 | `MISSING_DEPT_INPUT_FOR_MODULE` | A called process has two or more open lanes and the call's `Depts` input does not map every one |
 | `CALLED_ELEMENT_CYCLE` | A chain of `callActivity` calls returns to a process already on it |

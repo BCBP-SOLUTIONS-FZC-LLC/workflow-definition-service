@@ -43,17 +43,17 @@ var selfCallingModuleBPMN string
 //go:embed testdata/two-calls-of-one-module.bpmn
 var twoCallsOfOneModuleBPMN string
 
-// publishWithRealCompiler publishes bpmnXML, bundled with modules, through the
-// real compiler and returns the compiled_plan_json handed to the repository.
-func publishWithRealCompiler(t *testing.T, bpmnXML string, modules ...string) (string, error) {
+// publishWithRealCompiler publishes bpmnXML through the real compiler and
+// returns the compiled_plan_json handed to the repository.
+func publishWithRealCompiler(t *testing.T, bpmnXML string) (string, error) {
 	t.Helper()
-	stored, _, err := publishRecordingAssignees(t, bpmnXML, modules...)
+	stored, _, err := publishRecordingAssignees(t, bpmnXML)
 	return stored, err
 }
 
 // publishRecordingAssignees is publishWithRealCompiler that also returns the
 // workflow_node_assignee rows handed to the repository.
-func publishRecordingAssignees(t *testing.T, bpmnXML string, modules ...string) (string, []*domain.NodeAssignee, error) {
+func publishRecordingAssignees(t *testing.T, bpmnXML string) (string, []*domain.NodeAssignee, error) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	tx := mocks.NewMockTransactor(ctrl)
@@ -68,7 +68,7 @@ func publishRecordingAssignees(t *testing.T, bpmnXML string, modules ...string) 
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	draft := &domain.WorkflowVersion{
 		ID: vID, WorkflowID: wfID, TenantID: tenantID,
-		Status: domain.VersionStatusDraft, BPMNXML: bpmnXML, ModuleBPMNXMLs: modules,
+		Status: domain.VersionStatusDraft, BPMNXML: bpmnXML,
 	}
 
 	var stored string
@@ -78,8 +78,8 @@ func publishRecordingAssignees(t *testing.T, bpmnXML string, modules ...string) 
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil).AnyTimes()
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) }).AnyTimes()
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _, _ uuid.UUID, _ int32, compiledPlanJSON, _ string) error {
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _, _ uuid.UUID, _ int32, compiledPlanJSON, _ string, _ []domain.ModuleRef) error {
 			stored = compiledPlanJSON
 			return nil
 		}).AnyTimes()
@@ -164,22 +164,28 @@ func TestPublishContract_CollaborationWithIgnoredPool_Publishes(t *testing.T) {
 	assertExecutionCanStart(t, stored)
 }
 
-func TestPublishContract_MainWithModule_Publishes(t *testing.T) {
-	stored, err := publishWithRealCompiler(t, moduleMainBPMN, prepReviewModuleBPMN)
-	if err != nil {
-		t.Fatalf("publish: %v", err)
+func prepReviewLibrary(bpmnXML string) map[libraryKey]*domain.ModuleVersion {
+	return map[libraryKey]*domain.ModuleVersion{
+		{"Process_PrepReview", 0}: libraryVersion(uuid.New(), "Process_PrepReview", 1, bpmnXML),
 	}
-	assertExecutionCanStart(t, stored)
+}
+
+func TestPublishContract_MainWithModule_Publishes(t *testing.T) {
+	got := publishWithLibrary(t, moduleMainBPMN, prepReviewLibrary(prepReviewModuleBPMN))
+	if got.err != nil {
+		t.Fatalf("publish: %v", got.err)
+	}
+	assertExecutionCanStart(t, got.stored)
 }
 
 func TestPublishContract_ModuleWithInvalidTask_IsRefused(t *testing.T) {
-	stored, err := publishWithRealCompiler(t, moduleMainBPMN, prepReviewModuleInvalidCandidateUserBPMN)
-	assertRefusedWith(t, stored, err, domain.BPMNErrInvalidCandidateUser)
+	got := publishWithLibrary(t, moduleMainBPMN, prepReviewLibrary(prepReviewModuleInvalidCandidateUserBPMN))
+	assertRefusedWith(t, got.stored, got.err, domain.BPMNErrInvalidCandidateUser)
 }
 
 func TestPublishContract_SelfCallingModule_IsRefused(t *testing.T) {
-	stored, err := publishWithRealCompiler(t, moduleMainBPMN, selfCallingModuleBPMN)
-	assertRefusedWith(t, stored, err, domain.BPMNErrCalledElementCycle)
+	got := publishWithLibrary(t, moduleMainBPMN, prepReviewLibrary(selfCallingModuleBPMN))
+	assertRefusedWith(t, got.stored, got.err, domain.BPMNErrCalledElementCycle)
 }
 
 func assertRefusedWith(t *testing.T, stored string, err error, code domain.BPMNErrorCode) {

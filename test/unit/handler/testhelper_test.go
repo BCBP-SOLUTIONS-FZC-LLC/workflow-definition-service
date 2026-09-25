@@ -146,12 +146,21 @@ func (f *fakeVersionSvc) Diff(ctx context.Context, tenantID, workflowID, baseVer
 }
 
 type fakeValidationSvc struct {
-	validate func(context.Context, string, []string) (bool, []domain.BPMNValidationError, error)
+	validate        func(context.Context, uuid.UUID, string) (bool, []domain.BPMNValidationError, error)
+	validateVersion func(context.Context, uuid.UUID, *domain.WorkflowVersion) (bool, []domain.BPMNValidationError, error)
 }
 
-func (f *fakeValidationSvc) Validate(ctx context.Context, bpmnXML string, moduleXMLs []string) (bool, []domain.BPMNValidationError, error) {
+// ValidateVersion falls back to validate on the version's BPMN.
+func (f *fakeValidationSvc) ValidateVersion(ctx context.Context, tenantID uuid.UUID, v *domain.WorkflowVersion) (bool, []domain.BPMNValidationError, error) {
+	if f.validateVersion != nil {
+		return f.validateVersion(ctx, tenantID, v)
+	}
+	return f.Validate(ctx, tenantID, v.BPMNXML)
+}
+
+func (f *fakeValidationSvc) Validate(ctx context.Context, tenantID uuid.UUID, bpmnXML string) (bool, []domain.BPMNValidationError, error) {
 	if f.validate != nil {
-		return f.validate(ctx, bpmnXML, moduleXMLs)
+		return f.validate(ctx, tenantID, bpmnXML)
 	}
 	return true, nil, nil
 }
@@ -165,6 +174,7 @@ type fakeModuleSvc struct {
 	addVersion   func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, service.AddModuleVersionReq) (*domain.ModuleVersion, error)
 	publish      func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.ModuleVersion, error)
 	archive      func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error
+	usages       func(context.Context, uuid.UUID, uuid.UUID) ([]*domain.ModuleUsage, error)
 }
 
 func (f *fakeModuleSvc) List(ctx context.Context, callerTenantID uuid.UUID, filter port.ModuleFilter) ([]*domain.Module, int64, error) {
@@ -214,6 +224,13 @@ func (f *fakeModuleSvc) Archive(ctx context.Context, callerTenantID, userID, mod
 		return f.archive(ctx, callerTenantID, userID, moduleID)
 	}
 	return nil
+}
+
+func (f *fakeModuleSvc) Usages(ctx context.Context, callerTenantID, moduleID uuid.UUID) ([]*domain.ModuleUsage, error) {
+	if f.usages != nil {
+		return f.usages(ctx, callerTenantID, moduleID)
+	}
+	return nil, nil
 }
 
 type fakeStarterSvc struct {
@@ -286,6 +303,7 @@ func registerRoutes(r *gin.Engine, h *handler.Handler) {
 	mod.GET("", h.ListModules)
 	mod.POST("", h.CreateModule)
 	mod.GET("/:id", h.GetModule)
+	mod.GET("/:id/usages", h.ListModuleUsages)
 	mod.GET("/:id/versions", h.ListModuleVersions)
 	mod.GET("/:id/versions/:version_id", h.GetModuleVersion)
 	mod.POST("/:id/versions", h.AddModuleVersion)

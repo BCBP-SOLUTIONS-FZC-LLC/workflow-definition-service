@@ -18,7 +18,7 @@ func TestModuleRepo_CreateAndGet_TenantScope(t *testing.T) {
 
 	tenantID, userID := uuid.New(), uuid.New()
 	m := &domain.Module{
-		ID: uuid.New(), TenantID: &tenantID, Scope: domain.ScopeTenant,
+		ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), TenantID: &tenantID, Scope: domain.ScopeTenant,
 		Name: "Approval Chain", Description: "desc", CreatedByUserID: &userID,
 	}
 	if err := repo.Create(ctx, m); err != nil {
@@ -39,7 +39,7 @@ func TestModuleRepo_CreateAndGet_GlobalScope(t *testing.T) {
 	repo := postgres.NewModuleRepo(pool)
 	ctx := context.Background()
 
-	m := &domain.Module{ID: uuid.New(), Scope: domain.ScopeGlobal, Name: "Global Module"}
+	m := &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), Scope: domain.ScopeGlobal, Name: "Global Module"}
 	if err := repo.Create(ctx, m); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestModuleRepo_GetByID_CrossTenantNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	ownerTenantID := uuid.New()
-	m := &domain.Module{ID: uuid.New(), TenantID: &ownerTenantID, Scope: domain.ScopeTenant, Name: "Private"}
+	m := &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), TenantID: &ownerTenantID, Scope: domain.ScopeTenant, Name: "Private"}
 	if err := repo.Create(ctx, m); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestModuleRepo_UpdateActiveVersion(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := uuid.New()
-	m := &domain.Module{ID: uuid.New(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "M"}
+	m := &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "M"}
 	if err := repo.Create(ctx, m); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -126,10 +126,10 @@ func TestModuleRepo_List_ScopeFilter(t *testing.T) {
 
 	tenantID := uuid.New()
 	tenantScope, globalScope := domain.ScopeTenant, domain.ScopeGlobal
-	if err := repo.Create(ctx, &domain.Module{ID: uuid.New(), TenantID: &tenantID, Scope: tenantScope, Name: "T"}); err != nil {
+	if err := repo.Create(ctx, &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), TenantID: &tenantID, Scope: tenantScope, Name: "T"}); err != nil {
 		t.Fatalf("create tenant module: %v", err)
 	}
-	if err := repo.Create(ctx, &domain.Module{ID: uuid.New(), Scope: globalScope, Name: "G"}); err != nil {
+	if err := repo.Create(ctx, &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), Scope: globalScope, Name: "G"}); err != nil {
 		t.Fatalf("create global module: %v", err)
 	}
 
@@ -148,10 +148,10 @@ func TestModuleRepo_List_SearchFilter(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := uuid.New()
-	if err := repo.Create(ctx, &domain.Module{ID: uuid.New(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "Approval Chain"}); err != nil {
+	if err := repo.Create(ctx, &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "Approval Chain"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := repo.Create(ctx, &domain.Module{ID: uuid.New(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "Unrelated"}); err != nil {
+	if err := repo.Create(ctx, &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "Unrelated"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
@@ -172,7 +172,7 @@ func TestModuleRepo_List_Pagination(t *testing.T) {
 
 	tenantID := uuid.New()
 	for i := 0; i < 3; i++ {
-		if err := repo.Create(ctx, &domain.Module{ID: uuid.New(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "M"}); err != nil {
+		if err := repo.Create(ctx, &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "M"}); err != nil {
 			t.Fatalf("create: %v", err)
 		}
 	}

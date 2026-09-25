@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_Check" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_Check" name="Check" isExecutable="true">
+    <bpmn:startEvent id="Check_Start"/>
+    <bpmn:userTask id="Check_Task" name="Check">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:endEvent id="Check_End"/>
+    <bpmn:sequenceFlow id="Check_F1" sourceRef="Check_Start" targetRef="Check_Task"/>
+    <bpmn:sequenceFlow id="Check_F2" sourceRef="Check_Task" targetRef="Check_End"/>
+  </bpmn:process>
+</bpmn:definitions>

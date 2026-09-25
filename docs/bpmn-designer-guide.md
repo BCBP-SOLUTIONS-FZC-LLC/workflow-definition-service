@@ -72,14 +72,31 @@ Groups a sequence of tasks into a named block (e.g. "Prepare Strategy"). It appe
 
 ### Called Process (callActivity)
 
-Use when you want to invoke a reusable process that is defined in its own BPMN file. The definition team uploads the module BPMN separately via `module_bpmn_xmls` on the draft; the compiler merges them in-memory before validation.
+Use when you want to reuse a process instead of drawing it again. The process you call is either:
 
-- Stamp the element with `<zeebe:calledElement processId="…"/>` pointing to the module's process ID (fill this via the element template — do not type it by hand).
-- The called process BPMN must have `isExecutable="true"`.
-- If the module has **no lanes of its own**, add a `<zeebe:ioMapping>` with a `dept_id` input identifying which department owns the steps (e.g. `dept_id = engineering`). This tells the compiler which department to compile those tasks into.
-- If the module has its own lanes, no `dept_id` is needed — the module's lanes define the departments.
-- **Timer and error boundary events on a callActivity are not supported** — rejected at compile time. Use a sub-process if you need timer/error boundary semantics on a called process. **Message boundary events ARE supported directly on a callActivity** — they compile to the flattened step's `message_paths`.
-- The called process steps are compiled flat into the parent plan — they are not wrapped in a sub-workflow block.
+- **a module from the library**: a process published on its own, by your organisation or by the platform for every organisation. This is the usual case; or
+- **a process in the same file**: private to this workflow and saved with it.
+
+**Choosing the module and its version**
+
+- Stamp the element with `<zeebe:calledElement processId="…"/>` naming the module's process ID (fill this via the element template — do not type it by hand). It must be a fixed name, not an expression.
+- To use one particular published version, add `bindingType="versionTag" versionTag="3"`, where `3` is the module's version number. A pinned version always comes from the library, even if this file has a process with the same ID. Without it, the workflow takes the module's newest published version **at the moment the workflow is published**.
+- A published workflow keeps the module versions it was published with. A newer module version, or the module being retired, changes nothing in it or in instances already running; publish the workflow again to pick the change up. The module's usages view shows which workflows are on an older version.
+- A call that names a module that doesn't exist, isn't published, or has been retired is reported on the call when you validate.
+
+**Who does the module's work**
+
+- Each lane in the module is a place work happens. A lane with a `dept_id` property always runs in that department. A lane without one is **open**, and each call decides which of its own lanes does that work.
+- If the module has one open lane, or no lanes at all, its work runs in the lane the call sits in. Nothing to fill in.
+- If it has two or more open lanes, add a `Depts` input mapping each open lane to one of your lanes, for example `{"Sender":"Consultant","Receiver":"Tender"}`. Lanes are matched by name, ignoring case.
+- A lane with a `dept_id` cannot be remapped.
+- Optionally, add an `Assignees` input naming a default person for a module task in this call only, for example `{"PR_Review":"<user id>"}`. People can also be named when an instance starts.
+
+**Other rules**
+
+- The called process must have `isExecutable="true"`.
+- You can attach timer, error and message boundary events to a callActivity, with the same meaning as on a sub-process.
+- Each call runs as its own block of work. Calling the same module twice creates two separate sets of tasks, and each one can be assigned on its own.
 
 ---
 

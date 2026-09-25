@@ -156,6 +156,7 @@ func NewRouter(cfg RouterConfig) *Router {
 	mod.GET("", h.ListModules)
 	mod.POST("", idem(h.CreateModule))
 	mod.GET("/:id", h.GetModule)
+	mod.GET("/:id/usages", h.ListModuleUsages)
 	mod.GET("/:id/versions", h.ListModuleVersions)
 	mod.GET("/:id/versions/:version_id", h.GetModuleVersion)
 	mod.POST("/:id/versions", idem(h.AddModuleVersion))

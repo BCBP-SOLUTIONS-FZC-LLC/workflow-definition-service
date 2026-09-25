@@ -136,29 +136,6 @@ func TestUpdateDraft_OK(t *testing.T) {
 	assert.NotNil(t, resp["version_id"])
 }
 
-func TestUpdateDraft_WithModuleBPMNXMLs(t *testing.T) {
-	draft := newDraftVersion()
-	var captured *[]string
-
-	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{
-		update: func(_ context.Context, _, _, _ uuid.UUID, r service.UpdateDraftReq) (*domain.WorkflowVersion, error) {
-			captured = r.ModuleBPMNXMLs
-			return draft, nil
-		},
-	}, &fakeVersionSvc{}, &fakeValidationSvc{})
-
-	body := map[string]any{
-		"module_bpmn_xmls": []string{"<module/>"},
-	}
-	w := do(newRouter(h), adminReq(http.MethodPut, "/api/v1/workflows/"+testWFID.String()+"/draft", body))
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	if captured == nil {
-		t.Fatal("expected ModuleBPMNXMLs to be a non-nil pointer when module_bpmn_xmls is sent")
-	}
-	assert.Equal(t, []string{"<module/>"}, *captured)
-}
-
 func TestUpdateDraft_BindError(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 	// send malformed (truncated) JSON — causes bind error

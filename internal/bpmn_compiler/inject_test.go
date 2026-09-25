@@ -3,15 +3,19 @@ package bpmn_compiler
 import (
 	"strings"
 	"testing"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
 const injectMainXML = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions
   xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
   id="D1" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="MainProc" name="Main">
     <bpmn:startEvent id="Start1"/>
+    <bpmn:callActivity id="CA1"><bpmn:extensionElements><zeebe:calledElement processId="ModuleProc" bindingType="versionTag" versionTag="2"/></bpmn:extensionElements></bpmn:callActivity>
     <bpmn:endEvent id="End1"/>
   </bpmn:process>
   <bpmndi:BPMNDiagram id="Diag1">
@@ -34,75 +38,52 @@ const injectModuleXML = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmndi:BPMNDiagram>
 </bpmn:definitions>`
 
-func TestInjectTemplates_Empty(t *testing.T) {
-	out, err := InjectTemplates(injectMainXML, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if out != injectMainXML {
-		t.Error("expected mainXML returned unchanged when moduleXMLs is empty")
+func moduleV2() domain.ResolvedModule {
+	return domain.ResolvedModule{ProcessID: "ModuleProc", VersionNumber: 2, PlanName: "ModuleProc@v2", BPMNXML: injectModuleXML}
+}
+
+func TestBundleModules_NoModules_ReturnsMainUnchanged(t *testing.T) {
+	out, err := bundleModules(injectMainXML, nil)
+	if err != nil || out != injectMainXML {
+		t.Fatalf("bundleModules(nil) = %q, %v; want the main XML unchanged", out, err)
 	}
 }
 
-func TestInjectTemplates_EmptySlice(t *testing.T) {
-	out, err := InjectTemplates(injectMainXML, []string{})
+func TestBundleModules_RenamesTheModuleAndPointsTheCallAtIt(t *testing.T) {
+	out, err := bundleModules(injectMainXML, []domain.ResolvedModule{moduleV2()})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("bundleModules: %v", err)
 	}
-	if out != injectMainXML {
-		t.Error("expected mainXML returned unchanged when moduleXMLs is empty slice")
+	if !strings.Contains(out, `id="ModuleProc@v2"`) {
+		t.Error("the module process was not bundled under its plan name")
 	}
-}
-
-func TestInjectTemplates_OneModule(t *testing.T) {
-	out, err := InjectTemplates(injectMainXML, []string{injectModuleXML})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !strings.Contains(out, `processId="ModuleProc@v2"`) || strings.Contains(out, `versionTag="2"`) {
+		t.Error("the call still names the library module rather than its bundled plan")
 	}
-	if !strings.Contains(out, "ModuleProc") {
-		t.Error("expected module process ID in bundled output")
-	}
-	if !strings.Contains(out, "MainProc") {
-		t.Error("expected main process ID in bundled output")
-	}
-	// Module diagram must NOT appear in output.
 	if strings.Contains(out, "Diag2") {
-		t.Error("module diagram should not be present in bundled output")
+		t.Error("the module's diagram was bundled")
 	}
 }
 
-func TestInjectTemplates_InvalidMain(t *testing.T) {
-	_, err := InjectTemplates("not valid xml <<<", []string{injectModuleXML})
-	if err == nil {
-		t.Error("expected error for malformed main XML")
-	}
-}
-
-func TestInjectTemplates_InvalidModule(t *testing.T) {
-	_, err := InjectTemplates(injectMainXML, []string{"not valid xml <<<"})
-	if err == nil {
-		t.Error("expected error for malformed module XML")
-	}
-}
-
-func TestCompiler_Bundle_Passthrough(t *testing.T) {
-	c := New()
-	out, err := c.Bundle(injectMainXML, nil)
+func TestBundleModules_OnePlanReachedTwiceIsAddedOnce(t *testing.T) {
+	latest := moduleV2()
+	latest.VersionNumber = 0
+	out, err := bundleModules(injectMainXML, []domain.ResolvedModule{moduleV2(), latest})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("bundleModules: %v", err)
 	}
-	if out != injectMainXML {
-		t.Error("expected mainXML unchanged with nil modules")
+	if n := strings.Count(out, `id="ModuleProc@v2"`); n != 1 {
+		t.Errorf("ModuleProc@v2 bundled %d times, want once", n)
 	}
 }
 
-func TestCompiler_Bundle_InjectsModule(t *testing.T) {
-	c := New()
-	out, err := c.Bundle(injectMainXML, []string{injectModuleXML})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestBundleModules_InvalidMainOrModule(t *testing.T) {
+	if _, err := bundleModules("<not xml", []domain.ResolvedModule{moduleV2()}); err == nil {
+		t.Error("an unparseable main BPMN bundled without an error")
 	}
-	if !strings.Contains(out, "ModuleProc") {
-		t.Error("expected ModuleProc in bundled output")
+	bad := moduleV2()
+	bad.BPMNXML = `<!DOCTYPE x [<!ENTITY a "b">]><bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"/>`
+	if _, err := bundleModules(injectMainXML, []domain.ResolvedModule{bad}); err == nil {
+		t.Error("a module with a forbidden DOCTYPE bundled without an error")
 	}
 }

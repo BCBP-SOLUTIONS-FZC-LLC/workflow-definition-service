@@ -188,7 +188,7 @@ func TestWorkflowVersionRepo_DeleteDraft_ExistsPublished_ReturnsVersionNotDraft(
 	if err := vRepo.Create(ctx, v); err != nil {
 		t.Fatalf("create draft: %v", err)
 	}
-	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, `{}`, "hash1"); err != nil {
+	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, `{}`, "hash1", nil); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestWorkflowVersionRepo_Publish(t *testing.T) {
 		t.Fatalf("create draft: %v", err)
 	}
 
-	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, `{"steps":[]}`, "abc123"); err != nil {
+	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, `{"steps":[]}`, "abc123", nil); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestWorkflowVersionRepo_Publish_NotDraft(t *testing.T) {
 	ctx := context.Background()
 
 	// Non-existent version → ErrNotFound.
-	err := vRepo.Publish(ctx, uuid.New(), uuid.New(), 1, `{}`, "")
+	err := vRepo.Publish(ctx, uuid.New(), uuid.New(), 1, `{}`, "", nil)
 	if err != domain.ErrNotFound {
 		t.Errorf("Publish non-existent = %v, want ErrNotFound", err)
 	}

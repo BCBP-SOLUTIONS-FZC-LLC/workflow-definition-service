@@ -2,7 +2,8 @@ package service
 
 import (
 	"context"
-	"fmt"
+
+	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
@@ -10,46 +11,63 @@ import (
 )
 
 type ValidationDeps struct {
-	Compiler port.PlanCompiler
-	Log      port.Logger
+	Compiler       port.PlanCompiler
+	ModuleVersions port.ModuleVersionRepository
+	Log            port.Logger
 }
 
 type ValidationService struct {
-	compiler port.PlanCompiler
-	log      port.Logger
+	modules moduleResolver
+	log     port.Logger
 }
 
 func NewValidationService(d ValidationDeps) *ValidationService {
 	return &ValidationService{
-		compiler: d.Compiler,
-		log:      logOrNoop(d.Log),
+		modules: moduleResolver{compiler: d.Compiler, versions: d.ModuleVersions},
+		log:     logOrNoop(d.Log),
 	}
 }
 
-// Validate performs no DB writes — safe to call without a transaction.
+// Validate resolves bpmnXML's library calls for tenantID and validates the
+// result. It performs no DB writes — safe to call without a transaction.
 func (s *ValidationService) Validate(
 	ctx context.Context,
+	tenantID uuid.UUID,
 	bpmnXML string,
-	moduleXMLs []string,
 ) (isValid bool, errs []domain.BPMNValidationError, err error) {
-	bundled, err := s.compiler.Bundle(bpmnXML, moduleXMLs)
-	if err != nil {
-		return false, nil, fmt.Errorf("bundle modules: %w", err)
+	return s.validate(ctx, s.modules.live(tenantID), bpmnXML)
+}
+
+// ValidateVersion validates a stored version: a draft against the library as
+// it is now, any other version against the module versions it was published
+// with.
+func (s *ValidationService) ValidateVersion(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	v *domain.WorkflowVersion,
+) (isValid bool, errs []domain.BPMNValidationError, err error) {
+	lookup := s.modules.live(tenantID)
+	if v.Status != domain.VersionStatusDraft {
+		lookup = s.modules.snapshot(tenantID, v.ModuleRefs)
 	}
-	validationErrs, err := s.compiler.Validate(ctx, bundled)
+	return s.validate(ctx, lookup, v.BPMNXML)
+}
+
+func (s *ValidationService) validate(ctx context.Context, lookup moduleLookup, bpmnXML string) (bool, []domain.BPMNValidationError, error) {
+	errs, err := s.modules.validate(ctx, lookup, bpmnXML)
 	if err != nil {
-		return false, nil, fmt.Errorf("validate bpmn: %w", err)
+		return false, nil, err
 	}
-	if hasBlockingError(validationErrs) {
+	if hasBlockingError(errs) {
 		observability.IncCounter(observability.WFValidationFailuresTotal)
-		return false, validationErrs, nil
+		return false, errs, nil
 	}
-	return true, validationErrs, nil
+	return true, errs, nil
 }
 
 func hasBlockingError(errs []domain.BPMNValidationError) bool {
 	for _, e := range errs {
-		if e.Severity == domain.SeverityError {
+		if e.Severity != domain.SeverityWarning {
 			return true
 		}
 	}

@@ -28,8 +28,10 @@ type VersionDeps struct {
 	Membership port.MembershipService
 	Execution  port.ExecutionService
 	Compiler   port.PlanCompiler
-	Cache      port.CacheStore
-	Log        port.Logger
+	// ModuleVersions resolves the draft's library calls at publish and diff.
+	ModuleVersions port.ModuleVersionRepository
+	Cache          port.CacheStore
+	Log            port.Logger
 }
 
 type VersionService struct {
@@ -41,6 +43,7 @@ type VersionService struct {
 	membership port.MembershipService
 	execution  port.ExecutionService
 	compiler   port.PlanCompiler
+	modules    moduleResolver
 	cache      port.CacheStore
 	log        port.Logger
 }
@@ -55,6 +58,7 @@ func NewVersionService(d VersionDeps) *VersionService {
 		membership: d.Membership,
 		execution:  d.Execution,
 		compiler:   d.Compiler,
+		modules:    moduleResolver{compiler: d.Compiler, versions: d.ModuleVersions},
 		cache:      d.Cache,
 		log:        logOrNoop(d.Log),
 	}
@@ -96,8 +100,7 @@ func (s *VersionService) Publish(
 		observability.IncCounterVec(observability.WFPublishTotal, observability.OutcomeLabel(err))
 		observability.ObserveHistogram(observability.WFPublishLatencySeconds, time.Since(start).Seconds())
 	}()
-	draft, compiledJSON, artifactHash, assignees, err :=
-		s.publishPreFlight(ctx, tenantID, workflowID, versionID, forcePublishStructural)
+	draft, prep, err := s.publishPreFlight(ctx, tenantID, workflowID, versionID, forcePublishStructural)
 	if err != nil {
 		return nil, err
 	}
@@ -114,9 +117,10 @@ func (s *VersionService) Publish(
 			workflowID:    workflowID,
 			versionID:     versionID,
 			versionNumber: versionNumber,
-			compiledJSON:  compiledJSON,
-			artifactHash:  artifactHash,
-			assignees:     assignees,
+			compiledJSON:  prep.compiledJSON,
+			artifactHash:  prep.artifactHash,
+			assignees:     prep.assignees,
+			moduleRefs:    prep.moduleRefs,
 		})
 	}); err != nil {
 		return nil, fmt.Errorf("publish version: %w", err)
@@ -124,8 +128,9 @@ func (s *VersionService) Publish(
 
 	draft.Status = domain.VersionStatusPublished
 	draft.VersionNumber = &versionNumber
-	draft.CompiledPlanJSON = &compiledJSON
-	draft.ArtifactHash = artifactHash
+	draft.CompiledPlanJSON = &prep.compiledJSON
+	draft.ArtifactHash = prep.artifactHash
+	draft.ModuleRefs = prep.moduleRefs
 	s.log.Info("version published", map[string]any{
 		"tenant_id":      tenantID.String(),
 		"user_id":        userID.String(),
@@ -176,7 +181,6 @@ func (s *VersionService) Clone(
 		TenantID:        tenantID,
 		Status:          domain.VersionStatusDraft,
 		BPMNXML:         source.BPMNXML,
-		ModuleBPMNXMLs:  source.ModuleBPMNXMLs,
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
@@ -309,11 +313,14 @@ func (s *VersionService) resolvePlan(
 			return plan, nil
 		}
 	}
-	bundled, err := s.compiler.Bundle(v.BPMNXML, v.ModuleBPMNXMLs)
+	res, err := s.modules.resolve(ctx, s.modules.live(v.TenantID), v.BPMNXML, "")
 	if err != nil {
-		return nil, fmt.Errorf("bundle modules: %w", err)
+		return nil, err
 	}
-	_, plan, err := s.compileForPublish(ctx, bundled)
+	if len(res.issues) > 0 {
+		return nil, &domain.ValidationFailedError{Errors: res.issues}
+	}
+	_, plan, err := s.compileForPublish(ctx, res.bundled)
 	return plan, err
 }
 

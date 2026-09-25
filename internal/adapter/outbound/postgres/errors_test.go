@@ -28,6 +28,8 @@ func TestMapErr(t *testing.T) {
 		{"business key constraint", uniqueViolation(constraintWorkflowBusinessKey), domain.ErrDuplicateBusinessKey},
 		{"draft constraint", uniqueViolation(constraintWorkflowVersionDraft), domain.ErrDraftAlreadyExists},
 		{"published constraint", uniqueViolation(constraintWorkflowVersionPublished), domain.ErrDraftConcurrency},
+		{"tenant module process id constraint", uniqueViolation(constraintModuleProcessIDTenant), domain.ErrModuleProcessIDTaken},
+		{"global module process id constraint", uniqueViolation(constraintModuleProcessIDGlobal), domain.ErrModuleProcessIDTaken},
 		{"unknown constraint passes through", unknownConstraintErr, unknownConstraintErr},
 		{"unrelated error passes through", sentinel, sentinel},
 	}

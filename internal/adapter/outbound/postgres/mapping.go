@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -77,13 +78,6 @@ func toPgtypeTimestamp(t *time.Time) pgtype.Timestamp {
 	return pgtype.Timestamp{Time: *t, Valid: true}
 }
 
-func coalesceStrings(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
-}
-
 func toNullableJSONB(s *string) json.RawMessage {
 	if s == nil || *s == "" {
 		return nil
@@ -147,7 +141,7 @@ func workflowVersionFromDB(row db.WorkflowVersion) *domain.WorkflowVersion {
 		CreatedAt:            fromPgtypeTimestamp(row.CreatedAt),
 		UpdatedAt:            fromPgtypeTimestamp(row.UpdatedAt),
 		RecordVersion:        row.RecordVersion,
-		ModuleBPMNXMLs:       row.ModuleBpmnXmls,
+		ModuleRefs:           moduleRefsFromDB(row.ModuleRefs),
 	}
 }
 
@@ -166,6 +160,7 @@ func moduleFromDB(row db.GetModuleByIDRow) *domain.Module {
 		Scope:           fromCatalogScope(row.Scope),
 		Name:            row.Name,
 		Description:     fromPgtypeText(row.Description),
+		ProcessID:       row.ProcessID,
 		ActiveVersionID: fromPgtypeUUID(row.ActiveVersionID),
 		CreatedByUserID: fromPgtypeUUID(row.CreatedByUserID),
 		RecordVersion:   row.RecordVersion,
@@ -222,4 +217,25 @@ func assigneeFromDB(row db.WorkflowNodeAssignee) *domain.NodeAssignee {
 		Role:              row.Role,
 		CreatedAt:         fromPgtypeTimestamp(row.CreatedAt),
 	}
+}
+
+// moduleRefsFromDB decodes workflow_version.module_refs, which the schema keeps
+// a JSON array; anything else decodes to no refs.
+func moduleRefsFromDB(raw []byte) []domain.ModuleRef {
+	var refs []domain.ModuleRef
+	if err := json.Unmarshal(raw, &refs); err != nil {
+		return nil
+	}
+	return refs
+}
+
+func moduleRefsToDB(refs []domain.ModuleRef) ([]byte, error) {
+	if refs == nil {
+		refs = []domain.ModuleRef{}
+	}
+	b, err := json.Marshal(refs)
+	if err != nil {
+		return nil, fmt.Errorf("encode module refs: %w", err)
+	}
+	return b, nil
 }

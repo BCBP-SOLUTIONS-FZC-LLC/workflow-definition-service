@@ -43,7 +43,8 @@ type versionSvc interface {
 }
 
 type validationSvc interface {
-	Validate(ctx context.Context, bpmnXML string, moduleXMLs []string) (bool, []domain.BPMNValidationError, error)
+	Validate(ctx context.Context, tenantID uuid.UUID, bpmnXML string) (bool, []domain.BPMNValidationError, error)
+	ValidateVersion(ctx context.Context, tenantID uuid.UUID, v *domain.WorkflowVersion) (bool, []domain.BPMNValidationError, error)
 }
 
 type moduleSvc interface {
@@ -55,6 +56,7 @@ type moduleSvc interface {
 	AddVersion(ctx context.Context, callerTenantID, userID, moduleID uuid.UUID, req service.AddModuleVersionReq) (*domain.ModuleVersion, error)
 	Publish(ctx context.Context, callerTenantID, userID, moduleID, versionID uuid.UUID) (*domain.ModuleVersion, error)
 	Archive(ctx context.Context, callerTenantID, userID, moduleID uuid.UUID) error
+	Usages(ctx context.Context, callerTenantID, moduleID uuid.UUID) ([]*domain.ModuleUsage, error)
 }
 
 type starterSvc interface {

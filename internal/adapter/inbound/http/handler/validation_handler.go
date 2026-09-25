@@ -9,8 +9,7 @@ import (
 )
 
 type validateBPMNReq struct {
-	BPMNXML        string   `json:"bpmn_xml" binding:"required"`
-	ModuleBPMNXMLs []string `json:"module_bpmn_xmls"`
+	BPMNXML string `json:"bpmn_xml" binding:"required"`
 }
 
 type bpmnIssueResp struct {
@@ -21,7 +20,7 @@ type bpmnIssueResp struct {
 }
 
 func (h *Handler) ValidateBPMN(c *gin.Context) {
-	_, _, ok := mustCtx(c)
+	tenantID, _, ok := mustCtx(c)
 	if !ok {
 		return
 	}
@@ -32,7 +31,7 @@ func (h *Handler) ValidateBPMN(c *gin.Context) {
 		return
 	}
 
-	isValid, errs, err := h.validation.Validate(c.Request.Context(), req.BPMNXML, req.ModuleBPMNXMLs)
+	isValid, errs, err := h.validation.Validate(c.Request.Context(), tenantID, req.BPMNXML)
 	if err != nil {
 		h.logForbiddenXML(c, err)
 		errResponse(c, h.log, err)
@@ -83,7 +82,7 @@ func (h *Handler) GetVersionValidation(c *gin.Context) {
 		return
 	}
 
-	isValid, errs, err := h.validation.Validate(c.Request.Context(), v.BPMNXML, v.ModuleBPMNXMLs)
+	isValid, errs, err := h.validation.ValidateVersion(c.Request.Context(), tenantID, v)
 	if err != nil {
 		h.logForbiddenXML(c, err)
 		errResponse(c, h.log, err)

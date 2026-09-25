@@ -17,6 +17,8 @@ type ModuleDeps struct {
 	GlobalModules    port.ModuleRepository
 	Versions         port.ModuleVersionRepository
 	GlobalVersions   port.ModuleVersionRepository
+	// WorkflowVersions lists the workflow versions that use a module.
+	WorkflowVersions port.WorkflowVersionRepository
 	Compiler         port.PlanCompiler
 	Log              port.Logger
 }
@@ -28,6 +30,7 @@ type ModuleService struct {
 	globalModules    port.ModuleRepository
 	versions         port.ModuleVersionRepository
 	globalVersions   port.ModuleVersionRepository
+	workflowVersions port.WorkflowVersionRepository
 	compiler         port.PlanCompiler
 	log              port.Logger
 }
@@ -40,6 +43,7 @@ func NewModuleService(d ModuleDeps) *ModuleService {
 		globalModules:    d.GlobalModules,
 		versions:         d.Versions,
 		globalVersions:   d.GlobalVersions,
+		workflowVersions: d.WorkflowVersions,
 		compiler:         d.Compiler,
 		log:              logOrNoop(d.Log),
 	}
@@ -99,16 +103,23 @@ func (s *ModuleService) Create(
 		scope = domain.ScopeTenant
 	}
 
-	errs, err := s.compiler.Validate(ctx, req.BPMNXML)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(errs) > 0 {
-		return nil, nil, &domain.ValidationFailedError{Errors: errs}
-	}
 	processID, err := s.compiler.ProcessID(ctx, req.BPMNXML)
 	if err != nil {
 		return nil, nil, err
+	}
+	if err := s.validateContent(ctx, callerTenantID, scope, req.BPMNXML, processID); err != nil {
+		return nil, nil, err
+	}
+	var tenantID *uuid.UUID
+	if scope != domain.ScopeGlobal {
+		tenantID = &callerTenantID
+	}
+	inUse, err := s.modulesFor(scope).ProcessIDInUse(ctx, tenantID, processID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("check module process id: %w", err)
+	}
+	if inUse {
+		return nil, nil, fmt.Errorf("process id %q: %w", processID, domain.ErrModuleProcessIDTaken)
 	}
 
 	moduleID, err := uuid.NewV7()
@@ -120,16 +131,13 @@ func (s *ModuleService) Create(
 		return nil, nil, fmt.Errorf("generate module version id: %w", err)
 	}
 
-	var tenantID *uuid.UUID
-	if scope != domain.ScopeGlobal {
-		tenantID = &callerTenantID
-	}
 	m := &domain.Module{
 		ID:              moduleID,
 		TenantID:        tenantID,
 		Scope:           scope,
 		Name:            req.Name,
 		Description:     req.Description,
+		ProcessID:       processID,
 		CreatedByUserID: &userID,
 	}
 	v := &domain.ModuleVersion{
@@ -226,15 +234,14 @@ func (s *ModuleService) AddVersion(
 		return nil, err
 	}
 
-	errs, err := s.compiler.Validate(ctx, bpmnXML)
+	processID, err := s.compiler.ProcessID(ctx, bpmnXML)
 	if err != nil {
 		return nil, err
 	}
-	if len(errs) > 0 {
-		return nil, &domain.ValidationFailedError{Errors: errs}
+	if processID != m.ProcessID {
+		return nil, fmt.Errorf("process id %q, module keeps %q: %w", processID, m.ProcessID, domain.ErrModuleProcessIDChanged)
 	}
-	processID, err := s.compiler.ProcessID(ctx, bpmnXML)
-	if err != nil {
+	if err := s.validateContent(ctx, callerTenantID, m.Scope, bpmnXML, processID); err != nil {
 		return nil, err
 	}
 
@@ -263,6 +270,69 @@ func (s *ModuleService) AddVersion(
 		"version_id": v.ID.String(),
 	})
 	return v, nil
+}
+
+// validateContent resolves a module's own library calls and validates it with
+// its process as the root (definition LLD §3.3.18). Only errors block. A
+// global module sees only global modules, since it has no tenant.
+func (s *ModuleService) validateContent(ctx context.Context, callerTenantID uuid.UUID, scope domain.CatalogScope, bpmnXML, processID string) error {
+	resolveAs := callerTenantID
+	if scope == domain.ScopeGlobal {
+		resolveAs = uuid.Nil
+	}
+	resolver := moduleResolver{compiler: s.compiler, versions: s.versionsFor(scope)}
+	res, err := resolver.resolve(ctx, resolver.live(resolveAs), bpmnXML, processID)
+	if err != nil {
+		return err
+	}
+	if len(res.issues) > 0 {
+		return &domain.ValidationFailedError{Errors: res.issues}
+	}
+	errs, err := s.compiler.ValidateModule(ctx, res.bundled, processID, scope == domain.ScopeGlobal)
+	if err != nil {
+		return fmt.Errorf("validate module: %w", err)
+	}
+	if blocking := blockingErrors(errs); len(blocking) > 0 {
+		return &domain.ValidationFailedError{Errors: blocking}
+	}
+	return nil
+}
+
+// Usages lists the caller's workflow versions that hold a snapshot of the
+// module, marking those behind its active version.
+func (s *ModuleService) Usages(ctx context.Context, callerTenantID, moduleID uuid.UUID) ([]*domain.ModuleUsage, error) {
+	m, err := s.modules.GetByID(ctx, callerTenantID, moduleID)
+	if err != nil {
+		return nil, fmt.Errorf("get module: %w", err)
+	}
+	var active int32
+	if m.ActiveVersionID != nil {
+		v, err := s.versions.GetByID(ctx, callerTenantID, *m.ActiveVersionID)
+		if err != nil {
+			return nil, fmt.Errorf("get active module version: %w", err)
+		}
+		if v.VersionNumber != nil {
+			active = *v.VersionNumber
+		}
+	}
+	usages, err := s.workflowVersions.ListModuleUsages(ctx, callerTenantID, moduleID)
+	if err != nil {
+		return nil, fmt.Errorf("list module usages: %w", err)
+	}
+	for _, u := range usages {
+		u.Behind = u.ModuleVersionNumber < active
+	}
+	return usages, nil
+}
+
+func blockingErrors(errs []domain.BPMNValidationError) []domain.BPMNValidationError {
+	var out []domain.BPMNValidationError
+	for _, e := range errs {
+		if e.Severity != domain.SeverityWarning {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func (s *ModuleService) resolveVersionXML(
@@ -298,7 +368,7 @@ func (s *ModuleService) Publish(
 	if draft.Status != domain.VersionStatusDraft {
 		return nil, domain.ErrInvalidVersionStatus
 	}
-	if _, err := s.compiler.Compile(ctx, draft.BPMNXML); err != nil {
+	if err := s.validateContent(ctx, callerTenantID, draft.Scope, draft.BPMNXML, draft.ProcessID); err != nil {
 		return nil, err
 	}
 

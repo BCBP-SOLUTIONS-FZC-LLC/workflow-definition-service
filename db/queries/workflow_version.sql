@@ -2,15 +2,15 @@
 INSERT INTO workflow_version (
     id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
     artifact_hash, version_number, published_at, created_by_user_id,
-    is_valid, validation_errors_json, module_bpmn_xmls
+    is_valid, validation_errors_json
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
 
 -- name: GetWorkflowVersionByID :one
 SELECT id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
        artifact_hash, version_number, published_at, created_by_user_id,
        is_valid, validation_errors_json, created_at, updated_at, record_version,
-       module_bpmn_xmls
+       module_refs
 FROM workflow_version
 WHERE tenant_id = $1 AND id = $2;
 
@@ -18,7 +18,7 @@ WHERE tenant_id = $1 AND id = $2;
 SELECT id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
        artifact_hash, version_number, published_at, created_by_user_id,
        is_valid, validation_errors_json, created_at, updated_at, record_version,
-       module_bpmn_xmls
+       module_refs
 FROM workflow_version
 WHERE tenant_id = $1 AND workflow_id = $2 AND status = 'DRAFT';
 
@@ -26,7 +26,7 @@ WHERE tenant_id = $1 AND workflow_id = $2 AND status = 'DRAFT';
 SELECT id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
        artifact_hash, version_number, published_at, created_by_user_id,
        is_valid, validation_errors_json, created_at, updated_at, record_version,
-       module_bpmn_xmls
+       module_refs
 FROM workflow_version
 WHERE tenant_id = $1 AND workflow_id = $2
 ORDER BY created_at DESC
@@ -45,8 +45,7 @@ SET bpmn_xml               = $3,
     compiled_plan_json      = $4,
     artifact_hash           = $5,
     is_valid                = $6,
-    validation_errors_json  = $7,
-    module_bpmn_xmls        = $9
+    validation_errors_json  = $7
 WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT' AND record_version = $8;
 
 -- name: PublishVersion :execresult
@@ -55,6 +54,7 @@ SET status          = 'PUBLISHED',
     version_number  = $3,
     compiled_plan_json = $4,
     artifact_hash   = $5,
+    module_refs     = $6,
     published_at    = now(),
     updated_at      = now()
 WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT';
@@ -79,3 +79,17 @@ WHERE tenant_id = $1 AND id = $2;
 SELECT COALESCE(MAX(version_number), 0) + 1
 FROM workflow_version
 WHERE tenant_id = $1 AND workflow_id = $2 AND status != 'DRAFT';
+
+-- name: ListModuleUsages :many
+-- A workflow version holds one module_refs entry per module version, so a
+-- module appears at most once per version unless two of its versions coexist.
+SELECT wv.id AS version_id, wv.workflow_id, w.business_key, w.name AS workflow_name,
+       wv.version_number, wv.status,
+       (ref ->> 'version_number')::int AS module_version_number
+FROM workflow_version wv
+JOIN workflow w ON w.id = wv.workflow_id
+CROSS JOIN LATERAL jsonb_array_elements(wv.module_refs) AS ref
+WHERE wv.tenant_id = sqlc.arg(tenant_id)
+  AND wv.module_refs @> jsonb_build_array(jsonb_build_object('module_id', sqlc.arg(module_id)::text))
+  AND ref ->> 'module_id' = sqlc.arg(module_id)::text
+ORDER BY w.name, wv.version_number DESC NULLS LAST, module_version_number;

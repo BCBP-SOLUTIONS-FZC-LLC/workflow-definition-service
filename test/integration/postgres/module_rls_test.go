@@ -20,8 +20,8 @@ func insertModule(t *testing.T, superDSN string, id uuid.UUID, scope string, ten
 	t.Cleanup(pool.Close)
 	err = pool.WithConn(context.Background(), func(ctx context.Context, conn *pgxpool.Conn) error {
 		_, err := conn.Exec(ctx,
-			`INSERT INTO workflow_module (id, tenant_id, scope, name) VALUES ($1, $2, $3, 'm')`,
-			id, tenantID, scope)
+			`INSERT INTO workflow_module (id, tenant_id, scope, name, process_id) VALUES ($1, $2, $3, 'm', $4)`,
+			id, tenantID, scope, id.String())
 		return err
 	})
 	if err != nil {
@@ -90,8 +90,8 @@ func TestModuleRLS_OrdinaryRoleCannotInsertGlobalScope(t *testing.T) {
 
 	err := pool.WithConn(context.Background(), func(ctx context.Context, conn *pgxpool.Conn) error {
 		_, err := conn.Exec(ctx,
-			`INSERT INTO workflow_module (id, tenant_id, scope, name) VALUES ($1, NULL, 'global', 'm')`,
-			uuid.New())
+			`INSERT INTO workflow_module (id, tenant_id, scope, name, process_id) VALUES ($1, NULL, 'global', 'm', $2)`,
+			uuid.New(), uuid.NewString())
 		return err
 	})
 	if err == nil {
@@ -106,8 +106,8 @@ func TestModuleRLS_BypassRoleCanInsertGlobalScope(t *testing.T) {
 	id := uuid.New()
 	err := pool.WithConn(context.Background(), func(ctx context.Context, conn *pgxpool.Conn) error {
 		_, err := conn.Exec(ctx,
-			`INSERT INTO workflow_module (id, tenant_id, scope, name) VALUES ($1, NULL, 'global', 'm')`,
-			id)
+			`INSERT INTO workflow_module (id, tenant_id, scope, name, process_id) VALUES ($1, NULL, 'global', 'm', $2)`,
+			id, id.String())
 		return err
 	})
 	if err != nil {

@@ -137,7 +137,8 @@ func TestVersionService_Publish_OK(t *testing.T) {
 
 	// Pre-flight (outside transaction)
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan()), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("abc123", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
@@ -146,7 +147,7 @@ func TestVersionService_Publish_OK(t *testing.T) {
 	// Transaction
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "abc123").Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "abc123", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	// No BulkInsert — empty plan produces no assignees
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
@@ -178,7 +179,8 @@ func TestVersionService_Publish_CheckDivergence_WorkflowGetError(t *testing.T) {
 	}
 
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan("a")), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(nil, errors.New("db error"))
@@ -205,7 +207,8 @@ func TestVersionService_Publish_CheckDivergence_ActiveVersionGetError(t *testing
 	}
 
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan("a")), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
@@ -234,7 +237,8 @@ func TestVersionService_Publish_StructuralDivergence(t *testing.T) {
 	}
 
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan("a")), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
@@ -268,7 +272,8 @@ func TestVersionService_Publish_UnchangedStructureAgainstStoredBaseline_Publishe
 	}
 
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan("a")), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
@@ -279,7 +284,7 @@ func TestVersionService_Publish_UnchangedStructureAgainstStoredBaseline_Publishe
 
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h").Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
@@ -303,7 +308,8 @@ func TestVersionService_Publish_MainPlanMissingFromCollaboration_Fails(t *testin
 	collab.MainPlan = "absent"
 
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collab, nil)
 
 	if _, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false); err == nil {
@@ -331,7 +337,8 @@ func TestVersionService_Publish_ForceStructural(t *testing.T) {
 	}
 
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan("a")), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
@@ -342,7 +349,7 @@ func TestVersionService_Publish_ForceStructural(t *testing.T) {
 
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h").Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
@@ -377,7 +384,8 @@ func TestVersionService_Publish_NilBaselineAllowsPublish(t *testing.T) {
 	}
 
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan("a")), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
@@ -389,7 +397,7 @@ func TestVersionService_Publish_NilBaselineAllowsPublish(t *testing.T) {
 
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h").Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
@@ -420,7 +428,8 @@ func TestVersionService_Publish_UnreadableBaselineAllowsPublish(t *testing.T) {
 	badJSON := "{not-json"
 
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan("a")), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
@@ -431,7 +440,7 @@ func TestVersionService_Publish_UnreadableBaselineAllowsPublish(t *testing.T) {
 
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h").Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
@@ -493,7 +502,9 @@ func TestVersionService_Publish_BundleError(t *testing.T) {
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft, BPMNXML: "<bad/>"}, nil)
-	compiler.EXPECT().Bundle("<bad/>", gomock.Any()).Return("", errors.New("malformed module BPMN"))
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bad/>").Return(nil, nil, nil)
+
+	compiler.EXPECT().BundleModules("<bad/>", gomock.Any()).Return("", errors.New("malformed module BPMN"))
 
 	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
 	if err == nil {
@@ -510,7 +521,8 @@ func TestVersionService_Publish_CompileError(t *testing.T) {
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft, BPMNXML: "<bad/>"}, nil)
-	compiler.EXPECT().Bundle("<bad/>", gomock.Any()).Return("<bad/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bad/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bad/>", gomock.Any()).Return("<bad/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bad/>").Return(nil, errors.New("parse error"))
 
 	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
@@ -543,7 +555,8 @@ func TestVersionService_Publish_EligibilityFail(t *testing.T) {
 	}
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>"}, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(plan), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("hash", nil)
 	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "finance", "reviewer").
@@ -574,14 +587,15 @@ func TestVersionService_Publish_SkipEligibilityCheck(t *testing.T) {
 		Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>",
 	}
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan()), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(2), nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
@@ -622,14 +636,15 @@ func TestVersionService_Publish_WithAssignees_BulkInsert(t *testing.T) {
 		Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>",
 	}
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(plan), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("hash", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "hash").Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "hash", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	assignees.EXPECT().BulkInsert(gomock.Any(), tenantID, vID, gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
@@ -997,9 +1012,11 @@ func TestVersionService_Diff_FallsBackToCompile(t *testing.T) {
 		&domain.WorkflowVersion{ID: baseID, WorkflowID: wfID, BPMNXML: "<base/>"}, nil)
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>"}, nil)
-	compiler.EXPECT().Bundle("<base/>", gomock.Any()).Return("<base/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<base/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<base/>", gomock.Any()).Return("<base/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<base/>").Return(collabOf(buildPlan("a")), nil)
-	compiler.EXPECT().Bundle("<target/>", gomock.Any()).Return("<target/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<target/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<target/>", gomock.Any()).Return("<target/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<target/>").Return(collabOf(buildPlan("a")), nil)
 
 	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
@@ -1015,7 +1032,8 @@ func TestVersionService_Diff_FallsBackToCompile(t *testing.T) {
 // other fallback trigger: CompiledPlanJSON is present (non-empty) but fails to
 // unmarshal, as opposed to TestVersionService_Diff_FallsBackToCompile's case of
 // CompiledPlanJSON being entirely absent. Both must fall through to
-// compiler.Bundle + compiler.Compile.
+// library resolution (compiler.ModuleCalls + compiler.BundleModules) and
+// compiler.Compile.
 func TestVersionService_Diff_UnmarshalFailureFallsBackToCompile(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
@@ -1030,9 +1048,11 @@ func TestVersionService_Diff_UnmarshalFailureFallsBackToCompile(t *testing.T) {
 		&domain.WorkflowVersion{ID: baseID, WorkflowID: wfID, BPMNXML: "<base/>", CompiledPlanJSON: &garbage}, nil)
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>", CompiledPlanJSON: &garbage}, nil)
-	compiler.EXPECT().Bundle("<base/>", gomock.Any()).Return("<base/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<base/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<base/>", gomock.Any()).Return("<base/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<base/>").Return(collabOf(buildPlan("a")), nil)
-	compiler.EXPECT().Bundle("<target/>", gomock.Any()).Return("<target/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<target/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<target/>", gomock.Any()).Return("<target/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<target/>").Return(collabOf(buildPlan("a")), nil)
 
 	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
@@ -1104,7 +1124,8 @@ func TestVersionService_Diff_CompileBaseError(t *testing.T) {
 		&domain.WorkflowVersion{ID: baseID, WorkflowID: wfID, BPMNXML: "<base/>"}, nil)
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>"}, nil)
-	compiler.EXPECT().Bundle("<base/>", gomock.Any()).Return("<base/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<base/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<base/>", gomock.Any()).Return("<base/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<base/>").Return(nil, errors.New("compile error"))
 
 	_, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
@@ -1124,9 +1145,11 @@ func TestVersionService_Diff_CompileTargetError(t *testing.T) {
 		&domain.WorkflowVersion{ID: baseID, WorkflowID: wfID, BPMNXML: "<base/>"}, nil)
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>"}, nil)
-	compiler.EXPECT().Bundle("<base/>", gomock.Any()).Return("<base/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<base/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<base/>", gomock.Any()).Return("<base/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<base/>").Return(collabOf(buildPlan()), nil)
-	compiler.EXPECT().Bundle("<target/>", gomock.Any()).Return("<target/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<target/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<target/>", gomock.Any()).Return("<target/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<target/>").Return(nil, errors.New("compile error"))
 
 	_, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
@@ -1161,9 +1184,11 @@ func TestVersionService_Diff_WithStepChanges(t *testing.T) {
 		&domain.WorkflowVersion{ID: baseID, WorkflowID: wfID, BPMNXML: "<base/>"}, nil)
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>"}, nil)
-	compiler.EXPECT().Bundle("<base/>", gomock.Any()).Return("<base/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<base/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<base/>", gomock.Any()).Return("<base/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<base/>").Return(collabOf(basePlan), nil)
-	compiler.EXPECT().Bundle("<target/>", gomock.Any()).Return("<target/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<target/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<target/>", gomock.Any()).Return("<target/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<target/>").Return(collabOf(targetPlan), nil)
 
 	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
@@ -1205,9 +1230,11 @@ func TestVersionService_Diff_StepRemoved(t *testing.T) {
 		&domain.WorkflowVersion{ID: baseID, WorkflowID: wfID, BPMNXML: "<b/>"}, nil)
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<t/>"}, nil)
-	compiler.EXPECT().Bundle("<b/>", gomock.Any()).Return("<b/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<b/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<b/>", gomock.Any()).Return("<b/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<b/>").Return(collabOf(basePlan), nil)
-	compiler.EXPECT().Bundle("<t/>", gomock.Any()).Return("<t/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<t/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<t/>", gomock.Any()).Return("<t/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<t/>").Return(collabOf(targetPlan), nil)
 
 	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
@@ -1232,7 +1259,8 @@ func publishPreFlightMocks(
 		Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>",
 	}
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(plan), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
@@ -1247,7 +1275,8 @@ func TestVersionService_Publish_HashError(t *testing.T) {
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>"}, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan()), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("", errors.New("hash error"))
 
@@ -1267,7 +1296,8 @@ func TestVersionService_Publish_NextVersionNumberError(t *testing.T) {
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>"}, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan()), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -1294,7 +1324,7 @@ func TestVersionService_Publish_DeleteByVersionError(t *testing.T) {
 	publishPreFlightMocks(t, vRepo, compiler, tenantID, wfID, vID, buildPlan())
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("delete error"))
 
 	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
@@ -1329,7 +1359,7 @@ func TestVersionService_Publish_BulkInsertError(t *testing.T) {
 	publishPreFlightMocks(t, vRepo, compiler, tenantID, wfID, vID, plan)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	assignees.EXPECT().BulkInsert(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("bulk error"))
 
@@ -1355,7 +1385,7 @@ func TestVersionService_Publish_UpdateActiveVersionError(t *testing.T) {
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("update error"))
 
@@ -1387,7 +1417,8 @@ func TestVersionService_Publish_InvalidAssigneeUUID(t *testing.T) {
 	}
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>"}, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(plan), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 
@@ -1421,7 +1452,8 @@ func TestVersionService_Publish_EligibilityCheckError(t *testing.T) {
 	}
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>"}, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(plan), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "ops", "manager").
@@ -1492,7 +1524,7 @@ func TestVersionService_Publish_PublishVersionError(t *testing.T) {
 	publishPreFlightMocks(t, vRepo, compiler, tenantID, wfID, vID, buildPlan())
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.New("publish db error"))
 
 	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
@@ -1533,7 +1565,8 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	}
 
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(plan), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
@@ -1543,7 +1576,7 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "h").Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "h", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	assignees.EXPECT().BulkInsert(gomock.Any(), tenantID, vID, gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
@@ -1584,14 +1617,15 @@ func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.
 	}
 
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().Bundle("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(plan), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "h").Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "h", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	// BulkInsert NOT called — invalid UUID skipped by extractAssignees → empty slice
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
@@ -1616,9 +1650,11 @@ func TestVersionService_Diff_DepartmentRemoved(t *testing.T) {
 		&domain.WorkflowVersion{ID: baseID, WorkflowID: wfID, BPMNXML: "<b/>"}, nil)
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<t/>"}, nil)
-	compiler.EXPECT().Bundle("<b/>", gomock.Any()).Return("<b/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<b/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<b/>", gomock.Any()).Return("<b/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<b/>").Return(collabOf(buildPlan("finance", "old-dept")), nil)
-	compiler.EXPECT().Bundle("<t/>", gomock.Any()).Return("<t/>", nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<t/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<t/>", gomock.Any()).Return("<t/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<t/>").Return(collabOf(buildPlan("finance")), nil)
 
 	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)

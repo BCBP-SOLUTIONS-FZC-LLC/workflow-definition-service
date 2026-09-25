@@ -44,11 +44,10 @@ func NewDraftService(d DraftDeps) *DraftService {
 }
 
 type UpdateDraftReq struct {
-	Name           *string
-	Description    *string
-	BPMNXML        *string
-	ModuleBPMNXMLs *[]string // nil = no change; &[]string{} = clear all modules
-	RecordVersion  int64     // optimistic-lock token (0 = unchecked)
+	Name          *string
+	Description   *string
+	BPMNXML       *string
+	RecordVersion int64 // optimistic-lock token (0 = unchecked)
 }
 
 const errGetDraft = "get draft: %w"
@@ -88,7 +87,6 @@ func (s *DraftService) Init(
 		TenantID:        tenantID,
 		Status:          domain.VersionStatusDraft,
 		BPMNXML:         active.BPMNXML,
-		ModuleBPMNXMLs:  active.ModuleBPMNXMLs,
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
@@ -128,11 +126,6 @@ func (s *DraftService) Update(
 		draft.BPMNXML = *req.BPMNXML
 		clearCompiledArtifacts(draft)
 		draft.IsValid = true
-	}
-
-	if req.ModuleBPMNXMLs != nil {
-		draft.ModuleBPMNXMLs = *req.ModuleBPMNXMLs
-		clearCompiledArtifacts(draft)
 	}
 
 	if err := s.runUpdateTx(ctx, tenantID, workflowID, draft, req); err != nil {

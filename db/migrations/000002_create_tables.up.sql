@@ -28,7 +28,7 @@ CREATE TABLE workflow_version (
     created_at              TIMESTAMP DEFAULT now(),
     updated_at              TIMESTAMP DEFAULT now(),
     record_version          BIGINT NOT NULL DEFAULT 1,
-    module_bpmn_xmls        TEXT[] NOT NULL DEFAULT '{}',
+    module_refs             JSONB NOT NULL DEFAULT '[]',
     CONSTRAINT chk_version_number_on_publish
         CHECK (status = 'DRAFT' OR version_number IS NOT NULL)
 );
@@ -55,6 +55,7 @@ CREATE TABLE workflow_module (
     scope               catalog_scope NOT NULL,
     name                VARCHAR(255) NOT NULL,
     description         TEXT,
+    process_id          VARCHAR(255) NOT NULL,
     active_version_id   UUID,
     created_by_user_id  UUID,
     record_version      BIGINT NOT NULL DEFAULT 1,

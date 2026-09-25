@@ -16,7 +16,7 @@ import (
 
 func TestValidateBPMN_Valid(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{
-		validate: func(_ context.Context, bpmnXML string, _ []string) (bool, []domain.BPMNValidationError, error) {
+		validate: func(_ context.Context, _ uuid.UUID, bpmnXML string) (bool, []domain.BPMNValidationError, error) {
 			assert.Equal(t, "<definitions/>", bpmnXML)
 			return true, nil, nil
 		},
@@ -35,7 +35,7 @@ func TestValidateBPMN_Valid(t *testing.T) {
 
 func TestValidateBPMN_Invalid(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{
-		validate: func(_ context.Context, _ string, _ []string) (bool, []domain.BPMNValidationError, error) {
+		validate: func(_ context.Context, _ uuid.UUID, _ string) (bool, []domain.BPMNValidationError, error) {
 			return false, []domain.BPMNValidationError{
 				{Code: domain.BPMNErrNoStartEvent, NodeID: "node-1", Message: "missing start event", Severity: domain.SeverityError},
 				{Code: domain.BPMNErrCycleDetected, NodeID: "node-2", Message: "cycle detected", Severity: domain.SeverityError},
@@ -60,7 +60,7 @@ func TestValidateBPMN_Invalid(t *testing.T) {
 
 func TestValidateBPMN_ValidWithWarnings(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{
-		validate: func(_ context.Context, _ string, _ []string) (bool, []domain.BPMNValidationError, error) {
+		validate: func(_ context.Context, _ uuid.UUID, _ string) (bool, []domain.BPMNValidationError, error) {
 			return true, []domain.BPMNValidationError{
 				{Code: domain.BPMNWarnUnknownStageType, NodeID: "Task_audit", Message: "unknown stage type", Severity: domain.SeverityWarning},
 			}, nil
@@ -93,7 +93,7 @@ func TestValidateBPMN_BindError(t *testing.T) {
 
 func TestValidateBPMN_ServiceError(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{
-		validate: func(_ context.Context, _ string, _ []string) (bool, []domain.BPMNValidationError, error) {
+		validate: func(_ context.Context, _ uuid.UUID, _ string) (bool, []domain.BPMNValidationError, error) {
 			return false, nil, errors.New("parse failure")
 		},
 	})
@@ -117,14 +117,13 @@ func TestGetVersionValidation_ReportsStoredVersionIssues(t *testing.T) {
 			assert.Equal(t, versionID, gotVersionID)
 			return &domain.WorkflowVersion{
 				ID: versionID, Status: domain.VersionStatusPublished,
-				BPMNXML: "<definitions/>", ModuleBPMNXMLs: []string{"<module/>"},
+				BPMNXML: "<definitions/>",
 			}, nil
 		},
 	}
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, versions, &fakeValidationSvc{
-		validate: func(_ context.Context, bpmnXML string, moduleXMLs []string) (bool, []domain.BPMNValidationError, error) {
+		validate: func(_ context.Context, _ uuid.UUID, bpmnXML string) (bool, []domain.BPMNValidationError, error) {
 			assert.Equal(t, "<definitions/>", bpmnXML, "the stored version's own BPMN is validated")
-			assert.Equal(t, []string{"<module/>"}, moduleXMLs)
 			return false, []domain.BPMNValidationError{
 				{Code: domain.BPMNErrCandidateUsersEmpty, NodeID: "Activity_1", Message: "no candidateUsers", Severity: domain.SeverityError},
 			}, nil

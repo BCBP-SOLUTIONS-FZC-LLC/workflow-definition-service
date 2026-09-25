@@ -22,59 +22,76 @@ type publishTxInput struct {
 	compiledJSON  string
 	artifactHash  string
 	assignees     []*domain.NodeAssignee
+	moduleRefs    []domain.ModuleRef
+}
+
+// publishPrep is what publish computes before its transaction.
+type publishPrep struct {
+	compiledJSON string
+	artifactHash string
+	assignees    []*domain.NodeAssignee
+	moduleRefs   []domain.ModuleRef
 }
 
 func (s *VersionService) publishPreFlight(
 	ctx context.Context,
 	tenantID, workflowID, versionID uuid.UUID,
 	forcePublishStructural bool,
-) (*domain.WorkflowVersion, string, string, []*domain.NodeAssignee, error) {
+) (*domain.WorkflowVersion, *publishPrep, error) {
 	draft, err := s.versions.GetByID(ctx, tenantID, versionID)
 	if err != nil {
-		return nil, "", "", nil, fmt.Errorf("get draft version: %w", err)
+		return nil, nil, fmt.Errorf("get draft version: %w", err)
 	}
 	if draft.Status != domain.VersionStatusDraft {
-		return nil, "", "", nil, domain.ErrVersionNotDraft
+		return nil, nil, domain.ErrVersionNotDraft
 	}
 	if draft.WorkflowID != workflowID {
-		return nil, "", "", nil, domain.ErrNotFound
+		return nil, nil, domain.ErrNotFound
 	}
 
-	bundled, err := s.compiler.Bundle(draft.BPMNXML, draft.ModuleBPMNXMLs)
+	res, err := s.modules.resolve(ctx, s.modules.live(tenantID), draft.BPMNXML, "")
 	if err != nil {
-		return nil, "", "", nil, fmt.Errorf("bundle modules: %w", err)
+		return nil, nil, err
 	}
-	collab, plan, err := s.compileForPublish(ctx, bundled)
-	if err != nil {
-		return nil, "", "", nil, err
+	if len(res.issues) > 0 {
+		return nil, nil, &domain.ValidationFailedError{Errors: res.issues}
 	}
-	artifactHash, err := s.compiler.Hash(ctx, bundled)
+	collab, plan, err := s.compileForPublish(ctx, res.bundled)
 	if err != nil {
-		return nil, "", "", nil, fmt.Errorf("hash bpmn: %w", err)
+		return nil, nil, err
+	}
+	artifactHash, err := s.compiler.Hash(ctx, res.bundled)
+	if err != nil {
+		return nil, nil, fmt.Errorf("hash bpmn: %w", err)
 	}
 
 	if s.workflows != nil {
 		wf, err := s.workflows.GetByID(ctx, tenantID, workflowID)
 		if err != nil {
-			return nil, "", "", nil, fmt.Errorf(errGetWorkflow, err)
+			return nil, nil, fmt.Errorf(errGetWorkflow, err)
 		}
 		if err := s.checkStructuralDivergence(ctx, tenantID, wf, plan, forcePublishStructural); err != nil {
-			return nil, "", "", nil, err
+			return nil, nil, err
 		}
 	}
 
 	if s.membership != nil {
 		if err := s.checkAssigneeEligibility(ctx, tenantID, plan); err != nil {
-			return nil, "", "", nil, err
+			return nil, nil, err
 		}
 	}
 
 	compiledJSON, err := marshalPlan(collab)
 	if err != nil {
-		return nil, "", "", nil, fmt.Errorf("marshal compiled plan: %w", err)
+		return nil, nil, fmt.Errorf("marshal compiled plan: %w", err)
 	}
 
-	return draft, compiledJSON, artifactHash, extractAssignees(tenantID, versionID, plan), nil
+	return draft, &publishPrep{
+		compiledJSON: compiledJSON,
+		artifactHash: artifactHash,
+		assignees:    extractAssignees(tenantID, versionID, plan),
+		moduleRefs:   res.refs,
+	}, nil
 }
 
 func (s *VersionService) compileForPublish(
@@ -126,7 +143,7 @@ func (s *VersionService) checkStructuralDivergence(
 }
 
 func (s *VersionService) runPublishTx(ctx context.Context, in publishTxInput) error {
-	if err := s.versions.Publish(ctx, in.tenantID, in.versionID, in.versionNumber, in.compiledJSON, in.artifactHash); err != nil {
+	if err := s.versions.Publish(ctx, in.tenantID, in.versionID, in.versionNumber, in.compiledJSON, in.artifactHash, in.moduleRefs); err != nil {
 		return err
 	}
 	if err := s.assignees.DeleteByVersion(ctx, in.tenantID, in.versionID); err != nil {

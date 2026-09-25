@@ -36,6 +36,11 @@ var (
 	// type — rejected before either value is interpolated into an OpenBao path.
 	ErrInvalidConnectorCredentialInput = errors.New("invalid connector credential input")
 	ErrInvalidConnectorAliasInput      = errors.New("invalid connector alias input")
+	// ErrModuleProcessIDTaken marks a new module whose process id another
+	// module the tenant can call already has; ErrModuleProcessIDChanged marks a
+	// new version whose process id differs from its module's.
+	ErrModuleProcessIDTaken   = errors.New("module process id is already in use")
+	ErrModuleProcessIDChanged = errors.New("module version must keep its module's process id")
 )
 
 type BPMNErrorCode string

@@ -244,6 +244,11 @@ type ZeebeIOVar struct {
 type ZeebeCalledElement struct {
 	ProcessID                  string `xml:"processId,attr"`
 	PropagateAllChildVariables bool   `xml:"propagateAllChildVariables,attr"`
+	// BindingType and VersionTag pick a library module version: "versionTag"
+	// pins VersionTag, "latest" or none takes the active version, and
+	// "deployment" means the process in the same file.
+	BindingType string `xml:"bindingType,attr,omitempty"`
+	VersionTag  string `xml:"versionTag,attr,omitempty"`
 }
 
 type ZeebeTaskDefinition struct {

@@ -38,7 +38,6 @@ func (r *WorkflowVersionRepo) Create(ctx context.Context, v *domain.WorkflowVers
 			CreatedByUserID:      v.CreatedByUserID,
 			IsValid:              v.IsValid,
 			ValidationErrorsJson: toNullableJSONB(v.ValidationErrorsJSON),
-			ModuleBpmnXmls:       coalesceStrings(v.ModuleBPMNXMLs),
 		}))
 	})
 }
@@ -134,7 +133,6 @@ func (r *WorkflowVersionRepo) UpdateDraft(ctx context.Context, v *domain.Workflo
 			IsValid:              v.IsValid,
 			ValidationErrorsJson: toNullableJSONB(v.ValidationErrorsJSON),
 			RecordVersion:        v.RecordVersion,
-			ModuleBpmnXmls:       coalesceStrings(v.ModuleBPMNXMLs),
 		})
 		if err != nil {
 			return mapErr(err)
@@ -152,7 +150,12 @@ func (r *WorkflowVersionRepo) Publish(
 	tenantID, versionID uuid.UUID,
 	versionNumber int32,
 	compiledPlanJSON, artifactHash string,
+	moduleRefs []domain.ModuleRef,
 ) error {
+	refs, err := moduleRefsToDB(moduleRefs)
+	if err != nil {
+		return err
+	}
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		tag, err := db.New(dbtx).PublishVersion(ctx, db.PublishVersionParams{
 			TenantID:         tenantID,
@@ -160,6 +163,7 @@ func (r *WorkflowVersionRepo) Publish(
 			VersionNumber:    pgtype.Int4{Int32: versionNumber, Valid: true},
 			CompiledPlanJson: json.RawMessage(compiledPlanJSON),
 			ArtifactHash:     toNullableText(artifactHash),
+			ModuleRefs:       refs,
 		})
 		if err != nil {
 			return mapErr(err)
@@ -238,4 +242,27 @@ func (r *WorkflowVersionRepo) NextVersionNumber(
 		return mapErr(err)
 	})
 	return n, err
+}
+
+func (r *WorkflowVersionRepo) ListModuleUsages(ctx context.Context, tenantID, moduleID uuid.UUID) ([]*domain.ModuleUsage, error) {
+	var result []*domain.ModuleUsage
+	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		rows, err := db.New(dbtx).ListModuleUsages(ctx, db.ListModuleUsagesParams{TenantID: tenantID, ModuleID: moduleID.String()})
+		if err != nil {
+			return mapErr(err)
+		}
+		for _, row := range rows {
+			result = append(result, &domain.ModuleUsage{
+				WorkflowID:          mustUUID(row.WorkflowID),
+				WorkflowKey:         row.BusinessKey,
+				WorkflowName:        row.WorkflowName,
+				VersionID:           row.VersionID,
+				VersionNumber:       fromPgtypeInt4(row.VersionNumber),
+				Status:              fromVersionStatus(row.Status),
+				ModuleVersionNumber: row.ModuleVersionNumber,
+			})
+		}
+		return nil
+	})
+	return result, err
 }

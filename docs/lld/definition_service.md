@@ -830,6 +830,7 @@ erDiagram
         UUID created_by_user_id
         BOOLEAN is_valid
         JSONB validation_errors_json
+        JSONB module_refs "library module versions this version resolved"
         BIGINT record_version
         TIMESTAMP created_at
         TIMESTAMP updated_at
@@ -863,6 +864,7 @@ erDiagram
         VARCHAR scope "'global' | 'tenant'"
         VARCHAR name
         TEXT description
+        VARCHAR process_id "fixed for every version; what calledElement names"
         UUID active_version_id FK
         BIGINT record_version
         TIMESTAMP created_at
@@ -1102,6 +1104,8 @@ Stores failed outbox events that exhausted maximum retries.
     created_by_user_id (UUID): The tenant admin who created/updated this specific version. Provides strict revision history auditing.
 
     is_valid (BOOLEAN): Reflects assignee validity — not BPMN structural validity. Default `true`. Set to `false` by the `DepartmentMembershipRevoked` handler (`POST /internal/events`, §7.4) when an assigned user loses the required department role. A version with `is_valid = false` cannot be promoted or used to start new workflow instances; existing running instances are not affected. The version must be updated (re-assign the affected node) and republished to restore validity.
+
+    module_refs (JSONB): The library module versions a published version resolved, one `{module_id, version_id, process_id, version_number}` per module version, written at publish (§3.3.18). The version holds a snapshot of each: a later module version or an archived module never changes it. `GET /modules/:id/usages` reads it. `[]` on drafts.
 
     validation_errors_json (JSONB): Array of error objects written when `is_valid` is set to `false`. Each element has the shape `{"node_id": "<node_key>", "error": "<reason>"}`. Null when the version is valid. Example: `[{"node_id": "Task_design_prep", "error": "Default assignee is no longer eligible: Department membership revoked"}]`.
 
@@ -1408,6 +1412,7 @@ Below is the complete registry of application-specific error codes returned insi
 | `WORKFLOW_CONCURRENCY_VIOLATION` | `409 Conflict` | Workflow Concurrency Violation | Stale workflow metadata update — client's `record_version` on the `workflow` row does not match; another name/description update has been applied since the client last read. _(planned — pending `PATCH /workflows/:id` endpoint) |
 | `IDEMPOTENCY_KEY_REPLAY` | `409 Conflict` | Idempotent Request Replayed | The request was submitted with a previously processed `Idempotency-Key` but different parameters. |
 | `NO_ACTIVE_VERSION` | `409 Conflict` | No Active Version | The operation (e.g. archiving or promoting) requires an active version, but none is set. |
+| `MODULE_PROCESS_ID_CONFLICT` | `409 Conflict` | Module Process Id Conflict | A new module's process id is already used by a module the tenant can call, or a new module version's process id differs from its module's. |
 | `STRUCTURAL_DIVERGENCE` | `409 Conflict` | Structural Divergence Detected | The compiled graph has structural shifts. Blocked unless `force_publish_structural` is `true`. |
 | `ACTIVE_INSTANCES_EXIST` | `409 Conflict` | Active Instances Running | The workflow cannot be archived because there are active running or paused instances. |
 | `INVALID_VERSION_STATUS` | `409 Conflict` | Invalid Version Status | The requested operation is not permitted for the version's current status (e.g. cloning a DRAFT, promoting an ARCHIVED version). |
@@ -1668,6 +1673,12 @@ Below is a detailed walkthrough of the endpoints, checks, and flow execution tra
 
 ---
 
+20. **`MODULE_PROCESS_ID_CONFLICT`** (HTTP 409)
+    - **Endpoints**: `POST /modules`, `POST /modules/:id/versions`
+    - **Trigger Scenario**: A new module's `<bpmn:process>` id is already the `process_id` of a module the caller can call — the tenant's own or a global one; for a global module, any module. Or a new version's process id differs from its module's.
+    - **Technical Cause**: a call names a module by process id (§3.3.18), so the id must identify one module and stay the same across its versions. A partial unique index per scope backs the check; module create checks the other scope.
+    - **Resolution**: give the module's process a different id, or keep the module's own id in the new version.
+
 ### 3.1.4 BPMN Semantic & Structural Validation Sub-Errors
 
 When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), the response payload contains an `errors` list. Each item in this list carries a specific sub-validation code from the `BpmnErrorCode` registry. Below is the detailed trigger logic for each validation rule:
@@ -1698,7 +1709,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
    - **Trigger Logic**: The validator reads `assignmentDefinition.candidateGroups`. If the value is missing, empty after trimming, or longer than 256 characters, this error is emitted.
 
 7. **`INVALID_CANDIDATE_USER`**
-   - **Trigger Scenario**: The `candidateUsers` attribute on `<zeebe:assignmentDefinition>` is present but is not a single valid UUID v7.
+   - **Trigger Scenario**: The `candidateUsers` attribute on `<zeebe:assignmentDefinition>` is present but is not a single valid UUID v7. In a global module (§3.3.18), also any `candidateUsers` at all, and any call's `Assignees` input.
    - **Trigger Logic**: A dedicated validator function (`validateCandidateUser`) parses the value as a UUID v7. If parsing fails or the value contains a comma (multi-user not yet supported), this error is emitted. The named function is the single change point when multi-user support is introduced.
 
 8. **`CANDIDATE_USERS_EMPTY`**
@@ -1803,8 +1814,8 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Logic**: After back-edges are stripped, the validator computes the longest forward path (memoised DFS). If it exceeds `maxPathDepth` (2000), this error is emitted against the start event.
 
 29. **`UNRESOLVED_CALLED_ELEMENT`**
-    - **Trigger Scenario**: A `<bpmn:callActivity>` is missing its `<zeebe:calledElement processId="...">` extension element, or the `processId` references a process that is not defined in the same BPMN document.
-    - **Trigger Logic**: `ValidateCallActivity` in `bpmn_compiler/validator/call_activity.go` checks each callActivity for a non-empty `processId` that resolves to a sibling `<bpmn:process>` in the same definitions. The called process must be embedded in the document (injected by the thin BE before upload); remote references are not supported.
+    - **Trigger Scenario**: A `<bpmn:callActivity>` is missing its `<zeebe:calledElement processId="...">`, or names something that cannot be called: a `processId` that is neither a process in the document nor a library module the tenant can call (§3.3.18); a pinned version that does not exist or was never published; an archived module; an expression `processId` (a call must name a module); a `versionTag` that is not a positive integer or is missing with `bindingType="versionTag"`; or `bindingType="deployment"` without the process in the document.
+    - **Trigger Logic**: at `/validate` and at publish, the library calls are resolved first (`ModuleCalls`, then the module version repository), and each unresolvable one is reported on its call, naming the module and version. `ValidateCallActivity` in `bpmn_compiler/validator/call_activity.go` then checks every call against the bundled document.
 
 30. **`NESTED_SUBPROCESS_NOT_SUPPORTED`**
     - **Trigger Scenario**: A `<bpmn:subProcess>` element contains another `<bpmn:subProcess>` directly.
@@ -1816,11 +1827,11 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
 
 32. **`CALLED_ELEMENT_CYCLE`**
     - **Trigger Scenario**: A chain of `<bpmn:callActivity>` calls returns to a process already on it: a process that calls itself, or A calls B and B calls A.
-    - **Trigger Logic**: `ValidateCallGraph` in `bpmn_compiler/validator/call_graph.go` walks the calls of every process in the bundled document. The error is emitted on the callActivity that closes the cycle. A called process runs inside its caller, so a cycle has no finite plan.
+    - **Trigger Logic**: `ValidateCallGraph` in `bpmn_compiler/validator/call_graph.go` walks the calls of every process in the bundled document. The error is emitted on the callActivity that closes the cycle. A called process runs inside its caller, so a cycle has no finite plan. When a module is saved or published, the library resolution also emits it for a call that reaches the module itself at its latest version (§3.3.18), which would be a cycle once that version is published.
 
 33. **`DUPLICATE_PROCESS_ID`**
-    - **Trigger Scenario**: Two `<bpmn:process>` elements in the bundled document share an `id`: two `module_bpmn_xmls` entries, or a module and the main BPMN.
-    - **Trigger Logic**: `ValidateCallGraph` in `bpmn_compiler/validator/call_graph.go` emits one error per repeated id. A `calledElement` must resolve to exactly one process.
+    - **Trigger Scenario**: Two `<bpmn:process>` elements in the document share an `id`.
+    - **Trigger Logic**: `ValidateCallGraph` in `bpmn_compiler/validator/call_graph.go` emits one error per repeated id. A `calledElement` must resolve to exactly one process. Library modules are bundled under their plan names, so only the author's own file can repeat an id.
 
 ---
 
@@ -1857,7 +1868,8 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 | `/modules/:id/versions/:version_id` | `GET` | Any | Get a specific module version, including a pending DRAFT (§3.3.18) |
 | `/modules/:id/versions` | `POST` | Admin | Add a new draft version to an existing module; `bpmn_xml` optional, copies the active version forward when omitted (§3.3.18) |
 | `/modules/:id/versions/:version_id/publish` | `POST` | Admin | Publish a module draft version, promoting it to active |
-| `/modules/:id` | `DELETE` | Admin | Archive a module (soft delete — existing compiled plans that already bundled its XML are unaffected) |
+| `/modules/:id/usages` | `GET` | Any | List the caller's workflow versions that hold a snapshot of the module, with the module version each uses and whether it is behind (§3.3.18) |
+| `/modules/:id` | `DELETE` | Admin | Archive a module (soft delete — published workflow versions keep their snapshot; new publishes can no longer reference it) |
 | `/starters` | `GET` | Any | List starter workflows visible to the caller (global + their own tenant's), `?scope=`/`?category=`/`?q=` filters (§3.3.19) |
 | `/starters` | `POST` | Admin | Create a starter directly from a raw BPMN XML payload (tenant-scoped; `platform_operator` role required for `scope=global`) |
 | `/starters/from-workflow-version/:version_id` | `POST` | Admin | Snapshot one of the caller's own published workflow versions into a new tenant-scoped starter ("save as reusable") |
@@ -2060,10 +2072,10 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 #### 3.3.12.1 Stored Version Validation
 
 - **GET** `/workflows/:id/versions/:version_id/validation`
-- **Semantics**: Re-runs the structural validator against a stored version's own BPMN, in any status. Read-only — nothing is written, and a version already `PUBLISHED` keeps its status and its `is_valid` flag.
+- **Semantics**: Re-runs the structural validator against a stored version's own BPMN, in any status. A draft's library calls resolve against the library as it is now; any other version's resolve to the module versions in its `module_refs`, archived or not, so a later module version or an archived module does not change its result (§3.3.18). Read-only — nothing is written, and a version already `PUBLISHED` keeps its status and its `is_valid` flag.
 - **Why it exists**: a validator rule added after a version was published does not retroactively invalidate it, so a template published under the older rules can still hold a defect that only surfaces when the Execution Service refuses to instantiate it. This endpoint lets an operator find those templates first, one version at a time, and the fix is an ordinary new version (§7.4.3 Flow A).
 - **Response (`200 OK`)**: `{"version_id", "status", "is_valid", "issues"}`. The `issues` array carries the same element shape §3.3.12 returns, so one renderer serves both lists; `version_id` and `status` identify which stored version the result describes, which the stateless endpoint has no need of.
-- **Implementation**: composes two paths that already exist — the version read and the raw-validation service — and adds no service method of its own.
+- **Implementation**: the version read, then the validation service's `ValidateVersion`, which picks the live library or the version's snapshot by its status.
 
 #### 3.3.13 Export Workflow BPMN
 
@@ -2126,7 +2138,12 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 
 #### 3.3.18 Reusable BPMN Modules
 
-Modules are tenant-authored (or platform-authored, `scope=global`) BPMN fragments meant to be referenced from a main diagram's `<bpmn:callActivity>` and merged in at compile time via the existing `Bundle()` mechanism (§4.1.3.3) — this section only adds a persisted, versioned, browsable store in front of that already-existing merge step; `Bundle()` itself is unchanged.
+Modules are tenant-authored (or platform-authored, `scope=global`) BPMN processes that a workflow's `<bpmn:callActivity>` calls. They are the one source of module content: a workflow never carries module XML of its own.
+
+- **Identity.** A module's `process_id` is its `<bpmn:process>` id, set when the module is created and kept by every version. It is unique among a tenant's own modules and the global ones: a tenant module cannot take a global module's process id, nor a global module any tenant's (`409 MODULE_PROCESS_ID_CONFLICT`, also returned for a new version whose process id differs).
+- **Resolution.** A call names a module by `<zeebe:calledElement processId="<process_id>">` and pins a version with `bindingType="versionTag" versionTag="<version_number>"`. With `bindingType` `latest` or absent it takes the module's active version. A tenant's calls see its own modules and the global ones; a global module's calls see global modules only. A `versionTag` always names a library module, even when the file has a process of that id; whether a call is a library call is judged in the document it was written in, so a module's call never takes over a workflow's local process of the same id. Resolution happens when a workflow or starter is created, at `/workflows/validate`, at publish and for a draft's diff, never at runtime, and walks each module's own calls the same way. A problem inside a module (a call there that does not resolve) is reported on the workflow's call that reached it, its message naming the chain of modules. In the rare case a tenant module and a global one share a process id (only a race between two creates allows it), the tenant's own resolves.
+- **Snapshot.** A published workflow version records the versions it resolved in `module_refs` and compiles each into its own plan, named `<process_id>@v<version_number>`, so two versions of one module can coexist in a workflow (§4.1.2, §7.5). A later module version, or archiving the module, never changes a published workflow or a running instance; a workflow picks up a new module version when it is republished with the new pin or with `latest`.
+- **Rules for module content.** A module is validated with its own process as the root and its open lanes allowed (§4.1.2). Only errors block; warnings such as `CANDIDATE_USERS_EMPTY` do not. A global module names no user (`INVALID_CANDIDATE_USER`), neither in a task's `candidateUsers` nor in a call's `Assignees`, because user ids are per tenant; its fixed lanes use catalogue departments, which every tenant shares. A call from a module to itself at its latest version, directly or through other modules, is `CALLED_ELEMENT_CYCLE` when the module is saved or published: once published, latest would be that very version. A call to an earlier pinned version of itself is allowed.
 
 - **GET** `/modules`
   - **Query Params**: `scope` (`global`|`tenant`, optional — omitted returns both), `q` (name substring search), `page`/`limit` (pagination, same defaults as §3.3.3.1).
@@ -2140,6 +2157,7 @@ Modules are tenant-authored (or platform-authored, `scope=global`) BPMN fragment
           "scope": "tenant",
           "name": "Standard Two-Level Approval",
           "description": "Manager approval followed by finance sign-off.",
+          "process_id": "Process_TwoLevelApproval",
           "active_version_id": "c1d2e3f4-...",
           "created_at": "2026-08-10T12:00:00Z"
         }
@@ -2149,16 +2167,17 @@ Modules are tenant-authored (or platform-authored, `scope=global`) BPMN fragment
     ```
 
 - **POST** `/modules`
-  - **Request Body**: `name`, `description`, `bpmn_xml` (must contain exactly one top-level `<bpmn:process>`, which becomes the module's `process_id`, the value a referencing diagram's `callActivity` `calledElement` must match), `scope` (`tenant`, the default; `global` requires the caller to hold `platform_operator`, returning `403` otherwise — mirrors Org & Membership's own `platform_operator`-only gate on its global department catalog, §10.16).
+  - **Request Body**: `name`, `description`, `bpmn_xml` (must contain exactly one top-level `<bpmn:process>`, whose id becomes the module's fixed `process_id`, the value a calling `callActivity`'s `calledElement` names), `scope` (`tenant`, the default; `global` requires the caller to hold `platform_operator`, returning `403` otherwise — mirrors Org & Membership's own `platform_operator`-only gate on its global department catalog, §10.16).
   - **Response (`201 Created`)**: same shape as §3.3.2's create-workflow response (`module_id`, `version_id`, `status: "DRAFT"`, `version_number: null`) — the first version is always a draft, publish it via the next endpoint before it's usable in a compile.
-  - The submitted `bpmn_xml` runs through the same parser/element-allowlist validation as a normal workflow draft (§4.1) before being stored — a module is BPMN content like any other, not exempt from Tier validation.
+  - The submitted `bpmn_xml` runs through the same parser and element allowlist as a workflow (§4.1), with the module rules above, before being stored.
 
 - **POST** `/modules/:id/versions` — add a new draft version to an existing module. `bpmn_xml` is optional: supplied, it's validated and stored as the new draft's content (same validation as create); omitted, the new draft copies the current active version's content forward instead (mirrors `/workflows/:id/draft`'s copy-forward semantics). The single-DRAFT-per-module invariant is a DB partial unique index, not an app-level pre-check.
-- **POST** `/modules/:id/versions/:version_id/publish` — publishes a draft version (compiles the fragment standalone as a validation gate only — no `Bundle()`, no compiled-plan/hash storage, since a module fragment isn't itself executed — `status → PUBLISHED`, updates the module's `active_version_id`). Mirrors §3.3.7 exactly; a module version follows the identical DRAFT → PUBLISHED → ARCHIVED lifecycle a workflow version does (§2.1).
-- **GET** `/modules/:id` — module metadata + its active (published) version's `bpmn_xml`, ready for the frontend to hand to `Bundle()` via a referencing diagram's `module_bpmn_xmls` map.
+- **POST** `/modules/:id/versions/:version_id/publish` — publishes a draft version (validates it with the module rules above, its own calls resolved, as a gate only — no compiled plan or hash is stored, since a module runs only as part of a workflow — `status → PUBLISHED`, updates the module's `active_version_id`). Mirrors §3.3.7 exactly; a module version follows the identical DRAFT → PUBLISHED → ARCHIVED lifecycle a workflow version does (§2.1).
+- **GET** `/modules/:id` — module metadata, including `process_id`, and its active (published) version's `bpmn_xml`.
 - **GET** `/modules/:id/versions` — a module's version history (`page`/`limit` pagination), so the frontend can review non-active versions, including a pending DRAFT before it's published.
 - **GET** `/modules/:id/versions/:version_id` — a specific module version's metadata + `bpmn_xml`, including a pending DRAFT.
-- **DELETE** `/modules/:id` — archives the module (`active_version_id → NULL`, and the archived version's own `status → ARCHIVED`, mirroring §3.3.8); does not retroactively affect any already-compiled plan that bundled a snapshot of its XML, since `Bundle()` copies content in at compile time rather than holding a live reference.
+- **GET** `/modules/:id/usages` — the caller's workflow versions whose `module_refs` include the module: `workflow_id`, `workflow_key`, `workflow_name`, `version_id`, `version_number`, `status`, `module_version_number`, and `behind` (true when the module's active version is newer). The basis for "update available" in a UI.
+- **DELETE** `/modules/:id` — archives the module (`active_version_id → NULL`, and the archived version's own `status → ARCHIVED`, mirroring §3.3.8). New publishes can no longer reference any of its versions; published workflow versions keep their snapshot.
 
 #### 3.3.19 Starter Workflows
 
@@ -2350,13 +2369,13 @@ Elements are classified into three tiers. The raw-XML denylist scan (`rejectedEl
 - `<bpmn:inclusiveGateway>` — 0–N. OR-split/join: one or more branches fire based on `conditionExpression` evaluation. All outgoing flows from a split must carry `<bpmn:conditionExpression>`. Split/join pairs required.
 - `<bpmn:eventBasedGateway>` — 0–N. Exclusive wait for the first of N events (timer or signal). All outgoing flows must target an `intermediateCatchEvent`. At least one timer branch required. Not permitted inside a subprocess.
 - `<bpmn:subProcess>` (embedded, non-event, non-ad-hoc) — 0–N. Grouped sub-flow with its own start/end events, userTasks, and gateways. Must **not** contain an internal `<bpmn:laneSet>` — tasks inside a subprocess belong to the department of the subprocess's containing lane in the parent process. If a subprocess logically spans multiple departments, those tasks must be modelled as separate activities in the parent process lanes connected via parallel gateways. Must use `<bpmn:userTask>` (not plain `<bpmn:task>`) for all internal activities.
-- `<bpmn:callActivity>` — 0–N. References a named reusable sub-process via `<zeebe:calledElement processId="..."/>`. The called process must have `isExecutable="true"`. Called process BPMNs are supplied via `module_bpmn_xmls` on the draft and merged in-memory by the service via `Bundle()` before compile/validate. Each called process is **compiled once, into its own plan** in `CompiledCollaboration.Plans`, named by its process id, and each call site compiles to one `ExecutionStep.CallPlan` naming that plan (`workflow_models_lib.md` §2.5). Consumers expand calls with `dsl.ExpandCalls` (§2.6 there), so the same module called from two places gives two separate sets of tasks, each in the department its call binds.
+- `<bpmn:callActivity>` — 0–N. References a named reusable sub-process via `<zeebe:calledElement processId="..."/>`. The called process must have `isExecutable="true"`. It is either a process in the same file, private to the workflow, or a library module resolved by `processId` and version (§3.3.18). Each called process is **compiled once, into its own plan** in `CompiledCollaboration.Plans`, named by its process id — `<process_id>@v<version_number>` for a library module version — and each call site compiles to one `ExecutionStep.CallPlan` naming that plan (`workflow_models_lib.md` §2.5). Consumers expand calls with `dsl.ExpandCalls` (§2.6 there), so the same module called from two places gives two separate sets of tasks, each in the department its call binds.
   - **Departments.** A lane of the called process that holds work (a task, a callActivity or a subProcess) becomes one of its plan's departments. With a `dept_id` property it is *fixed* to that department, and no call can remap it. Without one it is *open*, and each call binds it to one of the caller's lanes: through the `Depts` input, or, when the called process has exactly one open lane (a laneless process counts as one), by default to the lane the callActivity itself sits in. A bound lane takes the caller lane's department and IAM id. Open lanes are the one place a lane may lack `dept_id`. See the **Depts dict-injection** pattern below and codes 25 and 31.
   - **Call-site assignees.** An optional `target="Assignees"` input maps a called task's id to a user id, a default for this call only (code 8's resolution order).
   - **Boundaries.** Message, timer and error boundary events attach to a callActivity as they do to a subProcess, and compile to the call step's `MessagePaths`, `TimerPaths` and `ErrorPaths`.
   - **Mappings.** The call's other `zeebe:ioMapping` inputs and outputs compile to the call step's `IOMapping`, and its `zeebe:properties` to its `Extras`.
 
-  In a single-root BPMN, every called process reachable from the root is validated once, with the root's rules and without the diagram check (`Bundle()` does not merge module diagrams). An error inside a module names the module's own node. An error about the whole process, such as `NO_END_EVENT`, names the called process id. A called process with no start event is reported only at its call site. A call cycle is `CALLED_ELEMENT_CYCLE`, and two processes sharing an `id` is `DUPLICATE_PROCESS_ID`.
+  In a single-root BPMN, every called process reachable from the root is validated once, with the root's rules and without the diagram check (module diagrams are not bundled). An error inside a module names the module's own node. An error about the whole process, such as `NO_END_EVENT`, names the called process id. A called process with no start event is reported only at its call site. A call cycle is `CALLED_ELEMENT_CYCLE`, and two processes sharing an `id` is `DUPLICATE_PROCESS_ID`.
 
   **`target="Depts"` dict-injection** — the `Depts` input lets one module with generic lane names (such as "Sender" / "Receiver") serve many call sites, each binding those lanes to its own departments. The `source` is a JSON object of strings, written plain or with a leading `=`, mapping a module lane name to a lane name of the calling process, both matched case-insensitively — e.g. `{"sender":"Consultant","receiver":"Tender"}`. It compiles to the call step's `Departments`, keyed by the module's lane names and valued by the caller's, and never reaches `IOMapping`. A UI is expected to render it as a form rather than ask for JSON.
 
@@ -4115,7 +4134,7 @@ The Definition Service consumes no tenant lifecycle event. `event_consumer`'s ro
 
 The Definition Service owns the compilation of the `compiled_plan_json` (DSL). This structure forms a strict API contract with the downstream Execution Service and Temporal Workers:
 
-- **Stored shape**: publish always stores a `dsl.CompiledCollaboration`, the shape the Execution Service decodes. It is built by one compiler entry point, `CompileForPublish`, which also stamps `schema_version = dsl.CurrentSchemaVersion`. A BPMN with one root process becomes a collaboration of one plan, with `main_plan` set to that plan's name. The name is the process `name`, or its `id` when the process has none. Each called process, a bundled module or a process in the same file, compiles once into its own plan beside it, named by its process id. A BPMN with a `<bpmn:collaboration>` validates, but publish refuses it: with `MULTIPLE_PROCESSES` when two or more pools are executable roots, otherwise with the single-process validation errors of the one pool compiled. An ignored pool compiles to a call-pool task that no one can complete until the admin completion path in `execution_service.md` §2.3 exists.
+- **Stored shape**: publish always stores a `dsl.CompiledCollaboration`, the shape the Execution Service decodes. It is built by one compiler entry point, `CompileForPublish`, which also stamps `schema_version = dsl.CurrentSchemaVersion`. A BPMN with one root process becomes a collaboration of one plan, with `main_plan` set to that plan's name. The name is the process `name`, or its `id` when the process has none. Each called process, a library module version or a process in the same file, compiles once into its own plan beside it, named `<process_id>@v<version_number>` or by its process id. A BPMN with a `<bpmn:collaboration>` validates, but publish refuses it: with `MULTIPLE_PROCESSES` when two or more pools are executable roots, otherwise with the single-process validation errors of the one pool compiled. An ignored pool compiles to a call-pool task that no one can complete until the admin completion path in `execution_service.md` §2.3 exists.
 - **Readers**: the structural-divergence check (§5.3) and the version diff (§3.3.14) compare the expanded main plan (`dsl.ExpandCalls`) of each stored collaboration. Assignee eligibility and `workflow_node_assignee` rows come from the expanded main plan, so a task inside a call has the node key `<call id>::<lane>/<task id>` and its call's department, as in the Execution Service.
 
 - **Backward Compatibility**: The DSL schema is strictly additive. No existing keys (e.g., `sequential`, `parallel`, `subworkflow`) can be removed or renamed without a major version upgrade of the Execution Service workers.
@@ -4346,12 +4365,12 @@ This section captures the key architectural and design decisions made for the Wo
 - **Credential lifecycle**: *write* is the authoring-form submission above. *Rotation* needs no separate operation — OpenBao KV-v2 versions on overwrite, so re-calling `WriteCredential` on the same path rotates the value, and the read side (`execution_service`'s `openbao.Reader`, at dispatch time) always resolves the latest version; no version is ever pinned. *Revocation* is `DELETE /api/v1/connectors/credentials/{connector_type}/{field_name}`, which calls OpenBao's **metadata** endpoint so every version is destroyed outright rather than soft-deleted. There is deliberately **no** credential table in Postgres: a secret is addressed purely by its deterministic path, so there is no `created_at`/`rotated_at`/`expires_at` to drift out of sync with OpenBao's own. The consequence, tracked in `workflow_connectors.md` §9, is that nothing sweeps a secret whose owning connector task or workflow version is gone — cleanup is on-demand only.
 - **Path-injection control**: both `connector_type` and `field_name` are interpolated into the OpenBao path, so both are bounded before they touch it — `^[a-zA-Z0-9_-]+$`, plus a `registry.All()` membership check on `connector_type` against the closed set of real connector types. `execution_service` re-declares equivalent regexes independently on the read side rather than importing these, because there the path arrives inside untrusted event-payload data.
 - **Alias `BaseURL` host allowlist**: a `rest-call` alias write is rejected unless the URL's host appears in `CONNECTOR_ALIAS_ALLOWED_HOSTS` — exact hosts, or a leading-dot suffix rule such as `.svc.cluster.local` — and unless its scheme is `http`/`https` with no embedded userinfo. The check **fails closed**: an empty allowlist rejects every alias write, so an unconfigured deployment cannot silently accept any host. `restcall.Execute` attaches the caller's real `x-internal-token` and `x-departments` headers to whatever host an alias names, and the alias registry is org-wide with no RLS, so an outward-pointing alias hands that host a valid internal credential ("never a raw URL, always an internal service", `workflow_connectors.md` §6.4.4). Enforcement lives on this write path rather than in the connector library because the allowlist is deployment configuration and the library takes none.
-- **Rationale**: Connector-authoring templates are fixed, code-generated catalogue metadata with no tenant-stored content of their own — not a new stored-entity type — so there's no data-ownership reason to keep them in a separate, undesigned service rather than the service that already owns design-time workflow authoring/compilation and already imports `pkg/registry` for a closely related compile-time check (§10.14). The module/starter library (§10.16) is modeled into this service's schema for the same reason. This service's existing `<bpmn:callActivity>`/`module_bpmn_xmls`/`Bundle()` compile-time merge mechanism (§4.1.3.3, the `callActivity` documentation) merges whatever module XML a caller supplies; the persisted module store (§10.16) sits in front of that merge step without changing it.
+- **Rationale**: Connector-authoring templates are fixed, code-generated catalogue metadata with no tenant-stored content of their own — not a new stored-entity type — so there's no data-ownership reason to keep them in a separate, undesigned service rather than the service that already owns design-time workflow authoring/compilation and already imports `pkg/registry` for a closely related compile-time check (§10.14). The module/starter library (§10.16) is modeled into this service's schema for the same reason. A workflow's calls resolve against the module store (§10.16, §3.3.18) at validate and publish.
 
 ### 10.16 Reusable Module & Starter-Workflow Library Absorbed Into This Service
 
 - **Decision**: The "custom BPMN module"/"reusable authoring component" library, and a new "starter/predesigned workflow" library, are both modeled into this service's own schema (`workflow_module`/`workflow_module_version`/`workflow_template`, §2.1, Appendix A) rather than a separate service's database. Both support a `scope` dimension — `global` (platform-authored, `tenant_id NULL`, visible to every tenant) and `tenant` (that tenant's own saved-for-reuse content, RLS-scoped) — per an explicit product requirement that tenants can maintain their own reusable modules/starters alongside platform-provided ones. Global-row writes are gated by the `platform_operator` role at the handler layer (mirroring Org & Membership's identical pattern for its own global department catalog, OP-1) and go through the same `BYPASSRLS` system-role connection the Outbox Relay already uses (§10.4) — the ordinary RLS-bound API role's `WITH CHECK` clause structurally cannot write a `scope='global'` row (§2.1's RLS DDL).
-- **Rationale**: This service already owns the entire versioned-BPMN-content lifecycle a module/starter library needs — draft → publish → version → clone (§3.3.10), `record_version` optimistic locking, RLS — and is the *only* consumer of module content today via `<bpmn:callActivity>`/`Bundle()` (§4.1.3.3), which currently has no persisted store to draw from and requires the caller to re-supply full module XML on every compile. Colocating storage with its only real consumer closes that gap rather than relocating one, and reuses infrastructure (this service's Postgres instance, already shared with Execution Service via separate schemas per §4.1/§5.1's database-per-service exception) instead of standing up a new deployable, database, and RLS/migration/CI surface for what is structurally more of the same kind of content this service already stores. A starter is deliberately **not** given the same DRAFT/PUBLISHED/ARCHIVED version history a module gets (§2.1) — "using" a starter is nothing more than submitting its `bpmn_xml` to the ordinary `POST /workflows` a hand-authored upload would use (§3.3.19), so it needs no lifecycle machinery of its own beyond simple CRUD.
+- **Rationale**: This service already owns the entire versioned-BPMN-content lifecycle a module/starter library needs — draft → publish → version → clone (§3.3.10), `record_version` optimistic locking, RLS — and is the *only* consumer of module content, through `<bpmn:callActivity>` (§3.3.18). Colocating storage with its only consumer lets a workflow's calls resolve against it directly, and reuses infrastructure (this service's Postgres instance, already shared with Execution Service via separate schemas per §4.1/§5.1's database-per-service exception) instead of standing up a new deployable, database, and RLS/migration/CI surface for what is structurally more of the same kind of content this service already stores. A starter is deliberately **not** given the same DRAFT/PUBLISHED/ARCHIVED version history a module gets (§2.1) — "using" a starter is nothing more than submitting its `bpmn_xml` to the ordinary `POST /workflows` a hand-authored upload would use (§3.3.19), so it needs no lifecycle machinery of its own beyond simple CRUD.
 - **Open item, not resolved by this decision:** if the intended UI for browsing this content turns out to be CMS-like (cross-tenant search, tagging, thumbnails, marketplace-style discovery) rather than "just another versioned BPMN entity," that product shape could still justify pulling this back into a dedicated service later. Not pre-built for here — see Appendix E.
 - **Implementation note**: `scope=global` writes go through a dedicated second database pool (`SYSTEM_DATABASE_URL`), distinct from the primary pool the API and Outbox Relay share (§1.7.1/§1.8.1), gated at the handler layer by the `platform_operator` role check. The RLS policies on `workflow_module`/`workflow_module_version`/`workflow_template` use the same inline-policy style as every other table in this service (Appendix A). The `platform_operator` role/claim itself is provisional — no code confirms how a cross-tenant claim would reach `x-tenant-roles`, which is otherwise populated per-tenant (tracked in Appendix E).
 
@@ -4482,6 +4501,7 @@ CREATE TABLE workflow_version (
     created_by_user_id UUID NOT NULL,
     is_valid BOOLEAN NOT NULL DEFAULT true,
     validation_errors_json JSONB,
+    module_refs JSONB NOT NULL DEFAULT '[]',  -- library module versions resolved at publish (§3.3.18)
     record_version BIGINT NOT NULL DEFAULT 1,  -- monotonic optimistic-lock counter; incremented on every update
     created_at TIMESTAMP DEFAULT now(),
     updated_at TIMESTAMP DEFAULT now(),
@@ -4508,13 +4528,11 @@ CREATE TABLE workflow_node_assignee (
     created_at TIMESTAMP DEFAULT now()
 );
 
--- Reusable BPMN modules (§3.3.18, §10.16) — absorbed from the retired "BE-for-UI"
--- placement. scope='global' rows are platform-authored and have tenant_id NULL;
--- scope='tenant' rows are tenant-authored and RLS-scoped normally. NOT the same
--- module-content table Bundle() reads at compile time in real time — Bundle()
--- still just merges whatever bpmn_xml a caller supplies (§4.1.3.3); this table
--- only adds a persisted, versioned, browsable store the frontend reads from
--- before supplying that content.
+-- Reusable BPMN modules (§3.3.18, §10.16). scope='global' rows are
+-- platform-authored and have tenant_id NULL; scope='tenant' rows are
+-- tenant-authored and RLS-scoped normally. A workflow's calls resolve against
+-- these tables at validate and publish; the published version keeps a snapshot
+-- (workflow_version.module_refs).
 CREATE TYPE catalog_scope AS ENUM ('global', 'tenant');
 
 CREATE TABLE workflow_module (
@@ -4523,6 +4541,7 @@ CREATE TABLE workflow_module (
     scope catalog_scope NOT NULL,
     name VARCHAR(255) NOT NULL,
     description TEXT,
+    process_id VARCHAR(255) NOT NULL,  -- fixed for every version; what a callActivity's calledElement names
     active_version_id UUID,
     created_by_user_id UUID,  -- NULL for platform-authored global modules
     record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),
@@ -4542,7 +4561,7 @@ CREATE TABLE workflow_module_version (
     scope catalog_scope NOT NULL,
     status workflow_version_status NOT NULL,
     bpmn_xml TEXT NOT NULL,
-    process_id VARCHAR(255) NOT NULL,  -- the bpmn:process id inside bpmn_xml; matched against a referencing diagram's callActivity calledElement
+    process_id VARCHAR(255) NOT NULL,  -- the bpmn:process id inside bpmn_xml; always its module's process_id
     version_number INT,  -- NULL on DRAFT rows, same convention as workflow_version
     is_valid BOOLEAN NOT NULL DEFAULT true,
     validation_errors_json JSONB,
@@ -4559,6 +4578,12 @@ CREATE TABLE workflow_module_version (
 ALTER TABLE workflow_module ADD CONSTRAINT fk_module_active_version
     FOREIGN KEY (active_version_id) REFERENCES workflow_module_version(id)
     ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+
+-- A module's process_id is unique within its scope; module create also checks
+-- the other scope, since a tenant sees global modules.
+CREATE UNIQUE INDEX uq_module_process_id_global ON workflow_module(process_id) WHERE scope = 'global';
+CREATE UNIQUE INDEX uq_module_process_id_tenant ON workflow_module(tenant_id, process_id) WHERE scope = 'tenant';
+CREATE INDEX idx_workflow_version_module_refs ON workflow_version USING gin (module_refs jsonb_path_ops);
 
 CREATE UNIQUE INDEX uq_module_version_published
     ON workflow_module_version(module_id, version_number)
@@ -5310,6 +5335,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.20 | 2026-09-24 | **Called processes are validated** (§4.1.2 `callActivity`, §3.1.4 codes 32–33). Only the call site was checked, so a module's own tasks published unvalidated (for example a userTask with empty `candidateUsers`), and a module that called itself, directly or through another module, recursed at compile time until the process died. Every called process reachable from the root is now validated once with the root's rules. New `CALLED_ELEMENT_CYCLE` rejects a call cycle, and new `DUPLICATE_PROCESS_ID` rejects two processes with one `id`, which a bundled module could introduce. The call-site checks (`UNRESOLVED_CALLED_ELEMENT`, `MISSING_DEPT_INPUT_FOR_MODULE`) are reported once per call site; they were reported twice. An error about a whole `subProcess` body, such as `NO_END_EVENT`, names the `subProcess`; it named no node. |
 | 1.21 | 2026-09-24 | **`TASK_LIMIT_EXCEEDED` covers the inlined plan** (§3.1.4 code 9). The 1000 limit counted each process's own user tasks, while compilation inlines a called process once per call site. So a chain of small modules that each called the next twice validated clean and compiled to millions of steps, which exhausted memory at publish. A process that makes calls now also counts one per call site plus the called process's own count. |
 | 1.22 | 2026-09-24 | **Called processes are referenced plans, not inlined** (§4.1.2 `callActivity`, §3.1.4 codes 8, 9, 22, 25, 31, 32, §7.5, qualification). Inlining a module at every call site duplicated its stages inside one department (Execution runs every stage of a department wherever a step names it), collided node keys, kept the module lane's IAM id through a `Depts` remap, gave a laneless module none, and dropped message boundaries. Each called process now compiles once into its own plan, and a call compiles to `ExecutionStep.CallPlan` with its department bindings, call-site `Assignees`, `IOMapping`, `Extras` and boundary paths; both services expand calls with the shared `dsl.ExpandCalls`. A module lane without `dept_id` is an open slot the call binds: through `Depts` (now an error when malformed, and accepted with a leading `=`), or by default to the call's lane when there is one open slot. The `dept_id` input is gone. Timer and error boundaries on a callActivity are accepted. `CANDIDATE_USERS_EMPTY` becomes a warning: the assignee may be supplied at instance start, which the Execution Service already requires. Publish counts the expanded plan's stages against the 1000 limit. |
+| 1.23 | 2026-09-25 | **Modules come from the library** (§3.3.18, §10.16, §4.1.2 `callActivity`, §7.5, code 29, Appendix A). A workflow no longer carries module XML: `module_bpmn_xmls` is removed from drafts, versions and `/workflows/validate`. A call names a library module by `processId` and pins a version with `versionTag`, or takes the active version (`latest`); calls resolve at validate, publish and a draft's diff, and modules' own calls resolve the same way. A published version records what it resolved in `module_refs` and compiles each module version into its own plan, `<process_id>@v<version_number>`, so two versions of one module can coexist; a later module version or an archived module never changes it. A module's `process_id` is fixed across versions and unique among a tenant's modules and the global ones (`409 MODULE_PROCESS_ID_CONFLICT`). Modules validate with their own process as the root and their open lanes allowed; only errors block; a global module names no user, in a task or in a call's `Assignees`; a module calling itself at its latest version is `CALLED_ELEMENT_CYCLE`. New `GET /modules/:id/usages`. Workflow and starter creation resolve library calls too, and warnings no longer block them. §3.3.12.1 judges a published version against its `module_refs`. A `versionTag` always names the library; a call is judged local or library in its own document; a problem inside a module is reported on the workflow's call. |
 
 ---
 

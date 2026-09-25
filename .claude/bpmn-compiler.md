@@ -87,13 +87,14 @@ Each called process compiles **once, into its own plan** in `CompiledCollaborati
 - **Open and fixed lanes.** A module lane that holds work (a task, a callActivity or a subProcess) becomes a department. With a `dept_id` property it is fixed, and `Depts` cannot remap it. Without one it is open, and is the only kind of lane allowed to lack `dept_id` (`BPMNDefinitions.ModuleProcesses` marks the processes where that applies). A laneless module is one open lane, whose department ID is the process id.
 - **Binding.** `Depts` (JSON object of strings, plain or `=`-prefixed) maps open lanes to caller lanes, case-insensitively; a single open lane left unmapped takes the callActivity's own lane. `Assignees` maps module task ids to users for this call. Both are stripped from `IOMapping`.
 - **Boundaries.** Message, timer and error boundary events on a callActivity compile to the call step's paths, built the same way as a subProcess's.
-- Called processes must be supplied as entries in `module_bpmn_xmls` on the draft. The service merges them in-memory before compile/validate via `Bundle()`. Diagrams in module BPMNs are intentionally NOT merged.
+- **Library modules.** `ModuleCalls` lists the calls that name a library module, with their pinned `versionTag` (0 = latest): every call with a `versionTag`, since only library modules have versions, and every other call whose target is not a process in the document. Whether a call is a library call is judged in the document it was written in, so a module's call never takes over a workflow's local process of the same id. It flags a FEEL `processId`, a `versionTag` that is not a positive integer, an unknown `bindingType`, and `deployment` with no local process, all as `UNRESOLVED_CALLED_ELEMENT`. The service resolves those calls (`service/module_resolution.go`) and `BundleModules` merges each resolved version under its plan name `<process_id>@v<n>`, rewriting the calls that name it and clearing their binding attributes. Diagrams in module BPMNs are intentionally NOT merged.
+- **Module content.** `ValidateModule` validates a bundled module with its own process as the root and its open lanes allowed, skipping the diagram rules. For a global module, a task naming a user is `INVALID_CANDIDATE_USER`.
 
 **Nested `<bpmn:subProcess>`** inside another subProcess is not supported — the validator emits `NESTED_SUBPROCESS_NOT_SUPPORTED`.
 
 ## Module BPMNs (Called Processes)
 
-- Each called process reachable from the root is validated once with the root's rules, minus the diagram rules (`Bundle()` drops module diagrams). A call cycle is `CALLED_ELEMENT_CYCLE`, and a repeated process `id` is `DUPLICATE_PROCESS_ID` (`validator/call_graph.go`).
+- Each called process reachable from the root is validated once with the root's rules, minus the diagram rules (`BundleModules` drops module diagrams). A call cycle is `CALLED_ELEMENT_CYCLE`, and a repeated process `id` is `DUPLICATE_PROCESS_ID` (`validator/call_graph.go`).
 - `CANDIDATE_USERS_EMPTY` is a warning: a task's assignee may come from the instance start request's `override_map`, which Execution requires for any task that resolves to nobody.
 
 ## Multi-Participant Collaboration

@@ -4,6 +4,8 @@ package e2e_test
 
 import (
 	"context"
+	"errors"
+	"regexp"
 	"testing"
 
 	"github.com/google/uuid"
@@ -29,6 +31,10 @@ func wireModuleService(tenantPool, systemPool *pgcommon.Pool) *service.ModuleSer
 		Compiler:         compiler,
 	})
 }
+
+// globalModuleBPMN is minimalBPMN without its default users, which a global
+// module may not name.
+var globalModuleBPMN = regexp.MustCompile(` candidateUsers="[^"]*"`).ReplaceAllString(minimalBPMN, "")
 
 // TestE2E_ModuleLifecycle exercises the full tenant-scoped module state
 // machine through the real service+repo layers against a real, genuinely
@@ -99,7 +105,7 @@ func TestE2E_ModuleGlobalScope_RequiresRealBypassRLSPool(t *testing.T) {
 		svc := wireModuleService(tenantPool, systemPool)
 
 		mod, _, err := svc.Create(ctx, tenantID, userID, service.CreateModuleReq{
-			Name: "Global Module", BPMNXML: minimalBPMN, Scope: domain.ScopeGlobal,
+			Name: "Global Module", BPMNXML: globalModuleBPMN, Scope: domain.ScopeGlobal,
 		})
 		if err != nil {
 			t.Fatalf("Create(global): %v", err)
@@ -124,10 +130,14 @@ func TestE2E_ModuleGlobalScope_RequiresRealBypassRLSPool(t *testing.T) {
 		svc := wireModuleService(tenantPool, notActuallyBypassRLS)
 
 		_, _, err := svc.Create(ctx, tenantID, userID, service.CreateModuleReq{
-			Name: "Should Not Be Written", BPMNXML: minimalBPMN, Scope: domain.ScopeGlobal,
+			Name: "Should Not Be Written", BPMNXML: globalModuleBPMN, Scope: domain.ScopeGlobal,
 		})
 		if err == nil {
 			t.Fatal("expected the database to reject a global-scope write through an ordinary role, got no error")
+		}
+		var vf *domain.ValidationFailedError
+		if errors.As(err, &vf) {
+			t.Fatalf("rejected by validation before reaching the database: %+v", vf.Errors)
 		}
 	})
 }

@@ -15,6 +15,8 @@ const (
 	constraintWorkflowVersionPublished = "uq_workflow_version_published"
 	constraintModuleVersionDraft       = "idx_mv_single_draft"
 	constraintModuleVersionPublished   = "uq_module_version_published"
+	constraintModuleProcessIDTenant    = "uq_module_process_id_tenant"
+	constraintModuleProcessIDGlobal    = "uq_module_process_id_global"
 )
 
 func mapErr(err error) error {
@@ -36,6 +38,8 @@ func mapErr(err error) error {
 			return domain.ErrDraftAlreadyExists
 		case constraintModuleVersionPublished:
 			return domain.ErrDraftConcurrency
+		case constraintModuleProcessIDTenant, constraintModuleProcessIDGlobal:
+			return domain.ErrModuleProcessIDTaken
 		}
 	}
 	return err

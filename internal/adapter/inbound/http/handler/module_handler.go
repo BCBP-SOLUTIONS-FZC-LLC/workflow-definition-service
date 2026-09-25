@@ -29,6 +29,7 @@ type moduleResp struct {
 	Scope           string     `json:"scope"`
 	Name            string     `json:"name"`
 	Description     string     `json:"description"`
+	ProcessID       string     `json:"process_id"`
 	ActiveVersionID *uuid.UUID `json:"active_version_id,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
@@ -59,6 +60,7 @@ func toModuleResp(m *domain.Module) moduleResp {
 		Scope:           string(m.Scope),
 		Name:            m.Name,
 		Description:     m.Description,
+		ProcessID:       m.ProcessID,
 		ActiveVersionID: m.ActiveVersionID,
 		CreatedAt:       m.CreatedAt,
 		UpdatedAt:       m.UpdatedAt,
@@ -223,6 +225,38 @@ func (h *Handler) GetModule(c *gin.Context) {
 		resp.ActiveVersion = &v
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+type moduleUsageResp struct {
+	WorkflowID          uuid.UUID            `json:"workflow_id"`
+	WorkflowKey         string               `json:"workflow_key"`
+	WorkflowName        string               `json:"workflow_name"`
+	VersionID           uuid.UUID            `json:"version_id"`
+	VersionNumber       *int32               `json:"version_number"`
+	Status              domain.VersionStatus `json:"status"`
+	ModuleVersionNumber int32                `json:"module_version_number"`
+	Behind              bool                 `json:"behind"`
+}
+
+func (h *Handler) ListModuleUsages(c *gin.Context) {
+	tenantID, _, ok := mustCtx(c)
+	if !ok {
+		return
+	}
+	moduleID, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	usages, err := h.modules.Usages(c.Request.Context(), tenantID, moduleID)
+	if err != nil {
+		errResponse(c, h.log, err)
+		return
+	}
+	resp := make([]moduleUsageResp, 0, len(usages))
+	for _, u := range usages {
+		resp = append(resp, moduleUsageResp(*u))
+	}
+	c.JSON(http.StatusOK, gin.H{"usages": resp})
 }
 
 func (h *Handler) ListModuleVersions(c *gin.Context) {

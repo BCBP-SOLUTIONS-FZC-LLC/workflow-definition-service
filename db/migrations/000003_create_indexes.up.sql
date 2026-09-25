@@ -17,6 +17,11 @@ CREATE INDEX idx_wnas_version ON workflow_node_assignee(workflow_version_id);
 CREATE INDEX idx_module_name_trgm ON workflow_module USING gin (name gin_trgm_ops);
 CREATE INDEX idx_module_scope_tenant ON workflow_module(scope, tenant_id);
 CREATE INDEX idx_module_active_version ON workflow_module(active_version_id) WHERE active_version_id IS NOT NULL;
+-- A module's process_id is unique within its scope; module create checks the
+-- other scope, since a tenant also sees global modules.
+CREATE UNIQUE INDEX uq_module_process_id_global ON workflow_module(process_id) WHERE scope = 'global';
+CREATE UNIQUE INDEX uq_module_process_id_tenant ON workflow_module(tenant_id, process_id) WHERE scope = 'tenant';
+CREATE INDEX idx_workflow_version_module_refs ON workflow_version USING gin (module_refs jsonb_path_ops);
 
 CREATE INDEX idx_mv_module_id ON workflow_module_version(module_id);
 CREATE UNIQUE INDEX idx_mv_single_draft ON workflow_module_version(module_id) WHERE status = 'DRAFT';

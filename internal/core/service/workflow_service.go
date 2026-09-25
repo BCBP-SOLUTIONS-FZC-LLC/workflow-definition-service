@@ -18,7 +18,9 @@ type WorkflowDeps struct {
 	Cache      port.CacheStore
 	Execution  port.ExecutionService
 	Compiler   port.PlanCompiler
-	Log        port.Logger
+	// ModuleVersions resolves the library modules a new workflow calls.
+	ModuleVersions port.ModuleVersionRepository
+	Log            port.Logger
 }
 
 type WorkflowService struct {
@@ -28,6 +30,7 @@ type WorkflowService struct {
 	cache      port.CacheStore
 	execution  port.ExecutionService
 	compiler   port.PlanCompiler
+	modules    moduleResolver
 	log        port.Logger
 }
 
@@ -39,6 +42,7 @@ func NewWorkflowService(d WorkflowDeps) *WorkflowService {
 		cache:      d.Cache,
 		execution:  d.Execution,
 		compiler:   d.Compiler,
+		modules:    moduleResolver{compiler: d.Compiler, versions: d.ModuleVersions},
 		log:        logOrNoop(d.Log),
 	}
 }
@@ -62,11 +66,11 @@ func (s *WorkflowService) Create(
 ) (wf *domain.Workflow, v *domain.WorkflowVersion, err error) {
 	defer func() { observability.IncCounterVec(observability.WFSubmissionsTotal, observability.OutcomeLabel(err)) }()
 	if s.compiler != nil {
-		errs, err := s.compiler.Validate(ctx, bpmnXML)
+		errs, err := s.modules.validate(ctx, s.modules.live(tenantID), bpmnXML)
 		if err != nil {
 			return nil, nil, err
 		}
-		if len(errs) > 0 {
+		if hasBlockingError(errs) {
 			return nil, nil, &domain.ValidationFailedError{Errors: errs}
 		}
 	}
