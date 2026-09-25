@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The golden boundaries workflow: see golden_test.go. -->
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  id="Def_GoldenBoundaries" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_withdraw" name="withdraw"/>
+
+  <bpmn:process id="Process_GoldenBoundaries" name="Golden Boundaries" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_eng" name="Engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="2200a5ae-2466-54f7-a1d8-243106e05705"/></zeebe:properties></bpmn:extensionElements>
+        <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>CA_Timer</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Late</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Late</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Send_Withdraw</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>CA_Message</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Withdrawn</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Withdrawn</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_1"/>
+    <bpmn:callActivity id="CA_Timer" name="Review, due in five days">
+      <bpmn:extensionElements><zeebe:calledElement processId="Process_Review"/></bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:boundaryEvent id="Late" attachedToRef="CA_Timer"><bpmn:timerEventDefinition id="TED_1"><bpmn:timeDuration>P5D</bpmn:timeDuration></bpmn:timerEventDefinition></bpmn:boundaryEvent>
+    <bpmn:endEvent id="End_Late"/>
+    <bpmn:sendTask id="Send_Withdraw" name="Withdraw" messageRef="Msg_withdraw"/>
+    <bpmn:callActivity id="CA_Message" name="Review, unless withdrawn">
+      <bpmn:extensionElements><zeebe:calledElement processId="Process_Review"/></bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:boundaryEvent id="Withdrawn" attachedToRef="CA_Message"><bpmn:messageEventDefinition id="MED_1" messageRef="Msg_withdraw"/></bpmn:boundaryEvent>
+    <bpmn:endEvent id="End_Withdrawn"/>
+    <bpmn:endEvent id="End_1"/>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_1" targetRef="CA_Timer"/>
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="CA_Timer" targetRef="Send_Withdraw"/>
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Send_Withdraw" targetRef="CA_Message"/>
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="CA_Message" targetRef="End_1"/>
+    <bpmn:sequenceFlow id="Flow_L" sourceRef="Late" targetRef="End_Late"/>
+    <bpmn:sequenceFlow id="Flow_W" sourceRef="Withdrawn" targetRef="End_Withdrawn"/>
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_GoldenBoundaries">
+      <bpmndi:BPMNShape id="Lane_eng_di" bpmnElement="Lane_eng"/>
+      <bpmndi:BPMNShape id="Start_1_di" bpmnElement="Start_1"/>
+      <bpmndi:BPMNShape id="CA_Timer_di" bpmnElement="CA_Timer"/>
+      <bpmndi:BPMNShape id="Late_di" bpmnElement="Late"/>
+      <bpmndi:BPMNShape id="End_Late_di" bpmnElement="End_Late"/>
+      <bpmndi:BPMNShape id="Send_Withdraw_di" bpmnElement="Send_Withdraw"/>
+      <bpmndi:BPMNShape id="CA_Message_di" bpmnElement="CA_Message"/>
+      <bpmndi:BPMNShape id="Withdrawn_di" bpmnElement="Withdrawn"/>
+      <bpmndi:BPMNShape id="End_Withdrawn_di" bpmnElement="End_Withdrawn"/>
+      <bpmndi:BPMNShape id="End_1_di" bpmnElement="End_1"/>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1"/>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2"/>
+      <bpmndi:BPMNEdge id="Flow_3_di" bpmnElement="Flow_3"/>
+      <bpmndi:BPMNEdge id="Flow_4_di" bpmnElement="Flow_4"/>
+      <bpmndi:BPMNEdge id="Flow_L_di" bpmnElement="Flow_L"/>
+      <bpmndi:BPMNEdge id="Flow_W_di" bpmnElement="Flow_W"/>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
