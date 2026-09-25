@@ -244,7 +244,23 @@ func unmarshal(xmlData string) (*bpmncore.BPMNDefinitions, error) {
 			sp.SequenceFlows = stripEmptyRefFlows(sp.SequenceFlows)
 		}
 	}
+	markCalledProcesses(&defs)
 	return &defs, nil
+}
+
+// markCalledProcesses records every process a callActivity names as a module,
+// whose open lanes its calls bind.
+func markCalledProcesses(defs *bpmncore.BPMNDefinitions) {
+	defs.ModuleProcesses = map[string]bool{}
+	for i := range defs.Processes {
+		for _, ca := range defs.Processes[i].CallActivities {
+			if ext := ca.ExtensionElements.ZeebeCalledElement; ext != nil {
+				if called := bpmncore.FindProcessByID(defs, ext.ProcessID); called != nil {
+					defs.ModuleProcesses[called.ID] = true
+				}
+			}
+		}
+	}
 }
 
 func promoteTasks(userTasks, genericTasks, serviceTasks *[]bpmncore.BPMNUserTask) {

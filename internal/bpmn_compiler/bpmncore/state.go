@@ -23,6 +23,9 @@ type CompileState struct {
 	// StopAt, when non-empty, causes TraverseNode to return immediately without
 	// processing the node. Used by branch states to stop at the parallel join.
 	StopAt string
+	// Called collects the plans of called processes, shared by every state of
+	// one compile.
+	Called *CalledPlans
 
 	sd      *sharedDeptsStore
 	steps   []dsl.ExecutionStep
@@ -50,6 +53,7 @@ func NewCompileState(
 		Elements:      elements,
 		Defs:          defs,
 		ExternalNodes: make(map[string]string),
+		Called:        NewCalledPlans(),
 		sd:            &sharedDeptsStore{deptIdx: make(map[string]int)},
 		visited:       make(map[string]bool),
 	}
@@ -67,6 +71,7 @@ func NewBranchState(parent *CompileState, stopAt string) *CompileState {
 		Defs:          parent.Defs,
 		ExternalNodes: parent.ExternalNodes,
 		StopAt:        stopAt,
+		Called:        parent.Called,
 		sd:            parent.sd,
 		visited:       make(map[string]bool),
 	}

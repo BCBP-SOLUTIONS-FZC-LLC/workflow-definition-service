@@ -32,7 +32,6 @@ func callerBPMN(mainID, calls string, procs ...string) string {
     <bpmn:callActivity id="CA_1">
       <bpmn:extensionElements>
         <zeebe:calledElement processId="%[2]s"/>
-        <zeebe:ioMapping><zeebe:input source="engineering" target="dept_id"/></zeebe:ioMapping>
       </bpmn:extensionElements>
     </bpmn:callActivity>
     <bpmn:endEvent id="End_1"/>
@@ -60,7 +59,6 @@ func modulePassingTo(id, calls string) string {
     <bpmn:callActivity id="%[1]s_CA">
       <bpmn:extensionElements>
         <zeebe:calledElement processId="%[2]s"/>
-        <zeebe:ioMapping><zeebe:input source="engineering" target="dept_id"/></zeebe:ioMapping>
       </bpmn:extensionElements>
     </bpmn:callActivity>
     <bpmn:endEvent id="%[1]s_End"/>
@@ -77,13 +75,11 @@ func moduleCallingBoth(id, first, second string) string {
     <bpmn:callActivity id="%[1]s_CA1">
       <bpmn:extensionElements>
         <zeebe:calledElement processId="%[2]s"/>
-        <zeebe:ioMapping><zeebe:input source="engineering" target="dept_id"/></zeebe:ioMapping>
       </bpmn:extensionElements>
     </bpmn:callActivity>
     <bpmn:callActivity id="%[1]s_CA2">
       <bpmn:extensionElements>
         <zeebe:calledElement processId="%[3]s"/>
-        <zeebe:ioMapping><zeebe:input source="engineering" target="dept_id"/></zeebe:ioMapping>
       </bpmn:extensionElements>
     </bpmn:callActivity>
     <bpmn:endEvent id="%[1]s_End"/>
@@ -182,33 +178,33 @@ func TestValidate_AcyclicModuleChain_IsValid(t *testing.T) {
 func TestValidate_CalledProcessBody_IsValidated(t *testing.T) {
 	bpmnXML := callerBPMN("Process_Main", "Process_B",
 		modulePassingTo("Process_B", "Process_C"),
-		moduleWithTask("Process_C", ""))
+		moduleWithTask("Process_C", "not-a-uuid"))
 
 	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	got := findCode(errs, domain.BPMNErrCandidateUsersEmpty)
+	got := findCode(errs, domain.BPMNErrInvalidCandidateUser)
 	if got == nil {
-		t.Fatalf("errors = %v, want CANDIDATE_USERS_EMPTY from the called process's task", errCodes(errs))
+		t.Fatalf("errors = %v, want INVALID_CANDIDATE_USER from the called process's task", errCodes(errs))
 	}
 	if got.NodeID != "Process_C_Task" {
-		t.Errorf("CANDIDATE_USERS_EMPTY node = %q, want Process_C_Task", got.NodeID)
+		t.Errorf("INVALID_CANDIDATE_USER node = %q, want Process_C_Task", got.NodeID)
 	}
-	assertCompileRefusedWith(t, bpmnXML, domain.BPMNErrCandidateUsersEmpty)
+	assertCompileRefusedWith(t, bpmnXML, domain.BPMNErrInvalidCandidateUser)
 }
 
 func TestValidate_CalledProcessReachedTwice_IsReportedOnce(t *testing.T) {
 	bpmnXML := callerBPMN("Process_Main", "Process_B",
 		moduleCallingTwice("Process_B", "Process_C"),
-		moduleWithTask("Process_C", ""))
+		moduleWithTask("Process_C", "not-a-uuid"))
 
 	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if n := countCode(errs, domain.BPMNErrCandidateUsersEmpty); n != 1 {
-		t.Errorf("CANDIDATE_USERS_EMPTY reported %d times, want 1; errors = %v", n, errCodes(errs))
+	if n := countCode(errs, domain.BPMNErrInvalidCandidateUser); n != 1 {
+		t.Errorf("INVALID_CANDIDATE_USER reported %d times, want 1; errors = %v", n, errCodes(errs))
 	}
 }
 
@@ -452,7 +448,7 @@ func moduleCallingN(id, calls string, n int) string {
 	prev := id + "_Start"
 	for i := range n {
 		ca := fmt.Sprintf("%s_CA%d", id, i)
-		fmt.Fprintf(&b, `    <bpmn:callActivity id=%q><bpmn:extensionElements><zeebe:calledElement processId=%q/><zeebe:ioMapping><zeebe:input source="engineering" target="dept_id"/></zeebe:ioMapping></bpmn:extensionElements></bpmn:callActivity>
+		fmt.Fprintf(&b, `    <bpmn:callActivity id=%q><bpmn:extensionElements><zeebe:calledElement processId=%q/></bpmn:extensionElements></bpmn:callActivity>
     <bpmn:sequenceFlow id="%s_F" sourceRef=%q targetRef=%q/>
 `, ca, calls, ca, prev, ca)
 		prev = ca
@@ -502,7 +498,7 @@ func TestCompileCollaboration_IgnoredPoolOverOwnTaskLimit_StillCountsItsCalls(t 
 	ignored := `  <bpmn:process id="Process_Ignored" isExecutable="true">
     <bpmn:extensionElements><zeebe:properties><zeebe:property name="ignore" value="true"/></zeebe:properties></bpmn:extensionElements>
     <bpmn:startEvent id="Ign_Start"/>
-    <bpmn:callActivity id="Ign_CA"><bpmn:extensionElements><zeebe:calledElement processId="Process_L0"/><zeebe:ioMapping><zeebe:input source="engineering" target="dept_id"/></zeebe:ioMapping></bpmn:extensionElements></bpmn:callActivity>
+    <bpmn:callActivity id="Ign_CA"><bpmn:extensionElements><zeebe:calledElement processId="Process_L0"/></bpmn:extensionElements></bpmn:callActivity>
     <bpmn:endEvent id="Ign_End"/>
     <bpmn:sequenceFlow id="Ign_F1" sourceRef="Ign_Start" targetRef="Ign_CA"/>
     <bpmn:sequenceFlow id="Ign_F2" sourceRef="Ign_CA" targetRef="Ign_End"/>

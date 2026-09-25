@@ -1,9 +1,9 @@
 package element
 
 import (
-	"encoding/json"
 	"fmt"
-	"strings"
+	"maps"
+	"slices"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 
@@ -21,25 +21,16 @@ func (CallActivityHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _
 	if ca == nil {
 		return nil
 	}
-	return validator.ValidateCallActivities(&bpmncore.BPMNProcess{CallActivities: []bpmncore.BPMNCallActivity{*ca}}, defs)
+	return validator.ValidateCallActivity(*ca, proc, defs)
 }
 
-func isUnsupportedCallActivityBoundary(be bpmncore.BPMNBoundaryEvent, nodeID string) bool {
-	return be.AttachedToRef == nodeID && be.Message == nil
-}
-
+// Compile emits one CallPlan step naming the called process's plan, which is
+// compiled once per compile however many calls name it (definition LLD §4.1.2).
 func (CallActivityHandler) Compile(nodeID string, cs *bpmncore.CompileState) error {
 	ca := bpmncore.FindCallActivity(cs.Proc, nodeID)
 	if ca == nil {
 		return fmt.Errorf("callActivity %q not found in process", nodeID)
 	}
-
-	for _, be := range cs.Proc.BoundaryEvents {
-		if isUnsupportedCallActivityBoundary(be, nodeID) {
-			return fmt.Errorf("callActivity %q: timer/error boundary events are not supported", nodeID)
-		}
-	}
-
 	processID := ""
 	if ca.ExtensionElements.ZeebeCalledElement != nil {
 		processID = ca.ExtensionElements.ZeebeCalledElement.ProcessID
@@ -48,165 +39,104 @@ func (CallActivityHandler) Compile(nodeID string, cs *bpmncore.CompileState) err
 	if calledProc == nil {
 		return fmt.Errorf("callActivity %q: called process %q not found", nodeID, processID)
 	}
-
-	deptsRemap := extractDeptsMap(ca.ExtensionElements.IOMapping)
-	steps, err := compileCalledProcess(calledProc, ca.ExtensionElements.IOMapping, deptsRemap, cs)
-	if err != nil {
+	if err := compileCalledPlan(calledProc, cs); err != nil {
 		return fmt.Errorf("callActivity %q: %w", nodeID, err)
 	}
 
-	cs.FlushSeqBuf()
-	firstStepIdx := cs.StepsCount()
-	appendStepsWithIOMapping(steps, toIOMapping(ca.ExtensionElements.IOMapping), cs)
-
+	inputs := bpmncore.ParseCallInputs(*ca)
+	errorPaths, timerPaths, messagePaths := boundaryPaths(nodeID, cs)
+	step := dsl.ExecutionStep{
+		CallPlan: &dsl.CallPlanStep{
+			NodeID:       ca.ID,
+			Name:         ca.Name,
+			Plan:         calledProc.ID,
+			Departments:  bindDepartments(ca, cs, calledProc, inputs.Depts),
+			Assignees:    inputs.Assignees,
+			ErrorPaths:   errorPaths,
+			TimerPaths:   timerPaths,
+			MessagePaths: messagePaths,
+		},
+		IOMapping: toIOMapping(ca.ExtensionElements.IOMapping),
+	}
 	if props := bpmncore.PropsMap(ca.ExtensionElements); len(props) > 0 {
-		cs.PatchStep(firstStepIdx, func(s *dsl.ExecutionStep) { s.Extras = props })
+		step.Extras = props
 	}
+	cs.FlushSeqBuf()
+	cs.AppendStep(step)
 
-	if msgPaths := collectMessagePaths(nodeID, cs); len(msgPaths) > 0 {
-		cs.PatchStep(firstStepIdx, func(s *dsl.ExecutionStep) { s.MessagePaths = msgPaths })
-	}
-
-	fwd := cs.ForwardNexts(nodeID)
-	if len(fwd) > 0 {
+	if fwd := cs.ForwardNexts(nodeID); len(fwd) > 0 {
 		return cs.TraverseNode(fwd[0])
 	}
 	return nil
 }
 
-func collectMessagePaths(nodeID string, cs *bpmncore.CompileState) []dsl.MessagePath {
-	var paths []dsl.MessagePath
-	for _, be := range cs.Proc.BoundaryEvents {
-		if be.AttachedToRef != nodeID || be.Message == nil {
-			continue
-		}
-		msgName := bpmncore.ResolveMessageName(be.Message.MessageRef, cs.Defs)
-		if msgName == "" {
-			msgName = bpmncore.ResolveMessageFlowTarget(be.ID, cs.Defs)
-		}
-		targetDept := ""
-		if nexts := cs.ForwardNexts(be.ID); len(nexts) > 0 {
-			targetDept, _, _ = cs.DeptOf(nexts[0])
-		}
-		paths = append(paths, dsl.MessagePath{
-			MessageName:  msgName,
-			Interrupting: be.CancelActivity != "false",
-			TargetDept:   targetDept,
-		})
-	}
-	return paths
-}
-
-func compileCalledProcess(calledProc *bpmncore.BPMNProcess, ioMapping *bpmncore.ZeebeIOMapping, deptsRemap map[string]string, cs *bpmncore.CompileState) ([]dsl.ExecutionStep, error) {
-	innerState, err := compileInnerState(calledProc, cs)
-	if err != nil {
-		return nil, err
-	}
-	mergeDepts(innerState.CollectedDepts(), calledProc, ioMapping, deptsRemap, cs)
-	steps := innerState.CollectedSteps()
-	if len(calledProc.LaneSet.Lanes) == 0 {
-		patchEmptyDepts(steps, deptIDFromIOMapping(ioMapping))
-	} else if len(deptsRemap) > 0 {
-		bpmncore.QualifySteps(steps, func(deptID string) string {
-			if deptID == "" {
-				return ""
-			}
-			if mapped, ok := deptsRemap[strings.ToLower(deptID)]; ok && mapped != "" {
-				return mapped
-			}
-			return deptID
-		})
-	}
-	return steps, nil
-}
-
-func mergeDepts(depts []dsl.DepartmentDef, calledProc *bpmncore.BPMNProcess, ioMapping *bpmncore.ZeebeIOMapping, deptsRemap map[string]string, cs *bpmncore.CompileState) {
-	if len(calledProc.LaneSet.Lanes) == 0 {
-		mergeLanelessDepts(depts, deptIDFromIOMapping(ioMapping), cs)
-		return
-	}
-	deptsByID := make(map[string]dsl.DepartmentDef, len(depts))
-	for _, d := range depts {
-		deptsByID[d.ID] = d
-	}
-	for _, lane := range calledProc.LaneSet.Lanes {
-		dept, ok := deptsByID[lane.Name]
-		if !ok {
-			continue
-		}
-		deptID := lane.Name
-		if mapped, ok := deptsRemap[strings.ToLower(lane.Name)]; ok && mapped != "" {
-			deptID = mapped
-		}
-		props := bpmncore.PropsMap(lane.ExtensionElements)
-		ignore := props["ignore"] == "true"
-		cs.EnsureDept(deptID, deptID, dept.IAMDepartmentID)
-		cs.SetDeptMeta(deptID, ignore, props)
-		for _, stage := range dept.Stages {
-			cs.AppendStage(deptID, stage)
-		}
-	}
-}
-
-func extractDeptsMap(m *bpmncore.ZeebeIOMapping) map[string]string {
-	if m == nil {
+func compileCalledPlan(calledProc *bpmncore.BPMNProcess, cs *bpmncore.CompileState) error {
+	if !cs.Called.Claim(calledProc.ID) {
 		return nil
 	}
-	for _, in := range m.Inputs {
-		if in.Target != "Depts" {
-			continue
-		}
-		var result map[string]string
-		if err := json.Unmarshal([]byte(in.Source), &result); err != nil {
-			return nil
-		}
-		lower := make(map[string]string, len(result))
-		for k, v := range result {
-			lower[strings.ToLower(k)] = v
-		}
-		return lower
+	inner, err := compileInnerState(calledProc, cs)
+	if err != nil {
+		return err
 	}
+	depts, steps := inner.CollectedDepts(), inner.CollectedSteps()
+	nameImplicitDept(depts, steps, calledProc.ID)
+	depts = withOpenSlots(depts, calledProc)
+	cs.Called.Put(&dsl.CompiledPlan{
+		Name:        calledProc.ID,
+		Departments: depts,
+		Execution:   dsl.ExecutionPlan{Steps: steps},
+	})
 	return nil
 }
 
-func mergeLanelessDepts(depts []dsl.DepartmentDef, deptID string, cs *bpmncore.CompileState) {
-	if deptID == "" {
-		return
-	}
-	cs.EnsureDept(deptID, deptID, "")
-	for _, dept := range depts {
-		for _, stage := range dept.Stages {
-			cs.AppendStage(deptID, stage)
+// nameImplicitDept gives a laneless called process's single department,
+// compiled with an empty ID, the process ID, so a call can bind it.
+func nameImplicitDept(depts []dsl.DepartmentDef, steps []dsl.ExecutionStep, processID string) {
+	for i := range depts {
+		if depts[i].ID == "" {
+			depts[i].ID, depts[i].Label = processID, processID
 		}
 	}
+	patchEmptyDepts(steps, processID)
 }
 
-func appendStepsWithIOMapping(steps []dsl.ExecutionStep, ioMap *dsl.IOMapping, cs *bpmncore.CompileState) {
-	for i, step := range steps {
-		if i == 0 {
-			step.IOMapping = ioMap
-		}
-		cs.AppendStep(step)
-	}
-}
-
-func deptIDFromIOMapping(m *bpmncore.ZeebeIOMapping) string {
-	if m == nil {
-		return ""
-	}
-	for _, in := range m.Inputs {
-		if in.Target == "dept_id" {
-			return in.Source
+// withOpenSlots adds a department for every open slot the compile left
+// without one — a lane holding only a call that binds nothing in it — so a
+// call can always bind every open slot.
+func withOpenSlots(depts []dsl.DepartmentDef, calledProc *bpmncore.BPMNProcess) []dsl.DepartmentDef {
+	for _, slot := range bpmncore.OpenSlots(calledProc) {
+		if !slices.ContainsFunc(depts, func(d dsl.DepartmentDef) bool { return d.ID == slot }) {
+			depts = append(depts, dsl.DepartmentDef{ID: slot, Label: slot})
 		}
 	}
-	return ""
+	return depts
 }
 
-// isCompilerInternalIOTarget reports whether an IO-mapping target is consumed
-// during compilation (dept_id/Depts routing) rather than passed through to
-// the execution-time IOMapping.
-func isCompilerInternalIOTarget(target string) bool {
-	return target == "dept_id" || target == "Depts"
+// bindDepartments maps each open department of the called process to a
+// department of the caller: as Depts names it, or, for the only open
+// department, the lane the call sits in. It makes sure every bound caller
+// department exists in the caller's plan.
+func bindDepartments(ca *bpmncore.BPMNCallActivity, cs *bpmncore.CompileState, calledProc *bpmncore.BPMNProcess, depts map[string]string) map[string]string {
+	bound := map[string]string{}
+	for _, key := range slices.Sorted(maps.Keys(depts)) {
+		calledLane, callerLane := bpmncore.LaneNamed(calledProc, key), bpmncore.LaneNamed(cs.Proc, depts[key])
+		if calledLane == nil || callerLane == nil {
+			continue
+		}
+		bound[calledLane.Name] = callerLane.Name
+		cs.EnsureDept(callerLane.Name, callerLane.Name, bpmncore.LaneDeptID(callerLane))
+	}
+	if open := bpmncore.OpenSlots(calledProc); len(open) == 1 {
+		if _, ok := bound[open[0]]; !ok {
+			id, label, iamDeptID := cs.DeptOf(ca.ID)
+			bound[open[0]] = id
+			cs.EnsureDept(id, label, iamDeptID)
+		}
+	}
+	if len(bound) == 0 {
+		return nil
+	}
+	return bound
 }
 
 func toIOMapping(m *bpmncore.ZeebeIOMapping) *dsl.IOMapping {
@@ -215,7 +145,7 @@ func toIOMapping(m *bpmncore.ZeebeIOMapping) *dsl.IOMapping {
 	}
 	result := &dsl.IOMapping{}
 	for _, in := range m.Inputs {
-		if isCompilerInternalIOTarget(in.Target) {
+		if bpmncore.IsCallInput(in.Target) {
 			continue
 		}
 		result.Inputs = append(result.Inputs, dsl.IOVar{Source: in.Source, Target: in.Target})

@@ -173,7 +173,7 @@ func TestCompileIgnoredPool_HappyPath(t *testing.T) {
 		},
 	}
 	g := bpmncore.BuildGraph(proc)
-	plan := compileIgnoredPool(proc, g, defaultStageTypes(), element.DefaultElementHandlers(), &bpmncore.BPMNDefinitions{})
+	plan, _ := compileIgnoredPool(proc, g, defaultStageTypes(), element.DefaultElementHandlers(), &bpmncore.BPMNDefinitions{})
 	if !plan.Ignored {
 		t.Error("expected Ignored=true")
 	}
@@ -195,7 +195,7 @@ func TestCompileIgnoredPool_AmbiguousImplicitStartFallback(t *testing.T) {
 	}
 	proc.Name = "AmbiguousPool"
 	g := bpmncore.BuildGraph(proc)
-	plan := compileIgnoredPool(proc, g, defaultStageTypes(), element.DefaultElementHandlers(), &bpmncore.BPMNDefinitions{})
+	plan, _ := compileIgnoredPool(proc, g, defaultStageTypes(), element.DefaultElementHandlers(), &bpmncore.BPMNDefinitions{})
 	if plan.Name != proc.Name {
 		t.Errorf("Name = %q, want %q", plan.Name, proc.Name)
 	}

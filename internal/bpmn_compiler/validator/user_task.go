@@ -50,12 +50,11 @@ func ValidateOptionalAssignment(taskID string, ext bpmncore.BPMNExtensionElement
 	return ValidateAssignmentDef(taskID, ext)
 }
 
-// ValidateDefaultAssignee rejects a userTask that names a role but nobody. Such
-// a task compiles to an empty assignee list, and Execution creates it with no
-// assignment rows and an assignee mode its claim path refuses, so the task can
-// be neither claimed nor completed and the instance never advances (execution
-// LLD §5.5). Kept out of ValidateAssignmentDef because sendTask/receiveTask
-// share that one and resolve through the message buffer without creating a task.
+// ValidateDefaultAssignee warns about a userTask that names a role but nobody:
+// its assignee must then come from the instance start request, which the
+// Execution Service refuses without one (definition LLD §3.1.4 code 8). Kept
+// out of ValidateAssignmentDef because sendTask/receiveTask share that one and
+// create no task.
 func ValidateDefaultAssignee(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
 	if ext.AssignmentDefinition == nil {
 		return nil // ValidateAssignmentDef already reports the missing element
@@ -63,8 +62,8 @@ func ValidateDefaultAssignee(taskID string, ext bpmncore.BPMNExtensionElements) 
 	if strings.TrimSpace(ext.AssignmentDefinition.CandidateUsers) != "" {
 		return nil
 	}
-	return AppendErr(nil, domain.BPMNErrCandidateUsersEmpty, taskID,
-		"userTask has no candidateUsers; a task with no default assignee can never be claimed or completed")
+	return AppendWarn(nil, domain.BPMNErrCandidateUsersEmpty, taskID,
+		"userTask has no candidateUsers; its assignee must be supplied when the instance starts")
 }
 
 func ValidateAssignmentDef(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
@@ -96,12 +95,15 @@ func validateCandidateUser(taskID, candidateUsers string) []domain.BPMNValidatio
 // ValidateDeptID rejects a lane with no valid dept_id zeebe property — the
 // real IAM department UUID eligibility checks and workflow_node_assignee
 // need, distinct from the lane's name (used elsewhere as the visual/grouping id).
-func ValidateDeptID(taskID string, proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
+func ValidateDeptID(taskID string, proc *bpmncore.BPMNProcess, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	lane := bpmncore.LaneFor(taskID, proc)
 	if lane == nil {
 		return nil // no lane at all is ValidateLaneMembership's TASK_NOT_IN_LANE, not this one's
 	}
 	deptID := bpmncore.DeptIDFor(taskID, proc)
+	if deptID == "" && defs != nil && defs.ModuleProcesses[proc.ID] {
+		return nil // an open lane of a module: its call binds the department
+	}
 	if deptID == "" {
 		return AppendErr(nil, domain.BPMNErrMissingDeptID, taskID,
 			fmt.Sprintf("lane %q has no dept_id zeebe property; add <zeebe:properties><zeebe:property name=\"dept_id\" value=\"<IAM department UUID>\"/></zeebe:properties>", lane.ID))

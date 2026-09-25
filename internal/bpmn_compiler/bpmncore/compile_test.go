@@ -22,7 +22,7 @@ func TestCompile_ExplicitStart(t *testing.T) {
 	proc := &BPMNProcess{StartEvents: []BPMNEvent{{ID: "start"}}}
 	g := BuildGraph(proc)
 
-	plan, err := Compile(proc, g, nil, nil, &BPMNDefinitions{})
+	plan, _, err := Compile(proc, g, nil, nil, &BPMNDefinitions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestCompile_ImplicitStart(t *testing.T) {
 	g := BuildGraph(proc)
 	elements := map[FlowNodeType]ElementHandler{NodeTypeReceiveTask: &stubElementHandler{nodeType: NodeTypeReceiveTask}}
 
-	plan, err := Compile(proc, g, nil, elements, &BPMNDefinitions{})
+	plan, _, err := Compile(proc, g, nil, elements, &BPMNDefinitions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestCompileWithImplicitStart_ExplicitStart(t *testing.T) {
 	g := BuildGraph(proc)
 	elements := map[FlowNodeType]ElementHandler{NodeTypeUserTask: &stubElementHandler{nodeType: NodeTypeUserTask}}
 
-	plan, err := CompileWithImplicitStart(proc, g, "", map[string]StageTypeHandler{}, elements, &BPMNDefinitions{})
+	plan, _, err := CompileWithImplicitStart(proc, g, "", map[string]StageTypeHandler{}, elements, &BPMNDefinitions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestCompileWithImplicitStart_Implicit(t *testing.T) {
 	g := BuildGraph(proc)
 	elements := map[FlowNodeType]ElementHandler{NodeTypeReceiveTask: &stubElementHandler{nodeType: NodeTypeReceiveTask}}
 
-	plan, err := CompileWithImplicitStart(proc, g, "rt1", map[string]StageTypeHandler{}, elements, &BPMNDefinitions{})
+	plan, _, err := CompileWithImplicitStart(proc, g, "rt1", map[string]StageTypeHandler{}, elements, &BPMNDefinitions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestCompileWithImplicitStart_Implicit(t *testing.T) {
 func TestCompileWithImplicitStart_NoStartEvent(t *testing.T) {
 	proc := &BPMNProcess{}
 	g := BuildGraph(proc)
-	if _, err := CompileWithImplicitStart(proc, g, "", nil, nil, &BPMNDefinitions{}); err == nil {
+	if _, _, err := CompileWithImplicitStart(proc, g, "", nil, nil, &BPMNDefinitions{}); err == nil {
 		t.Fatal("expected error when no start event and no implicit start resolved")
 	}
 }
@@ -93,7 +93,7 @@ func TestCompileWithImplicitStart_ExplicitStartNoForward(t *testing.T) {
 	proc := &BPMNProcess{StartEvents: []BPMNEvent{{ID: "start"}}}
 	g := BuildGraph(proc)
 
-	plan, err := CompileWithImplicitStart(proc, g, "", nil, nil, &BPMNDefinitions{})
+	plan, _, err := CompileWithImplicitStart(proc, g, "", nil, nil, &BPMNDefinitions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestCompileWithImplicitStart_TraverseError(t *testing.T) {
 	wantErr := errors.New("boom")
 	elements := map[FlowNodeType]ElementHandler{NodeTypeUserTask: &stubElementHandler{nodeType: NodeTypeUserTask, err: wantErr}}
 
-	if _, err := CompileWithImplicitStart(proc, g, "", nil, elements, &BPMNDefinitions{}); err == nil {
+	if _, _, err := CompileWithImplicitStart(proc, g, "", nil, elements, &BPMNDefinitions{}); err == nil {
 		t.Fatal("expected error to propagate")
 	}
 }
@@ -123,7 +123,7 @@ func TestCompileWithImplicitStart_ImplicitTraverseError(t *testing.T) {
 	wantErr := errors.New("boom")
 	elements := map[FlowNodeType]ElementHandler{NodeTypeReceiveTask: &stubElementHandler{nodeType: NodeTypeReceiveTask, err: wantErr}}
 
-	if _, err := CompileWithImplicitStart(proc, g, "rt1", nil, elements, &BPMNDefinitions{}); err == nil {
+	if _, _, err := CompileWithImplicitStart(proc, g, "rt1", nil, elements, &BPMNDefinitions{}); err == nil {
 		t.Fatal("expected error to propagate")
 	}
 }
@@ -142,7 +142,7 @@ func TestCompileWithImplicitStart_BoundaryPathError(t *testing.T) {
 		NodeTypeTimerBoundaryEvent: &stubElementHandler{nodeType: NodeTypeTimerBoundaryEvent, err: wantErr},
 	}
 
-	if _, err := CompileWithImplicitStart(proc, g, "", nil, elements, &BPMNDefinitions{}); err == nil {
+	if _, _, err := CompileWithImplicitStart(proc, g, "", nil, elements, &BPMNDefinitions{}); err == nil {
 		t.Fatal("expected boundary path error to propagate")
 	}
 }
@@ -156,7 +156,7 @@ func TestCompileWithImplicitStart_ExternalNodesMerge(t *testing.T) {
 	g.NodeType["ext1"] = NodeTypeExternalParticipant
 	g.NodeIDs["ext1"] = struct{}{}
 
-	plan, err := CompileWithImplicitStart(proc, g, "", nil, nil, &BPMNDefinitions{}, map[string]string{"ext1": "Partner"})
+	plan, _, err := CompileWithImplicitStart(proc, g, "", nil, nil, &BPMNDefinitions{}, map[string]string{"ext1": "Partner"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestCompileWithImplicitStart_VisualElements(t *testing.T) {
 	}
 	g := BuildGraph(proc)
 
-	plan, err := CompileWithImplicitStart(proc, g, "", nil, nil, &BPMNDefinitions{})
+	plan, _, err := CompileWithImplicitStart(proc, g, "", nil, nil, &BPMNDefinitions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

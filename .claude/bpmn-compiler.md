@@ -80,26 +80,21 @@ See [ARCHITECTURE.md § BPMN Compiler](../ARCHITECTURE.md#bpmn-compiler) §Routi
 
 The compiler distinguishes root entry-point processes from called processes by whether the process ID appears as a `zeebe:calledElement` target in another process — NOT by this flag. A called process must still have `isExecutable="true"`.
 
-## callActivity Flat Compilation
+## callActivity: referenced plans
 
-`<bpmn:callActivity>` steps are **flattened directly into the parent execution plan** — no `SubWorkflowStep` wrapper is emitted. `SubWorkflowStep` is exclusively for inline `<bpmn:subProcess>` elements.
+Each called process compiles **once, into its own plan** in `CompiledCollaboration.Plans`, named by its process id, and each `<bpmn:callActivity>` compiles to an `ExecutionStep.CallPlan` naming it. Consumers never interpret `CallPlan` directly: they run `dsl.ExpandCalls` (workflow-models), which turns each call into a `SubWorkflowStep` and clones the called plan's departments into the caller as `<call id>::<lane>`. Definition does this for assignee extraction, eligibility, divergence and the exact stage count at publish; Execution does it when it decodes a plan.
 
-The called process brings its own lanes/departments. The parent lane of the callActivity node is visual-only and is NOT inherited by the called process. Departments from the called process appear alongside the parent's departments in the compiled plan.
-
-**Timer boundary events on callActivity are not supported** — rejected at compile time. Error boundary events on callActivity pass validation but also fail compilation. Neither type produces a `BoundaryTimer` in the compiled output.
-
-Called processes must be supplied as entries in `module_bpmn_xmls` on the draft. The service merges them in-memory before compile/validate via `Bundle()`. Diagrams in module BPMNs are intentionally NOT merged.
+- **Open and fixed lanes.** A module lane that holds work (a task, a callActivity or a subProcess) becomes a department. With a `dept_id` property it is fixed, and `Depts` cannot remap it. Without one it is open, and is the only kind of lane allowed to lack `dept_id` (`BPMNDefinitions.ModuleProcesses` marks the processes where that applies). A laneless module is one open lane, whose department ID is the process id.
+- **Binding.** `Depts` (JSON object of strings, plain or `=`-prefixed) maps open lanes to caller lanes, case-insensitively; a single open lane left unmapped takes the callActivity's own lane. `Assignees` maps module task ids to users for this call. Both are stripped from `IOMapping`.
+- **Boundaries.** Message, timer and error boundary events on a callActivity compile to the call step's paths, built the same way as a subProcess's.
+- Called processes must be supplied as entries in `module_bpmn_xmls` on the draft. The service merges them in-memory before compile/validate via `Bundle()`. Diagrams in module BPMNs are intentionally NOT merged.
 
 **Nested `<bpmn:subProcess>`** inside another subProcess is not supported — the validator emits `NESTED_SUBPROCESS_NOT_SUPPORTED`.
 
 ## Module BPMNs (Called Processes)
 
-When a called process has **no lanes**, the callActivity must include `<zeebe:ioMapping>` with a `dept_id` input. This input determines which department in the compiled plan the module's tasks are assigned to. The validator emits `MISSING_DEPT_INPUT_FOR_MODULE` if it's absent.
-
-- `dept_id` is compiler-internal — it is NOT emitted in the compiled `ExecutionStep.IOMapping`.
-- All other inputs/outputs in `zeebe:ioMapping` ARE emitted in `ExecutionStep.IOMapping` for the Execution Service.
-- When the called process has its own lanes, the caller does NOT provide `dept_id` — the module uses its own lane names as department IDs.
 - Each called process reachable from the root is validated once with the root's rules, minus the diagram rules (`Bundle()` drops module diagrams). A call cycle is `CALLED_ELEMENT_CYCLE`, and a repeated process `id` is `DUPLICATE_PROCESS_ID` (`validator/call_graph.go`).
+- `CANDIDATE_USERS_EMPTY` is a warning: a task's assignee may come from the instance start request's `override_map`, which Execution requires for any task that resolves to nobody.
 
 ## Multi-Participant Collaboration
 

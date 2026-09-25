@@ -472,10 +472,13 @@ components:
           required: [pool]
           properties:
             pool: { type: string, description: "Name of the target CompiledPlan." }
+        call_plan:
+          $ref: '#/components/schemas/CallPlanStep'
+          nullable: true
         io_mapping:
           type: object
           nullable: true
-          description: "Variable input/output declarations for a callActivity step. Attached to the first step of a flattened callActivity. The Execution Service uses this to pass variables when creating child workflows. dept_id is compiler-internal and is NOT emitted here."
+          description: "Variable input/output declarations of a callActivity step (call_plan). The Depts and Assignees inputs compile to call_plan, not here."
           properties:
             inputs:
               type: array
@@ -497,12 +500,12 @@ components:
           type: object
           nullable: true
           additionalProperties: { type: string }
-          description: "Forward of unknown zeebe:properties from a callActivity element. Attached to the first step of a flattened callActivity."
+          description: "The zeebe:properties of a callActivity step (call_plan)."
         message_paths:
           type: array
           nullable: true
           items: { $ref: '#/components/schemas/MessagePath' }
-          description: "Message boundary events attached to a callActivity, flattened into its first step."
+          description: "Message boundary events attached to this step."
       example:
         sequential: [design, planning, construction]
 
@@ -539,6 +542,36 @@ components:
           type: array
           items: { $ref: '#/components/schemas/MessagePath' }
           description: "From message boundary events attached to the subProcess."
+
+    CallPlanStep:
+      type: object
+      description: >
+        A callActivity. The called process is compiled once into its own plan in
+        CompiledCollaboration.plans; consumers expand the call with dsl.ExpandCalls
+        (workflow_models_lib.md §2.6), which clones the called plan's departments into
+        the caller as "<node_id>::<department>".
+      required: [node_id, plan]
+      properties:
+        node_id: { type: string, description: "BPMN element ID of the callActivity." }
+        name:    { type: string }
+        plan:    { type: string, description: "Name of the called plan in CompiledCollaboration.plans (its process id)." }
+        departments:
+          type: object
+          additionalProperties: { type: string }
+          description: "Called plan department → calling plan department. A called department absent here keeps its own IAM department."
+        assignees:
+          type: object
+          additionalProperties: { type: string, format: uuid }
+          description: "Called task node ID → default user for this call only."
+        error_paths:
+          type: array
+          items: { $ref: '#/components/schemas/ErrorPath' }
+        timer_paths:
+          type: array
+          items: { $ref: '#/components/schemas/TimerPath' }
+        message_paths:
+          type: array
+          items: { $ref: '#/components/schemas/MessagePath' }
 
     ErrorPath:
       type: object
@@ -723,10 +756,10 @@ components:
         - INVALID_CANDIDATE_USER        # candidateUsers is not a valid UUID (any version)
         - INVALID_CONDITION_EXPRESSION  # conditionExpression exceeds 4096 chars
         - INVALID_SLA_DURATION          # timer boundary duration is not valid ISO 8601 or Go duration
-        - INVALID_ZEEBE_PROPERTY        # warning severity — zeebe:ioMapping target="Depts" input source is not valid JSON / map[string]string
+        - INVALID_ZEEBE_PROPERTY        # callActivity: malformed Depts/Assignees input, a Depts lane or Assignees task that does not exist, or a retired dept_id input
         - MISSING_MESSAGE_DEFINITION    # error severity when a messageFlow's messageRef references an undeclared bpmn:message; warning severity when a message boundary event's or collaboration messageFlow's name cannot be resolved at all
         - UNMATCHED_MESSAGE_FLOW        # message flow source/target does not reference a known element
-        - TASK_LIMIT_EXCEEDED           # userTask count > 1000, in the process or in its plan once called processes are inlined
+        - TASK_LIMIT_EXCEEDED           # userTask count > 1000 in the process, or more than 1000 stages and calls once its calls are expanded
         - LANE_LIMIT_EXCEEDED           # lane count > 100
         - MULTIPLE_START_EVENTS         # more than one startEvent in the process
         - MULTIPLE_END_EVENTS           # deprecated: not currently raised by the compiler (multiple end events are valid)
@@ -745,7 +778,7 @@ components:
         - MISSING_DIAGRAM_SHAPE         # a flow node has no corresponding BPMNShape in the diagram
         - UNRESOLVED_CALLED_ELEMENT     # callActivity missing zeebe:calledElement or processId not found in same document
         - NESTED_SUBPROCESS_NOT_SUPPORTED # subProcess nested inside another subProcess
-        - MISSING_DEPT_INPUT_FOR_MODULE # called process has no lanes and no dept_id input mapping was provided
+        - MISSING_DEPT_INPUT_FOR_MODULE # a called process has two or more open lanes (no dept_id) and the call's Depts input does not map every one
         - CALLED_ELEMENT_CYCLE          # a chain of callActivity calls returns to a process already on it
         - DUPLICATE_PROCESS_ID          # two bpmn:process elements in the bundled document share an id
 

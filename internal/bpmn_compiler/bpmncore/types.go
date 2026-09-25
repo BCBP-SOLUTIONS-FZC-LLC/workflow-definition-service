@@ -34,6 +34,11 @@ type BPMNDefinitions struct {
 	Messages      []BPMNMessage      `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL message"`
 	Errors        []BPMNError        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL error"`
 	Diagrams      []BPMNDiagram      `xml:"http://www.omg.org/spec/BPMN/20100524/DI BPMNDiagram"`
+
+	// ModuleProcesses holds the IDs of processes compiled as modules, the ones
+	// a callActivity names. Their lanes may omit dept_id, since a call binds
+	// those departments.
+	ModuleProcesses map[string]bool `xml:"-"`
 }
 
 type BPMNDiagram struct {

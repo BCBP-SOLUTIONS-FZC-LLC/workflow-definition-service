@@ -15,6 +15,7 @@ func compileInnerState(inner *bpmncore.BPMNProcess, cs *bpmncore.CompileState) (
 	}
 
 	innerState := bpmncore.NewCompileState(inner, innerG, innerLaneLabels, innerCondExprs, innerBackEdges, cs.StageTypes, cs.Elements, cs.Defs)
+	innerState.Called = cs.Called
 	if len(inner.StartEvents) > 0 {
 		if nexts := innerState.ForwardNexts(inner.StartEvents[0].ID); len(nexts) > 0 {
 			if err := innerState.TraverseNode(nexts[0]); err != nil {

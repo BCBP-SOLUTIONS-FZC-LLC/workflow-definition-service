@@ -92,7 +92,7 @@ func (c *Compiler) validateSingleRoot(bpmnXML string, proc *bpmncore.BPMNProcess
 }
 
 func (c *Compiler) Compile(ctx context.Context, bpmnXML string) (*dsl.CompiledPlan, error) {
-	plan, _, err := c.compileSingleRoot(ctx, bpmnXML)
+	plan, _, _, err := c.compileSingleRoot(ctx, bpmnXML)
 	return plan, err
 }
 
@@ -100,52 +100,75 @@ func (c *Compiler) Compile(ctx context.Context, bpmnXML string) (*dsl.CompiledPl
 // shape the Execution Service decodes. A collaboration BPMN is refused by
 // compileSingleRoot until an ignored pool's call-pool task can be completed.
 func (c *Compiler) CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error) {
-	plan, root, err := c.compileSingleRoot(ctx, bpmnXML)
+	plan, called, root, err := c.compileSingleRoot(ctx, bpmnXML)
 	if err != nil {
 		return nil, err
 	}
 	if plan.Name == "" {
 		plan.Name = root.ID
 	}
-	return &dsl.CompiledCollaboration{
+	collab := &dsl.CompiledCollaboration{
 		MainPlan:      plan.Name,
-		Plans:         []*dsl.CompiledPlan{plan},
+		Plans:         append([]*dsl.CompiledPlan{plan}, called...),
 		Messages:      []dsl.MessageDef{},
 		SchemaVersion: dsl.CurrentSchemaVersion,
-	}, nil
+	}
+	if err := checkExpandedSize(collab, root.ID); err != nil {
+		return nil, err
+	}
+	return collab, nil
 }
 
-func (c *Compiler) compileSingleRoot(ctx context.Context, bpmnXML string) (*dsl.CompiledPlan, *bpmncore.BPMNProcess, error) {
+// checkExpandedSize expands collab's calls the way both services will, and
+// refuses a plan whose stages and calls exceed the task limit (definition LLD
+// §3.1.4 code 9).
+func checkExpandedSize(collab *dsl.CompiledCollaboration, rootID string) error {
+	_, err := dsl.ExpandCalls(collab, validator.MaxUserTasks)
+	if errors.Is(err, dsl.ErrPlanTooLarge) {
+		return &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
+			Code:     domain.BPMNErrTaskLimitExceeded,
+			NodeID:   rootID,
+			Message:  fmt.Sprintf("process exceeds the %d task limit once its calls are expanded, counting each call and every stage it brings in", validator.MaxUserTasks),
+			Severity: domain.SeverityError,
+		}}}
+	}
+	if err != nil {
+		return fmt.Errorf("bpmn compile: expand calls: %w", err)
+	}
+	return nil
+}
+
+func (c *Compiler) compileSingleRoot(ctx context.Context, bpmnXML string) (plan *dsl.CompiledPlan, called []*dsl.CompiledPlan, root *bpmncore.BPMNProcess, err error) {
 	defs, err := parse(ctx, bpmnXML)
 	if errors.Is(err, errMissingNamespace) {
-		return nil, nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
+		return nil, nil, nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
 			Code: domain.BPMNErrMissingNamespace, Message: err.Error(), Severity: domain.SeverityError,
 		}}}
 	}
 	if err != nil {
-		return nil, nil, classifyParseError("compile", err)
+		return nil, nil, nil, classifyParseError("compile", err)
 	}
 	callGraphErrs := validator.ValidateCallGraph(defs)
 	execProcs := executableProcesses(defs)
 	if len(execProcs) != 1 {
-		return nil, nil, &domain.ValidationFailedError{Errors: append(callGraphErrs, domain.BPMNValidationError{
+		return nil, nil, nil, &domain.ValidationFailedError{Errors: append(callGraphErrs, domain.BPMNValidationError{
 			Code:     domain.BPMNErrMultipleProcesses,
 			Message:  fmt.Sprintf("Compile expects a single executable process; got %d — use CompileCollaboration for multi-pool BPMN", len(execProcs)),
 			Severity: domain.SeverityError,
 		})}
 	}
-	proc := execProcs[0]
+	root = execProcs[0]
 
-	errs := append(callGraphErrs, c.validateSingleRoot(bpmnXML, proc, defs)...)
+	errs := append(callGraphErrs, c.validateSingleRoot(bpmnXML, root, defs)...)
 	if hasBlockingErrors(errs) {
-		return nil, nil, &domain.ValidationFailedError{Errors: errs}
+		return nil, nil, nil, &domain.ValidationFailedError{Errors: errs}
 	}
 
-	plan, err := bpmncore.Compile(proc, bpmncore.BuildGraph(proc), c.stageTypes, c.elements, defs)
+	plan, called, err = bpmncore.Compile(root, bpmncore.BuildGraph(root), c.stageTypes, c.elements, defs)
 	if err != nil {
-		return nil, nil, fmt.Errorf("bpmn compile: %w", err)
+		return nil, nil, nil, fmt.Errorf("bpmn compile: %w", err)
 	}
-	return plan, proc, nil
+	return plan, called, root, nil
 }
 
 // executableProcesses returns the root entry-point processes to compile — see

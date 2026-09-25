@@ -94,18 +94,18 @@ func TestValidationService_Validate_CompilerError(t *testing.T) {
 func TestValidationService_Validate_InvalidModuleTask_IsInvalid(t *testing.T) {
 	svc := service.NewValidationService(service.ValidationDeps{Compiler: bpmn_compiler.New()})
 
-	isValid, errs, err := svc.Validate(context.Background(), moduleMainBPMN, []string{prepReviewModuleNoCandidateUsersBPMN})
+	isValid, errs, err := svc.Validate(context.Background(), moduleMainBPMN, []string{prepReviewModuleInvalidCandidateUserBPMN})
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
 	if isValid {
-		t.Errorf("is_valid = true, want false for a module task with no candidate users")
+		t.Errorf("is_valid = true, want false for a module task naming an invalid user")
 	}
 	found := false
 	for _, e := range errs {
-		found = found || (e.Code == domain.BPMNErrCandidateUsersEmpty && e.NodeID == "PR_Prep")
+		found = found || (e.Code == domain.BPMNErrInvalidCandidateUser && e.NodeID == "PR_Prep")
 	}
 	if !found {
-		t.Errorf("errors = %+v, want CANDIDATE_USERS_EMPTY on PR_Prep", errs)
+		t.Errorf("errors = %+v, want INVALID_CANDIDATE_USER on PR_Prep", errs)
 	}
 }

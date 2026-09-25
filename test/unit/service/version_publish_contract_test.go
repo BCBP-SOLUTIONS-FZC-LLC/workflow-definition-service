@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -33,15 +34,26 @@ var moduleMainBPMN string
 //go:embed testdata/module-prep-review.bpmn
 var prepReviewModuleBPMN string
 
-//go:embed testdata/module-prep-review-no-candidate-users.bpmn
-var prepReviewModuleNoCandidateUsersBPMN string
+//go:embed testdata/module-prep-review-invalid-candidate-user.bpmn
+var prepReviewModuleInvalidCandidateUserBPMN string
 
 //go:embed testdata/module-self-calling.bpmn
 var selfCallingModuleBPMN string
 
+//go:embed testdata/two-calls-of-one-module.bpmn
+var twoCallsOfOneModuleBPMN string
+
 // publishWithRealCompiler publishes bpmnXML, bundled with modules, through the
 // real compiler and returns the compiled_plan_json handed to the repository.
 func publishWithRealCompiler(t *testing.T, bpmnXML string, modules ...string) (string, error) {
+	t.Helper()
+	stored, _, err := publishRecordingAssignees(t, bpmnXML, modules...)
+	return stored, err
+}
+
+// publishRecordingAssignees is publishWithRealCompiler that also returns the
+// workflow_node_assignee rows handed to the repository.
+func publishRecordingAssignees(t *testing.T, bpmnXML string, modules ...string) (string, []*domain.NodeAssignee, error) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	tx := mocks.NewMockTransactor(ctrl)
@@ -60,6 +72,7 @@ func publishWithRealCompiler(t *testing.T, bpmnXML string, modules ...string) (s
 	}
 
 	var stored string
+	var rows []*domain.NodeAssignee
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil).AnyTimes()
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil).AnyTimes()
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil).AnyTimes()
@@ -71,7 +84,11 @@ func publishWithRealCompiler(t *testing.T, bpmnXML string, modules ...string) (s
 			return nil
 		}).AnyTimes()
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil).AnyTimes()
-	assignees.EXPECT().BulkInsert(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	assignees.EXPECT().BulkInsert(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _, _ uuid.UUID, inserted []*domain.NodeAssignee) error {
+			rows = inserted
+			return nil
+		}).AnyTimes()
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil).AnyTimes()
 
 	_, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, false)
@@ -79,7 +96,7 @@ func publishWithRealCompiler(t *testing.T, bpmnXML string, modules ...string) (s
 	if errors.As(err, &vf) {
 		t.Logf("validation errors: %+v", vf.Errors)
 	}
-	return stored, err
+	return stored, rows, err
 }
 
 // assertExecutionCanStart reads compiled_plan_json the way the Execution
@@ -95,6 +112,9 @@ func assertExecutionCanStart(t *testing.T, compiledPlanJSON string) *dsl.Compile
 	}
 	if collab.MainPlan == "" {
 		t.Fatalf("main_plan is empty; Execution fails with \"main plan not found\"")
+	}
+	if _, err := dsl.ExpandCalls(&collab, 0); err != nil {
+		t.Fatalf("compiled_plan_json does not expand as Execution expands it: %v", err)
 	}
 	for _, p := range collab.Plans {
 		if p.Name == collab.MainPlan {
@@ -153,8 +173,8 @@ func TestPublishContract_MainWithModule_Publishes(t *testing.T) {
 }
 
 func TestPublishContract_ModuleWithInvalidTask_IsRefused(t *testing.T) {
-	stored, err := publishWithRealCompiler(t, moduleMainBPMN, prepReviewModuleNoCandidateUsersBPMN)
-	assertRefusedWith(t, stored, err, domain.BPMNErrCandidateUsersEmpty)
+	stored, err := publishWithRealCompiler(t, moduleMainBPMN, prepReviewModuleInvalidCandidateUserBPMN)
+	assertRefusedWith(t, stored, err, domain.BPMNErrInvalidCandidateUser)
 }
 
 func TestPublishContract_SelfCallingModule_IsRefused(t *testing.T) {
@@ -177,5 +197,23 @@ func assertRefusedWith(t *testing.T, stored string, err error, code domain.BPMNE
 	}
 	if stored != "" {
 		t.Errorf("a refused publish stored compiled_plan_json")
+	}
+}
+
+func TestPublishContract_TwoCallsOfOneModule_RecordAnAssigneePerCall(t *testing.T) {
+	_, rows, err := publishRecordingAssignees(t, twoCallsOfOneModuleBPMN)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	got := map[string]string{}
+	for _, r := range rows {
+		got[r.NodeKey] = r.DepartmentID.String()
+	}
+	want := map[string]string{
+		"CA_1::Process_Review/Review_Task": "2200a5ae-2466-54f7-a1d8-243106e05705",
+		"CA_2::Process_Review/Review_Task": "92fd92cf-4b2c-58dc-bf98-f3d0af729876",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("assignee rows (node key → department) = %v, want %v", got, want)
 	}
 }

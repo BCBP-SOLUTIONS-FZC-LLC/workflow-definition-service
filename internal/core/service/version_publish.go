@@ -87,9 +87,9 @@ func (s *VersionService) compileForPublish(
 	if err != nil {
 		return nil, nil, fmt.Errorf("compile bpmn: %w", err)
 	}
-	plan := mainPlan(collab)
-	if plan == nil {
-		return nil, nil, fmt.Errorf("compile bpmn: main plan %q not among the compiled plans", collab.MainPlan)
+	plan, err := expandedMainPlan(collab)
+	if err != nil {
+		return nil, nil, fmt.Errorf("compile bpmn: %w", err)
 	}
 	return collab, plan, nil
 }
@@ -223,24 +223,30 @@ func extractAssignees(
 	return assignees
 }
 
-func mainPlan(collab *dsl.CompiledCollaboration) *dsl.CompiledPlan {
-	for _, p := range collab.Plans {
-		if p != nil && p.Name == collab.MainPlan {
-			return p
+// expandedMainPlan is the main plan with its calls expanded, as the Execution
+// Service runs it: every task has its call-scoped node key and department.
+func expandedMainPlan(collab *dsl.CompiledCollaboration) (*dsl.CompiledPlan, error) {
+	expanded, err := dsl.ExpandCalls(collab, 0)
+	if err != nil {
+		return nil, fmt.Errorf("expand calls: %w", err)
+	}
+	for _, p := range expanded.Plans {
+		if p != nil && p.Name == expanded.MainPlan {
+			return p, nil
 		}
 	}
-	return nil
+	return nil, fmt.Errorf("main plan %q not among the compiled plans", collab.MainPlan)
 }
 
-// storedMainPlan reads compiled_plan_json as publish stores it. ok is false
-// when the blob does not decode or names no plan it carries.
+// storedMainPlan reads compiled_plan_json as publish stores it, expanded. ok
+// is false when the blob does not decode or does not expand.
 func storedMainPlan(compiledPlanJSON string) (*dsl.CompiledPlan, bool) {
 	var collab dsl.CompiledCollaboration
 	if err := json.Unmarshal([]byte(compiledPlanJSON), &collab); err != nil {
 		return nil, false
 	}
-	p := mainPlan(&collab)
-	return p, p != nil
+	p, err := expandedMainPlan(&collab)
+	return p, err == nil
 }
 
 func marshalPlan(collab *dsl.CompiledCollaboration) (string, error) {

@@ -68,6 +68,30 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 		}
 	}
 
+	errorPaths, timerPaths, messagePaths := boundaryPaths(nodeID, cs)
+
+	cs.FlushSeqBuf()
+	cs.AppendStep(dsl.ExecutionStep{
+		SubWorkflow: &dsl.SubWorkflowStep{
+			NodeID:       sp.ID,
+			Name:         sp.Name,
+			Plan:         dsl.ExecutionPlan{Steps: steps},
+			ErrorPaths:   errorPaths,
+			TimerPaths:   timerPaths,
+			MessagePaths: messagePaths,
+		},
+	})
+
+	fwd := cs.ForwardNexts(nodeID)
+	if len(fwd) > 0 {
+		return cs.TraverseNode(fwd[0])
+	}
+	return nil
+}
+
+// boundaryPaths compiles the boundary events attached to nodeID, a subProcess
+// or a callActivity.
+func boundaryPaths(nodeID string, cs *bpmncore.CompileState) ([]dsl.ErrorPath, []dsl.TimerPath, []dsl.MessagePath) {
 	var errorPaths []dsl.ErrorPath
 	var timerPaths []dsl.TimerPath
 	var messagePaths []dsl.MessagePath
@@ -77,9 +101,8 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 		}
 		targetDept := cs.FirstDeptAhead(bpmncore.OutgoingTargetOf(be.ID, cs.Proc))
 		if be.Error != nil {
-			errorCode := cs.ResolveErrorCode(be.Error.ErrorRef)
 			errorPaths = append(errorPaths, dsl.ErrorPath{
-				ErrorCode:  errorCode,
+				ErrorCode:  cs.ResolveErrorCode(be.Error.ErrorRef),
 				TargetDept: targetDept,
 			})
 		}
@@ -102,24 +125,7 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 			})
 		}
 	}
-
-	cs.FlushSeqBuf()
-	cs.AppendStep(dsl.ExecutionStep{
-		SubWorkflow: &dsl.SubWorkflowStep{
-			NodeID:       sp.ID,
-			Name:         sp.Name,
-			Plan:         dsl.ExecutionPlan{Steps: steps},
-			ErrorPaths:   errorPaths,
-			TimerPaths:   timerPaths,
-			MessagePaths: messagePaths,
-		},
-	})
-
-	fwd := cs.ForwardNexts(nodeID)
-	if len(fwd) > 0 {
-		return cs.TraverseNode(fwd[0])
-	}
-	return nil
+	return errorPaths, timerPaths, messagePaths
 }
 
 // assignParentLaneDept backfills the parent lane onto any inner dept/step left
@@ -171,6 +177,13 @@ func patchEmptyDepts(steps []dsl.ExecutionStep, lane string) {
 			for k := range sw.TimerPaths {
 				if sw.TimerPaths[k].TargetDept == "" {
 					sw.TimerPaths[k].TargetDept = lane
+				}
+			}
+		}
+		if cp := steps[i].CallPlan; cp != nil {
+			for k, v := range cp.Departments {
+				if v == "" {
+					cp.Departments[k] = lane
 				}
 			}
 		}

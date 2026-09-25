@@ -70,10 +70,10 @@ func validatePerElement(
 		}
 	}
 	for _, t := range proc.SendTasks {
-		errs = append(errs, validateOptionalTaskMembership(t.ID, t.ExtensionElements, proc, laneRefs)...)
+		errs = append(errs, validateOptionalTaskMembership(t.ID, t.ExtensionElements, proc, laneRefs, defs)...)
 	}
 	for _, t := range proc.ReceiveTasks {
-		errs = append(errs, validateOptionalTaskMembership(t.ID, t.ExtensionElements, proc, laneRefs)...)
+		errs = append(errs, validateOptionalTaskMembership(t.ID, t.ExtensionElements, proc, laneRefs, defs)...)
 	}
 	for _, ca := range proc.CallActivities {
 		errs = append(errs, ValidateLaneMembership(ca.ID, laneRefs)...)
@@ -95,11 +95,11 @@ func validatePerElement(
 // validateOptionalTaskMembership runs the checks shared by sendTask/receiveTask
 // nodes, whose zeebe:assignmentDefinition is optional (unlike userTask's, which
 // is required).
-func validateOptionalTaskMembership(taskID string, ext bpmncore.BPMNExtensionElements, proc *bpmncore.BPMNProcess, laneRefs map[string]struct{}) []domain.BPMNValidationError {
+func validateOptionalTaskMembership(taskID string, ext bpmncore.BPMNExtensionElements, proc *bpmncore.BPMNProcess, laneRefs map[string]struct{}, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	errs = append(errs, ValidateLaneMembership(taskID, laneRefs)...)
 	errs = append(errs, ValidateOptionalAssignment(taskID, ext)...)
-	errs = append(errs, ValidateDeptID(taskID, proc)...)
+	errs = append(errs, ValidateDeptID(taskID, proc, defs)...)
 	return errs
 }
 

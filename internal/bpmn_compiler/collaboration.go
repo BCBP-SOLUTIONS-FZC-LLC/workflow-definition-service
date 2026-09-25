@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 
@@ -128,6 +130,7 @@ func (c *Compiler) compileCollaborationPlans(defs *bpmncore.BPMNDefinitions, ign
 	}
 
 	var plans []*dsl.CompiledPlan
+	called := map[string]*dsl.CompiledPlan{}
 	for _, participant := range defs.Collaboration.Participants {
 		proc, ok := procByID[participant.ProcessRef]
 		if !ok {
@@ -136,9 +139,12 @@ func (c *Compiler) compileCollaborationPlans(defs *bpmncore.BPMNDefinitions, ign
 		g := bpmncore.BuildGraph(proc)
 
 		if isIgnoredProcess(proc) {
-			plan := compileIgnoredPool(proc, g, c.stageTypes, c.elements, defs)
+			plan, calledPlans := compileIgnoredPool(proc, g, c.stageTypes, c.elements, defs)
 			bpmncore.QualifyPlanDepts(plan, plan.Name)
 			plans = append(plans, plan)
+			for _, p := range calledPlans {
+				called[p.Name] = p
+			}
 			continue
 		}
 
@@ -149,12 +155,18 @@ func (c *Compiler) compileCollaborationPlans(defs *bpmncore.BPMNDefinitions, ign
 			extNodes[b.SyntheticNodeID] = b.ParticipantName
 		}
 		implicitStart := collabImplicitStart(proc, g, defs, ignoredProcIDs)
-		plan, err := bpmncore.CompileWithImplicitStart(proc, g, implicitStart, c.stageTypes, c.elements, defs, extNodes)
+		plan, calledPlans, err := bpmncore.CompileWithImplicitStart(proc, g, implicitStart, c.stageTypes, c.elements, defs, extNodes)
 		if err != nil {
 			return nil, fmt.Errorf("bpmn compile-collaboration participant %q: %w", participant.ID, err)
 		}
 		bpmncore.QualifyPlanDepts(plan, plan.Name)
 		plans = append(plans, plan)
+		for _, p := range calledPlans {
+			called[p.Name] = p
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(called)) {
+		plans = append(plans, called[name])
 	}
 	return plans, nil
 }
@@ -200,15 +212,15 @@ func compileIgnoredPool(
 	stageTypes map[string]bpmncore.StageTypeHandler,
 	elements map[bpmncore.FlowNodeType]bpmncore.ElementHandler,
 	defs *bpmncore.BPMNDefinitions,
-) *dsl.CompiledPlan {
+) (*dsl.CompiledPlan, []*dsl.CompiledPlan) {
 	implicitStart := bpmncore.FindImplicitStart(proc, g)
-	plan, err := bpmncore.CompileWithImplicitStart(proc, g, implicitStart, stageTypes, elements, defs)
+	plan, called, err := bpmncore.CompileWithImplicitStart(proc, g, implicitStart, stageTypes, elements, defs)
 	if err != nil {
-		plan = &dsl.CompiledPlan{Name: proc.Name}
+		plan, called = &dsl.CompiledPlan{Name: proc.Name}, nil
 	}
 	plan.Ignored = true
 	plan.TaskQueue = ""
-	return plan
+	return plan, called
 }
 
 // validateCallPoolConstraints rejects a call_pool step from any pool other

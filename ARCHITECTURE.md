@@ -830,40 +830,30 @@ A called process referenced by `<bpmn:callActivity>` must be provided as a separ
 
 - The main BPMN must contain `<zeebe:calledElement processId="<id>"/>` on every callActivity.
 - Each module BPMN must define the corresponding `<bpmn:process id="<id>"/>` with `isExecutable="true"`.
-- Module BPMNs may contain their own lanes/departments; these surface alongside the parent's departments in the compiled plan.
-- If the module has **no lanes**, the callActivity must include a `<zeebe:ioMapping>` with a `dept_id` input. This determines which department the module's tasks compile into and allows any department to call the same module.
-- If the module has its own lanes, the caller does NOT provide `dept_id` — the module uses its own lane names as department IDs.
+- Each called process compiles **once, into its own plan** in `CompiledCollaboration.Plans`, named by its process id. Each call site compiles to an `ExecutionStep.CallPlan` naming that plan. Both services expand calls with `dsl.ExpandCalls` (workflow-models), which gives every call its own departments, `<call id>::<lane>`, so the same module called twice yields two separate sets of tasks.
+- **Departments.** A module lane that holds work becomes a department. With a `dept_id` property it is fixed to that department, and no call can remap it. Without one it is an open slot the call binds to one of the caller's lanes: through the `Depts` input, or by default to the callActivity's own lane when the module has exactly one open slot (a laneless module is one slot). A bound slot takes the caller lane's department and IAM id.
+- **Call-site assignees.** An optional `Assignees` input maps a module task id to a user id for this call only.
+- Message, timer and error boundary events attach to a callActivity and compile to the call step's paths.
 - Diagrams in module BPMNs are discarded — only process elements are merged.
-- Timer and error boundary events attached to a callActivity are not supported and produce a compile error. Message boundary events ARE supported on a callActivity — they compile to `ExecutionStep.MessagePaths` on the flattened step.
 - Nested `<bpmn:subProcess>` inside another subProcess is not supported (`NESTED_SUBPROCESS_NOT_SUPPORTED`).
 - Modules are versioned and cloned together with the main BPMN.
-- `callActivity` steps are flattened **directly into the parent execution plan** — no `SubWorkflowStep` wrapper is emitted (that wrapper is exclusively for inline `<bpmn:subProcess>` elements). The parent lane of the callActivity node is visual-only and is NOT inherited by the called process.
 
-**Example — calling a no-lane module:**
+**Example — calling a module with two generic lanes:**
 
 ```xml
 <bpmn:callActivity id="CA_PrepResponse" name="Prepare Response">
   <bpmn:extensionElements>
-    <zeebe:calledElement processId="Process_PrepareResponse" propagateAllChildVariables="false"/>
+    <zeebe:calledElement processId="Process_PrepareResponse"/>
     <zeebe:ioMapping>
-      <zeebe:input source="engineering" target="dept_id"/>
+      <zeebe:input source='{"sender":"Consultant","receiver":"Tender"}' target="Depts"/>
+      <zeebe:input source='{"PR_Review":"018f2d3c-0000-7000-8000-0000000000b2"}' target="Assignees"/>
       <zeebe:input source="=clarificationId" target="clarificationId"/>
     </zeebe:ioMapping>
   </bpmn:extensionElements>
 </bpmn:callActivity>
 ```
 
-`dept_id` is compiler-internal: it assigns the department in the compiled plan but is NOT emitted in the `io_mapping` field of the compiled `ExecutionStep`. Other inputs (like `clarificationId`) ARE emitted and consumed by the Execution Service when creating the child workflow.
-
-**Alternative: `target="Depts"` dict-injection**: When a called process has lanes with generic names (e.g. "Sender", "Receiver") and the same callActivity is used in multiple contexts where the actual departments differ, use `target="Depts"` instead of `dept_id`. The source is a JSON object mapping lane names (case-insensitive) to actual department IDs:
-
-```xml
-<zeebe:ioMapping>
-  <zeebe:input source='{"sender":"Consultant","receiver":"Tender"}' target="Depts"/>
-</zeebe:ioMapping>
-```
-
-This also satisfies `MISSING_DEPT_INPUT_FOR_MODULE` for lane-based modules. The `Depts` input is compiler-internal and is stripped from `ExecutionStep.IOMapping` — it is not passed to the Execution Service. A `target="Depts"` source that is not valid JSON / not a `map[string]string` emits `INVALID_ZEEBE_PROPERTY` as a warning; the module falls back to its own lane names as-is.
+`Depts` and `Assignees` are JSON objects of strings, written plain or with a leading `=`, and compile to the call step's `Departments` and `Assignees`; they never reach `io_mapping`. `Depts` maps module lane names to caller lane names, matched case-insensitively. A malformed value, an unknown lane or task, or a retired `dept_id` input is `INVALID_ZEEBE_PROPERTY`; an unmapped slot when there are two or more is `MISSING_DEPT_INPUT_FOR_MODULE`. Other inputs (like `clarificationId`) compile to the call step's `io_mapping`.
 
 **isExecutable semantics:**
 
@@ -918,10 +908,10 @@ Limits: 1–100 lanes per process.
 | `<bpmn:exclusiveGateway>` | Routing decision → `ExclusiveBranch` list; all outgoing flows require `conditionExpression`; back-edges allowed when guarded |
 | `<bpmn:eventBasedGateway>` | Waits for the first of N intermediate catch events |
 | `<bpmn:subProcess>` | Embedded, non-event, non-ad-hoc → `SubWorkflowStep`; recursively validated; nested `subProcess` inside another `subProcess` is **not supported** (`NESTED_SUBPROCESS_NOT_SUPPORTED`) |
-| `<bpmn:callActivity>` | References a called process by `<zeebe:calledElement processId="..."/>`; the called process BPMN must be supplied in `module_bpmn_xmls` on the draft; called process uses its own lanes; steps flattened directly into parent plan (no `SubWorkflowStep`); if called process has no lanes, a `dept_id` input mapping is required (see §Module BPMNs) |
-| `<bpmn:boundaryEvent cancelActivity="…">` + `timerEventDefinition` | SLA deadline → `StageDef.BoundaryTimer`; attached to `userTask` or `subProcess`; timer boundary events on `callActivity` are rejected at compile time; `cancelActivity="false"` = non-interrupting, `"true"` = interrupting |
-| `<bpmn:boundaryEvent>` + `errorEventDefinition` | Exception catch → `SubWorkflowStep.ErrorPaths`; attached to `subProcess` or `callActivity`; error boundaries on `callActivity` pass validation but fail compilation |
-| `<bpmn:boundaryEvent cancelActivity="…">` + `messageEventDefinition` | Inbound message interrupt → `StageDef.BoundaryMessage` (userTask), `SubWorkflowStep.MessagePaths` (subProcess), or `ExecutionStep.MessagePaths` (callActivity, flattened); attached to `userTask`, `subProcess`, or `callActivity`; zero outgoing flows is a valid terminal interrupt notification |
+| `<bpmn:callActivity>` | References a called process by `<zeebe:calledElement processId="..."/>`; the called process BPMN must be supplied in `module_bpmn_xmls` on the draft; the called process compiles once into its own plan and the call to an `ExecutionStep.CallPlan` binding its open lanes to caller lanes (see §Module BPMNs) |
+| `<bpmn:boundaryEvent cancelActivity="…">` + `timerEventDefinition` | SLA deadline → `StageDef.BoundaryTimer` (userTask), `SubWorkflowStep.TimerPaths` (subProcess) or `CallPlanStep.TimerPaths` (callActivity); `cancelActivity="false"` = non-interrupting, `"true"` = interrupting |
+| `<bpmn:boundaryEvent>` + `errorEventDefinition` | Exception catch → `SubWorkflowStep.ErrorPaths` or `CallPlanStep.ErrorPaths`; attached to `subProcess` or `callActivity` |
+| `<bpmn:boundaryEvent cancelActivity="…">` + `messageEventDefinition` | Inbound message interrupt → `StageDef.BoundaryMessage` (userTask), `SubWorkflowStep.MessagePaths` (subProcess), or `CallPlanStep.MessagePaths` (callActivity); attached to `userTask`, `subProcess`, or `callActivity`; zero outgoing flows is a valid terminal interrupt notification |
 | `<bpmn:intermediateCatchEvent>` + `timerEventDefinition` | Wait/delay step |
 | `<bpmn:sequenceFlow>` | Structural connector |
 | `<bpmn:conditionExpression>` (child of sequenceFlow) | FEEL expression for routing decisions; stored verbatim; evaluated at runtime by the Execution Service; max 4096 chars |
@@ -1124,7 +1114,7 @@ A `<bpmn:boundaryEvent>` with a `messageEventDefinition` can be attached to a `u
 
 **Contrast with timer and error boundaries**: Timer and error boundary events still require at least one outgoing sequence flow; a timer or error boundary with no continuation is a modelling error and will fail validation.
 
-**System semantics**: compiles to `StageDef.BoundaryMessage {message_name, interrupting, target_dept}` when attached to a `userTask`, to `SubWorkflowStep.MessagePaths` when attached to a `subProcess`, or to `ExecutionStep.MessagePaths` when attached to a `callActivity` (flattened into the parent plan). The message name is resolved from the boundary event's own `messageEventDefinition messageRef`, falling back to any collaboration `messageFlow` targeting the boundary event — see §Message Flow Name Resolution.
+**System semantics**: compiles to `StageDef.BoundaryMessage {message_name, interrupting, target_dept}` when attached to a `userTask`, to `SubWorkflowStep.MessagePaths` when attached to a `subProcess`, or to `CallPlanStep.MessagePaths` when attached to a `callActivity`. The message name is resolved from the boundary event's own `messageEventDefinition messageRef`, falling back to any collaboration `messageFlow` targeting the boundary event — see §Message Flow Name Resolution.
 
 ### Gateway Rules
 
@@ -1196,13 +1186,13 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | --- | --- |
 | `<zeebe:calledElement processId="…"/>` present and `processId` resolves to a supplied module process | `UNRESOLVED_CALLED_ELEMENT` |
 | Called process has at least one `startEvent` | `NO_START_EVENT` (anchored on the callActivity node ID) |
-| Called process has no lanes AND callActivity ioMapping has neither a `dept_id` input nor a `target="Depts"` input containing a valid JSON object mapping lane names to dept IDs | `MISSING_DEPT_INPUT_FOR_MODULE` |
-| Timer boundary event attached to a `callActivity` | `INVALID_BOUNDARY_ATTACHMENT` |
+| Every open lane (no `dept_id`) of the called process is bound, by `Depts` or, for a single open lane, by default to the call's lane | `MISSING_DEPT_INPUT_FOR_MODULE` |
+| `Depts`/`Assignees` are JSON objects of strings naming lanes and tasks that exist; no `dept_id` input | `INVALID_ZEEBE_PROPERTY` |
 | No chain of calls returns to a process already on it | `CALLED_ELEMENT_CYCLE` (anchored on the callActivity that closes the cycle) |
 | No two processes in the bundled document share an `id` | `DUPLICATE_PROCESS_ID` |
 | The called process's own body passes every rule in these tables, without the diagram rules | the body's own codes, anchored on its own nodes, or on the called process id for a whole-process rule |
 
-Note: error boundary events on `callActivity` pass validation but are rejected at compile time. Message boundary events on `callActivity` are fully supported — they pass validation and compile to `ExecutionStep.message_paths` on the flattened step.
+Message, timer and error boundary events on `callActivity` compile to the call step's `message_paths`, `timer_paths` and `error_paths`.
 
 **Sequence flow conditions**
 
@@ -1239,7 +1229,6 @@ Back-edges are classified once via DFS from the start event (`classifyBackEdges`
 | Code | Trigger |
 | --- | --- |
 | `UNKNOWN_STAGE_TYPE` | `taskDefinition.type` does not match a registered `StageTypeHandler` — compilation continues with the raw type string |
-| `INVALID_ZEEBE_PROPERTY` | A `target="Depts"` input in `zeebe:ioMapping` is present but its source is not valid JSON or is not a `map[string]string` — the module uses its lane names as-is |
 | `MISSING_MESSAGE_DEFINITION` | A message boundary event's message name cannot be resolved from either the `<bpmn:message>` definitions or the collaboration's message flows targeting that boundary event's ID — emitted per event; compilation continues with an empty correlation key hint |
 | `MISSING_MESSAGE_DEFINITION` *(collaboration-level)* | A `<bpmn:messageFlow>`'s name cannot be resolved via any of the fallback paths in §Message Flow Name Resolution — emitted per flow; `MessageDef.Name` compiles to `""` |
 
@@ -1249,7 +1238,7 @@ Back-edges are classified once via DFS from the start event (`classifyBackEdges`
 |---|---|---|
 | Upload size | 10 MB | `PAYLOAD_TOO_LARGE` |
 | XML token stream | 1,000,000 tokens | parse error → 400 |
-| User tasks per process, and user tasks plus call sites in its plan once called processes are inlined | 1000 | `TASK_LIMIT_EXCEEDED` |
+| User tasks per process, and stages plus calls once its calls are expanded | 1000 | `TASK_LIMIT_EXCEEDED` |
 | Lanes per process | 100 | `LANE_LIMIT_EXCEEDED` |
 | Longest forward path | 2000 nodes | `MAX_DEPTH_EXCEEDED` |
 | `conditionExpression` length | 4096 chars | `INVALID_CONDITION_EXPRESSION` |
@@ -1272,11 +1261,11 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `CANDIDATE_GROUPS_EMPTY` | `candidateGroups` absent or exceeds 256 chars |
 | `INVALID_CANDIDATE_USER` | `candidateUsers` is not a valid UUID v7 |
 | `INVALID_CONDITION_EXPRESSION` | Condition expression exceeds 4096 chars |
-| `INVALID_ZEEBE_PROPERTY` | *(warning severity)* module `zeebe:ioMapping` `target="Depts"` input source is not valid JSON / not a `map[string]string` |
+| `INVALID_ZEEBE_PROPERTY` | callActivity: malformed `Depts`/`Assignees` input, an unknown lane or task in them, or a retired `dept_id` input |
 | `INVALID_SLA_DURATION` | Timer boundary duration is not valid ISO 8601 or Go duration |
 | `MISSING_MESSAGE_DEFINITION` | `messageRef` on a flow or task references an undeclared `<bpmn:message>` |
 | `UNMATCHED_MESSAGE_FLOW` | Message flow source/target does not reference a known element |
-| `TASK_LIMIT_EXCEEDED` | User task count > 1000, in the process or in its inlined plan |
+| `TASK_LIMIT_EXCEEDED` | User task count > 1000 in the process, or more than 1000 stages and calls once its calls are expanded |
 | `LANE_LIMIT_EXCEEDED` | Lane count > 100 |
 | `MULTIPLE_START_EVENTS` | More than one `startEvent` in the process |
 | `MULTIPLE_END_EVENTS` | More than one `endEvent` (only raised when collaboration is absent and single process has > 1 end events without guarded exits) |
@@ -1295,7 +1284,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `MISSING_DIAGRAM_SHAPE` | A BPMN element has no corresponding `<bpmndi:BPMNShape>` in the diagram |
 | `UNRESOLVED_CALLED_ELEMENT` | `callActivity` references a `processId` not found in supplied module BPMNs |
 | `NESTED_SUBPROCESS_NOT_SUPPORTED` | A `subProcess` is nested inside another `subProcess` |
-| `MISSING_DEPT_INPUT_FOR_MODULE` | Called process has no lanes and no `dept_id` input mapping was provided |
+| `MISSING_DEPT_INPUT_FOR_MODULE` | A called process has two or more open lanes and the call's `Depts` input does not map every one |
 | `CALLED_ELEMENT_CYCLE` | A chain of `callActivity` calls returns to a process already on it |
 | `DUPLICATE_PROCESS_ID` | Two processes in the bundled document share an `id` |
 | `UNSUPPORTED_ELEMENT` | Tier 2 element present (e.g. `inclusiveGateway`) — parsed but compile handler absent |

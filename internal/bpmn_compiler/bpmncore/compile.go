@@ -7,7 +7,8 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 )
 
-func Compile(proc *BPMNProcess, g *Graph, stageTypes map[string]StageTypeHandler, elements map[FlowNodeType]ElementHandler, defs *BPMNDefinitions) (*dsl.CompiledPlan, error) {
+// Compile returns the process's plan and the plans of the processes it calls.
+func Compile(proc *BPMNProcess, g *Graph, stageTypes map[string]StageTypeHandler, elements map[FlowNodeType]ElementHandler, defs *BPMNDefinitions) (*dsl.CompiledPlan, []*dsl.CompiledPlan, error) {
 	implicit := ""
 	if len(proc.StartEvents) == 0 {
 		implicit = FindImplicitStart(proc, g)
@@ -15,7 +16,7 @@ func Compile(proc *BPMNProcess, g *Graph, stageTypes map[string]StageTypeHandler
 	return CompileWithImplicitStart(proc, g, implicit, stageTypes, elements, defs)
 }
 
-func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string, stageTypes map[string]StageTypeHandler, elements map[FlowNodeType]ElementHandler, defs *BPMNDefinitions, externalNodes ...map[string]string) (*dsl.CompiledPlan, error) {
+func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string, stageTypes map[string]StageTypeHandler, elements map[FlowNodeType]ElementHandler, defs *BPMNDefinitions, externalNodes ...map[string]string) (*dsl.CompiledPlan, []*dsl.CompiledPlan, error) {
 	startID := ""
 	if len(proc.StartEvents) > 0 {
 		startID = proc.StartEvents[0].ID
@@ -23,7 +24,7 @@ func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string,
 		startID = implicitStart
 	}
 	if startID == "" {
-		return nil, fmt.Errorf("compile: no start event")
+		return nil, nil, fmt.Errorf("compile: no start event")
 	}
 
 	laneLabels := BuildLaneLabels(proc)
@@ -42,16 +43,16 @@ func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string,
 		nexts := state.ForwardNexts(startID)
 		if len(nexts) > 0 {
 			if err := state.TraverseNode(nexts[0]); err != nil {
-				return nil, fmt.Errorf("compile: %w", err)
+				return nil, nil, fmt.Errorf("compile: %w", err)
 			}
 		}
 	} else {
 		if err := state.TraverseNode(startID); err != nil {
-			return nil, fmt.Errorf("compile: %w", err)
+			return nil, nil, fmt.Errorf("compile: %w", err)
 		}
 	}
 	if err := state.CompileBoundaryPaths(); err != nil {
-		return nil, fmt.Errorf("compile: %w", err)
+		return nil, nil, fmt.Errorf("compile: %w", err)
 	}
 
 	var visualElems []dsl.VisualElementDef
@@ -69,7 +70,7 @@ func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string,
 		Departments:    state.CollectedDepts(),
 		Execution:      dsl.ExecutionPlan{Steps: state.steps},
 		VisualElements: visualElems,
-	}, nil
+	}, state.Called.All(), nil
 }
 
 func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, proc *BPMNProcess, defs *BPMNDefinitions) (dsl.StageDef, error) {

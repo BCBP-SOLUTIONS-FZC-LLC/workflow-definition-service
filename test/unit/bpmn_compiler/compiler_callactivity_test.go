@@ -2,6 +2,7 @@ package bpmn_compiler_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
@@ -238,36 +239,28 @@ func TestValidate_CallActivity_UnknownProcessRef(t *testing.T) {
 	}
 }
 
-// TestCompile_CallActivity_Flat asserts that callActivity stages are inlined
-// directly into the parent plan (no SubWorkflow wrapper).
-func TestCompile_CallActivity_Flat(t *testing.T) {
-	c := bpmn_compiler.New()
-	plan, err := c.Compile(context.Background(), callActivityBPMN)
+// TestCompile_CallActivity_IsACallToTheModulesOwnPlan asserts that a
+// callActivity compiles to one call step and the called process to its own
+// plan, rather than being inlined into the caller's departments.
+func TestCompile_CallActivity_IsACallToTheModulesOwnPlan(t *testing.T) {
+	collab, err := bpmn_compiler.New().CompileForPublish(context.Background(), callActivityBPMN)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(plan.Execution.Steps) == 0 {
-		t.Fatal("expected at least one execution step")
+	main := collab.Plans[0]
+	if len(main.Execution.Steps) != 1 || main.Execution.Steps[0].CallPlan == nil {
+		t.Fatalf("main steps = %+v, want one call_plan step", main.Execution.Steps)
 	}
-	// No SubWorkflow wrappers — callActivity is flat.
-	for _, step := range plan.Execution.Steps {
-		if step.SubWorkflow != nil {
-			t.Errorf("callActivity should not produce a SubWorkflow step; got %+v", step.SubWorkflow)
-		}
+	call := main.Execution.Steps[0].CallPlan
+	if call.NodeID != "CA_1" || call.Plan != "Process_PrepReview" || call.Departments != nil {
+		t.Errorf("call = %+v, want CA_1 calling Process_PrepReview with its fixed lane unbound", call)
 	}
-	// The called process's own department ("engineering") must appear.
-	found := false
-	for _, d := range plan.Departments {
-		if d.ID == "engineering" {
-			found = true
-			if d.IAMDepartmentID != "f14abc9f-befa-54ff-b57f-c15ab3090062" {
-				t.Errorf("expected engineering dept to carry its lane's IAMDepartmentID; got %q", d.IAMDepartmentID)
-			}
-			break
-		}
+	if len(collab.Plans) != 2 || collab.Plans[1].Name != "Process_PrepReview" {
+		t.Fatalf("plans = %d, want the main plan and Process_PrepReview's", len(collab.Plans))
 	}
-	if !found {
-		t.Errorf("expected dept 'engineering' from called process; departments = %v", plan.Departments)
+	engineering := collab.Plans[1].Departments[0]
+	if engineering.ID != "engineering" || engineering.IAMDepartmentID != "f14abc9f-befa-54ff-b57f-c15ab3090062" {
+		t.Errorf("module department = %+v, want its own engineering lane and IAM id", engineering)
 	}
 }
 
@@ -397,66 +390,29 @@ const callActivityNoLaneMissingDeptBPMN = `<?xml version="1.0" encoding="UTF-8"?
   </bpmndi:BPMNDiagram>
 </bpmn:definitions>`
 
-// TestCompile_CallActivity_NoLane_DeptFromIOMapping: called process has no lanes;
-// the caller provides dept_id via ioMapping — steps compile into that department.
-func TestCompile_CallActivity_NoLane_DeptFromIOMapping(t *testing.T) {
-	c := bpmn_compiler.New()
-	plan, err := c.Compile(context.Background(), callActivityNoLaneWithDeptBPMN)
+// TestValidate_CallActivity_RetiredDeptIDInput_IsRefused: a laneless module
+// takes the call's lane, so the old dept_id input is refused rather than
+// silently passed to the called process as a variable.
+func TestValidate_CallActivity_RetiredDeptIDInput_IsRefused(t *testing.T) {
+	errs, err := bpmn_compiler.New().Validate(context.Background(), callActivityNoLaneWithDeptBPMN)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertHasDept(t, plan.Departments, "engineering")
-	assertIOMapping(t, plan.Execution.Steps)
-}
-
-func assertHasDept(t *testing.T, depts []dsl.DepartmentDef, id string) {
-	t.Helper()
-	for _, d := range depts {
-		if d.ID == id {
-			return
-		}
+	if got := findCode(errs, domain.BPMNErrInvalidZeebeProperty); got == nil || !strings.Contains(got.Message, "dept_id") {
+		t.Errorf("errors = %+v, want INVALID_ZEEBE_PROPERTY about dept_id", errs)
 	}
-	t.Errorf("expected dept %q from dept_id ioMapping; departments = %v", id, depts)
 }
 
-func assertIOMapping(t *testing.T, steps []dsl.ExecutionStep) {
-	t.Helper()
-	for _, step := range steps {
-		if step.IOMapping == nil {
-			continue
-		}
-		for _, in := range step.IOMapping.Inputs {
-			if in.Target == "dept_id" {
-				t.Error("dept_id should not be emitted in compiled IOMapping (it is compiler-internal)")
-			}
-		}
-		return // found an ioMapping, done
-	}
-	t.Error("expected IOMapping on a step (non-dept_id inputs should be preserved)")
-}
-
-// TestValidate_CallActivity_NoLane_MissingDeptID: validator must emit MISSING_DEPT_INPUT_FOR_MODULE
-// when the called process has no lanes and no dept_id input mapping is provided.
-func TestValidate_CallActivity_NoLane_MissingDeptID(t *testing.T) {
-	c := bpmn_compiler.New()
-	errs, err := c.Validate(context.Background(), callActivityNoLaneMissingDeptBPMN)
+// TestCompile_CallActivity_NoLane_TakesTheCallsLane: a laneless module is one
+// open slot, which the call binds to its own lane when Depts is absent.
+func TestCompile_CallActivity_NoLane_TakesTheCallsLane(t *testing.T) {
+	collab, err := bpmn_compiler.New().CompileForPublish(context.Background(), callActivityNoLaneMissingDeptBPMN)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !hasCode(errs, domain.BPMNErrMissingDeptInputForModule) {
-		t.Errorf("expected MISSING_DEPT_INPUT_FOR_MODULE; got %v", errs)
-	}
-}
-
-// TestValidate_CallActivity_NoLane_WithDeptID: no validation error when dept_id is provided.
-func TestValidate_CallActivity_NoLane_WithDeptID(t *testing.T) {
-	c := bpmn_compiler.New()
-	errs, err := c.Validate(context.Background(), callActivityNoLaneWithDeptBPMN)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if hasCode(errs, domain.BPMNErrMissingDeptInputForModule) {
-		t.Errorf("unexpected MISSING_DEPT_INPUT_FOR_MODULE when dept_id is provided; errs = %v", errs)
+	call := collab.Plans[0].Execution.Steps[0].CallPlan
+	if call == nil || call.Departments["Process_NoLane"] != "management" {
+		t.Errorf("call = %+v, want Process_NoLane bound to the call's lane management", call)
 	}
 }
 
@@ -583,36 +539,25 @@ const callActivityDeptsRemapBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmndi:BPMNDiagram>
 </bpmn:definitions>`
 
-// TestCompile_CallActivity_DeptsRemap_StepsMatchDepartments is a regression test:
-// zeebe:ioMapping's "Depts" remap must apply to both DepartmentDef.ID entries AND
-// the ExecutionStep dept references inside the called process's flattened steps —
-// previously only the former was remapped, leaving steps pointing at a department
-// ID absent from plan.Departments.
-func TestCompile_CallActivity_DeptsRemap_StepsMatchDepartments(t *testing.T) {
-	c := bpmn_compiler.New()
-	plan, err := c.Compile(context.Background(), callActivityDeptsRemapBPMN)
+// TestCompile_CallActivity_DeptsBindsAModuleLaneToACallerLane: Depts binds an
+// open module lane to a caller lane, whose department the called tasks run in.
+func TestCompile_CallActivity_DeptsBindsAModuleLaneToACallerLane(t *testing.T) {
+	bpmnXML := strings.Replace(callActivityDeptsRemapBPMN, "&#34;delivery&#34;", "&#34;management&#34;", 1)
+	openLane := `<bpmn:lane id="Lane_eng" name="engineering">`
+	bpmnXML = strings.Replace(bpmnXML, openLane+`<bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="f14abc9f-befa-54ff-b57f-c15ab3090062"/></zeebe:properties></bpmn:extensionElements>`, openLane, 1)
+	collab, err := bpmn_compiler.New().CompileForPublish(context.Background(), bpmnXML)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	foundDept := false
-	for _, d := range plan.Departments {
-		if d.ID == "engineering" {
-			t.Errorf("department %q should have been remapped to %q", "engineering", "delivery")
-		}
-		if d.ID == "delivery" {
-			foundDept = true
-		}
+	call := collab.Plans[0].Execution.Steps[0].CallPlan
+	if call == nil || call.Departments["engineering"] != "management" {
+		t.Fatalf("call = %+v, want engineering bound to management", call)
 	}
-	if !foundDept {
-		t.Fatalf("expected remapped dept 'delivery'; departments = %v", plan.Departments)
+	expanded, err := dsl.ExpandCalls(collab, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for _, step := range plan.Execution.Steps {
-		for _, dept := range step.Sequential {
-			if dept == "engineering" {
-				t.Errorf("step references unremapped dept %q; steps = %+v", dept, plan.Execution.Steps)
-			}
-		}
+	if got := departmentNamed(t, expanded.Plans[0], "CA_1::engineering").IAMDepartmentID; got != "92fd92cf-4b2c-58dc-bf98-f3d0af729876" {
+		t.Errorf("engineering runs in iam %q, want management's", got)
 	}
 }

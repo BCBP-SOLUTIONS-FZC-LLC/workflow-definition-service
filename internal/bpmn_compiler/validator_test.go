@@ -309,7 +309,7 @@ func TestValidateDeptID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			proc := &bpmncore.BPMNProcess{LaneSet: bpmncore.BPMNLaneSet{Lanes: tt.lanes}}
-			errs := validator.ValidateDeptID(tt.taskID, proc)
+			errs := validator.ValidateDeptID(tt.taskID, proc, nil)
 			if tt.wantErr != (len(errs) != 0) {
 				t.Fatalf("expected error=%v; got %v", tt.wantErr, errs)
 			}

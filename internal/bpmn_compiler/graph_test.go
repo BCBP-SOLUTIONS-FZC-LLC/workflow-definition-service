@@ -482,7 +482,7 @@ func TestCompile_PassthroughGateway(t *testing.T) {
 func TestCompile_NoStartEvents(t *testing.T) {
 	proc := &bpmncore.BPMNProcess{}
 	g := bpmncore.BuildGraph(proc)
-	_, err := bpmncore.Compile(proc, g, defaultStageTypes(), element.DefaultElementHandlers(), nil)
+	_, _, err := bpmncore.Compile(proc, g, defaultStageTypes(), element.DefaultElementHandlers(), nil)
 	if err == nil {
 		t.Error("Compile() should return error when process has no start events")
 	}

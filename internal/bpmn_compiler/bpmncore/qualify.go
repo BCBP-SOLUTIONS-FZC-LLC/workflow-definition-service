@@ -51,5 +51,26 @@ func QualifySteps(steps []dsl.ExecutionStep, rename func(string) string) {
 		for j := range steps[i].MessagePaths {
 			steps[i].MessagePaths[j].TargetDept = rename(steps[i].MessagePaths[j].TargetDept)
 		}
+		if cp := steps[i].CallPlan; cp != nil {
+			qualifyCall(cp, rename)
+		}
+	}
+}
+
+// qualifyCall renames the calling plan's departments a call names: its
+// bindings' values and its boundary targets. The keys name the called plan's
+// own departments and stay as they are.
+func qualifyCall(cp *dsl.CallPlanStep, rename func(string) string) {
+	for k, v := range cp.Departments {
+		cp.Departments[k] = rename(v)
+	}
+	for j := range cp.ErrorPaths {
+		cp.ErrorPaths[j].TargetDept = rename(cp.ErrorPaths[j].TargetDept)
+	}
+	for j := range cp.TimerPaths {
+		cp.TimerPaths[j].TargetDept = rename(cp.TimerPaths[j].TargetDept)
+	}
+	for j := range cp.MessagePaths {
+		cp.MessagePaths[j].TargetDept = rename(cp.MessagePaths[j].TargetDept)
 	}
 }

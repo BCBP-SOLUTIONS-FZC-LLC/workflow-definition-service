@@ -12,7 +12,7 @@ type UserTaskHandler struct{}
 
 func (UserTaskHandler) NodeType() bpmncore.FlowNodeType { return bpmncore.NodeTypeUserTask }
 
-func (UserTaskHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *bpmncore.Graph, _ *bpmncore.BPMNDefinitions, stageTypes map[string]bpmncore.StageTypeHandler, _ map[bpmncore.FlowNodeType]bpmncore.ElementHandler) []domain.BPMNValidationError {
+func (UserTaskHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *bpmncore.Graph, defs *bpmncore.BPMNDefinitions, stageTypes map[string]bpmncore.StageTypeHandler, _ map[bpmncore.FlowNodeType]bpmncore.ElementHandler) []domain.BPMNValidationError {
 	task := bpmncore.FindTask(proc, nodeID)
 	if task == nil {
 		return nil
@@ -32,7 +32,7 @@ func (UserTaskHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *bp
 
 	laneRefs := bpmncore.BuildLaneRefSet(proc)
 	errs = append(errs, validator.ValidateLaneMembership(task.ID, laneRefs)...)
-	errs = append(errs, validator.ValidateDeptID(task.ID, proc)...)
+	errs = append(errs, validator.ValidateDeptID(task.ID, proc, defs)...)
 	return errs
 }
 
