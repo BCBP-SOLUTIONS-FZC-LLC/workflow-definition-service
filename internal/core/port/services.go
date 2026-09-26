@@ -25,6 +25,9 @@ type PlanCompiler interface {
 	// CompileForPublish returns the shape stored as compiled_plan_json.
 	CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error)
 	Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error)
+	// ValidateForPublish is Validate plus the rules only the expanded plan
+	// shows, so a document it accepts is one publish accepts.
+	ValidateForPublish(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error)
 	// ValidateModule validates a bundled module document with the module's own
 	// process as the root, its open lanes allowed; global forbids naming users.
 	ValidateModule(ctx context.Context, bpmnXML, moduleProcessID string, global bool) ([]domain.BPMNValidationError, error)

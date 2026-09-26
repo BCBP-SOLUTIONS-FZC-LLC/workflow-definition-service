@@ -77,6 +77,24 @@ func TestModuleCalls_FlagsCallsThatCannotNameALibraryModule(t *testing.T) {
 	}
 }
 
+// TestModuleCalls_PinningAProcessThisFileDefines_IsRefused pins that a call
+// pinning a library version of a process id the file also defines is refused
+// on the call, rather than left to strand the local copy as a second root.
+func TestModuleCalls_PinningAProcessThisFileDefines_IsRefused(t *testing.T) {
+	bpmnXML := pinned(mainWithCalls([]callSite{{ID: "CA_1", Lane: "Engineering", Calls: "Process_Lib"}},
+		moduleWithTask("Process_Lib", validCandidateUser)), "Process_Lib", "2")
+	calls, issues, err := bpmn_compiler.New().ModuleCalls(context.Background(), bpmnXML)
+	if err != nil {
+		t.Fatalf("ModuleCalls: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("calls = %+v, want none", calls)
+	}
+	if got := findCode(issues, domain.BPMNErrUnresolvedCalledElement); got == nil || got.NodeID != "CA_1" || !strings.Contains(got.Message, "this file") {
+		t.Errorf("issues = %+v, want UNRESOLVED_CALLED_ELEMENT on CA_1 saying the file defines the process", issues)
+	}
+}
+
 func TestBundleModules_TwoVersionsOfOneModuleBecomeTwoPlans(t *testing.T) {
 	c := bpmn_compiler.New()
 	main := pinned(mainWithCalls([]callSite{
@@ -197,6 +215,38 @@ func TestValidateModule_GlobalModuleNamesNoUserThroughACallsAssignees(t *testing
 	}
 	if got := findCode(errs, domain.BPMNErrInvalidCandidateUser); got == nil || got.NodeID != "Process_G_Call" {
 		t.Errorf("errors = %+v, want INVALID_CANDIDATE_USER on the call naming a user", errs)
+	}
+}
+
+// TestValidateModule_GlobalModuleUserTwoSubProcessesDown_IsRefused pins why
+// namedUsers looks one subProcess level deep: a deeper subProcess, where a
+// user could hide from it, is itself refused.
+func TestValidateModule_GlobalModuleUserTwoSubProcessesDown_IsRefused(t *testing.T) {
+	module := moduleDocument(`  <bpmn:process id="Process_G" isExecutable="true">
+    <bpmn:startEvent id="G_Start"/>
+    <bpmn:subProcess id="G_Outer">
+      <bpmn:startEvent id="GO_Start"/>
+      <bpmn:subProcess id="G_Inner">
+        <bpmn:startEvent id="GI_Start"/>
+        <bpmn:userTask id="GI_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + validCandidateUser + `"/></bpmn:extensionElements></bpmn:userTask>
+        <bpmn:endEvent id="GI_End"/>
+        <bpmn:sequenceFlow id="GI_F1" sourceRef="GI_Start" targetRef="GI_Task"/>
+        <bpmn:sequenceFlow id="GI_F2" sourceRef="GI_Task" targetRef="GI_End"/>
+      </bpmn:subProcess>
+      <bpmn:endEvent id="GO_End"/>
+      <bpmn:sequenceFlow id="GO_F1" sourceRef="GO_Start" targetRef="G_Inner"/>
+      <bpmn:sequenceFlow id="GO_F2" sourceRef="G_Inner" targetRef="GO_End"/>
+    </bpmn:subProcess>
+    <bpmn:endEvent id="G_End"/>
+    <bpmn:sequenceFlow id="G_F1" sourceRef="G_Start" targetRef="G_Outer"/>
+    <bpmn:sequenceFlow id="G_F2" sourceRef="G_Outer" targetRef="G_End"/>
+  </bpmn:process>`)
+	errs, err := bpmn_compiler.New().ValidateModule(context.Background(), module, "Process_G", true)
+	if err != nil {
+		t.Fatalf("ValidateModule: %v", err)
+	}
+	if got := findCode(blockingErrors(errs), domain.BPMNErrNestedSubProcessNotSupported); got == nil {
+		t.Errorf("errors = %+v, want the nested subProcess refused", errs)
 	}
 }
 

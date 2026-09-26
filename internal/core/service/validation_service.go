@@ -54,7 +54,7 @@ func (s *ValidationService) ValidateVersion(
 }
 
 func (s *ValidationService) validate(ctx context.Context, lookup moduleLookup, bpmnXML string) (bool, []domain.BPMNValidationError, error) {
-	errs, err := s.modules.validate(ctx, lookup, bpmnXML)
+	errs, err := s.modules.validateForPublish(ctx, lookup, bpmnXML)
 	if err != nil {
 		return false, nil, err
 	}

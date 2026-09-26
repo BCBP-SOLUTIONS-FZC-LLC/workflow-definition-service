@@ -41,7 +41,7 @@ func (c *Compiler) ModuleCalls(ctx context.Context, bpmnXML string) ([]domain.Mo
 	var issues []domain.BPMNValidationError
 	for i := range defs.Processes {
 		for _, ca := range defs.Processes[i].CallActivities {
-			call, issue, ok := moduleCall(ca, defs)
+			call, issue, ok := moduleCall(ca, defs.Processes[i].ID, defs)
 			if issue != nil {
 				issues = append(issues, *issue)
 			}
@@ -53,7 +53,9 @@ func (c *Compiler) ModuleCalls(ctx context.Context, bpmnXML string) ([]domain.Mo
 	return calls, issues, nil
 }
 
-func moduleCall(ca bpmncore.BPMNCallActivity, defs *bpmncore.BPMNDefinitions) (domain.ModuleCall, *domain.BPMNValidationError, bool) {
+// moduleCall judges ca, a call made by process callerID. A call pinning a
+// version of callerID itself names an earlier version of the same module.
+func moduleCall(ca bpmncore.BPMNCallActivity, callerID string, defs *bpmncore.BPMNDefinitions) (domain.ModuleCall, *domain.BPMNValidationError, bool) {
 	ext := ca.ExtensionElements.ZeebeCalledElement
 	if ext == nil || ext.ProcessID == "" {
 		return domain.ModuleCall{}, nil, false // ValidateCallActivity reports the missing calledElement
@@ -85,6 +87,10 @@ func moduleCall(ca bpmncore.BPMNCallActivity, defs *bpmncore.BPMNDefinitions) (d
 		n, ok := parseVersionTag(ext.VersionTag)
 		if !ok {
 			return domain.ModuleCall{}, unresolved("pins versionTag %q; it must be a published module version number", ext.VersionTag), false
+		}
+		if local && ext.ProcessID != callerID {
+			return domain.ModuleCall{}, unresolved("pins version %d of library module %q, but this file also defines a process %q; "+
+				"rename the process in this file, or call it without a versionTag", n, ext.ProcessID, ext.ProcessID), false
 		}
 		return domain.ModuleCall{CallID: ca.ID, ProcessID: ext.ProcessID, VersionNumber: n}, nil, true
 	default:

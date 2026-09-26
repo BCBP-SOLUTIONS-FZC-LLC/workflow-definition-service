@@ -81,7 +81,7 @@ func minimalBPMN(processBody string) string {
 </bpmn:definitions>`
 }
 
-const aliceUUID = "550e8400-e29b-41d4-a716-446655440000"
+const aliceUUID = "018f2d3c-0000-7000-8000-0000000000a1"
 
 // validTask returns a minimal valid userTask XML block.
 // deptID is ignored — department is derived from the lane the task appears in.
@@ -990,7 +990,7 @@ const subprocessUnknownErrorRefBPMN = `<?xml version="1.0" encoding="UTF-8"?>
       <bpmn:userTask id="InnerTask" name="Inner Task">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="prep"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         </bpmn:extensionElements>
       </bpmn:userTask>
       <bpmn:endEvent id="InnerEnd" name="Inner End"/>
@@ -1003,7 +1003,7 @@ const subprocessUnknownErrorRefBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_after" name="Task After">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="EndEvent_1" name="End"/>

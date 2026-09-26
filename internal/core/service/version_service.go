@@ -313,7 +313,11 @@ func (s *VersionService) resolvePlan(
 			return plan, nil
 		}
 	}
-	res, err := s.modules.resolve(ctx, s.modules.live(v.TenantID), v.BPMNXML, "")
+	lookup := s.modules.live(v.TenantID)
+	if v.Status != domain.VersionStatusDraft {
+		lookup = s.modules.snapshot(v.TenantID, v.ModuleRefs)
+	}
+	res, err := s.modules.resolve(ctx, lookup, v.BPMNXML, "")
 	if err != nil {
 		return nil, err
 	}

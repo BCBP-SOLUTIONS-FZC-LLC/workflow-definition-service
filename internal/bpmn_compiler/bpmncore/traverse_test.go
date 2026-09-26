@@ -506,14 +506,24 @@ func TestCompileBoundaryPaths_ErrorPropagation(t *testing.T) {
 	}
 }
 
-func TestFirstDeptAhead(t *testing.T) {
+func TestBoundaryTarget(t *testing.T) {
 	s := newMinimalState()
-	s.G.NodeType["t1"] = NodeTypeUserTask
+	s.G.NodeType["t1"], s.G.NodeType["end"] = NodeTypeUserTask, NodeTypeEndEvent
 	s.Proc.UserTasks = []BPMNUserTask{{ID: "t1"}}
 	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"t1"}}}
+	s.Proc.SequenceFlows = []BPMNSequenceFlow{{ID: "f1", SourceRef: "be_task", TargetRef: "t1"}, {ID: "f2", SourceRef: "be_end", TargetRef: "end"}}
 
-	if got := s.FirstDeptAhead("t1"); got != "Ops" {
-		t.Errorf("got %q; want Ops", got)
+	for _, tc := range []struct {
+		boundary, dept string
+		terminates     bool
+	}{
+		{"be_task", "Ops", false},
+		{"be_end", "", true},
+		{"be_nowhere", "", true},
+	} {
+		if dept, terminates := s.BoundaryTarget(tc.boundary); dept != tc.dept || terminates != tc.terminates {
+			t.Errorf("BoundaryTarget(%s) = %q, %v; want %q, %v", tc.boundary, dept, terminates, tc.dept, tc.terminates)
+		}
 	}
 }
 

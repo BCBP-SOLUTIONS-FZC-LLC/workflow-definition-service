@@ -146,9 +146,11 @@ func TestPublish_ResolvesPinnedAndLatestLibraryVersions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stored plan does not expand: %v", err)
 	}
+	// Node keys name the module by its process id, not its version, so a call
+	// moving from v3 to v4 keeps its tasks' keys.
 	for id, iam := range map[string]string{
-		"CA_1::Process_Review@v3": "2200a5ae-2466-54f7-a1d8-243106e05705",
-		"CA_2::Process_Review@v4": "92fd92cf-4b2c-58dc-bf98-f3d0af729876",
+		"CA_1::Process_Review": "2200a5ae-2466-54f7-a1d8-243106e05705",
+		"CA_2::Process_Review": "92fd92cf-4b2c-58dc-bf98-f3d0af729876",
 	} {
 		found := false
 		for _, d := range expanded.Plans[0].Departments {
@@ -293,7 +295,7 @@ func TestModuleService_Create_ProcessIDInUseIsAConflict(t *testing.T) {
 func TestModuleService_Create_GlobalModuleNamingAUserIsRefused(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, _ := newLibraryModuleService(ctrl)
-	named := strings.Replace(openLaneModule, `candidateGroups="preparer"/>`, `candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>`, 1)
+	named := strings.Replace(openLaneModule, `candidateGroups="preparer"/>`, `candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>`, 1)
 
 	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), service.CreateModuleReq{Name: "Open", BPMNXML: named, Scope: domain.ScopeGlobal})
 	var vf *domain.ValidationFailedError
@@ -475,5 +477,41 @@ func TestValidationService_ValidateVersion_APublishedVersionUsesItsSnapshot(t *t
 	}
 	if !isValid {
 		t.Errorf("is_valid = false (%+v); a published version is judged against the module versions it was published with, archived or not", errs)
+	}
+}
+
+// TestDiff_PublishedVersionWithAnUnreadablePlan_UsesItsOwnModuleVersions pins
+// that a published version is recompiled against the module versions it was
+// published with, not today's library, when its stored plan cannot be read.
+func TestDiff_PublishedVersionWithAnUnreadablePlan_UsesItsOwnModuleVersions(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	modules := mocks.NewMockModuleVersionRepository(ctrl)
+	svc := service.NewVersionService(service.VersionDeps{Versions: vRepo, Compiler: bpmn_compiler.New(), ModuleVersions: modules})
+
+	tenantID, wfID, baseID, targetID, reviewID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	v3 := libraryVersion(reviewID, "Process_Review", 3, libraryReviewBPMN)
+	expectLibrary(modules, tenantID, map[libraryKey]*domain.ModuleVersion{
+		{"Process_Review", 3}: v3,
+		{"Process_Review", 0}: libraryVersion(reviewID, "Process_Review", 4, libraryReviewCallsCheckBPMN),
+		{"Process_Check", 0}:  libraryVersion(uuid.New(), "Process_Check", 1, libraryCheckBPMN),
+	})
+	modules.EXPECT().GetByID(gomock.Any(), tenantID, v3.ID).Return(v3, nil).AnyTimes()
+	unreadable, one := "not valid json", int32(1)
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, baseID).Return(&domain.WorkflowVersion{
+		ID: baseID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusPublished, VersionNumber: &one,
+		BPMNXML: libraryCallerBPMN, CompiledPlanJSON: &unreadable,
+		ModuleRefs: []domain.ModuleRef{{ModuleID: reviewID, VersionID: v3.ID, ProcessID: "Process_Review", VersionNumber: 3}},
+	}, nil)
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(&domain.WorkflowVersion{
+		ID: targetID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusDraft, BPMNXML: libraryCallerBPMN,
+	}, nil)
+
+	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if result.ChangeType != "STRUCTURAL" {
+		t.Errorf("change type = %s, want STRUCTURAL: the published version ran Process_Review v3 at both calls, the draft takes v4 at one", result.ChangeType)
 	}
 }

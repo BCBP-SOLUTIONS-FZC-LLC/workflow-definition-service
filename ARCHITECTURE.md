@@ -826,16 +826,16 @@ Typical use: a `callActivity` is the first element in the process; an ignored po
 
 A `<bpmn:callActivity>` calls either a process in the same file, private to that workflow and versioned with it, or a module from the library (tenant modules plus global ones; definition LLD §3.3.18). A workflow never carries module XML of its own.
 
-**Resolution** (`service/module_resolution.go`). When a workflow or starter is created, at `/workflows/validate`, at publish and for a draft's diff, `moduleResolver` asks the compiler for the document's library calls (`ModuleCalls`: calls with a `versionTag`, and calls whose target is not a process in the file), resolves each through `ModuleVersionRepository.Resolve`, walks each resolved module's own calls the same way, and hands the versions to `BundleModules`. The bundle renames each module process to its plan name `<process_id>@v<version_number>` and rewrites every call to it, so two versions of one module can coexist. A call that does not resolve is `UNRESOLVED_CALLED_ELEMENT` on the callActivity; one inside a module is reported on the workflow's call that reached it. `GET …/versions/:version_id/validation` resolves a published version's calls to its stored `module_refs` instead of the live library, and module authoring reports a call back to the module itself at its latest version as `CALLED_ELEMENT_CYCLE`. Publish records the resolved versions in `workflow_version.module_refs`; `GET /modules/:id/usages` reads them back.
+**Resolution** (`service/module_resolution.go`). When a workflow or starter is created, at `/workflows/validate`, at publish and for a draft's diff, `moduleResolver` asks the compiler for the document's library calls (`ModuleCalls`: calls with a `versionTag`, and calls whose target is not a process in the file), resolves each through `ModuleVersionRepository.Resolve`, walks each resolved module's own calls the same way, and hands the versions to `BundleModules`. The bundle renames each module process to its plan name `<process_id>@v<version_number>` and rewrites every call to it, so two versions of one module can coexist. A module's `<bpmn:message>`/`<bpmn:error>` definitions come with it, renamed `<plan name>/<id>` with its references, so it keeps its own message names and error codes. A call that does not resolve is `UNRESOLVED_CALLED_ELEMENT` on the callActivity; one inside a module is reported on the workflow's call that reached it. `GET …/versions/:version_id/validation` resolves a published version's calls to its stored `module_refs` instead of the live library, and module authoring reports a call back to the module itself at its latest version as `CALLED_ELEMENT_CYCLE`. Publish records the resolved versions in `workflow_version.module_refs`; `GET /modules/:id/usages` reads them back.
 
 **Rules:**
 
-- Every callActivity carries `<zeebe:calledElement processId="<id>"/>`, a literal process id. `bindingType="versionTag" versionTag="<n>"` pins a published module version; `latest` or no binding takes the module's active version when the workflow is published. `deployment` means a process in the same file. A `versionTag` always names a library module, even when the file has a process of that id.
+- Every callActivity carries `<zeebe:calledElement processId="<id>"/>`, a literal process id. `bindingType="versionTag" versionTag="<n>"` pins a published module version; `latest` or no binding takes the module's active version when the workflow is published. `deployment` means a process in the same file. A `versionTag` names a library module; pinning a process id the file also defines is `UNRESOLVED_CALLED_ELEMENT`.
 - A module is created from a file with exactly one `<bpmn:process isExecutable="true">`; its id is the module's fixed `process_id`, unique among the tenant's modules and the global ones (`409 MODULE_PROCESS_ID_CONFLICT`).
 - A module is validated with its own process as the root (`ValidateModule`); only errors block. A global module names no user (`INVALID_CANDIDATE_USER`).
 - Each called process compiles **once, into its own plan** in `CompiledCollaboration.Plans`, named by its process id (a library module's by its plan name). Each call site compiles to an `ExecutionStep.CallPlan` naming that plan. Both services expand calls with `dsl.ExpandCalls` (workflow-models), which gives every call its own departments, `<call id>::<lane>`, so the same module called twice yields two separate sets of tasks.
 - **Departments.** A module lane that holds work becomes a department. With a `dept_id` property it is fixed to that department, and no call can remap it. Without one it is an open slot the call binds to one of the caller's lanes: through the `Depts` input, or by default to the callActivity's own lane when the module has exactly one open slot (a laneless module is one slot). A bound slot takes the caller lane's department and IAM id.
-- **Call-site assignees.** An optional `Assignees` input maps a module task id to a user id for this call only.
+- **Call-site assignees.** An optional `Assignees` input maps a module task id, or a `::`-joined path of calls to a task in a nested module, to a user id for this call only; the outermost call's entry wins. A laneless module's department is named by its process id without the version, so its tasks' node keys, `<call id>::<process_id>/<task id>`, survive a move to another module version.
 - Message, timer and error boundary events attach to a callActivity and compile to the call step's paths.
 - Diagrams in module BPMNs are discarded — only process elements are merged.
 - Nested `<bpmn:subProcess>` inside another subProcess is not supported (`NESTED_SUBPROCESS_NOT_SUPPORTED`).
@@ -981,7 +981,7 @@ Every `<bpmn:userTask>` requires these extension elements:
 | Attribute | Required | Rules |
 |---|---|---|
 | `candidateGroups` | Yes | IAM role level name; validated against Membership Service at publish time; max 256 chars |
-| `candidateUsers` | No | Single UUID v7 (one assignee currently enforced; will be relaxed later). Absent is the `CANDIDATE_USERS_EMPTY` warning: the person must then come from the call site's `Assignees` or the instance start's `override_map`. A global module names no user. |
+| `candidateUsers` | No | Single UUID v7 (one assignee currently enforced; will be relaxed later). Absent is the `CANDIDATE_USERS_EMPTY` warning on the document; a published workflow gives every task a default, from here or from a calling callActivity's `Assignees`, and refuses publish (and `/validate`) otherwise. A global module names no user. |
 
 **System semantics**: `candidateGroups` → `StageDef.Role` (passed as `?level=<role>` to Membership eligibility check). `candidateUsers` → `StageDef.DefaultAssignees` (pre-assigned when the task starts in Execution Service).
 
@@ -1173,7 +1173,7 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | Task appears in exactly one lane via `<bpmn:flowNodeRef>` | `TASK_NOT_IN_LANE` |
 | `zeebe:assignmentDefinition` present | `MISSING_ASSIGNMENT_DEFINITION` |
 | `candidateGroups` present, ≤ 256 chars | `CANDIDATE_GROUPS_EMPTY` |
-| `candidateUsers` present | `CANDIDATE_USERS_EMPTY` *(warning)* |
+| `candidateUsers` present — on a workflow's expanded plan at publish and `/validate`, or given by a calling callActivity's `Assignees` | `CANDIDATE_USERS_EMPTY` *(warning on the document; error at publish)* |
 | `candidateUsers` is a single valid UUID v7, and is not set at all in a global module | `INVALID_CANDIDATE_USER` |
 
 **Metadata — sendTask / receiveTask**
@@ -1188,15 +1188,16 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 
 | Rule | Error code |
 | --- | --- |
-| `<zeebe:calledElement processId="…"/>` present and `processId` resolves to a process in the file or a library module | `UNRESOLVED_CALLED_ELEMENT` |
+| `<zeebe:calledElement processId="…"/>` present and `processId` resolves to a process in the file or a library module; a `versionTag` does not pin a process id the file also defines | `UNRESOLVED_CALLED_ELEMENT` |
 | Called process has at least one `startEvent` | `NO_START_EVENT` (anchored on the callActivity node ID) |
 | Every open lane (no `dept_id`) of the called process is bound, by `Depts` or, for a single open lane, by default to the call's lane | `MISSING_DEPT_INPUT_FOR_MODULE` |
-| `Depts`/`Assignees` are JSON objects of strings naming lanes and tasks that exist; no `dept_id` input | `INVALID_ZEEBE_PROPERTY` |
+| `Depts`/`Assignees` are JSON objects of strings naming lanes and tasks that exist — an `Assignees` key may be a `::`-joined path of calls to a task in a nested module — with UUID v7 users; no `dept_id` input | `INVALID_ZEEBE_PROPERTY` |
+| In a workflow, every lane a module slot binds to has a `dept_id` | `MISSING_DEPT_ID` |
 | No chain of calls returns to a process already on it | `CALLED_ELEMENT_CYCLE` (anchored on the callActivity that closes the cycle) |
 | No two processes in the bundled document share an `id` | `DUPLICATE_PROCESS_ID` |
 | The called process's own body passes every rule in these tables, without the diagram rules | the body's own codes, anchored on its own nodes, or on the called process id for a whole-process rule |
 
-Message, timer and error boundary events on `callActivity` compile to the call step's `message_paths`, `timer_paths` and `error_paths`.
+Message, timer and error boundary events on `callActivity` compile to the call step's `message_paths`, `timer_paths` and `error_paths`. Every boundary names the department of the first task or subProcess on its path, or `terminates` at an end event; a path starting at a call or a message task is `UNSUPPORTED_BOUNDARY_TARGET`.
 
 **Sequence flow conditions**
 
@@ -1263,10 +1264,10 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `UNKNOWN_STAGE_TYPE` | *(warning severity)* `type` attribute value not in the registered `StageTypeHandler` set; compilation continues |
 | `TASK_NOT_IN_LANE` | `userTask` not referenced by any `<bpmn:flowNodeRef>` |
 | `CANDIDATE_GROUPS_EMPTY` | `candidateGroups` absent or exceeds 256 chars |
-| `CANDIDATE_USERS_EMPTY` | *(warning severity)* `candidateUsers` absent; the assignee must be supplied at the call site or at instance start |
+| `CANDIDATE_USERS_EMPTY` | `candidateUsers` absent: a warning on the document; an error at publish and `/validate` for any task of the expanded plan with no default, on the task or the top-level call that runs it |
 | `INVALID_CANDIDATE_USER` | `candidateUsers` is not a valid UUID v7, or a global module names a user |
 | `INVALID_CONDITION_EXPRESSION` | Condition expression exceeds 4096 chars |
-| `INVALID_ZEEBE_PROPERTY` | callActivity: malformed `Depts`/`Assignees` input, an unknown lane or task in them, or a retired `dept_id` input |
+| `INVALID_ZEEBE_PROPERTY` | callActivity: malformed `Depts`/`Assignees` input, an unknown lane, task or call path in them, an `Assignees` user that is not a UUID v7, or a retired `dept_id` input |
 | `INVALID_SLA_DURATION` | Timer boundary duration is not valid ISO 8601 or Go duration |
 | `MISSING_MESSAGE_DEFINITION` | `messageRef` on a flow or task references an undeclared `<bpmn:message>` |
 | `UNMATCHED_MESSAGE_FLOW` | Message flow source/target does not reference a known element |
@@ -1287,11 +1288,16 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `INVALID_BOUNDARY_ATTACHMENT` | Boundary event attached to an unsupported element type |
 | `MISSING_DIAGRAM` | No `<bpmndi:BPMNDiagram>` found in the BPMN document |
 | `MISSING_DIAGRAM_SHAPE` | A BPMN element has no corresponding `<bpmndi:BPMNShape>` in the diagram |
-| `UNRESOLVED_CALLED_ELEMENT` | `callActivity` names a `processId` that is an expression, is not in the file, or is not a published, unarchived library module the tenant can call (or not that `versionTag`); or its `versionTag`/`bindingType` is invalid |
+| `UNRESOLVED_CALLED_ELEMENT` | `callActivity` names a `processId` that is an expression, is not in the file, or is not a published, unarchived library module the tenant can call (or not that `versionTag`); its `versionTag`/`bindingType` is invalid; or it pins a `versionTag` of a process id the file also defines |
 | `NESTED_SUBPROCESS_NOT_SUPPORTED` | A `subProcess` is nested inside another `subProcess` |
 | `MISSING_DEPT_INPUT_FOR_MODULE` | A called process has two or more open lanes and the call's `Depts` input does not map every one |
 | `CALLED_ELEMENT_CYCLE` | A chain of `callActivity` calls returns to a process already on it |
 | `DUPLICATE_PROCESS_ID` | Two processes in the bundled document share an `id` |
+| `UNSUPPORTED_BOUNDARY_TARGET` | A boundary event's path reaches a `callActivity`, `sendTask` or `receiveTask` before any `userTask`, `subProcess` or end event |
+| `MISSING_DEPT_ID` | A task's lane has no `dept_id`, or a call binds a module lane to a workflow lane with no `dept_id` |
+| `INVALID_DEPT_ID` | A lane's `dept_id` is not a UUID |
+| `UNKNOWN_CONNECTOR_TYPE` | *(warning severity)* A connector `serviceTask` names a connector type the registry does not know |
+| `CONNECTOR_TASK_HAS_ASSIGNMENT` | *(warning severity)* A connector `serviceTask` carries a `zeebe:assignmentDefinition`, which it ignores |
 | `UNSUPPORTED_ELEMENT` | Tier 2 element present (e.g. `inclusiveGateway`) — parsed but compile handler absent |
 
 > **Unparseable documents.** Documents that fail XML parsing (bad XML, `DOCTYPE`/entity injection, token-cap exceeded) return **400 `INVALID_BPMN_XML`** — not a BPMN validation code. Forbidden `DOCTYPE`/entity additionally triggers an internal security log with client IP and tenant ID; the client sees only the generic 400.

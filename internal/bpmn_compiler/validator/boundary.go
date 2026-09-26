@@ -3,6 +3,7 @@ package validator
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,8 +52,34 @@ func ValidateBoundaryEvents(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []dom
 		if be.Error != nil {
 			errs = append(errs, validateErrorBoundary(be, g)...)
 		}
+		errs = append(errs, validateBoundaryTarget(be, proc, g)...)
 	}
 	return errs
+}
+
+// validateBoundaryTarget refuses a boundary whose path reaches a call or a
+// message task before any userTask, subProcess or end: the compiled plan can
+// only move a boundary to a department or end its path.
+func validateBoundaryTarget(be bpmncore.BPMNBoundaryEvent, proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain.BPMNValidationError {
+	targets := []bpmncore.FlowNodeType{bpmncore.NodeTypeUserTask, bpmncore.NodeTypeSubProcess, bpmncore.NodeTypeEndEvent}
+	untargetable := []bpmncore.FlowNodeType{bpmncore.NodeTypeCallActivity, bpmncore.NodeTypeSendTask, bpmncore.NodeTypeReceiveTask}
+	visited := map[string]bool{}
+	for curr := bpmncore.OutgoingTargetOf(be.ID, proc); curr != "" && !visited[curr]; {
+		visited[curr] = true
+		if slices.Contains(targets, g.NodeType[curr]) {
+			return nil
+		}
+		if slices.Contains(untargetable, g.NodeType[curr]) {
+			return AppendErr(nil, domain.BPMNErrUnsupportedBoundaryTarget, be.ID,
+				fmt.Sprintf("boundary event leads to %s %q; a boundary's path must start with a userTask or subProcess, or end, so put a userTask before it", g.NodeType[curr], curr))
+		}
+		next := g.Outgoing[curr]
+		if len(next) == 0 {
+			return nil
+		}
+		curr = next[0]
+	}
+	return nil
 }
 
 func validateBoundaryEventDef(be bpmncore.BPMNBoundaryEvent) (errs []domain.BPMNValidationError, skip bool) {

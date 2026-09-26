@@ -78,6 +78,7 @@ const (
 	BPMNErrInvalidSequenceFlowRef       BPMNErrorCode = "INVALID_SEQUENCE_FLOW_REF"
 	BPMNErrMultipleProcesses            BPMNErrorCode = "MULTIPLE_PROCESSES"
 	BPMNErrInvalidBoundaryAttachment    BPMNErrorCode = "INVALID_BOUNDARY_ATTACHMENT"
+	BPMNErrUnsupportedBoundaryTarget    BPMNErrorCode = "UNSUPPORTED_BOUNDARY_TARGET"
 	BPMNErrMissingDiagram               BPMNErrorCode = "MISSING_DIAGRAM"
 	BPMNErrMissingDiagramShape          BPMNErrorCode = "MISSING_DIAGRAM_SHAPE"
 	BPMNErrInvalidZeebeProperty         BPMNErrorCode = "INVALID_ZEEBE_PROPERTY"

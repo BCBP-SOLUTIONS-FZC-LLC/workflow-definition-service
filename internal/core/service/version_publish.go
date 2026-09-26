@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -127,12 +128,19 @@ func (s *VersionService) checkStructuralDivergence(
 		return fmt.Errorf("get active version for divergence check: %w", err)
 	}
 
-	if active.CompiledPlanJSON == nil || *active.CompiledPlanJSON == "" {
-		return nil // no stored baseline to compare; allow publish
-	}
-	activePlan, ok := storedMainPlan(*active.CompiledPlanJSON)
-	if !ok {
-		return nil // unreadable baseline; allow publish rather than blocking
+	activePlan, err := s.resolvePlan(ctx, active)
+	var invalid *domain.ValidationFailedError
+	switch {
+	case errors.As(err, &invalid) || errors.Is(err, domain.ErrMalformedBPMN):
+		// The active version no longer compiles under today's rules, so
+		// nothing proves the draft keeps its structure: divergent, which a
+		// forced publish accepts.
+		if forcePublishStructural {
+			return nil
+		}
+		return fmt.Errorf("active version no longer compiles: %w", domain.ErrStructuralDivergence)
+	case err != nil:
+		return fmt.Errorf("compile active version for divergence check: %w", err)
 	}
 
 	diff := computeDiff(activePlan, draftPlan)

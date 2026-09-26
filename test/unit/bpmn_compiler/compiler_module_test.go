@@ -126,7 +126,7 @@ func moduleDocument(procs ...string) string {
 </bpmn:definitions>`
 }
 
-const validCandidateUser = "550e8400-e29b-41d4-a716-446655440000"
+const validCandidateUser = "018f2d3c-0000-7000-8000-0000000000a1"
 
 func blockingErrors(errs []domain.BPMNValidationError) []domain.BPMNValidationError {
 	var out []domain.BPMNValidationError
@@ -392,8 +392,8 @@ func TestValidate_CalledProcessLevelError_NamesTheProcess(t *testing.T) {
 }
 
 // doublingChain is main → Process_L0, where each Process_Li calls Process_Li+1
-// twice and the last level holds one userTask, so the plan compile flattens
-// doubles in size with every level.
+// twice and the last level holds one userTask, so the expanded plan doubles
+// in size with every level.
 func doublingChain(levels int) string {
 	procs := make([]string, 0, levels+1)
 	for i := range levels {
@@ -403,7 +403,7 @@ func doublingChain(levels int) string {
 	return callerBPMN("Process_Main", "Process_L0", procs...)
 }
 
-func TestValidate_FlattenedPlanOverTaskLimit_IsRejected(t *testing.T) {
+func TestValidate_ExpandedPlanOverTaskLimit_IsRejected(t *testing.T) {
 	// 64 levels would overflow an unbounded count.
 	for _, levels := range []int{11, 64} {
 		t.Run(fmt.Sprintf("%d levels", levels), func(t *testing.T) {
@@ -430,7 +430,7 @@ func TestValidate_FlattenedPlanOverTaskLimit_IsRejected(t *testing.T) {
 	}
 }
 
-func TestValidate_FlattenedPlanUnderTaskLimit_IsValid(t *testing.T) {
+func TestValidate_ExpandedPlanUnderTaskLimit_IsValid(t *testing.T) {
 	bpmnXML := doublingChain(8)
 
 	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
@@ -467,7 +467,7 @@ func emptyModule(id string) string {
   </bpmn:process>`, id)
 }
 
-func TestValidate_InlinedCallSitesCountTowardTaskLimit(t *testing.T) {
+func TestValidate_CallSitesCountTowardTaskLimit(t *testing.T) {
 	cases := []struct {
 		callSites int
 		rejected  bool

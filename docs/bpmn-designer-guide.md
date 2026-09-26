@@ -79,8 +79,8 @@ Use when you want to reuse a process instead of drawing it again. The process yo
 
 **Choosing the module and its version**
 
-- Stamp the element with `<zeebe:calledElement processId="…"/>` naming the module's process ID (fill this via the element template — do not type it by hand). It must be a fixed name, not an expression.
-- To use one particular published version, add `bindingType="versionTag" versionTag="3"`, where `3` is the module's version number. A pinned version always comes from the library, even if this file has a process with the same ID. Without it, the workflow takes the module's newest published version **at the moment the workflow is published**.
+- Stamp the element with `<zeebe:calledElement processId="…"/>` naming the module's process ID (pick it from the module library; the ID is the module's `process_id`). It must be a fixed name, not an expression.
+- To use one particular published version, add `bindingType="versionTag" versionTag="3"`, where `3` is the module's version number. A pinned version always comes from the library, so it cannot share its ID with a process in this file; validation reports that on the call. Without it, the workflow takes the module's newest published version **at the moment the workflow is published**.
 - A published workflow keeps the module versions it was published with. A newer module version, or the module being retired, changes nothing in it or in instances already running; publish the workflow again to pick the change up. The module's usages view shows which workflows are on an older version.
 - A call that names a module that doesn't exist, isn't published, or has been retired is reported on the call when you validate.
 
@@ -90,12 +90,12 @@ Use when you want to reuse a process instead of drawing it again. The process yo
 - If the module has one open lane, or no lanes at all, its work runs in the lane the call sits in. Nothing to fill in.
 - If it has two or more open lanes, add a `Depts` input mapping each open lane to one of your lanes, for example `{"Sender":"Consultant","Receiver":"Tender"}`. Lanes are matched by name, ignoring case.
 - A lane with a `dept_id` cannot be remapped.
-- Optionally, add an `Assignees` input naming a default person for a module task in this call only, for example `{"PR_Review":"<user id>"}`. People can also be named when an instance starts.
+- **Every task needs a default person before the workflow can be published.** A module may leave its tasks' people to you. Name them with an `Assignees` input on the call, for example `{"PR_Review":"<user id>"}`, for this call only. For a task in a module that the module itself calls, give the path of calls to it: `{"PR_Check::Check_Task":"<user id>"}`. Your entry wins over one the module sets. A user id is the person's IAM id. Validation tells you which task still has nobody, on the call that runs it. People can still be changed when an instance starts.
 
 **Other rules**
 
 - The called process must have `isExecutable="true"`.
-- You can attach timer, error and message boundary events to a callActivity, with the same meaning as on a sub-process.
+- You can attach timer, error and message boundary events to a callActivity, with the same meaning as on a sub-process. A boundary's path must start with a task or a sub-process, or go straight to an end event; to call a module or send a message from it, put a task first.
 - Each call runs as its own block of work. Calling the same module twice creates two separate sets of tasks, and each one can be assigned on its own.
 
 ---
@@ -265,4 +265,5 @@ Attach a timer boundary event to the sub-process.
 - [ ] Revert loops always have a forward exit
 - [ ] Sub-processes have start and end events inside them
 - [ ] No disallowed elements (script task, business rule task, etc.)
-- [ ] If you used a called process (callActivity), all module BPMNs are uploaded in the same draft
+- [ ] Every callActivity names a published library module, or a process in this file, pinned with `versionTag` where the workflow must not move with the module
+- [ ] Every task has a default person, in its own `candidateUsers` or in the `Assignees` of the call that runs it

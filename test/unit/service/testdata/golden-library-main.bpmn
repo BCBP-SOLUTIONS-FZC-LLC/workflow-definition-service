@@ -19,12 +19,15 @@
     </bpmn:laneSet>
     <bpmn:startEvent id="Start_1"/>
     <bpmn:callActivity id="CA_Eng" name="Review in Engineering">
-      <bpmn:extensionElements><zeebe:calledElement processId="Process_Review"/></bpmn:extensionElements>
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="Process_Review"/>
+        <zeebe:ioMapping><zeebe:input source='{"Review_Check::Check_Task":"018f2d3c-0000-7000-8000-0000000000c1"}' target="Assignees"/></zeebe:ioMapping>
+      </bpmn:extensionElements>
     </bpmn:callActivity>
     <bpmn:callActivity id="CA_Ops" name="Review in Ops">
       <bpmn:extensionElements>
         <zeebe:calledElement processId="Process_Review"/>
-        <zeebe:ioMapping><zeebe:input source='{"Review_Task":"018f2d3c-0000-7000-8000-0000000000b2"}' target="Assignees"/></zeebe:ioMapping>
+        <zeebe:ioMapping><zeebe:input source='{"Review_Task":"018f2d3c-0000-7000-8000-0000000000b2","Review_Check::Check_Task":"018f2d3c-0000-7000-8000-0000000000c2"}' target="Assignees"/></zeebe:ioMapping>
       </bpmn:extensionElements>
     </bpmn:callActivity>
     <bpmn:endEvent id="End_1"/>

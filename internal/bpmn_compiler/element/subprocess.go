@@ -99,11 +99,12 @@ func boundaryPaths(nodeID string, cs *bpmncore.CompileState) ([]dsl.ErrorPath, [
 		if be.AttachedToRef != nodeID {
 			continue
 		}
-		targetDept := cs.FirstDeptAhead(bpmncore.OutgoingTargetOf(be.ID, cs.Proc))
+		targetDept, terminates := cs.BoundaryTarget(be.ID)
 		if be.Error != nil {
 			errorPaths = append(errorPaths, dsl.ErrorPath{
 				ErrorCode:  cs.ResolveErrorCode(be.Error.ErrorRef),
 				TargetDept: targetDept,
+				Terminates: terminates,
 			})
 		}
 		if be.Timer != nil {
@@ -111,6 +112,7 @@ func boundaryPaths(nodeID string, cs *bpmncore.CompileState) ([]dsl.ErrorPath, [
 				Duration:     be.Timer.Duration,
 				Interrupting: be.CancelActivity != "false",
 				TargetDept:   targetDept,
+				Terminates:   terminates,
 			})
 		}
 		if be.Message != nil {
@@ -122,6 +124,7 @@ func boundaryPaths(nodeID string, cs *bpmncore.CompileState) ([]dsl.ErrorPath, [
 				MessageName:  msgName,
 				Interrupting: be.CancelActivity != "false",
 				TargetDept:   targetDept,
+				Terminates:   terminates,
 			})
 		}
 	}
@@ -139,10 +142,16 @@ func assignParentLaneDept(depts []dsl.DepartmentDef, steps []dsl.ExecutionStep, 
 			depts[i].IAMDepartmentID = parentIAMDeptID
 		}
 	}
+	patchEmptyStageTargets(depts, parentLane)
 	patchEmptyDepts(steps, parentLane)
 }
 
 func patchEmptyDepts(steps []dsl.ExecutionStep, lane string) {
+	fill := func(target *string, terminates bool) {
+		if *target == "" && !terminates {
+			*target = lane
+		}
+	}
 	for i := range steps {
 		for j := range steps[i].Sequential {
 			if steps[i].Sequential[j] == "" {
@@ -167,24 +176,47 @@ func patchEmptyDepts(steps []dsl.ExecutionStep, lane string) {
 				}
 			}
 		}
+		for k := range steps[i].MessagePaths {
+			fill(&steps[i].MessagePaths[k].TargetDept, steps[i].MessagePaths[k].Terminates)
+		}
 		if sw := steps[i].SubWorkflow; sw != nil {
 			patchEmptyDepts(sw.Plan.Steps, lane)
-			for k := range sw.ErrorPaths {
-				if sw.ErrorPaths[k].TargetDept == "" {
-					sw.ErrorPaths[k].TargetDept = lane
-				}
-			}
-			for k := range sw.TimerPaths {
-				if sw.TimerPaths[k].TargetDept == "" {
-					sw.TimerPaths[k].TargetDept = lane
-				}
-			}
+			patchEmptyPaths(fill, sw.ErrorPaths, sw.TimerPaths, sw.MessagePaths)
 		}
 		if cp := steps[i].CallPlan; cp != nil {
 			for k, v := range cp.Departments {
 				if v == "" {
 					cp.Departments[k] = lane
 				}
+			}
+			patchEmptyPaths(fill, cp.ErrorPaths, cp.TimerPaths, cp.MessagePaths)
+		}
+	}
+}
+
+func patchEmptyPaths(fill func(*string, bool), errs []dsl.ErrorPath, timers []dsl.TimerPath, msgs []dsl.MessagePath) {
+	for k := range errs {
+		fill(&errs[k].TargetDept, errs[k].Terminates)
+	}
+	for k := range timers {
+		fill(&timers[k].TargetDept, timers[k].Terminates)
+	}
+	for k := range msgs {
+		fill(&msgs[k].TargetDept, msgs[k].Terminates)
+	}
+}
+
+// patchEmptyStageTargets gives lane to every stage boundary that moves to a
+// department but was compiled with none, as in a process without lanes.
+func patchEmptyStageTargets(depts []dsl.DepartmentDef, lane string) {
+	for i := range depts {
+		for j := range depts[i].Stages {
+			st := &depts[i].Stages[j]
+			if bt := st.BoundaryTimer; bt != nil && bt.TargetDept == "" && !bt.Terminates {
+				bt.TargetDept = lane
+			}
+			if bm := st.BoundaryMessage; bm != nil && bm.TargetDept == "" && !bm.Terminates {
+				bm.TargetDept = lane
 			}
 		}
 	}

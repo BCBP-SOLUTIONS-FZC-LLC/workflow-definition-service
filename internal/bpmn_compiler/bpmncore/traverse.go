@@ -226,13 +226,8 @@ func (s *CompileState) FillBoundaryTimerTarget(taskID string, stage *dsl.StageDe
 	if stage.BoundaryTimer == nil {
 		return
 	}
-	be := TimerBoundaryFor(taskID, s.Proc)
-	if be == nil {
-		return
-	}
-	targetID := OutgoingTargetOf(be.ID, s.Proc)
-	if targetID != "" {
-		stage.BoundaryTimer.TargetDept = s.FirstDeptAhead(targetID)
+	if be := TimerBoundaryFor(taskID, s.Proc); be != nil {
+		stage.BoundaryTimer.TargetDept, stage.BoundaryTimer.Terminates = s.BoundaryTarget(be.ID)
 	}
 }
 
@@ -240,14 +235,22 @@ func (s *CompileState) FillBoundaryMessageTarget(taskID string, stage *dsl.Stage
 	if stage.BoundaryMessage == nil {
 		return
 	}
-	be := MessageBoundaryFor(taskID, s.Proc)
-	if be == nil {
-		return
+	if be := MessageBoundaryFor(taskID, s.Proc); be != nil {
+		stage.BoundaryMessage.TargetDept, stage.BoundaryMessage.Terminates = s.BoundaryTarget(be.ID)
 	}
-	targetID := OutgoingTargetOf(be.ID, s.Proc)
-	if targetID != "" {
-		stage.BoundaryMessage.TargetDept = s.FirstDeptAhead(targetID)
+}
+
+// BoundaryTarget is where boundary event boundaryID leads: the department of
+// the first task or subProcess on its path, or, when the path meets no such
+// node, nowhere, and the boundary terminates. In a laneless process the
+// department is empty until the process's own department is named.
+func (s *CompileState) BoundaryTarget(boundaryID string) (dept string, terminates bool) {
+	target := OutgoingTargetOf(boundaryID, s.Proc)
+	if target == "" {
+		return "", true
 	}
+	dept, _, found := s.taskAhead(target)
+	return dept, !found
 }
 
 func (s *CompileState) CompileBoundaryPaths() error {
@@ -260,11 +263,6 @@ func (s *CompileState) CompileBoundaryPaths() error {
 		}
 	}
 	return nil
-}
-
-func (s *CompileState) FirstDeptAhead(node string) string {
-	dept, _ := s.firstTaskAhead(node)
-	return dept
 }
 
 func (s *CompileState) ResolveErrorCode(errorRef string) string {
@@ -312,22 +310,30 @@ func (s *CompileState) revertBranches(
 }
 
 func (s *CompileState) firstTaskAhead(node string) (dept, stageType string) {
+	dept, stageType, _ = s.taskAhead(node)
+	return dept, stageType
+}
+
+// taskAhead follows node's first forward flow to the first userTask or
+// subProcess, reporting whether it found one.
+func (s *CompileState) taskAhead(node string) (dept, stageType string, found bool) {
 	visited := make(map[string]bool)
 	curr := node
 	for {
 		if visited[curr] {
-			return "", ""
+			return "", "", false
 		}
 		visited[curr] = true
 		if s.G.NodeType[curr] == NodeTypeUserTask {
-			return s.resolveUserTaskDept(curr)
+			dept, stageType = s.resolveUserTaskDept(curr)
+			return dept, stageType, true
 		}
 		if s.G.NodeType[curr] == NodeTypeSubProcess {
-			return LaneNameFor(curr, s.Proc), "sub_workflow"
+			return LaneNameFor(curr, s.Proc), "sub_workflow", true
 		}
 		fwd := s.ForwardNexts(curr)
 		if len(fwd) == 0 {
-			return "", ""
+			return "", "", false
 		}
 		curr = fwd[0]
 	}

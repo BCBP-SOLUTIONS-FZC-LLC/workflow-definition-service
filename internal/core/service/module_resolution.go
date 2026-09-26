@@ -197,6 +197,19 @@ func (d pendingDoc) child(call domain.ModuleCall, processID string, number int32
 // validate resolves bpmnXML's library calls and validates the bundle. Every
 // issue is returned; hasBlockingError says whether any refuses the document.
 func (r moduleResolver) validate(ctx context.Context, lookup moduleLookup, bpmnXML string) ([]domain.BPMNValidationError, error) {
+	return r.validateWith(ctx, lookup, bpmnXML, r.compiler.Validate)
+}
+
+// validateForPublish is validate judged as publish judges: with the rules
+// only the bundle's expanded plan shows.
+func (r moduleResolver) validateForPublish(ctx context.Context, lookup moduleLookup, bpmnXML string) ([]domain.BPMNValidationError, error) {
+	return r.validateWith(ctx, lookup, bpmnXML, r.compiler.ValidateForPublish)
+}
+
+func (r moduleResolver) validateWith(
+	ctx context.Context, lookup moduleLookup, bpmnXML string,
+	check func(context.Context, string) ([]domain.BPMNValidationError, error),
+) ([]domain.BPMNValidationError, error) {
 	res, err := r.resolve(ctx, lookup, bpmnXML, "")
 	if err != nil {
 		return nil, err
@@ -204,7 +217,7 @@ func (r moduleResolver) validate(ctx context.Context, lookup moduleLookup, bpmnX
 	if len(res.issues) > 0 {
 		return res.issues, nil
 	}
-	errs, err := r.compiler.Validate(ctx, res.bundled)
+	errs, err := check(ctx, res.bundled)
 	if err != nil {
 		return nil, fmt.Errorf("validate bpmn: %w", err)
 	}

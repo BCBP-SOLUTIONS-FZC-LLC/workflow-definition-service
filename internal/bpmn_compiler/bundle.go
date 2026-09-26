@@ -46,6 +46,7 @@ func bundleModules(mainXML string, modules []domain.ResolvedModule) (string, err
 		pointLibraryCalls(&proc, modDefs, planFor)
 		pointSelfCalls(&proc, m.PlanName)
 		proc.ID = m.PlanName
+		bundleDefinitions(defs, modDefs, &proc, m.PlanName)
 		defs.Processes = append(defs.Processes, proc)
 		bundled[m.PlanName] = true
 	}
@@ -56,11 +57,53 @@ func bundleModules(mainXML string, modules []domain.ResolvedModule) (string, err
 	return xml.Header + string(out), nil
 }
 
+// bundleDefinitions adds the module document's messages and errors to defs
+// under IDs prefixed with the module's plan name, and points proc's
+// references at them, so they resolve as the module declared them and cannot
+// collide with the workflow's or another module's.
+func bundleDefinitions(defs, modDefs *bpmncore.BPMNDefinitions, proc *bpmncore.BPMNProcess, planName string) {
+	own := func(id string) string {
+		if id == "" {
+			return ""
+		}
+		return planName + "/" + id
+	}
+	for _, m := range modDefs.Messages {
+		m.ID = own(m.ID)
+		defs.Messages = append(defs.Messages, m)
+	}
+	for _, e := range modDefs.Errors {
+		e.ID = own(e.ID)
+		defs.Errors = append(defs.Errors, e)
+	}
+	renameRefs(proc.SendTasks, proc.ReceiveTasks, proc.BoundaryEvents, proc.SubProcesses, own)
+}
+
+func renameRefs(sends []bpmncore.BPMNSendTask, receives []bpmncore.BPMNReceiveTask, boundaries []bpmncore.BPMNBoundaryEvent, subs []bpmncore.BPMNSubProcess, own func(string) string) {
+	for i := range sends {
+		sends[i].MessageRef = own(sends[i].MessageRef)
+	}
+	for i := range receives {
+		receives[i].MessageRef = own(receives[i].MessageRef)
+	}
+	for i := range boundaries {
+		if m := boundaries[i].Message; m != nil {
+			m.MessageRef = own(m.MessageRef)
+		}
+		if e := boundaries[i].Error; e != nil {
+			e.ErrorRef = own(e.ErrorRef)
+		}
+	}
+	for i := range subs {
+		renameRefs(subs[i].SendTasks, subs[i].ReceiveTasks, subs[i].BoundaryEvents, subs[i].SubProcesses, own)
+	}
+}
+
 // pointLibraryCalls points proc's library calls, as judged within its own
 // document home, at their plans.
 func pointLibraryCalls(proc *bpmncore.BPMNProcess, home *bpmncore.BPMNDefinitions, planFor map[moduleKey]string) {
 	for j := range proc.CallActivities {
-		call, _, ok := moduleCall(proc.CallActivities[j], home)
+		call, _, ok := moduleCall(proc.CallActivities[j], proc.ID, home)
 		if !ok {
 			continue
 		}

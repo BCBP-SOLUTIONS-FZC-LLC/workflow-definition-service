@@ -238,6 +238,19 @@ type moduleUsageResp struct {
 	Behind              bool                 `json:"behind"`
 }
 
+func toModuleUsageResp(u *domain.ModuleUsage) moduleUsageResp {
+	return moduleUsageResp{
+		WorkflowID:          u.WorkflowID,
+		WorkflowKey:         u.WorkflowKey,
+		WorkflowName:        u.WorkflowName,
+		VersionID:           u.VersionID,
+		VersionNumber:       u.VersionNumber,
+		Status:              u.Status,
+		ModuleVersionNumber: u.ModuleVersionNumber,
+		Behind:              u.Behind,
+	}
+}
+
 func (h *Handler) ListModuleUsages(c *gin.Context) {
 	tenantID, _, ok := mustCtx(c)
 	if !ok {
@@ -254,7 +267,7 @@ func (h *Handler) ListModuleUsages(c *gin.Context) {
 	}
 	resp := make([]moduleUsageResp, 0, len(usages))
 	for _, u := range usages {
-		resp = append(resp, moduleUsageResp(*u))
+		resp = append(resp, toModuleUsageResp(u))
 	}
 	c.JSON(http.StatusOK, gin.H{"usages": resp})
 }

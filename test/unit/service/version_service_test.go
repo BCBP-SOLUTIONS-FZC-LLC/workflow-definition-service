@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
@@ -253,6 +254,40 @@ func TestVersionService_Publish_StructuralDivergence(t *testing.T) {
 	}
 }
 
+// TestVersionService_Publish_UnreadableBaselineIsRecompiled pins that an
+// active version whose stored plan cannot be read is recompiled for the
+// divergence check, rather than letting any structural change through.
+func TestVersionService_Publish_UnreadableBaselineIsRecompiled(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	compiler := mocks.NewMockPlanCompiler(ctrl)
+	svc := service.NewVersionService(service.VersionDeps{Workflows: wfRepo, Versions: vRepo, Compiler: compiler})
+
+	tenantID, wfID, vID, activeID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	unreadable := "not valid json"
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(&domain.WorkflowVersion{
+		ID: vID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusDraft, BPMNXML: "<draft/>",
+	}, nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<draft/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<draft/>", gomock.Any()).Return("<draft/>", nil)
+	compiler.EXPECT().CompileForPublish(gomock.Any(), "<draft/>").Return(collabOf(buildPlan("a")), nil)
+	compiler.EXPECT().Hash(gomock.Any(), "<draft/>").Return("h", nil)
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ActiveVersionID: &activeID}, nil)
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, activeID).Return(&domain.WorkflowVersion{
+		ID: activeID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusPublished,
+		BPMNXML: "<active/>", CompiledPlanJSON: &unreadable,
+	}, nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<active/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<active/>", gomock.Any()).Return("<active/>", nil)
+	compiler.EXPECT().CompileForPublish(gomock.Any(), "<active/>").Return(collabOf(buildPlan("b")), nil)
+
+	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
+	if !errors.Is(err, domain.ErrStructuralDivergence) {
+		t.Fatalf("err = %v, want ErrStructuralDivergence against the recompiled baseline", err)
+	}
+}
+
 func TestVersionService_Publish_UnchangedStructureAgainstStoredBaseline_Publishes(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tx := mocks.NewMockTransactor(ctrl)
@@ -362,90 +397,86 @@ func TestVersionService_Publish_ForceStructural(t *testing.T) {
 	}
 }
 
-// An active version with no stored compiled plan (nil baseline) cannot diverge —
-// publish proceeds. Also exercises an empty/unreadable baseline being treated as
-// "allow" rather than a hard block.
-func TestVersionService_Publish_NilBaselineAllowsPublish(t *testing.T) {
+// TestVersionService_Publish_BaselineThatCannotBeRead_StopsThePublish pins that
+// a failure reading the active version's plan is returned as that failure,
+// rather than skipping the divergence check.
+func TestVersionService_Publish_BaselineThatCannotBeRead_StopsThePublish(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	tx := mocks.NewMockTransactor(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	assignees := mocks.NewMockAssigneeRepository(ctrl)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{
-		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Compiler: compiler,
-	})
+	svc := service.NewVersionService(service.VersionDeps{Workflows: wfRepo, Versions: vRepo, Compiler: compiler})
 
-	tenantID, userID, wfID, vID, activeID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	draft := &domain.WorkflowVersion{
-		ID: vID, WorkflowID: wfID, TenantID: tenantID,
-		Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>",
-	}
+	tenantID, wfID, vID, activeID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(&domain.WorkflowVersion{
+		ID: vID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusDraft, BPMNXML: "<draft/>",
+	}, nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<draft/>").Return(nil, nil, nil)
+	compiler.EXPECT().BundleModules("<draft/>", gomock.Any()).Return("<draft/>", nil)
+	compiler.EXPECT().CompileForPublish(gomock.Any(), "<draft/>").Return(collabOf(buildPlan("a")), nil)
+	compiler.EXPECT().Hash(gomock.Any(), "<draft/>").Return("h", nil)
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ActiveVersionID: &activeID}, nil)
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, activeID).Return(&domain.WorkflowVersion{
+		ID: activeID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusPublished, BPMNXML: "<active/>",
+	}, nil)
+	compiler.EXPECT().ModuleCalls(gomock.Any(), "<active/>").Return(nil, nil, errors.New("parse error"))
 
-	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
-	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan("a")), nil)
-	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
-	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
-		Return(&domain.Workflow{ActiveVersionID: &activeID}, nil)
-	// Active version exists but has no compiled plan stored → no baseline to compare.
-	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, activeID).
-		Return(&domain.WorkflowVersion{CompiledPlanJSON: nil}, nil)
-	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(2), nil)
-
-	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
-	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
-	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-
-	if _, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, false); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if _, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false); err == nil || errors.Is(err, domain.ErrStructuralDivergence) {
+		t.Fatalf("err = %v, want the failure reading the active version, not a divergence", err)
 	}
 }
 
-// An unreadable stored baseline (invalid JSON) is treated as "allow publish",
-// not a hard failure.
-func TestVersionService_Publish_UnreadableBaselineAllowsPublish(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	tx := mocks.NewMockTransactor(ctrl)
-	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
-	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	assignees := mocks.NewMockAssigneeRepository(ctrl)
-	compiler := mocks.NewMockPlanCompiler(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{
-		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
-		Assignees: assignees, Compiler: compiler,
-	})
+// TestVersionService_Publish_BaselineThatNoLongerCompiles_IsDivergent pins that
+// an active version whose stored plan is unreadable and whose BPMN no longer
+// compiles under today's rules counts as divergent: refused without
+// force_publish_structural, published with it, never blocked for good.
+func TestVersionService_Publish_BaselineThatNoLongerCompiles_IsDivergent(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%v", force), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			tx := mocks.NewMockTransactor(ctrl)
+			wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+			vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+			assignees := mocks.NewMockAssigneeRepository(ctrl)
+			compiler := mocks.NewMockPlanCompiler(ctrl)
+			svc := service.NewVersionService(service.VersionDeps{Transactor: tx, Workflows: wfRepo, Versions: vRepo, Assignees: assignees, Compiler: compiler})
 
-	tenantID, userID, wfID, vID, activeID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	draft := &domain.WorkflowVersion{
-		ID: vID, WorkflowID: wfID, TenantID: tenantID,
-		Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>",
-	}
-	badJSON := "{not-json"
+			tenantID, wfID, vID, activeID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+			unreadable := "not valid json"
+			vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(&domain.WorkflowVersion{
+				ID: vID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusDraft, BPMNXML: "<draft/>",
+			}, nil)
+			compiler.EXPECT().ModuleCalls(gomock.Any(), "<draft/>").Return(nil, nil, nil)
+			compiler.EXPECT().BundleModules("<draft/>", gomock.Any()).Return("<draft/>", nil)
+			compiler.EXPECT().CompileForPublish(gomock.Any(), "<draft/>").Return(collabOf(buildPlan("a")), nil)
+			compiler.EXPECT().Hash(gomock.Any(), "<draft/>").Return("h", nil)
+			wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ActiveVersionID: &activeID}, nil)
+			vRepo.EXPECT().GetByID(gomock.Any(), tenantID, activeID).Return(&domain.WorkflowVersion{
+				ID: activeID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusPublished,
+				BPMNXML: "<active/>", CompiledPlanJSON: &unreadable,
+			}, nil)
+			compiler.EXPECT().ModuleCalls(gomock.Any(), "<active/>").Return(nil, nil, nil)
+			compiler.EXPECT().BundleModules("<active/>", gomock.Any()).Return("<active/>", nil)
+			compiler.EXPECT().CompileForPublish(gomock.Any(), "<active/>").Return(nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{
+				{Code: domain.BPMNErrInvalidCandidateUser, NodeID: "T1", Severity: domain.SeverityError},
+			}})
+			if force {
+				vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(2), nil)
+				tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
+					func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
+				vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
+				assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
+				wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
+			}
 
-	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(draft, nil)
-	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
-	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(buildPlan("a")), nil)
-	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
-	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
-		Return(&domain.Workflow{ActiveVersionID: &activeID}, nil)
-	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, activeID).
-		Return(&domain.WorkflowVersion{CompiledPlanJSON: &badJSON}, nil)
-	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(2), nil)
-
-	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
-	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
-	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
-
-	if _, err := svc.Publish(context.Background(), tenantID, userID, wfID, vID, false); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+			_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, force)
+			if force && err != nil {
+				t.Errorf("forced publish: %v", err)
+			}
+			if !force && !errors.Is(err, domain.ErrStructuralDivergence) {
+				t.Errorf("err = %v, want ErrStructuralDivergence", err)
+			}
+		})
 	}
 }
 

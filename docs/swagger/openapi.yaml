@@ -382,7 +382,8 @@ components:
           properties:
             duration:     { type: string, description: "ISO 8601 duration (e.g. 'PT48H', 'P3D')." }
             interrupting: { type: boolean, description: "true = task cancelled on fire; false = escalation runs concurrently." }
-            target_dept:  { type: string, nullable: true, description: "Department key to route the escalation path to, if set." }
+            target_dept:  { type: string, nullable: true, description: "Department key to route the escalation path to." }
+            terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
         boundary_message:
           allOf: [{ $ref: '#/components/schemas/MessagePath' }]
           nullable: true
@@ -392,7 +393,7 @@ components:
         activity: PrepActivity
         node_id: Activity_0abc123
         role: preparator
-        default_assignees: [550e8400-e29b-41d4-a716-446655440000]
+        default_assignees: [018f2d3c-0000-7000-8000-0000000000a1]
         extras: { requires_comment: "false" }
         boundary_timer: { duration: "PT24H", interrupting: false }
 
@@ -587,7 +588,7 @@ components:
         assignees:
           type: object
           additionalProperties: { type: string, format: uuid }
-          description: "Called task node ID → default user for this call only."
+          description: "A task → its default user for this call only. The key is a called task's node ID, or the node IDs of the calls leading to a task in a nested module, then its node ID, joined by '::' (e.g. Review_Check::Check_Task). An outer call's entry wins over an inner call's."
         error_paths:
           type: array
           items: { $ref: '#/components/schemas/ErrorPath' }
@@ -605,6 +606,7 @@ components:
         error_code:   { type: string, nullable: true, description: "BPMN error code that triggers this path. Empty means catch-all." }
         short_circuit: { type: boolean, description: "true = bypass remaining stages and route directly to target_dept." }
         target_dept:  { type: string, nullable: true, description: "Department to route to on this error path." }
+        terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
 
     TimerPath:
       type: object
@@ -613,6 +615,7 @@ components:
         duration:     { type: string, description: "ISO 8601 duration string." }
         interrupting: { type: boolean, description: "true = task cancelled on fire; false = escalation runs concurrently." }
         target_dept:  { type: string, nullable: true, description: "Department to route to on this timer path." }
+        terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
 
     MessagePath:
       type: object
@@ -620,7 +623,8 @@ components:
       properties:
         message_name: { type: string, description: "Resolved message name used for runtime correlation. May be empty if the source BPMN's message flow/messageRef could not be resolved (see MISSING_MESSAGE_DEFINITION warning)." }
         interrupting: { type: boolean, description: "true = host activity cancelled on fire; false = escalation runs concurrently." }
-        target_dept:  { type: string, nullable: true, description: "Department to route to on this message path, if set." }
+        target_dept:  { type: string, nullable: true, description: "Department to route to on this message path." }
+        terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
 
     CompiledCollaboration:
       type: object
@@ -678,7 +682,7 @@ components:
           - id: Engineering
             label: Engineering
             stages:
-              - { type: prep,    activity: PrepActivity,    role: lead-engineer,  default_assignees: [018e1f2a-0000-7000-8000-000000000010], extras: { requires_comment: "false" }, boundary_timer: { duration: "PT48H", interrupting: false } }
+              - { type: prep,    activity: PrepActivity,    role: lead-engineer,  default_assignees: [018e1f2a-0000-7000-8000-000000000010], extras: { requires_comment: "false" }, boundary_timer: { duration: "PT48H", interrupting: false, target_dept: tender } }
         execution:
           steps:
             - sequential: [Tender, Engineering]
@@ -778,10 +782,11 @@ components:
         - UNKNOWN_STAGE_TYPE            # taskDefinition.type not in the registered StageTypeHandler set; warning severity — compilation continues with passthrough StageDef
         - TASK_NOT_IN_LANE              # userTask not listed in any lane via flowNodeRef
         - CANDIDATE_GROUPS_EMPTY        # candidateGroups absent or exceeds 256 chars
-        - INVALID_CANDIDATE_USER        # candidateUsers is not a valid UUID (any version)
+        - INVALID_CANDIDATE_USER        # candidateUsers is not a UUID v7; in a global module, any candidateUsers or call Assignees at all
+        - CANDIDATE_USERS_EMPTY         # a userTask names no user: a warning on a document; an error at publish and /validate for a task of the expanded plan with no default, on the task or the top-level call that runs it
         - INVALID_CONDITION_EXPRESSION  # conditionExpression exceeds 4096 chars
         - INVALID_SLA_DURATION          # timer boundary duration is not valid ISO 8601 or Go duration
-        - INVALID_ZEEBE_PROPERTY        # callActivity: malformed Depts/Assignees input, a Depts lane or Assignees task that does not exist, or a retired dept_id input
+        - INVALID_ZEEBE_PROPERTY        # callActivity: malformed Depts/Assignees input, a Depts lane or an Assignees task or call path that does not exist, an Assignees user that is not a UUID v7, or a retired dept_id input
         - MISSING_MESSAGE_DEFINITION    # error severity when a messageFlow's messageRef references an undeclared bpmn:message; warning severity when a message boundary event's or collaboration messageFlow's name cannot be resolved at all
         - UNMATCHED_MESSAGE_FLOW        # message flow source/target does not reference a known element
         - TASK_LIMIT_EXCEEDED           # userTask count > 1000 in the process, or more than 1000 stages and calls once its calls are expanded
@@ -801,11 +806,16 @@ components:
         - INVALID_BOUNDARY_ATTACHMENT   # more than one event definition on a boundary event, more than one timer boundary on the same host, an error boundary attached to a host other than subProcess/callActivity, or an unknown errorRef
         - MISSING_DIAGRAM               # bpmndi:BPMNDiagram section absent
         - MISSING_DIAGRAM_SHAPE         # a flow node has no corresponding BPMNShape in the diagram
-        - UNRESOLVED_CALLED_ELEMENT     # callActivity missing zeebe:calledElement or processId not found in same document
+        - UNRESOLVED_CALLED_ELEMENT     # callActivity missing zeebe:calledElement, naming neither a process in the document nor a callable library module version, or pinning a versionTag of a process id the document also defines
         - NESTED_SUBPROCESS_NOT_SUPPORTED # subProcess nested inside another subProcess
         - MISSING_DEPT_INPUT_FOR_MODULE # a called process has two or more open lanes (no dept_id) and the call's Depts input does not map every one
         - CALLED_ELEMENT_CYCLE          # a chain of callActivity calls returns to a process already on it
         - DUPLICATE_PROCESS_ID          # two bpmn:process elements in the bundled document share an id
+        - UNSUPPORTED_BOUNDARY_TARGET   # a boundary event's path reaches a callActivity, sendTask or receiveTask before any userTask, subProcess or end event
+        - MISSING_DEPT_ID               # a task's lane has no dept_id, or a call binds a module lane to a workflow lane with no dept_id
+        - INVALID_DEPT_ID               # a lane's dept_id is not a UUID
+        - UNKNOWN_CONNECTOR_TYPE        # warning: a connector serviceTask names a connector type the registry does not know
+        - CONNECTOR_TASK_HAS_ASSIGNMENT # warning: a connector serviceTask carries an assignmentDefinition, which it does not use
 
     BpmnValidationFailure:
       type: object

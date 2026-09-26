@@ -146,11 +146,11 @@ BPMN_VALID='<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_prep" name="Design Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="dept_id" value="design"/>
           <zeebe:property name="role" value="preparer"/>
-          <zeebe:property name="default_user_ids" value="550e8400-e29b-41d4-a716-446655440000"/>
+          <zeebe:property name="default_user_ids" value="018f2d3c-0000-7000-8000-0000000000a1"/>
           <zeebe:property name="sla_duration" value="48h"/>
         </zeebe:properties>
       </bpmn:extensionElements>
@@ -158,11 +158,11 @@ BPMN_VALID='<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_review" name="Design Review">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a2"/>
         <zeebe:properties>
           <zeebe:property name="dept_id" value="design"/>
           <zeebe:property name="role" value="reviewer"/>
-          <zeebe:property name="default_user_ids" value="661f9511-f3ac-52e5-b827-557766551111"/>
+          <zeebe:property name="default_user_ids" value="018f2d3c-0000-7000-8000-0000000000a2"/>
           <zeebe:property name="sla_duration" value="24h"/>
         </zeebe:properties>
       </bpmn:extensionElements>

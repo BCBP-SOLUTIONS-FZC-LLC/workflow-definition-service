@@ -375,6 +375,7 @@ func TestCompileForPublish_CallSiteAssignees(t *testing.T) {
 	for name, assignees := range map[string]string{
 		"unknown task":     `{"Nope":"` + otherUser + `"}`,
 		"user is not uuid": `{"Process_M_Task":"someone"}`,
+		"user is uuid v4":  `{"Process_M_Task":"9b2e4f1a-3c5d-4e6f-8a7b-1c2d3e4f5a6b"}`,
 		"malformed":        `{"Process_M_Task":`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -383,6 +384,37 @@ func TestCompileForPublish_CallSiteAssignees(t *testing.T) {
 			}, moduleWithTask("Process_M", validCandidateUser))
 			if got := findCode(validateBlocking(t, bpmnXML), domain.BPMNErrInvalidZeebeProperty); got == nil || got.NodeID != "CA_1" {
 				t.Errorf("errors = %+v, want INVALID_ZEEBE_PROPERTY on CA_1", validateBlocking(t, bpmnXML))
+			}
+		})
+	}
+}
+
+// TestCompileForPublish_CallSiteAssigneesReachANestedModuleByPath pins that a
+// workflow names a user for a task two modules down by the path of calls to
+// it, and that a path leading nowhere is refused on the call.
+func TestCompileForPublish_CallSiteAssigneesReachANestedModuleByPath(t *testing.T) {
+	withAssignees := func(assignees string) string {
+		return mainWithCalls([]callSite{
+			{ID: "CA_1", Lane: "Engineering", Calls: "Process_Lib", Inputs: [][2]string{{"Assignees", assignees}}},
+		}, moduleCalling("Process_Lib", "Process_Check"), moduleWithTask("Process_Check", ""))
+	}
+	bpmnXML := withAssignees(`{"Process_Lib_Call::Process_Check_Task":"` + otherUser + `"}`)
+	if errs := validateBlocking(t, bpmnXML); len(errs) > 0 {
+		t.Fatalf("a path through the module's call is valid; got %+v", errs)
+	}
+	got := departmentNamed(t, expandedMain(t, compileForPublish(t, bpmnXML)), "CA_1::Process_Lib_Call::Process_Check")
+	if !reflect.DeepEqual(got.Stages[0].DefaultAssignees, []string{otherUser}) {
+		t.Errorf("nested task defaults = %v, want [%s]", got.Stages[0].DefaultAssignees, otherUser)
+	}
+
+	for key, mentions := range map[string]string{
+		"Process_Lib_Call::Nope":        "Nope",
+		"Nope_Call::Process_Check_Task": "Nope_Call",
+	} {
+		t.Run(key, func(t *testing.T) {
+			got := findCode(validateBlocking(t, withAssignees(`{"`+key+`":"`+otherUser+`"}`)), domain.BPMNErrInvalidZeebeProperty)
+			if got == nil || got.NodeID != "CA_1" || !strings.Contains(got.Message, mentions) {
+				t.Errorf("error = %+v, want INVALID_ZEEBE_PROPERTY on CA_1 naming %q", got, mentions)
 			}
 		})
 	}
@@ -422,20 +454,53 @@ func TestCompileForPublish_ModuleCallingAModule(t *testing.T) {
 	}
 }
 
-func TestValidate_UserTaskWithoutDefaultAssignee_IsAWarning(t *testing.T) {
-	bpmnXML := mainWithCalls([]callSite{{ID: "CA_1", Lane: "Engineering", Calls: "Process_M"}}, moduleWithTask("Process_M", ""))
-	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
+// TestPublish_EveryHumanTaskNeedsADefaultUser pins that a module may name no
+// user, but once a workflow calls it each of its tasks needs one: the call's
+// Assignees or the module's own. The rule is judged on the expanded plan, so
+// it is a warning on the documents alone and an error once publishable.
+func TestPublish_EveryHumanTaskNeedsADefaultUser(t *testing.T) {
+	c := bpmn_compiler.New()
+	unassigned := mainWithCalls([]callSite{{ID: "CA_1", Lane: "Engineering", Calls: "Process_M"}}, moduleWithTask("Process_M", ""))
+
+	errs, err := c.Validate(context.Background(), unassigned)
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	got := findCode(errs, domain.BPMNErrCandidateUsersEmpty)
-	if got == nil || got.Severity != domain.SeverityWarning {
-		t.Fatalf("errors = %+v, want CANDIDATE_USERS_EMPTY as a warning: the assignee is supplied when the instance starts", errs)
+	if got := findCode(errs, domain.BPMNErrCandidateUsersEmpty); got == nil || got.Severity != domain.SeverityWarning {
+		t.Errorf("Validate = %+v, want CANDIDATE_USERS_EMPTY as a warning on the module's task", errs)
 	}
-	compileForPublish(t, bpmnXML)
+
+	errs, err = c.ValidateForPublish(context.Background(), unassigned)
+	if err != nil {
+		t.Fatalf("ValidateForPublish: %v", err)
+	}
+	got := findCode(blockingErrors(errs), domain.BPMNErrCandidateUsersEmpty)
+	if got == nil || got.NodeID != "CA_1" || !strings.Contains(got.Message, "CA_1::Process_M/Process_M_Task") {
+		t.Errorf("ValidateForPublish = %+v, want CANDIDATE_USERS_EMPTY on the call CA_1 naming node CA_1::Process_M/Process_M_Task", errs)
+	}
+	assertCompileRefusedWith(t, unassigned, domain.BPMNErrCandidateUsersEmpty)
+
+	assigned := mainWithCalls([]callSite{
+		{ID: "CA_1", Lane: "Engineering", Calls: "Process_M", Inputs: [][2]string{{"Assignees", `{"Process_M_Task":"` + otherUser + `"}`}}},
+	}, moduleWithTask("Process_M", ""))
+	if errs, err := c.ValidateForPublish(context.Background(), assigned); err != nil || len(blockingErrors(errs)) > 0 {
+		t.Errorf("ValidateForPublish = %+v, %v; want a call naming the user to be publishable", errs, err)
+	}
+	compileForPublish(t, assigned)
 }
 
-func TestCompileForPublish_InlinedStagesOverTheLimit_AreRefused(t *testing.T) {
+func TestPublish_TopLevelTaskWithoutADefaultUser_IsRefused(t *testing.T) {
+	bpmnXML := strings.Replace(lanedMainWithBoundary("Task_B", userTaskXML("Task_B")), `candidateUsers="`+validCandidateUser+`"`, `candidateUsers=""`, 1)
+	errs, err := bpmn_compiler.New().ValidateForPublish(context.Background(), bpmnXML)
+	if err != nil {
+		t.Fatalf("ValidateForPublish: %v", err)
+	}
+	if got := findCode(blockingErrors(errs), domain.BPMNErrCandidateUsersEmpty); got == nil || got.NodeID != "Task_A" {
+		t.Errorf("errors = %+v, want CANDIDATE_USERS_EMPTY on Task_A", errs)
+	}
+}
+
+func TestCompileForPublish_ExpandedStagesOverTheLimit_AreRefused(t *testing.T) {
 	var tasks, flows strings.Builder
 	prev := "Big_SubStart"
 	for i := range 600 {
@@ -461,6 +526,13 @@ func TestCompileForPublish_InlinedStagesOverTheLimit_AreRefused(t *testing.T) {
 	}, big)
 
 	assertCompileRefusedWith(t, bpmnXML, domain.BPMNErrTaskLimitExceeded)
+	errs, err := bpmn_compiler.New().ValidateForPublish(context.Background(), bpmnXML)
+	if err != nil {
+		t.Fatalf("ValidateForPublish: %v", err)
+	}
+	if findCode(blockingErrors(errs), domain.BPMNErrTaskLimitExceeded) == nil {
+		t.Errorf("ValidateForPublish = %+v, want TASK_LIMIT_EXCEEDED, as publish refuses it", errs)
+	}
 }
 
 // workFreeLaneModule is Process_R with a lane, Starter, holding only its start
@@ -623,5 +695,60 @@ func TestCompileCollaboration_IgnoredPoolKeepsTheModulesItCalls(t *testing.T) {
 	planNamed(t, collab, "Process_P")
 	if _, err := dsl.ExpandCalls(collab, 0); err != nil {
 		t.Errorf("the collaboration does not expand: %v", err)
+	}
+}
+
+// TestValidate_ModuleSlotBoundToALaneWithoutADepartment_IsRefused pins that
+// every department a call binds in a workflow has an IAM department, whether
+// Depts names the lane or the module's one open slot takes the call's own.
+func TestValidate_ModuleSlotBoundToALaneWithoutADepartment_IsRefused(t *testing.T) {
+	withoutOpsDept := func(bpmnXML string) string {
+		return strings.Replace(bpmnXML, fmt.Sprintf(`<zeebe:property name="dept_id" value=%q/>`, opsDeptID), "", 1)
+	}
+	twoOpen := lanedModule("Process_R", moduleLane{"Sender", "", "R_Send"}, moduleLane{"Receiver", "", "R_Receive"})
+	for name, bpmnXML := range map[string]string{
+		"mapped by Depts": withoutOpsDept(mainWithCalls([]callSite{
+			{ID: "CA_1", Lane: "Engineering", Calls: "Process_R", Inputs: [][2]string{{"Depts", `{"Sender":"Ops","Receiver":"Engineering"}`}}},
+		}, twoOpen)),
+		"the call's own lane": withoutOpsDept(mainWithCalls([]callSite{
+			{ID: "CA_1", Lane: "Ops", Calls: "Process_M"},
+		}, moduleWithTask("Process_M", validCandidateUser))),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := findCode(validateBlocking(t, bpmnXML), domain.BPMNErrMissingDeptID)
+			if got == nil || got.NodeID != "CA_1" || !strings.Contains(got.Message, "Ops") {
+				t.Errorf("errors = %+v, want MISSING_DEPT_ID on CA_1 naming lane Ops", validateBlocking(t, bpmnXML))
+			}
+		})
+	}
+}
+
+// TestCompileForPublish_CallSiteAssigneesReachATaskInsideAModuleSubProcess pins
+// that Assignees finds a module task wherever the module's plan has it,
+// including a subProcess body, as ExpandCalls does.
+func TestCompileForPublish_CallSiteAssigneesReachATaskInsideAModuleSubProcess(t *testing.T) {
+	module := `  <bpmn:process id="Process_S" isExecutable="true">
+    <bpmn:startEvent id="S_Start"/>
+    <bpmn:subProcess id="S_Sub">
+      <bpmn:startEvent id="SS_Start"/>
+      <bpmn:userTask id="SS_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer"/></bpmn:extensionElements></bpmn:userTask>
+      <bpmn:endEvent id="SS_End"/>
+      <bpmn:sequenceFlow id="SS_F1" sourceRef="SS_Start" targetRef="SS_Task"/>
+      <bpmn:sequenceFlow id="SS_F2" sourceRef="SS_Task" targetRef="SS_End"/>
+    </bpmn:subProcess>
+    <bpmn:endEvent id="S_End"/>
+    <bpmn:sequenceFlow id="S_F1" sourceRef="S_Start" targetRef="S_Sub"/>
+    <bpmn:sequenceFlow id="S_F2" sourceRef="S_Sub" targetRef="S_End"/>
+  </bpmn:process>`
+	bpmnXML := mainWithCalls([]callSite{
+		{ID: "CA_1", Lane: "Engineering", Calls: "Process_S", Inputs: [][2]string{{"Assignees", `{"SS_Task":"` + otherUser + `"}`}}},
+	}, module)
+	errs, err := bpmn_compiler.New().ValidateForPublish(context.Background(), bpmnXML)
+	if err != nil || len(blockingErrors(errs)) > 0 {
+		t.Fatalf("ValidateForPublish = %+v, %v; want the subProcess task assignable", errs, err)
+	}
+	st := stageNamed(t, expandedMain(t, compileForPublish(t, bpmnXML)), "SS_Task")
+	if !reflect.DeepEqual(st.DefaultAssignees, []string{otherUser}) {
+		t.Errorf("SS_Task defaults = %v, want [%s]", st.DefaultAssignees, otherUser)
 	}
 }

@@ -235,6 +235,27 @@ func TestValidateTaskExtensions_InvalidCandidateUser(t *testing.T) {
 	}
 }
 
+// TestValidateTaskExtensions_CandidateUserMustBeAUUIDv7 pins validate to the
+// rule publish enforces: IAM user ids are UUID v7, so a v4 id is refused here
+// rather than at publish as ASSIGNEE_INELIGIBLE.
+func TestValidateTaskExtensions_CandidateUserMustBeAUUIDv7(t *testing.T) {
+	for id, want := range map[string]bool{
+		"9b2e4f1a-3c5d-4e6f-8a7b-1c2d3e4f5a6b": true,
+		"018f2d3c-0000-7000-8000-0000000000b2": false,
+	} {
+		proc := &bpmncore.BPMNProcess{
+			LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}}}},
+			UserTasks: []bpmncore.BPMNUserTask{{ID: "T1", ExtensionElements: bpmncore.BPMNExtensionElements{
+				TaskDefinition:       &bpmncore.ZeebeTaskDefinition{Type: "prep"},
+				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "preparer", CandidateUsers: id},
+			}}},
+		}
+		if got := hasCodeIn(validator.ValidateTaskExtensions(proc, defaultStageTypes()), domain.BPMNErrInvalidCandidateUser); got != want {
+			t.Errorf("candidateUsers %s: INVALID_CANDIDATE_USER = %v, want %v", id, got, want)
+		}
+	}
+}
+
 func TestValidateLaneMembership_TaskNotInLane(t *testing.T) {
 	refs := map[string]struct{}{"T1": {}, "T2": {}}
 	errs := validator.ValidateLaneMembership("T3", refs)

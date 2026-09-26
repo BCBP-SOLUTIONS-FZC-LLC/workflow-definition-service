@@ -25,13 +25,13 @@
       <bpmn:userTask id="InnerTask_prep" name="Inner Prep">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="prep"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         </bpmn:extensionElements>
       </bpmn:userTask>
       <bpmn:userTask id="InnerTask_approve" name="Inner Approve">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="approve"/>
-          <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+          <zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         </bpmn:extensionElements>
       </bpmn:userTask>
       <bpmn:endEvent id="InnerEnd_1" name="Inner End" />
@@ -42,7 +42,7 @@
     <bpmn:userTask id="Task_qa_prep" name="QA Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="EndEvent_1" name="End" />

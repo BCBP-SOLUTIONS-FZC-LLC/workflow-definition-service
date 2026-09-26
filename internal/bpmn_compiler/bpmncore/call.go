@@ -115,7 +115,7 @@ func WorkLanes(proc *BPMNProcess) []*BPMNLane {
 // single implicit department, named by the process ID.
 func OpenSlots(proc *BPMNProcess) []string {
 	if len(proc.LaneSet.Lanes) == 0 {
-		return []string{proc.ID}
+		return []string{ImplicitSlot(proc)}
 	}
 	var open []string
 	for _, lane := range WorkLanes(proc) {
@@ -124,6 +124,15 @@ func OpenSlots(proc *BPMNProcess) []string {
 		}
 	}
 	return open
+}
+
+// ImplicitSlot names the one department of a process without lanes: its
+// process ID, without the "@v<n>" a bundled library module's plan name adds
+// ("@" cannot occur in an XML ID), so its tasks' node keys stay the same
+// across module versions.
+func ImplicitSlot(proc *BPMNProcess) string {
+	id, _, _ := strings.Cut(proc.ID, "@")
+	return id
 }
 
 // CalledPlans collects the plans of called processes during one compile, so

@@ -31,20 +31,20 @@
     <bpmn:userTask id="Task_design_prep" name="Design Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:parallelGateway id="Gateway_ParallelSplit" name="Split" />
     <bpmn:userTask id="Task_procurement_prep" name="Procurement Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:userTask id="Task_planning_prep" name="Planning Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a2"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:parallelGateway id="Gateway_ParallelJoin" name="Join" />
@@ -52,13 +52,13 @@
     <bpmn:userTask id="Task_construction_prep" name="Construction Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:userTask id="Task_qa_prep" name="QA Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="772a0622-04bd-63f6-c938-668877662222"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a3"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:exclusiveGateway id="Gateway_ExclusiveJoin" name="Merge" />

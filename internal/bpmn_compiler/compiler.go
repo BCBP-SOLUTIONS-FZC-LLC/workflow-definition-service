@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/enums"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/element"
@@ -81,6 +84,38 @@ func (c *Compiler) Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNV
 	return append(callGraphErrs, c.validateSingleRoot(bpmnXML, execProcs[0], defs)...), nil
 }
 
+// ValidateForPublish is Validate plus what only the compiled plan, with its
+// calls expanded, shows and publish refuses: the task limit and a task no one
+// is named for. A document with a blocking error, or a collaboration, which
+// publish refuses outright, gets Validate's answer alone.
+func (c *Compiler) ValidateForPublish(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error) {
+	errs, err := c.Validate(ctx, bpmnXML)
+	if err != nil || slices.ContainsFunc(errs, isBlocking) {
+		return errs, err
+	}
+	if defs, err := parse(ctx, bpmnXML); err != nil || defs.Collaboration != nil {
+		return errs, nil
+	}
+	_, err = c.CompileForPublish(ctx, bpmnXML)
+	var failed *domain.ValidationFailedError
+	switch {
+	case errors.As(err, &failed):
+		return append(withoutCode(errs, domain.BPMNErrCandidateUsersEmpty), failed.Errors...), nil
+	case err != nil:
+		return nil, err
+	}
+	return withoutCode(errs, domain.BPMNErrCandidateUsersEmpty), nil
+}
+
+func isBlocking(e domain.BPMNValidationError) bool { return e.Severity != domain.SeverityWarning }
+
+// withoutCode drops code's warnings: the expanded plan's own check replaces
+// the per-document CANDIDATE_USERS_EMPTY warning once a workflow is judged
+// for publish, since a call may name the user the module leaves out.
+func withoutCode(errs []domain.BPMNValidationError, code domain.BPMNErrorCode) []domain.BPMNValidationError {
+	return slices.DeleteFunc(errs, func(e domain.BPMNValidationError) bool { return e.Code == code && !isBlocking(e) })
+}
+
 // validateSingleRoot runs every check a single-root BPMN must pass apart from
 // ValidateCallGraph, which callers run first because it also explains a
 // MULTIPLE_PROCESSES caused by a duplicated process id.
@@ -113,17 +148,42 @@ func (c *Compiler) CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.
 		Messages:      []dsl.MessageDef{},
 		SchemaVersion: dsl.CurrentSchemaVersion,
 	}
-	if err := checkExpandedSize(collab, root.ID); err != nil {
+	if errs := unplacedTasks(plan); len(errs) > 0 {
+		return nil, &domain.ValidationFailedError{Errors: errs}
+	}
+	if err := checkExpanded(collab, root.ID); err != nil {
 		return nil, err
 	}
 	return collab, nil
 }
 
-// checkExpandedSize expands collab's calls the way both services will, and
+// unplacedTasks reports each human task of the workflow's own plan that runs
+// in no IAM department, as in a workflow without lanes: nobody could be
+// checked eligible for it (code 35). A called plan's open departments take
+// their IAM department from the call, so only the root's own are judged.
+func unplacedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	for _, d := range plan.Departments {
+		if d.Ignore || d.IAMDepartmentID != "" {
+			continue
+		}
+		for _, s := range d.Stages {
+			if createsHumanTask(s) {
+				errs = append(errs, domain.BPMNValidationError{
+					Code: domain.BPMNErrMissingDeptID, NodeID: s.NodeID, Severity: domain.SeverityError,
+					Message: "task is in no lane with a dept_id, so it has no IAM department; put it in a lane whose dept_id names one",
+				})
+			}
+		}
+	}
+	return errs
+}
+
+// checkExpanded expands collab's calls the way both services will, and
 // refuses a plan whose stages and calls exceed the task limit (definition LLD
-// §3.1.4 code 9).
-func checkExpandedSize(collab *dsl.CompiledCollaboration, rootID string) error {
-	_, err := dsl.ExpandCalls(collab, validator.MaxUserTasks)
+// §3.1.4 code 9) or that has a human task with no default user (code 8).
+func checkExpanded(collab *dsl.CompiledCollaboration, rootID string) error {
+	expanded, err := dsl.ExpandCalls(collab, validator.MaxUserTasks)
 	if errors.Is(err, dsl.ErrPlanTooLarge) {
 		return &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
 			Code:     domain.BPMNErrTaskLimitExceeded,
@@ -135,7 +195,45 @@ func checkExpandedSize(collab *dsl.CompiledCollaboration, rootID string) error {
 	if err != nil {
 		return fmt.Errorf("bpmn compile: expand calls: %w", err)
 	}
+	if errs := unassignedTasks(expanded.Plans[0]); len(errs) > 0 {
+		return &domain.ValidationFailedError{Errors: errs}
+	}
 	return nil
+}
+
+// unassignedTasks reports each human task of the expanded main plan that
+// names no default user, on the element its author can fix: the task itself,
+// or, for a task inside a module, the top-level call that runs it.
+func unassignedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	for _, d := range plan.Departments {
+		if d.Ignore {
+			continue
+		}
+		for _, s := range d.Stages {
+			if !createsHumanTask(s) || len(s.DefaultAssignees) > 0 {
+				continue
+			}
+			node := s.NodeID
+			if call, _, inModule := strings.Cut(d.ID, dsl.CallScopeSeparator); inModule {
+				node = call
+			}
+			errs = append(errs, domain.BPMNValidationError{
+				Code:   domain.BPMNErrCandidateUsersEmpty,
+				NodeID: node,
+				Message: fmt.Sprintf("task %s/%s names no default user; name one in its candidateUsers or in the Assignees of a call that runs it, "+
+					"since a published workflow gives every task a default", d.ID, s.NodeID),
+				Severity: domain.SeverityError,
+			})
+		}
+	}
+	return errs
+}
+
+// createsHumanTask matches the Execution Service's rule for which stages
+// become tasks a person completes (execution LLD §5.5).
+func createsHumanTask(s dsl.StageDef) bool {
+	return s.ConnectorType == "" && s.Type != string(enums.StageTypeSendTask) && s.Type != string(enums.StageTypeReceiveTask)
 }
 
 func (c *Compiler) compileSingleRoot(ctx context.Context, bpmnXML string) (plan *dsl.CompiledPlan, called []*dsl.CompiledPlan, root *bpmncore.BPMNProcess, err error) {

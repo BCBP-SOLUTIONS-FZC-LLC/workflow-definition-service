@@ -7,7 +7,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-const injectMainXML = `<?xml version="1.0" encoding="UTF-8"?>
+const bundleMainXML = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions
   xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
@@ -23,7 +23,7 @@ const injectMainXML = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmndi:BPMNDiagram>
 </bpmn:definitions>`
 
-const injectModuleXML = `<?xml version="1.0" encoding="UTF-8"?>
+const bundleModuleXML = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions
   xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
@@ -39,18 +39,18 @@ const injectModuleXML = `<?xml version="1.0" encoding="UTF-8"?>
 </bpmn:definitions>`
 
 func moduleV2() domain.ResolvedModule {
-	return domain.ResolvedModule{ProcessID: "ModuleProc", VersionNumber: 2, PlanName: "ModuleProc@v2", BPMNXML: injectModuleXML}
+	return domain.ResolvedModule{ProcessID: "ModuleProc", VersionNumber: 2, PlanName: "ModuleProc@v2", BPMNXML: bundleModuleXML}
 }
 
 func TestBundleModules_NoModules_ReturnsMainUnchanged(t *testing.T) {
-	out, err := bundleModules(injectMainXML, nil)
-	if err != nil || out != injectMainXML {
+	out, err := bundleModules(bundleMainXML, nil)
+	if err != nil || out != bundleMainXML {
 		t.Fatalf("bundleModules(nil) = %q, %v; want the main XML unchanged", out, err)
 	}
 }
 
 func TestBundleModules_RenamesTheModuleAndPointsTheCallAtIt(t *testing.T) {
-	out, err := bundleModules(injectMainXML, []domain.ResolvedModule{moduleV2()})
+	out, err := bundleModules(bundleMainXML, []domain.ResolvedModule{moduleV2()})
 	if err != nil {
 		t.Fatalf("bundleModules: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestBundleModules_RenamesTheModuleAndPointsTheCallAtIt(t *testing.T) {
 func TestBundleModules_OnePlanReachedTwiceIsAddedOnce(t *testing.T) {
 	latest := moduleV2()
 	latest.VersionNumber = 0
-	out, err := bundleModules(injectMainXML, []domain.ResolvedModule{moduleV2(), latest})
+	out, err := bundleModules(bundleMainXML, []domain.ResolvedModule{moduleV2(), latest})
 	if err != nil {
 		t.Fatalf("bundleModules: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestBundleModules_InvalidMainOrModule(t *testing.T) {
 	}
 	bad := moduleV2()
 	bad.BPMNXML = `<!DOCTYPE x [<!ENTITY a "b">]><bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"/>`
-	if _, err := bundleModules(injectMainXML, []domain.ResolvedModule{bad}); err == nil {
+	if _, err := bundleModules(bundleMainXML, []domain.ResolvedModule{bad}); err == nil {
 		t.Error("a module with a forbidden DOCTYPE bundled without an error")
 	}
 }

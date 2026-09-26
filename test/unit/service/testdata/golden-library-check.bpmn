@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Library module Process_Check, version 1: its task names no user, so its
-     assignee comes from the instance start request. -->
+<!-- Library module Process_Check, version 1: its task names no user, so each
+     workflow calling it through Process_Review names one by the call path. -->
 <bpmn:definitions
   xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
   xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"

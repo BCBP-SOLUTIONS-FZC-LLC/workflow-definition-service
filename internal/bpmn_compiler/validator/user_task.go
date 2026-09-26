@@ -50,10 +50,11 @@ func ValidateOptionalAssignment(taskID string, ext bpmncore.BPMNExtensionElement
 	return ValidateAssignmentDef(taskID, ext)
 }
 
-// ValidateDefaultAssignee warns about a userTask that names a role but nobody:
-// its assignee must then come from the instance start request, which the
-// Execution Service refuses without one (definition LLD §3.1.4 code 8). Kept
-// out of ValidateAssignmentDef because sendTask/receiveTask share that one and
+// ValidateDefaultAssignee warns about a userTask that names a role but nobody.
+// A module may leave the user to the workflow that calls it, so on the
+// document alone this is a warning; publish refuses a workflow whose expanded
+// plan still names no one for it (definition LLD §3.1.4 code 8). Kept out of
+// ValidateAssignmentDef because sendTask/receiveTask share that one and
 // create no task.
 func ValidateDefaultAssignee(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
 	if ext.AssignmentDefinition == nil {
@@ -63,7 +64,7 @@ func ValidateDefaultAssignee(taskID string, ext bpmncore.BPMNExtensionElements) 
 		return nil
 	}
 	return AppendWarn(nil, domain.BPMNErrCandidateUsersEmpty, taskID,
-		"userTask has no candidateUsers; its assignee must be supplied when the instance starts")
+		"userTask has no candidateUsers; a workflow that runs it must name its user, here or in a calling callActivity's Assignees, before it publishes")
 }
 
 func ValidateAssignmentDef(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
@@ -85,11 +86,17 @@ func validateCandidateUser(taskID, candidateUsers string) []domain.BPMNValidatio
 	if candidateUsers == "" {
 		return nil
 	}
-	if _, err := uuid.Parse(candidateUsers); err != nil {
+	if !IsUserID(candidateUsers) {
 		return AppendErr(nil, domain.BPMNErrInvalidCandidateUser, taskID,
 			fmt.Sprintf("candidateUsers %q is not a valid UUID v7", candidateUsers))
 	}
 	return nil
+}
+
+// IsUserID reports whether s can be an IAM user id, which is a UUID v7.
+func IsUserID(s string) bool {
+	id, err := uuid.Parse(s)
+	return err == nil && id.Version() == 7
 }
 
 // ValidateDeptID rejects a lane with no valid dept_id zeebe property — the

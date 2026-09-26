@@ -21,7 +21,7 @@ func TestValidationService_Validate_Valid(t *testing.T) {
 
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
-	compiler.EXPECT().Validate(gomock.Any(), "<bpmn/>").Return(nil, nil)
+	compiler.EXPECT().ValidateForPublish(gomock.Any(), "<bpmn/>").Return(nil, nil)
 
 	isValid, errs, err := svc.Validate(context.Background(), uuid.New(), "<bpmn/>")
 	if err != nil || !isValid || len(errs) != 0 {
@@ -39,7 +39,7 @@ func TestValidationService_Validate_Invalid(t *testing.T) {
 	}
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<bad/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<bad/>", gomock.Any()).Return("<bad/>", nil)
-	compiler.EXPECT().Validate(gomock.Any(), "<bad/>").Return(validationErrs, nil)
+	compiler.EXPECT().ValidateForPublish(gomock.Any(), "<bad/>").Return(validationErrs, nil)
 
 	isValid, errs, err := svc.Validate(context.Background(), uuid.New(), "<bad/>")
 	if err != nil || isValid || len(errs) != 1 {
@@ -60,7 +60,7 @@ func TestValidationService_Validate_WarningsOnly(t *testing.T) {
 	}
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<warn/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<warn/>", gomock.Any()).Return("<warn/>", nil)
-	compiler.EXPECT().Validate(gomock.Any(), "<warn/>").Return(validationErrs, nil)
+	compiler.EXPECT().ValidateForPublish(gomock.Any(), "<warn/>").Return(validationErrs, nil)
 
 	isValid, errs, err := svc.Validate(context.Background(), uuid.New(), "<warn/>")
 	if err != nil || !isValid || len(errs) != 1 {
@@ -90,11 +90,39 @@ func TestValidationService_Validate_CompilerError(t *testing.T) {
 
 	compiler.EXPECT().ModuleCalls(gomock.Any(), gomock.Any()).Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules(gomock.Any(), gomock.Any()).Return("<broken/>", nil)
-	compiler.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil, errors.New("parse error"))
+	compiler.EXPECT().ValidateForPublish(gomock.Any(), gomock.Any()).Return(nil, errors.New("parse error"))
 
 	isValid, _, err := svc.Validate(context.Background(), uuid.New(), "<broken/>")
 	if err == nil || isValid {
 		t.Fatal("expected error and isValid=false")
+	}
+}
+
+// TestValidationService_Validate_JudgesWhatPublishJudges pins /validate to
+// publish's expanded-plan rules: a module task two calls down that names no
+// user, with no call naming one either, makes the workflow invalid.
+func TestValidationService_Validate_JudgesWhatPublishJudges(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	modules := mocks.NewMockModuleVersionRepository(ctrl)
+	tenantID := uuid.New()
+	review := libraryVersion(uuid.New(), "Process_Review", 3, libraryReviewCallsCheckBPMN)
+	expectLibrary(modules, tenantID, map[libraryKey]*domain.ModuleVersion{
+		{"Process_Review", 3}: review,
+		{"Process_Review", 0}: review,
+		{"Process_Check", 0}:  libraryVersion(uuid.New(), "Process_Check", 1, goldenCheckBPMN),
+	})
+	svc := service.NewValidationService(service.ValidationDeps{Compiler: bpmn_compiler.New(), ModuleVersions: modules})
+
+	isValid, errs, err := svc.Validate(context.Background(), tenantID, libraryCallerBPMN)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	found := false
+	for _, e := range errs {
+		found = found || (e.Code == domain.BPMNErrCandidateUsersEmpty && e.Severity == domain.SeverityError && e.NodeID == "CA_1")
+	}
+	if isValid || !found {
+		t.Errorf("is_valid = %v, errors = %+v; want invalid with CANDIDATE_USERS_EMPTY on CA_1", isValid, errs)
 	}
 }
 

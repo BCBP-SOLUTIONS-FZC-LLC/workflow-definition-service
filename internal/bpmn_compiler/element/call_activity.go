@@ -79,7 +79,7 @@ func compileCalledPlan(calledProc *bpmncore.BPMNProcess, cs *bpmncore.CompileSta
 		return err
 	}
 	depts, steps := inner.CollectedDepts(), inner.CollectedSteps()
-	nameImplicitDept(depts, steps, calledProc.ID)
+	nameImplicitDept(depts, steps, bpmncore.ImplicitSlot(calledProc))
 	depts = withOpenSlots(depts, calledProc)
 	cs.Called.Put(&dsl.CompiledPlan{
 		Name:        calledProc.ID,
@@ -90,14 +90,15 @@ func compileCalledPlan(calledProc *bpmncore.BPMNProcess, cs *bpmncore.CompileSta
 }
 
 // nameImplicitDept gives a laneless called process's single department,
-// compiled with an empty ID, the process ID, so a call can bind it.
-func nameImplicitDept(depts []dsl.DepartmentDef, steps []dsl.ExecutionStep, processID string) {
+// compiled with an empty ID, its implicit slot name, so a call can bind it.
+func nameImplicitDept(depts []dsl.DepartmentDef, steps []dsl.ExecutionStep, slot string) {
 	for i := range depts {
 		if depts[i].ID == "" {
-			depts[i].ID, depts[i].Label = processID, processID
+			depts[i].ID, depts[i].Label = slot, slot
 		}
 	}
-	patchEmptyDepts(steps, processID)
+	patchEmptyStageTargets(depts, slot)
+	patchEmptyDepts(steps, slot)
 }
 
 // withOpenSlots adds a department for every open slot the compile left

@@ -53,10 +53,14 @@ type moduleRefResp struct {
 	VersionNumber int32     `json:"version_number"`
 }
 
+func toModuleRefResp(ref domain.ModuleRef) moduleRefResp {
+	return moduleRefResp{ModuleID: ref.ModuleID, VersionID: ref.VersionID, ProcessID: ref.ProcessID, VersionNumber: ref.VersionNumber}
+}
+
 func toVersionResp(v *domain.WorkflowVersion) versionResp {
 	refs := make([]moduleRefResp, 0, len(v.ModuleRefs))
 	for _, ref := range v.ModuleRefs {
-		refs = append(refs, moduleRefResp(ref))
+		refs = append(refs, toModuleRefResp(ref))
 	}
 	r := versionResp{
 		ID:              v.ID,

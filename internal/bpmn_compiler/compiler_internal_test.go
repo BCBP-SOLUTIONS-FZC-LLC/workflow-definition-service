@@ -1208,7 +1208,7 @@ const compileCollabSuccessBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_b" name="Task">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="fin" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="fin" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
       <bpmn:incoming>Fb1</bpmn:incoming><bpmn:outgoing>Fb2</bpmn:outgoing>
     </bpmn:userTask>

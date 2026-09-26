@@ -23,13 +23,19 @@
     </bpmn:laneSet>
     <bpmn:startEvent id="Start_1"/>
     <bpmn:callActivity id="CA_Timer" name="Review, due in five days">
-      <bpmn:extensionElements><zeebe:calledElement processId="Process_Review"/></bpmn:extensionElements>
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="Process_Review"/>
+        <zeebe:ioMapping><zeebe:input source='{"Review_Check::Check_Task":"018f2d3c-0000-7000-8000-0000000000c1"}' target="Assignees"/></zeebe:ioMapping>
+      </bpmn:extensionElements>
     </bpmn:callActivity>
     <bpmn:boundaryEvent id="Late" attachedToRef="CA_Timer"><bpmn:timerEventDefinition id="TED_1"><bpmn:timeDuration>P5D</bpmn:timeDuration></bpmn:timerEventDefinition></bpmn:boundaryEvent>
     <bpmn:endEvent id="End_Late"/>
     <bpmn:sendTask id="Send_Withdraw" name="Withdraw" messageRef="Msg_withdraw"/>
     <bpmn:callActivity id="CA_Message" name="Review, unless withdrawn">
-      <bpmn:extensionElements><zeebe:calledElement processId="Process_Review"/></bpmn:extensionElements>
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="Process_Review"/>
+        <zeebe:ioMapping><zeebe:input source='{"Review_Check::Check_Task":"018f2d3c-0000-7000-8000-0000000000c1"}' target="Assignees"/></zeebe:ioMapping>
+      </bpmn:extensionElements>
     </bpmn:callActivity>
     <bpmn:boundaryEvent id="Withdrawn" attachedToRef="CA_Message"><bpmn:messageEventDefinition id="MED_1" messageRef="Msg_withdraw"/></bpmn:boundaryEvent>
     <bpmn:endEvent id="End_Withdrawn"/>

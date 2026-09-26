@@ -54,7 +54,7 @@
     <bpmn:userTask id="Task_design_prep" name="PrepActivity">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -63,7 +63,7 @@
     <bpmn:userTask id="Task_design_review" name="ReviewActivity">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a2"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="true" />
         </zeebe:properties>
@@ -81,7 +81,7 @@
     <bpmn:userTask id="Task_contracts_prep" name="Contracts Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -90,7 +90,7 @@
     <bpmn:userTask id="Task_contracts_review" name="Contracts Review">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a2"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="true" />
         </zeebe:properties>
@@ -108,7 +108,7 @@
     <bpmn:userTask id="Task_procurement_prep" name="Procurement Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -117,7 +117,7 @@
     <bpmn:userTask id="Task_procurement_review" name="Procurement Review">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a2"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="true" />
         </zeebe:properties>
@@ -135,7 +135,7 @@
     <bpmn:userTask id="Task_planning_prep" name="Planning Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -144,7 +144,7 @@
     <bpmn:userTask id="Task_planning_review" name="Planning Review">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a2"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="true" />
         </zeebe:properties>
@@ -162,7 +162,7 @@
     <bpmn:userTask id="Task_logistics_prep" name="Logistics Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -171,7 +171,7 @@
     <bpmn:userTask id="Task_logistics_review" name="Logistics Review">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a2"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="true" />
         </zeebe:properties>
@@ -189,7 +189,7 @@
     <bpmn:userTask id="Task_hse_prep" name="HSE Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -198,7 +198,7 @@
     <bpmn:userTask id="Task_hse_review" name="HSE Review">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a2"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="true" />
         </zeebe:properties>
@@ -216,7 +216,7 @@
     <bpmn:userTask id="Task_construction_prep" name="Construction Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -225,7 +225,7 @@
     <bpmn:userTask id="Task_construction_review" name="Construction Review">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a2"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="true" />
         </zeebe:properties>
@@ -243,7 +243,7 @@
     <bpmn:userTask id="Task_qa_prep" name="QA Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -252,7 +252,7 @@
     <bpmn:userTask id="Task_qa_review" name="QA Review">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a2"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="true" />
         </zeebe:properties>
@@ -270,7 +270,7 @@
     <bpmn:userTask id="Task_commissioning_prep" name="Commissioning Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="550e8400-e29b-41d4-a716-446655440000"/>
+        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -279,7 +279,7 @@
     <bpmn:userTask id="Task_commissioning_review" name="Commissioning Review">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="661f9511-f3ac-52e5-b827-557766551111"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a2"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="true" />
         </zeebe:properties>
