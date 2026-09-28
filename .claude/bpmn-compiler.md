@@ -96,7 +96,7 @@ Each called process compiles **once, into its own plan** in `CompiledCollaborati
 ## Module BPMNs (Called Processes)
 
 - Each called process reachable from the root is validated once with the root's rules, minus the diagram rules (`BundleModules` drops module diagrams). A call cycle is `CALLED_ELEMENT_CYCLE`, and a repeated process `id` is `DUPLICATE_PROCESS_ID` (`validator/call_graph.go`).
-- `CANDIDATE_USERS_EMPTY` is a warning on a document and an error on a workflow's expanded plan: `CompileForPublish` (`checkExpanded`) refuses every human stage with no default user, on the task or on the top-level call that runs it, naming the node key. `ValidateForPublish`, which `/workflows/validate` uses, runs the same check; workflow and starter creation run `Validate` alone, so a draft can be saved first.
+- `CANDIDATE_USERS_EMPTY` is a warning on a document and an error on a workflow's expanded plan: `CompileForPublish` (`checkExpanded`) refuses every human stage with no default user, on the task or on the top-level call that runs it, naming the node key. `ValidateForPublish`, which `/workflows/validate` uses, runs the same check; workflow and starter creation run `Validate` alone, so a draft can be saved first. `CompileDraft` compiles without these publish-only rules (default users, IAM departments via `lanelessWork`/`unplacedTasks`, the expanded task limit); the diff and the divergence baseline use it.
 
 ## Multi-Participant Collaboration
 

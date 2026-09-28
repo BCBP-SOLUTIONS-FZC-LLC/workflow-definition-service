@@ -324,8 +324,11 @@ func (s *VersionService) resolvePlan(
 	if len(res.issues) > 0 {
 		return nil, &domain.ValidationFailedError{Errors: res.issues}
 	}
-	_, plan, err := s.compileForPublish(ctx, res.bundled)
-	return plan, err
+	collab, err := s.compiler.CompileDraft(ctx, res.bundled)
+	if err != nil {
+		return nil, fmt.Errorf("compile bpmn: %w", err)
+	}
+	return expandedMainPlan(collab)
 }
 
 func versionLabel(v *domain.WorkflowVersion) string {

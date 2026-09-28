@@ -131,24 +131,15 @@ func (c *Compiler) Compile(ctx context.Context, bpmnXML string) (*dsl.CompiledPl
 	return plan, err
 }
 
-// CompileForPublish wraps a single root as a one-plan collaboration, the
-// shape the Execution Service decodes. A collaboration BPMN is refused by
-// compileSingleRoot until an ignored pool's call-pool task can be completed.
+// CompileForPublish is CompileDraft plus the rules only a published version
+// must meet: every task has a default user and runs in an IAM department, and
+// the expanded plan is within the task limit.
 func (c *Compiler) CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error) {
-	plan, called, root, err := c.compileSingleRoot(ctx, bpmnXML)
+	collab, root, err := c.compileCollaboration(ctx, bpmnXML)
 	if err != nil {
 		return nil, err
 	}
-	if plan.Name == "" {
-		plan.Name = root.ID
-	}
-	collab := &dsl.CompiledCollaboration{
-		MainPlan:      plan.Name,
-		Plans:         append([]*dsl.CompiledPlan{plan}, called...),
-		Messages:      []dsl.MessageDef{},
-		SchemaVersion: dsl.CurrentSchemaVersion,
-	}
-	if errs := unplacedTasks(plan); len(errs) > 0 {
+	if errs := lanelessWork(root); len(errs) > 0 {
 		return nil, &domain.ValidationFailedError{Errors: errs}
 	}
 	if err := checkExpanded(collab, root.ID); err != nil {
@@ -157,10 +148,69 @@ func (c *Compiler) CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.
 	return collab, nil
 }
 
-// unplacedTasks reports each human task of the workflow's own plan that runs
-// in no IAM department, as in a workflow without lanes: nobody could be
-// checked eligible for it (code 35). A called plan's open departments take
-// their IAM department from the call, so only the root's own are judged.
+// CompileDraft wraps a single root as a one-plan collaboration, the shape the
+// Execution Service decodes, with the document's structural rules only, so a
+// draft can be compared before it is publishable. A collaboration BPMN is
+// refused by compileSingleRoot until an ignored pool's call-pool task can be
+// completed.
+func (c *Compiler) CompileDraft(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error) {
+	collab, _, err := c.compileCollaboration(ctx, bpmnXML)
+	return collab, err
+}
+
+func (c *Compiler) compileCollaboration(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, *bpmncore.BPMNProcess, error) {
+	plan, called, root, err := c.compileSingleRoot(ctx, bpmnXML)
+	if err != nil {
+		return nil, nil, err
+	}
+	if plan.Name == "" {
+		plan.Name = root.ID
+	}
+	return &dsl.CompiledCollaboration{
+		MainPlan:      plan.Name,
+		Plans:         append([]*dsl.CompiledPlan{plan}, called...),
+		Messages:      []dsl.MessageDef{},
+		SchemaVersion: dsl.CurrentSchemaVersion,
+	}, root, nil
+}
+
+// lanelessWork refuses every piece of work in a workflow with no lanes: none
+// of it, a call's module included, would run in an IAM department (code 35).
+// It is judged on the document, before expansion, which such a workflow's
+// boundaries cannot pass.
+func lanelessWork(root *bpmncore.BPMNProcess) []domain.BPMNValidationError {
+	if len(root.LaneSet.Lanes) > 0 {
+		return nil
+	}
+	var ids []string
+	for _, t := range root.UserTasks {
+		ids = append(ids, t.ID)
+	}
+	for _, t := range root.SendTasks {
+		ids = append(ids, t.ID)
+	}
+	for _, t := range root.ReceiveTasks {
+		ids = append(ids, t.ID)
+	}
+	for _, c := range root.CallActivities {
+		ids = append(ids, c.ID)
+	}
+	for _, sp := range root.SubProcesses {
+		ids = append(ids, sp.ID)
+	}
+	errs := make([]domain.BPMNValidationError, 0, len(ids))
+	for _, id := range ids {
+		errs = append(errs, domain.BPMNValidationError{
+			Code: domain.BPMNErrMissingDeptID, NodeID: id, Severity: domain.SeverityError,
+			Message: "the workflow has no lanes, so this work runs in no IAM department; put it in a lane whose dept_id names one",
+		})
+	}
+	return errs
+}
+
+// unplacedTasks reports each human task of the expanded plan that runs in no
+// IAM department: nobody could be checked eligible for it (code 35). The error
+// is on the task, or on the top-level call that runs it.
 func unplacedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, d := range plan.Departments {
@@ -170,8 +220,8 @@ func unplacedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 		for _, s := range d.Stages {
 			if createsHumanTask(s) {
 				errs = append(errs, domain.BPMNValidationError{
-					Code: domain.BPMNErrMissingDeptID, NodeID: s.NodeID, Severity: domain.SeverityError,
-					Message: "task is in no lane with a dept_id, so it has no IAM department; put it in a lane whose dept_id names one",
+					Code: domain.BPMNErrMissingDeptID, NodeID: authoredNode(d, s), Severity: domain.SeverityError,
+					Message: fmt.Sprintf("task %s/%s runs in no IAM department; put it, or the call that runs it, in a lane whose dept_id names one", d.ID, s.NodeID),
 				})
 			}
 		}
@@ -181,7 +231,8 @@ func unplacedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 
 // checkExpanded expands collab's calls the way both services will, and
 // refuses a plan whose stages and calls exceed the task limit (definition LLD
-// §3.1.4 code 9) or that has a human task with no default user (code 8).
+// §3.1.4 code 9), or that has a human task with no default user (code 8) or
+// in no IAM department (code 35).
 func checkExpanded(collab *dsl.CompiledCollaboration, rootID string) error {
 	expanded, err := dsl.ExpandCalls(collab, validator.MaxUserTasks)
 	if errors.Is(err, dsl.ErrPlanTooLarge) {
@@ -195,10 +246,20 @@ func checkExpanded(collab *dsl.CompiledCollaboration, rootID string) error {
 	if err != nil {
 		return fmt.Errorf("bpmn compile: expand calls: %w", err)
 	}
-	if errs := unassignedTasks(expanded.Plans[0]); len(errs) > 0 {
+	main := expanded.Plans[0]
+	if errs := append(unplacedTasks(main), unassignedTasks(main)...); len(errs) > 0 {
 		return &domain.ValidationFailedError{Errors: errs}
 	}
 	return nil
+}
+
+// authoredNode is the element a stage's author can fix: the task itself, or,
+// for a task inside a module, the workflow's top-level call that runs it.
+func authoredNode(d dsl.DepartmentDef, s dsl.StageDef) string {
+	if call, _, inModule := strings.Cut(d.ID, dsl.CallScopeSeparator); inModule {
+		return call
+	}
+	return s.NodeID
 }
 
 // unassignedTasks reports each human task of the expanded main plan that
@@ -214,13 +275,9 @@ func unassignedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 			if !createsHumanTask(s) || len(s.DefaultAssignees) > 0 {
 				continue
 			}
-			node := s.NodeID
-			if call, _, inModule := strings.Cut(d.ID, dsl.CallScopeSeparator); inModule {
-				node = call
-			}
 			errs = append(errs, domain.BPMNValidationError{
 				Code:   domain.BPMNErrCandidateUsersEmpty,
-				NodeID: node,
+				NodeID: authoredNode(d, s),
 				Message: fmt.Sprintf("task %s/%s names no default user; name one in its candidateUsers or in the Assignees of a call that runs it, "+
 					"since a published workflow gives every task a default", d.ID, s.NodeID),
 				Severity: domain.SeverityError,

@@ -24,6 +24,9 @@ type PlanCompiler interface {
 	CompileCollaboration(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error)
 	// CompileForPublish returns the shape stored as compiled_plan_json.
 	CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error)
+	// CompileDraft returns the same shape without the rules only publish
+	// enforces, for comparing a version that need not be publishable.
+	CompileDraft(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error)
 	Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error)
 	// ValidateForPublish is Validate plus the rules only the expanded plan
 	// shows, so a document it accepts is one publish accepts.

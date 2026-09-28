@@ -515,3 +515,39 @@ func TestDiff_PublishedVersionWithAnUnreadablePlan_UsesItsOwnModuleVersions(t *t
 		t.Errorf("change type = %s, want STRUCTURAL: the published version ran Process_Review v3 at both calls, the draft takes v4 at one", result.ChangeType)
 	}
 }
+
+// TestDiff_DraftThatIsNotYetPublishable_StillDiffs pins that the diff compiles
+// a draft without publish's own refusals: a draft may be saved before every
+// task has its user, and it can still be compared with the active version.
+func TestDiff_DraftThatIsNotYetPublishable_StillDiffs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	modules := mocks.NewMockModuleVersionRepository(ctrl)
+	svc := service.NewVersionService(service.VersionDeps{Versions: vRepo, Compiler: bpmn_compiler.New(), ModuleVersions: modules})
+
+	tenantID, wfID, baseID, targetID, reviewID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	v3 := libraryVersion(reviewID, "Process_Review", 3, libraryReviewBPMN)
+	expectLibrary(modules, tenantID, map[libraryKey]*domain.ModuleVersion{
+		{"Process_Review", 3}: v3,
+		{"Process_Review", 0}: libraryVersion(reviewID, "Process_Review", 4, libraryReviewCallsCheckBPMN),
+		{"Process_Check", 0}:  libraryVersion(uuid.New(), "Process_Check", 1, goldenCheckBPMN),
+	})
+	modules.EXPECT().GetByID(gomock.Any(), tenantID, v3.ID).Return(v3, nil).AnyTimes()
+	unreadable, one := "not valid json", int32(1)
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, baseID).Return(&domain.WorkflowVersion{
+		ID: baseID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusPublished, VersionNumber: &one,
+		BPMNXML: libraryCallerBPMN, CompiledPlanJSON: &unreadable,
+		ModuleRefs: []domain.ModuleRef{{ModuleID: reviewID, VersionID: v3.ID, ProcessID: "Process_Review", VersionNumber: 3}},
+	}, nil)
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(&domain.WorkflowVersion{
+		ID: targetID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusDraft, BPMNXML: libraryCallerBPMN,
+	}, nil)
+
+	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
+	if err != nil {
+		t.Fatalf("Diff: %v; a draft whose nested Check_Task names nobody yet must still diff", err)
+	}
+	if result.ChangeType != "STRUCTURAL" {
+		t.Errorf("change type = %s, want STRUCTURAL", result.ChangeType)
+	}
+}

@@ -241,3 +241,66 @@ func TestPublish_WorkflowWithoutLanes_IsRefused(t *testing.T) {
 		})
 	}
 }
+
+func connectorXML(id string) string {
+	return fmt.Sprintf("    <bpmn:serviceTask id=%q><bpmn:extensionElements><zeebe:taskDefinition type=\"connector:storage\"/></bpmn:extensionElements></bpmn:serviceTask>\n", id)
+}
+
+// lanelessWorkflow wraps nodes and flows, and procs as further processes, as
+// a workflow with no lanes; ids are the main process's elements for the
+// diagram.
+func lanelessWorkflow(nodes, flows string, ids []string, procs ...string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" id="Def_W" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_Main" name="Main" isExecutable="true">
+    <bpmn:startEvent id="Start_1"/>
+%s    <bpmn:endEvent id="End_1"/>
+%s  </bpmn:process>
+%s
+  <bpmndi:BPMNDiagram id="D"><bpmndi:BPMNPlane id="P" bpmnElement="Process_Main">
+%s  </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
+</bpmn:definitions>`, nodes, flows, strings.Join(procs, "\n"), diagramOf(append([]string{"Start_1", "End_1"}, ids...)...))
+}
+
+// TestPublish_WorkflowWithoutLanes_IsRefusedWhateverItsWork pins the refusal
+// for a workflow with no lanes whose work is only a call, or only connector
+// tasks with a boundary between them: every such document is a validation
+// result, never an internal error, and none publishes work with no IAM
+// department.
+func TestPublish_WorkflowWithoutLanes_IsRefusedWhateverItsWork(t *testing.T) {
+	for name, tc := range map[string]struct {
+		bpmnXML, node string
+	}{
+		"only a call": {lanelessWorkflow(
+			`    <bpmn:callActivity id="CA_1"><bpmn:extensionElements><zeebe:calledElement processId="Process_M"/></bpmn:extensionElements></bpmn:callActivity>
+`, flowXML("F1", "Start_1", "CA_1")+flowXML("F2", "CA_1", "End_1"), []string{"CA_1", "F1", "F2"},
+			moduleWithTask("Process_M", validCandidateUser)), "CA_1"},
+		"only connectors, with a boundary": {lanelessWorkflow(
+			connectorXML("C_1")+connectorXML("C_2")+`    <bpmn:boundaryEvent id="B_C" attachedToRef="C_1">`+timerP1D+`</bpmn:boundaryEvent>
+    <bpmn:endEvent id="End_2"/>
+`, flowXML("F1", "Start_1", "C_1")+flowXML("F2", "C_1", "End_1")+flowXML("F3", "B_C", "C_2")+flowXML("F4", "C_2", "End_2"),
+			[]string{"C_1", "C_2", "B_C", "End_2", "F1", "F2", "F3", "F4"}), "C_1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			errs, err := bpmn_compiler.New().ValidateForPublish(context.Background(), tc.bpmnXML)
+			if err != nil {
+				t.Fatalf("ValidateForPublish returned an error, not a validation result: %v", err)
+			}
+			if got := findCode(blockingErrors(errs), domain.BPMNErrMissingDeptID); got == nil {
+				t.Errorf("errors = %+v, want MISSING_DEPT_ID", errs)
+			} else if !slicesContainNode(blockingErrors(errs), domain.BPMNErrMissingDeptID, tc.node) {
+				t.Errorf("errors = %+v, want MISSING_DEPT_ID on %s", errs, tc.node)
+			}
+			assertCompileRefusedWith(t, tc.bpmnXML, domain.BPMNErrMissingDeptID)
+		})
+	}
+}
+
+func slicesContainNode(errs []domain.BPMNValidationError, code domain.BPMNErrorCode, node string) bool {
+	for _, e := range errs {
+		if e.Code == code && e.NodeID == node {
+			return true
+		}
+	}
+	return false
+}

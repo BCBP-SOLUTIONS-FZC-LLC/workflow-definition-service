@@ -280,7 +280,7 @@ func TestVersionService_Publish_UnreadableBaselineIsRecompiled(t *testing.T) {
 	}, nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<active/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<active/>", gomock.Any()).Return("<active/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<active/>").Return(collabOf(buildPlan("b")), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<active/>").Return(collabOf(buildPlan("b")), nil)
 
 	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
 	if !errors.Is(err, domain.ErrStructuralDivergence) {
@@ -457,7 +457,7 @@ func TestVersionService_Publish_BaselineThatNoLongerCompiles_IsDivergent(t *test
 			}, nil)
 			compiler.EXPECT().ModuleCalls(gomock.Any(), "<active/>").Return(nil, nil, nil)
 			compiler.EXPECT().BundleModules("<active/>", gomock.Any()).Return("<active/>", nil)
-			compiler.EXPECT().CompileForPublish(gomock.Any(), "<active/>").Return(nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{
+			compiler.EXPECT().CompileDraft(gomock.Any(), "<active/>").Return(nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{
 				{Code: domain.BPMNErrInvalidCandidateUser, NodeID: "T1", Severity: domain.SeverityError},
 			}})
 			if force {
@@ -1045,10 +1045,10 @@ func TestVersionService_Diff_FallsBackToCompile(t *testing.T) {
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>"}, nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<base/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<base/>", gomock.Any()).Return("<base/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<base/>").Return(collabOf(buildPlan("a")), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<base/>").Return(collabOf(buildPlan("a")), nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<target/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<target/>", gomock.Any()).Return("<target/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<target/>").Return(collabOf(buildPlan("a")), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<target/>").Return(collabOf(buildPlan("a")), nil)
 
 	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
 	if err != nil {
@@ -1081,10 +1081,10 @@ func TestVersionService_Diff_UnmarshalFailureFallsBackToCompile(t *testing.T) {
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>", CompiledPlanJSON: &garbage}, nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<base/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<base/>", gomock.Any()).Return("<base/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<base/>").Return(collabOf(buildPlan("a")), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<base/>").Return(collabOf(buildPlan("a")), nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<target/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<target/>", gomock.Any()).Return("<target/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<target/>").Return(collabOf(buildPlan("a")), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<target/>").Return(collabOf(buildPlan("a")), nil)
 
 	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
 	if err != nil {
@@ -1157,7 +1157,7 @@ func TestVersionService_Diff_CompileBaseError(t *testing.T) {
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>"}, nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<base/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<base/>", gomock.Any()).Return("<base/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<base/>").Return(nil, errors.New("compile error"))
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<base/>").Return(nil, errors.New("compile error"))
 
 	_, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
 	if err == nil {
@@ -1178,10 +1178,10 @@ func TestVersionService_Diff_CompileTargetError(t *testing.T) {
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>"}, nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<base/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<base/>", gomock.Any()).Return("<base/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<base/>").Return(collabOf(buildPlan()), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<base/>").Return(collabOf(buildPlan()), nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<target/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<target/>", gomock.Any()).Return("<target/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<target/>").Return(nil, errors.New("compile error"))
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<target/>").Return(nil, errors.New("compile error"))
 
 	_, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
 	if err == nil {
@@ -1217,10 +1217,10 @@ func TestVersionService_Diff_WithStepChanges(t *testing.T) {
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<target/>"}, nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<base/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<base/>", gomock.Any()).Return("<base/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<base/>").Return(collabOf(basePlan), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<base/>").Return(collabOf(basePlan), nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<target/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<target/>", gomock.Any()).Return("<target/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<target/>").Return(collabOf(targetPlan), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<target/>").Return(collabOf(targetPlan), nil)
 
 	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
 	if err != nil {
@@ -1263,10 +1263,10 @@ func TestVersionService_Diff_StepRemoved(t *testing.T) {
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<t/>"}, nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<b/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<b/>", gomock.Any()).Return("<b/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<b/>").Return(collabOf(basePlan), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<b/>").Return(collabOf(basePlan), nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<t/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<t/>", gomock.Any()).Return("<t/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<t/>").Return(collabOf(targetPlan), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<t/>").Return(collabOf(targetPlan), nil)
 
 	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
 	if err != nil {
@@ -1683,10 +1683,10 @@ func TestVersionService_Diff_DepartmentRemoved(t *testing.T) {
 		&domain.WorkflowVersion{ID: targetID, WorkflowID: wfID, BPMNXML: "<t/>"}, nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<b/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<b/>", gomock.Any()).Return("<b/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<b/>").Return(collabOf(buildPlan("finance", "old-dept")), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<b/>").Return(collabOf(buildPlan("finance", "old-dept")), nil)
 	compiler.EXPECT().ModuleCalls(gomock.Any(), "<t/>").Return(nil, nil, nil)
 	compiler.EXPECT().BundleModules("<t/>", gomock.Any()).Return("<t/>", nil)
-	compiler.EXPECT().CompileForPublish(gomock.Any(), "<t/>").Return(collabOf(buildPlan("finance")), nil)
+	compiler.EXPECT().CompileDraft(gomock.Any(), "<t/>").Return(collabOf(buildPlan("finance")), nil)
 
 	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
 	if err != nil {

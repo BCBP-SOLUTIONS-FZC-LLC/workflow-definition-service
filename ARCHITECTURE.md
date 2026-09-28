@@ -981,7 +981,7 @@ Every `<bpmn:userTask>` requires these extension elements:
 | Attribute | Required | Rules |
 |---|---|---|
 | `candidateGroups` | Yes | IAM role level name; validated against Membership Service at publish time; max 256 chars |
-| `candidateUsers` | No | Single UUID v7 (one assignee currently enforced; will be relaxed later). Absent is the `CANDIDATE_USERS_EMPTY` warning on the document; a published workflow gives every task a default, from here or from a calling callActivity's `Assignees`, and refuses publish (and `/validate`) otherwise. A global module names no user. |
+| `candidateUsers` | No | Single UUID v7 (one assignee). Absent is the `CANDIDATE_USERS_EMPTY` warning on the document; a published workflow gives every task a default, from here or from a calling callActivity's `Assignees`, and refuses publish (and `/validate`) otherwise. A global module names no user. |
 
 **System semantics**: `candidateGroups` → `StageDef.Role` (passed as `?level=<role>` to Membership eligibility check). `candidateUsers` → `StageDef.DefaultAssignees` (pre-assigned when the task starts in Execution Service).
 
@@ -1294,7 +1294,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `CALLED_ELEMENT_CYCLE` | A chain of `callActivity` calls returns to a process already on it |
 | `DUPLICATE_PROCESS_ID` | Two processes in the bundled document share an `id` |
 | `UNSUPPORTED_BOUNDARY_TARGET` | A boundary event's path reaches a `callActivity`, `sendTask` or `receiveTask` before any `userTask`, `subProcess` or end event |
-| `MISSING_DEPT_ID` | A task's lane has no `dept_id`, or a call binds a module lane to a workflow lane with no `dept_id` |
+| `MISSING_DEPT_ID` | A task's lane has no `dept_id`; a call binds a module lane to a workflow lane with no `dept_id`; or, at publish and `/validate`, a workflow has no lanes, or a task of its expanded plan runs in no IAM department |
 | `INVALID_DEPT_ID` | A lane's `dept_id` is not a UUID |
 | `UNKNOWN_CONNECTOR_TYPE` | *(warning severity)* A connector `serviceTask` names a connector type the registry does not know |
 | `CONNECTOR_TASK_HAS_ASSIGNMENT` | *(warning severity)* A connector `serviceTask` carries a `zeebe:assignmentDefinition`, which it ignores |
