@@ -227,7 +227,7 @@ service.NewCompiledPlanService(service.CompiledPlanDeps{Versions: repo, Log: tes
 
 ### End-to-end smoke testing
 
-`scripts/smoke-test.sh` covers all 13 HTTP flow groups, the internal compiled-plan read, and the `DepartmentMembershipRevoked` ingest via `POST /internal/events` — including error cases and idempotency checks. See [README.md § Local Development](README.md#local-development) for the stub-binary setup this script depends on. Optional tools (`grpcurl`, `psql`, `aws` CLI) unlock additional assertions; the script exits `0` on full pass or `1` with a summary of failures.
+`scripts/smoke-test.sh` covers all 13 HTTP flow groups, the internal compiled-plan read, and the `DepartmentMembershipRevoked` ingest via `POST /internal/events` — including error cases and idempotency checks. See [README.md § Local Development](README.md#local-development) for the stub-binary setup this script depends on. Optional tools (`psql`, `aws` CLI) unlock additional assertions; the script exits `0` on full pass or `1` with a summary of failures.
 
 ---
 

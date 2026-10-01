@@ -178,8 +178,8 @@ func (c *Config) validate() error {
 	if c.AppEnv != "dev" && c.OpenBaoAddr != "" && c.OpenBaoToken == "" {
 		return fmt.Errorf("OPENBAO_TOKEN is required when OPENBAO_ADDR is set in non-dev environments")
 	}
-	if c.AppEnv == "prod" && c.InternalAPIToken == "" {
-		return fmt.Errorf("INTERNAL_API_TOKEN is required in prod environment")
+	if c.AppEnv != "dev" && c.InternalAPIToken == "" {
+		return fmt.Errorf("INTERNAL_API_TOKEN is required in non-dev environments")
 	}
 	if c.AppEnv == "prod" && c.SystemDatabaseURL == "" {
 		return fmt.Errorf("SYSTEM_DATABASE_URL is required in prod environment")

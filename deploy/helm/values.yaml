@@ -64,7 +64,7 @@ env:
   OUTBOX_BATCH_SIZE: "50"
   ORG_MEMBERSHIP_BASE_URL: ""                      # in-cluster org-membership service URL — required when APP_ENV != dev
   MEMBERSHIP_CLIENT_TIMEOUT: "10s"
-  EXECUTION_SERVICE_URL: "http://workflow-execution-service:8080"  # the Execution Service's in-cluster HTTP Service — required when APP_ENV != dev
+  EXECUTION_SERVICE_URL: "http://workflow-execution-service-api:8080"  # the Execution Service API's in-cluster HTTP Service — required when APP_ENV != dev
   EXECUTION_CLIENT_TIMEOUT: "5s"
 
 envFromSecret:
@@ -73,7 +73,7 @@ envFromSecret:
   - SYSTEM_DATABASE_URL      # BYPASSRLS DSN for scope=global module/template writes
   - VALKEY_PASSWORD
   - SNS_TOPIC_ARN
-  - INTERNAL_API_TOKEN       # required when APP_ENV=prod — pod crash-loops without it (config.validate())
+  - INTERNAL_API_TOKEN       # required when APP_ENV != dev — pod crash-loops without it (config.validate())
   - EXECUTION_SERVICE_TOKEN  # the Execution Service's INTERNAL_API_TOKEN, sent on its internal API
   # - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY — only if not using IRSA
   # GLUE_REGISTRY_ARN intentionally NOT included: the running binary never reads it
@@ -195,6 +195,7 @@ networkPolicy:
         app.kubernetes.io/name: iam-user-profile
     - podSelector:
         app.kubernetes.io/name: workflow-execution-service
+        app.kubernetes.io/component: api
   # If the Execution Service lives in a different namespace than this release, add
   # an ingress rule here restricted to the http port.
   additionalIngressRules: []

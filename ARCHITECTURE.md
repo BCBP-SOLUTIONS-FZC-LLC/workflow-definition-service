@@ -649,7 +649,7 @@ All configuration is read from environment variables via `internal/config.Config
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `INTERNAL_API_TOKEN` | When `APP_ENV=prod` | *(empty)* | Required as the `x-internal-token` header on `POST /internal/events`. Empty disables the check outside `prod` (local/dev); NetworkPolicy / mesh remains the primary control either way. |
+| `INTERNAL_API_TOKEN` | When `APP_ENV` is not `dev` | *(empty)* | Required as the `x-internal-token` header on `/api/v1/internal`. Empty disables the check in dev; NetworkPolicy / mesh remains the primary control either way. |
 
 ### Outbox relay
 

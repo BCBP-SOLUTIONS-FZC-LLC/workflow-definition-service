@@ -10,7 +10,9 @@
 #
 # Labels on HTTP metrics (from platform-gincommon):
 #   job          — "workflow-definition-service"
-#   method       — the route template (e.g. /api/v1/workflows/:id)
+#   method       — the HTTP verb
+#   route        — the route template (e.g. /api/v1/workflows/:id)
+#   error_class  — the error class, when the request failed
 #   status_class — "2xx" | "4xx" | "5xx" (there is no raw "status" label)
 
 groups:
@@ -126,9 +128,9 @@ groups:
 
       - alert: WorkflowDefinitionServiceCompiledPlanHighErrorRate
         expr: |
-          sum(rate(http_requests_total{job="workflow-definition-service", method="/api/v1/internal/workflow-versions/:version_id/compiled-plan", status_class="5xx"}[5m]))
+          sum(rate(http_requests_total{job="workflow-definition-service", route="/api/v1/internal/workflow-versions/:version_id/compiled-plan", status_class="5xx"}[5m]))
             /
-          sum(rate(http_requests_total{job="workflow-definition-service", method="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m]))
+          sum(rate(http_requests_total{job="workflow-definition-service", route="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m]))
           > 0.05
         for: 5m
         labels:
@@ -145,7 +147,7 @@ groups:
         expr: |
           histogram_quantile(0.99,
             sum by (le) (
-              rate(http_request_duration_seconds_bucket{job="workflow-definition-service", method="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m])
+              rate(http_request_duration_seconds_bucket{job="workflow-definition-service", route="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m])
             )
           ) > 1.0
         for: 10m

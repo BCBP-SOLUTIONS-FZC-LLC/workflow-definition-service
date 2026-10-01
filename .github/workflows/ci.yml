@@ -217,6 +217,8 @@ jobs:
       DB_URL: postgres://wfdef:wfdef@localhost:5432/wfdef?sslmode=disable
       AWS_USE_STUB: "true"
       APP_ENV: ci
+      INTERNAL_API_TOKEN: smoke-internal-token
+      INTERNAL_TOKEN: smoke-internal-token
       ORG_MEMBERSHIP_BASE_URL: http://localhost:8081
       EXECUTION_SERVICE_URL: http://localhost:8083
     services:

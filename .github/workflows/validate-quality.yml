@@ -48,13 +48,13 @@ jobs:
           CONTRACT_BASE_REF: origin/main
         run: |
           GOBIN="$PWD/.tools" go install github.com/oasdiff/oasdiff@v1.32.1
-          scripts/contract-breaking.sh
+          make contract-breaking
 
       # The copy of the Execution Service's spec must match its source.
       - name: Contract copy check
         env:
           GH_TOKEN: ${{ secrets.CI_REPO_READ_TOKEN }}
-        run: scripts/contract-check.sh
+        run: make contract-check
 
   quality:
     name: quality

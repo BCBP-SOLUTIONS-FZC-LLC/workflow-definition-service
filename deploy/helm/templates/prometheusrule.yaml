@@ -118,9 +118,9 @@ spec:
       rules:
         - alert: WorkflowDefinitionServiceCompiledPlanHighErrorRate
           expr: |
-            sum(rate(http_requests_total{job={{ include "workflow-definition-service.fullname" . | quote }}, method="/api/v1/internal/workflow-versions/:version_id/compiled-plan", status_class="5xx"}[5m]))
+            sum(rate(http_requests_total{job={{ include "workflow-definition-service.fullname" . | quote }}, route="/api/v1/internal/workflow-versions/:version_id/compiled-plan", status_class="5xx"}[5m]))
               /
-            sum(rate(http_requests_total{job={{ include "workflow-definition-service.fullname" . | quote }}, method="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m]))
+            sum(rate(http_requests_total{job={{ include "workflow-definition-service.fullname" . | quote }}, route="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m]))
             > 0.05
           for: 5m
           labels:
@@ -137,7 +137,7 @@ spec:
           expr: |
             histogram_quantile(0.99,
               sum by (le) (
-                rate(http_request_duration_seconds_bucket{job={{ include "workflow-definition-service.fullname" . | quote }}, method="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m])
+                rate(http_request_duration_seconds_bucket{job={{ include "workflow-definition-service.fullname" . | quote }}, route="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m])
               )
             ) > 1.0
           for: 10m

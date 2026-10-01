@@ -17,7 +17,7 @@ metadata:
 
 The service does **not** consume SQS in-process. The shared workflow-events consumer (separate service) forwards each `events.Envelope[json.RawMessage]` to this endpoint, which dispatches by `env.Type` to `versionSvc.HandleDepartmentMembershipRevoked` or `versionSvc.HandleTenantMembershipRevoked`.
 
-Route is on the `/internal` group guarded by `RequireInternalToken` (`x-internal-token` vs `INTERNAL_API_TOKEN`, skipped when unset). Consumer retry contract:
+Route is on the `/internal` group guarded by `RequireInternalToken` (`x-internal-token` vs `INTERNAL_API_TOKEN`; required outside dev, skipped when unset in dev). Consumer retry contract:
 - `2xx` — handled (a redelivery reprocesses and converges; there is no dedup table)
 - `400` — malformed (non-retryable)
 - `5xx` — transient (consumer should retry)

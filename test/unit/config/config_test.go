@@ -18,6 +18,7 @@ func TestLoad_Success(t *testing.T) {
 		"AWS_USE_STUB", "AWS_REGION", "SNS_TOPIC_ARN",
 		"OUTBOX_POLL_INTERVAL", "OUTBOX_BATCH_SIZE", "ORG_MEMBERSHIP_BASE_URL",
 		"EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN", "GLUE_REGISTRY_NAME",
+		"INTERNAL_API_TOKEN",
 	}
 	for _, k := range keysToBackup {
 		envBackup[k] = os.Getenv(k)
@@ -54,6 +55,7 @@ func TestLoad_Success(t *testing.T) {
 	_ = os.Setenv("EXECUTION_SERVICE_URL", "http://execution:8080")
 	_ = os.Setenv("EXECUTION_SERVICE_TOKEN", "execution-token")
 	_ = os.Setenv("GLUE_REGISTRY_NAME", "workflow-template-events")
+	_ = os.Setenv("INTERNAL_API_TOKEN", "definition-token")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -221,6 +223,14 @@ func TestLoad_ValidationFailures(t *testing.T) {
 				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
 				"SNS_TOPIC_ARN":      "arn:aws:sns:topic",
 				"GLUE_REGISTRY_NAME": "",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing internal api token outside dev",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost", "APP_ENV": "staging",
+				"INTERNAL_API_TOKEN": "",
 			},
 			wantErr: true,
 		},

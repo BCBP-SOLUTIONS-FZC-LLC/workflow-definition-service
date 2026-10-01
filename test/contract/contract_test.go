@@ -30,6 +30,7 @@ func TestSpec_ReportsBreaches(t *testing.T) {
 		breach bool
 	}{
 		{"a 401 with no problem body", http.StatusUnauthorized, "", true},
+		{"a status the spec does not declare", http.StatusTeapot, `{}`, true},
 		{"a plan sent as a string", http.StatusOK, `{"workflow_id":"8fa88cde-824c-47bc-836b-665cd42c2222","version_id":"11abcc22-0000-7000-8000-000000000001","version_number":3,"status":"PUBLISHED","is_valid":true,"compiled_plan":"{}"}`, true},
 		{"a well-formed plan", http.StatusOK, `{"workflow_id":"8fa88cde-824c-47bc-836b-665cd42c2222","version_id":"11abcc22-0000-7000-8000-000000000001","version_number":3,"status":"PUBLISHED","is_valid":true,"compiled_plan":{"schema_version":1}}`, false},
 	} {
