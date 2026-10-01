@@ -86,3 +86,10 @@ type ModuleUsage struct {
 	// Behind reports that the module has a newer active version.
 	Behind bool
 }
+
+// ModuleDeclarations are the message names and error codes a bundled module
+// document declares, deduplicated and sorted.
+type ModuleDeclarations struct {
+	Messages   []string
+	ErrorCodes []string
+}

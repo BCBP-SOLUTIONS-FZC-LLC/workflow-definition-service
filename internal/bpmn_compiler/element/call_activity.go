@@ -79,14 +79,21 @@ func compileCalledPlan(calledProc *bpmncore.BPMNProcess, cs *bpmncore.CompileSta
 		return err
 	}
 	depts, steps := inner.CollectedDepts(), inner.CollectedSteps()
-	nameImplicitDept(depts, steps, bpmncore.ImplicitSlot(calledProc))
-	depts = withOpenSlots(depts, calledProc)
+	depts = ShapeCalledPlan(depts, steps, calledProc)
 	cs.Called.Put(&dsl.CompiledPlan{
 		Name:        calledProc.ID,
 		Departments: depts,
 		Execution:   dsl.ExecutionPlan{Steps: steps},
 	})
 	return nil
+}
+
+// ShapeCalledPlan gives a called process's compiled departments the shape a
+// call binds: a laneless process's department named by its implicit slot, and
+// a department for every open slot.
+func ShapeCalledPlan(depts []dsl.DepartmentDef, steps []dsl.ExecutionStep, calledProc *bpmncore.BPMNProcess) []dsl.DepartmentDef {
+	nameImplicitDept(depts, steps, bpmncore.ImplicitSlot(calledProc))
+	return withOpenSlots(depts, calledProc)
 }
 
 // nameImplicitDept gives a laneless called process's single department,

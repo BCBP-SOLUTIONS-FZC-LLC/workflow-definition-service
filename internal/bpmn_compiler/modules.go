@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/element"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/validator"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
@@ -122,6 +126,63 @@ func (c *Compiler) ValidateModule(ctx context.Context, bpmnXML, moduleProcessID 
 		errs = append(errs, namedUsers(root)...)
 	}
 	return errs, nil
+}
+
+// CompileModule compiles a bundled module document with the module's own
+// process as the root, judged as ValidateModule judges it and shaped as a call
+// compiles it, and returns the message names and error codes the bundle
+// declares.
+func (c *Compiler) CompileModule(ctx context.Context, bpmnXML, moduleProcessID string) (*dsl.CompiledCollaboration, domain.ModuleDeclarations, error) {
+	var none domain.ModuleDeclarations
+	errs, err := c.ValidateModule(ctx, bpmnXML, moduleProcessID, false)
+	if err != nil {
+		return nil, none, err
+	}
+	if blocking := slices.DeleteFunc(errs, func(e domain.BPMNValidationError) bool { return !isBlocking(e) }); len(blocking) > 0 {
+		return nil, none, &domain.ValidationFailedError{Errors: blocking}
+	}
+	defs, err := parse(ctx, bpmnXML)
+	if err != nil {
+		return nil, none, classifyParseError("compile-module", err)
+	}
+	root := bpmncore.FindProcessByID(defs, moduleProcessID)
+	defs.ModuleProcesses[root.ID] = true
+	plan, called, err := bpmncore.Compile(root, bpmncore.BuildGraph(root), c.stageTypes, c.elements, defs)
+	if err != nil {
+		return nil, none, fmt.Errorf("bpmn compile-module: %w", err)
+	}
+	if plan.Name == "" {
+		plan.Name = root.ID
+	}
+	plan.Departments = element.ShapeCalledPlan(plan.Departments, plan.Execution.Steps, root)
+	collab := &dsl.CompiledCollaboration{
+		MainPlan:      plan.Name,
+		Plans:         append([]*dsl.CompiledPlan{plan}, called...),
+		Messages:      []dsl.MessageDef{},
+		SchemaVersion: dsl.CurrentSchemaVersion,
+	}
+	if _, err := expand(collab, root.ID); err != nil {
+		return nil, none, err
+	}
+	return collab, declarations(defs), nil
+}
+
+func declarations(defs *bpmncore.BPMNDefinitions) domain.ModuleDeclarations {
+	var d domain.ModuleDeclarations
+	for _, m := range defs.Messages {
+		if m.Name != "" {
+			d.Messages = append(d.Messages, m.Name)
+		}
+	}
+	for _, e := range defs.Errors {
+		if e.ErrorCode != "" {
+			d.ErrorCodes = append(d.ErrorCodes, e.ErrorCode)
+		}
+	}
+	slices.Sort(d.Messages)
+	slices.Sort(d.ErrorCodes)
+	d.Messages, d.ErrorCodes = slices.Compact(d.Messages), slices.Compact(d.ErrorCodes)
+	return d
 }
 
 func namedUsers(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/enums"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/element"
@@ -218,7 +217,7 @@ func unplacedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 			continue
 		}
 		for _, s := range d.Stages {
-			if createsHumanTask(s) {
+			if s.CreatesHumanTask() {
 				errs = append(errs, domain.BPMNValidationError{
 					Code: domain.BPMNErrMissingDeptID, NodeID: authoredNode(d, s), Severity: domain.SeverityError,
 					Message: fmt.Sprintf("task %s/%s runs in no IAM department; put it, or the call that runs it, in a lane whose dept_id names one", d.ID, s.NodeID),
@@ -234,9 +233,23 @@ func unplacedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 // §3.1.4 code 9), or that has a human task with no default user (code 8) or
 // in no IAM department (code 35).
 func checkExpanded(collab *dsl.CompiledCollaboration, rootID string) error {
+	expanded, err := expand(collab, rootID)
+	if err != nil {
+		return err
+	}
+	main := expanded.Plans[0]
+	if errs := append(unplacedTasks(main), unassignedTasks(main)...); len(errs) > 0 {
+		return &domain.ValidationFailedError{Errors: errs}
+	}
+	return nil
+}
+
+// expand runs ExpandCalls within the task limit, reporting a plan over it as
+// TASK_LIMIT_EXCEEDED on the root.
+func expand(collab *dsl.CompiledCollaboration, rootID string) (*dsl.CompiledCollaboration, error) {
 	expanded, err := dsl.ExpandCalls(collab, validator.MaxUserTasks)
 	if errors.Is(err, dsl.ErrPlanTooLarge) {
-		return &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
+		return nil, &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
 			Code:     domain.BPMNErrTaskLimitExceeded,
 			NodeID:   rootID,
 			Message:  fmt.Sprintf("process exceeds the %d task limit once its calls are expanded, counting each call and every stage it brings in", validator.MaxUserTasks),
@@ -244,13 +257,9 @@ func checkExpanded(collab *dsl.CompiledCollaboration, rootID string) error {
 		}}}
 	}
 	if err != nil {
-		return fmt.Errorf("bpmn compile: expand calls: %w", err)
+		return nil, fmt.Errorf("bpmn compile: expand calls: %w", err)
 	}
-	main := expanded.Plans[0]
-	if errs := append(unplacedTasks(main), unassignedTasks(main)...); len(errs) > 0 {
-		return &domain.ValidationFailedError{Errors: errs}
-	}
-	return nil
+	return expanded, nil
 }
 
 // authoredNode is the element a stage's author can fix: the task itself, or,
@@ -272,7 +281,7 @@ func unassignedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 			continue
 		}
 		for _, s := range d.Stages {
-			if !createsHumanTask(s) || len(s.DefaultAssignees) > 0 {
+			if !s.CreatesHumanTask() || len(s.DefaultAssignees) > 0 {
 				continue
 			}
 			errs = append(errs, domain.BPMNValidationError{
@@ -285,12 +294,6 @@ func unassignedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 		}
 	}
 	return errs
-}
-
-// createsHumanTask matches the Execution Service's rule for which stages
-// become tasks a person completes (execution LLD §5.5).
-func createsHumanTask(s dsl.StageDef) bool {
-	return s.ConnectorType == "" && s.Type != string(enums.StageTypeSendTask) && s.Type != string(enums.StageTypeReceiveTask)
 }
 
 func (c *Compiler) compileSingleRoot(ctx context.Context, bpmnXML string) (plan *dsl.CompiledPlan, called []*dsl.CompiledPlan, root *bpmncore.BPMNProcess, err error) {

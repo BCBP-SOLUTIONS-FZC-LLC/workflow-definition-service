@@ -100,6 +100,14 @@ type fakeVersionSvc struct {
 	promote func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error)
 	export  func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (string, string, error)
 	diff    func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*service.DiffResult, error)
+	nodes   func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*service.VersionNodes, error)
+}
+
+func (f *fakeVersionSvc) Nodes(ctx context.Context, tenantID, workflowID, versionID uuid.UUID) (*service.VersionNodes, error) {
+	if f.nodes != nil {
+		return f.nodes(ctx, tenantID, workflowID, versionID)
+	}
+	return nil, nil
 }
 
 func (f *fakeVersionSvc) List(ctx context.Context, tenantID, workflowID uuid.UUID, page, limit int) ([]*domain.WorkflowVersion, int64, error) {
@@ -175,6 +183,14 @@ type fakeModuleSvc struct {
 	publish      func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.ModuleVersion, error)
 	archive      func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error
 	usages       func(context.Context, uuid.UUID, uuid.UUID) ([]*domain.ModuleUsage, error)
+	contract     func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*service.ModuleContract, error)
+}
+
+func (f *fakeModuleSvc) Contract(ctx context.Context, callerTenantID, moduleID, versionID uuid.UUID) (*service.ModuleContract, error) {
+	if f.contract != nil {
+		return f.contract(ctx, callerTenantID, moduleID, versionID)
+	}
+	return nil, nil
 }
 
 func (f *fakeModuleSvc) List(ctx context.Context, callerTenantID uuid.UUID, filter port.ModuleFilter) ([]*domain.Module, int64, error) {
@@ -289,6 +305,7 @@ func registerRoutes(r *gin.Engine, h *handler.Handler) {
 	wf.POST("/:id/versions/:version_id/clone", h.CloneVersion)
 	wf.POST("/:id/versions/:version_id/promote", h.PromoteVersion)
 	wf.GET("/:id/versions/:version_id/validation", h.GetVersionValidation)
+	wf.GET("/:id/versions/:version_id/nodes", h.GetVersionNodes)
 	wf.GET("/:id/versions/:version_id/export", h.ExportBPMN)
 	wf.GET("/:id/versions/:version_id/diff/:target_version_id", h.GetVersionDiff)
 
@@ -306,6 +323,7 @@ func registerRoutes(r *gin.Engine, h *handler.Handler) {
 	mod.GET("/:id/usages", h.ListModuleUsages)
 	mod.GET("/:id/versions", h.ListModuleVersions)
 	mod.GET("/:id/versions/:version_id", h.GetModuleVersion)
+	mod.GET("/:id/versions/:version_id/contract", h.GetModuleContract)
 	mod.POST("/:id/versions", h.AddModuleVersion)
 	mod.POST("/:id/versions/:version_id/publish", h.PublishModuleVersion)
 	mod.DELETE("/:id", h.ArchiveModule)

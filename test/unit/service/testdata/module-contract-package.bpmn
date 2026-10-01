@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A library module with an open lane, a fixed lane and a call of the
+     laneless Process_Check, for the module-contract read: see
+     module_contract_test.go. -->
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_Package" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_withdrawn" name="package-withdrawn"/>
+  <bpmn:error id="Err_rejected" name="Package rejected" errorCode="PACKAGE_REJECTED"/>
+  <bpmn:process id="Process_Package" name="Package" isExecutable="true">
+    <bpmn:laneSet id="Pkg_LaneSet">
+      <bpmn:lane id="Lane_Author" name="Author">
+        <bpmn:flowNodeRef>Pkg_Start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Pkg_Prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Pkg_Check</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Pkg_EndWithdrawn</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_QA" name="Quality"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="6f1c0e52-3b1d-5d7e-9a3c-0c4b8e2f1a77"/></zeebe:properties></bpmn:extensionElements>
+        <bpmn:flowNodeRef>Pkg_Approve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Pkg_End</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Pkg_Start"/>
+    <bpmn:userTask id="Pkg_Prep" name="Prepare the package">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="L2"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="Pkg_Withdrawn" attachedToRef="Pkg_Prep"><bpmn:messageEventDefinition id="Pkg_MED" messageRef="Msg_withdrawn"/></bpmn:boundaryEvent>
+    <bpmn:endEvent id="Pkg_EndWithdrawn"/>
+    <bpmn:callActivity id="Pkg_Check" name="Check the package">
+      <bpmn:extensionElements><zeebe:calledElement processId="Process_Check"/></bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:userTask id="Pkg_Approve" name="Approve the package">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="approve"/>
+        <zeebe:assignmentDefinition candidateGroups="L4"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:endEvent id="Pkg_End"/>
+    <bpmn:sequenceFlow id="Pkg_F1" sourceRef="Pkg_Start" targetRef="Pkg_Prep"/>
+    <bpmn:sequenceFlow id="Pkg_F2" sourceRef="Pkg_Prep" targetRef="Pkg_Check"/>
+    <bpmn:sequenceFlow id="Pkg_F3" sourceRef="Pkg_Check" targetRef="Pkg_Approve"/>
+    <bpmn:sequenceFlow id="Pkg_F4" sourceRef="Pkg_Approve" targetRef="Pkg_End"/>
+    <bpmn:sequenceFlow id="Pkg_F5" sourceRef="Pkg_Withdrawn" targetRef="Pkg_EndWithdrawn"/>
+  </bpmn:process>
+</bpmn:definitions>

@@ -202,16 +202,6 @@ func (s *VersionService) checkStageEligibility(
 	return nil
 }
 
-// stageNodeSuffix mirrors the Execution Service's own node-key composition, so
-// one node carries one name across both services. The BPMN element id rather
-// than the stage type, because a department may hold two stages of the same type.
-func stageNodeSuffix(stage dsl.StageDef) string {
-	if stage.NodeID != "" {
-		return stage.NodeID
-	}
-	return stage.Type
-}
-
 func extractAssignees(
 	tenantID, versionID uuid.UUID,
 	plan *dsl.CompiledPlan,
@@ -219,7 +209,7 @@ func extractAssignees(
 	var assignees []*domain.NodeAssignee
 	for _, dept := range plan.Departments {
 		for _, stage := range dept.Stages {
-			nodeKey := dept.ID + "/" + stageNodeSuffix(stage)
+			nodeKey := dsl.NodeKey(dept.ID, &stage)
 			deptUUID, err := uuid.Parse(dept.IAMDepartmentID)
 			if err != nil {
 				continue

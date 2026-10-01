@@ -273,22 +273,13 @@ func (s *ModuleService) AddVersion(
 }
 
 // validateContent resolves a module's own library calls and validates it with
-// its process as the root (definition LLD §3.3.18). Only errors block. A
-// global module sees only global modules, since it has no tenant.
+// its process as the root (definition LLD §3.3.18). Only errors block.
 func (s *ModuleService) validateContent(ctx context.Context, callerTenantID uuid.UUID, scope domain.CatalogScope, bpmnXML, processID string) error {
-	resolveAs := callerTenantID
-	if scope == domain.ScopeGlobal {
-		resolveAs = uuid.Nil
-	}
-	resolver := moduleResolver{compiler: s.compiler, versions: s.versionsFor(scope)}
-	res, err := resolver.resolve(ctx, resolver.live(resolveAs), bpmnXML, processID)
+	bundled, err := s.bundle(ctx, callerTenantID, scope, bpmnXML, processID)
 	if err != nil {
 		return err
 	}
-	if len(res.issues) > 0 {
-		return &domain.ValidationFailedError{Errors: res.issues}
-	}
-	errs, err := s.compiler.ValidateModule(ctx, res.bundled, processID, scope == domain.ScopeGlobal)
+	errs, err := s.compiler.ValidateModule(ctx, bundled, processID, scope == domain.ScopeGlobal)
 	if err != nil {
 		return fmt.Errorf("validate module: %w", err)
 	}
@@ -296,6 +287,25 @@ func (s *ModuleService) validateContent(ctx context.Context, callerTenantID uuid
 		return &domain.ValidationFailedError{Errors: blocking}
 	}
 	return nil
+}
+
+// bundle resolves a module's own library calls against the library as it is
+// now and bundles them into it. A global module sees only global modules,
+// since it has no tenant.
+func (s *ModuleService) bundle(ctx context.Context, callerTenantID uuid.UUID, scope domain.CatalogScope, bpmnXML, processID string) (string, error) {
+	resolveAs := callerTenantID
+	if scope == domain.ScopeGlobal {
+		resolveAs = uuid.Nil
+	}
+	resolver := moduleResolver{compiler: s.compiler, versions: s.versionsFor(scope)}
+	res, err := resolver.resolve(ctx, resolver.live(resolveAs), bpmnXML, processID)
+	if err != nil {
+		return "", err
+	}
+	if len(res.issues) > 0 {
+		return "", &domain.ValidationFailedError{Errors: res.issues}
+	}
+	return res.bundled, nil
 }
 
 // Usages lists the caller's workflow versions that hold a snapshot of the

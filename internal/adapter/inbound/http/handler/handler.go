@@ -40,6 +40,7 @@ type versionSvc interface {
 	Promote(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID) (*domain.WorkflowVersion, error)
 	Export(ctx context.Context, tenantID, workflowID, versionID uuid.UUID) (string, string, error)
 	Diff(ctx context.Context, tenantID, workflowID, baseVersionID, targetVersionID uuid.UUID) (*service.DiffResult, error)
+	Nodes(ctx context.Context, tenantID, workflowID, versionID uuid.UUID) (*service.VersionNodes, error)
 }
 
 type validationSvc interface {
@@ -57,6 +58,7 @@ type moduleSvc interface {
 	Publish(ctx context.Context, callerTenantID, userID, moduleID, versionID uuid.UUID) (*domain.ModuleVersion, error)
 	Archive(ctx context.Context, callerTenantID, userID, moduleID uuid.UUID) error
 	Usages(ctx context.Context, callerTenantID, moduleID uuid.UUID) ([]*domain.ModuleUsage, error)
+	Contract(ctx context.Context, callerTenantID, moduleID, versionID uuid.UUID) (*service.ModuleContract, error)
 }
 
 type starterSvc interface {

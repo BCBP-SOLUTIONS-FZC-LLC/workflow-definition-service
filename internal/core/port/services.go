@@ -34,6 +34,9 @@ type PlanCompiler interface {
 	// ValidateModule validates a bundled module document with the module's own
 	// process as the root, its open lanes allowed; global forbids naming users.
 	ValidateModule(ctx context.Context, bpmnXML, moduleProcessID string, global bool) ([]domain.BPMNValidationError, error)
+	// CompileModule compiles a bundled module document with the module's own
+	// process as the root, judged as ValidateModule judges it.
+	CompileModule(ctx context.Context, bpmnXML, moduleProcessID string) (*dsl.CompiledCollaboration, domain.ModuleDeclarations, error)
 	Hash(ctx context.Context, bpmnXML string) (string, error)
 	// ModuleCalls lists the calls in bpmnXML that name a library module (a
 	// versionTag pin, or a target not in the document), plus issues with calls

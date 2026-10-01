@@ -10,10 +10,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Node keys and the human-task rule come from workflow-models' `dsl.NodeKey` and `StageDef.CreatesHumanTask`, shared with the Execution Service.
 - **Prometheus metrics centralized into `internal/observability`** — the three previously-scattered `promauto` call sites (`internal/core/service/metrics.go`, `internal/adapter/inbound/grpc/server.go`, `internal/adapter/inbound/http/handler/internal_events.go`) are now nil-until-`Register()` vars in one package, registered against `gincommon.MetricsRegisterer()` from `cmd/server/wire.go`'s composition root instead of `promauto`'s implicit default-registry registration. Call sites go through new nil-safe `IncCounter`/`IncCounterVec`/`ObserveHistogram` helpers. No metric name/label changed. `cmd/server/wire.go`'s standalone `pgmetrics.Init` + `prometheus.MustRegister(pgmetrics.NewPoolStatsCollector(...))` calls are folded into the same `Register()`. `platform-gincommon` bumped v1.2.1 → v1.3.0 (adds `MetricsRegisterer`/`MetricsConstLabels`) and `platform-pgcommon` v1.1.2 → v1.2.1 (public `pkg/domain.Logger`, letting `cmd/server/pglogger.go` finally wire a real logger into `pgcommon.Config.Logger`).
 
 ### Added
 
+- `GET /workflows/:id/versions/:version_id/nodes`: a published version's human tasks, module tasks included, each with its node key, department, role level, default users and name (definition LLD §3.3.12.2).
+- `GET /modules/:id/versions/:version_id/contract`: what a call of a module version binds and names — its open and fixed slots, every human task by its `Assignees` key and the slot it runs in, its messages and error codes, and whether it names users (§3.3.18).
+- Compiled stages carry their task's `name`.
 - **Connector-task compiler exception + authoring endpoints** (per the `workflow_connectors` LLD) — a `connector:<name>`-prefixed `serviceTask` compiles to a fully automation-only `StageDef` (no assignee/role fields), with `IOMapping` preserved and an unrecognized connector type warning rather than rejecting (the type might still be registered before the workflow is instantiated). `GET /connectors/registry` serves `workflow-connectors`' `pkg/registry` catalogue; `POST /connectors/credentials` writes a provider credential to OpenBao and returns only the resulting secret path — the raw value never appears in any response.
 
 ### Changed
