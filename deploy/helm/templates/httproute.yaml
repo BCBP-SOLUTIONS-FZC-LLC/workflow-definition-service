@@ -5,8 +5,8 @@
 # TLS termination is configured on the Gateway listener, not here.
 # For CORS and gateway-level rate limiting, enable ingress.securityPolicy.
 #
-# This routes HTTP traffic only (port 8080) — the gRPC port (9090) is not fronted
-# by this Gateway; the Execution Service calls it directly in-cluster.
+# This routes the public path prefixes in ingress.hosts[].paths only; the internal
+# API (/api/v1/internal) is called in-cluster and is never routed here.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:

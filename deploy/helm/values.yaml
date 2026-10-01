@@ -17,7 +17,6 @@ service:
   type: ClusterIP
   ports:
     http: 8080     # REST/OpenAPI, /healthz, /readyz
-    grpc: 9090     # GetCompiledWorkflow (called by the Execution Service)
     metrics: 9091  # /metrics only — served on its own http.Server (cmd/server/wire.go)
 
 autoscaling:
@@ -40,9 +39,8 @@ resources:
     memory: "1024Mi"
 
 env:
-  APP_ENV: "prod"                                 # enables INTERNAL_API_TOKEN + ORG_MEMBERSHIP_BASE_URL + EXECUTION_SERVICE_ADDR validation (internal/config/config.go validate())
+  APP_ENV: "prod"                                 # enables INTERNAL_API_TOKEN + ORG_MEMBERSHIP_BASE_URL + EXECUTION_SERVICE_URL/TOKEN validation (internal/config/config.go validate())
   HTTP_PORT: "8080"
-  GRPC_PORT: "9090"
   METRICS_PORT: "9091"
   OTEL_SERVICE_NAME: "workflow-definition-svc"     # exact value from internal/config/config.go default
   OTEL_EXPORTER_OTLP_ENDPOINT: ""                  # e.g. otel-collector.observability:4317
@@ -66,7 +64,7 @@ env:
   OUTBOX_BATCH_SIZE: "50"
   ORG_MEMBERSHIP_BASE_URL: ""                      # in-cluster org-membership service URL — required when APP_ENV != dev
   MEMBERSHIP_CLIENT_TIMEOUT: "10s"
-  EXECUTION_SERVICE_ADDR: ""                       # in-cluster execution-service:9091 — required when APP_ENV != dev
+  EXECUTION_SERVICE_URL: "http://workflow-execution-service:8080"  # the Execution Service's in-cluster HTTP Service — required when APP_ENV != dev
   EXECUTION_CLIENT_TIMEOUT: "5s"
 
 envFromSecret:
@@ -76,6 +74,7 @@ envFromSecret:
   - VALKEY_PASSWORD
   - SNS_TOPIC_ARN
   - INTERNAL_API_TOKEN       # required when APP_ENV=prod — pod crash-loops without it (config.validate())
+  - EXECUTION_SERVICE_TOKEN  # the Execution Service's INTERNAL_API_TOKEN, sent on its internal API
   # - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY — only if not using IRSA
   # GLUE_REGISTRY_ARN intentionally NOT included: the running binary never reads it
   # (no field on internal/config.Config) — only CI-time platform-schemagov tooling uses it.
@@ -103,6 +102,7 @@ secretValues:
   VALKEY_PASSWORD: ""
   SNS_TOPIC_ARN: ""
   INTERNAL_API_TOKEN: ""
+  EXECUTION_SERVICE_TOKEN: ""
 
 # migrationJob — runs `/server migrate` as a pre-install/pre-upgrade Helm hook before
 # the main Deployment rolls out. This service has NO auto-migration at server boot
@@ -113,8 +113,7 @@ migrationJob:
 
 terminationGracePeriodSeconds: 60
 # cmd/server/app.go stopServers() runs sequentially: HTTP Shutdown(ctx) (bounded by a
-# single 30s context) -> grpcServer.GracefulStop() (NO context — unbounded, waits for
-# in-flight RPCs) -> outboxRelay.Stop() (NO context — platform-events defaults
+# single 30s context) -> outboxRelay.Stop() (NO context — platform-events defaults
 # DrainTimeout to ~30s) -> pool.DrainAndClose(ctx) (bounded by whatever remains of the
 # original 30s deadline). The 30s figure does not bound the whole sequence; 60s gives
 # real headroom above the worst reasonable case before Kubernetes SIGKILLs the pod.
@@ -159,8 +158,8 @@ readinessProbe:
   timeoutSeconds: 3
 
 # NetworkPolicy — enabled by default. Restricts traffic to the ingress controller /
-# gateway namespace (HTTP only) plus intra-namespace traffic (HTTP + gRPC, covers the
-# Execution Service calling GetCompiledWorkflow) and the monitoring namespace (/metrics).
+# gateway namespace, the named same-namespace callers (the Execution Service, which
+# reads compiled plans from the internal API) and the monitoring namespace (/metrics).
 #
 # Envoy Gateway: data-plane Envoy proxy pods run in the same namespace as the
 # Gateway resource (not envoy-gateway-system, which is the control plane).
@@ -176,7 +175,7 @@ networkPolicy:
   # Leave empty ({}) to allow all pods in the ingress controller namespace.
   ingressControllerPodSelector: {}
   # Named same-namespace callers, replacing a blanket podSelector: {} allow.
-  # Execution Service calls both the HTTP API and GetCompiledWorkflow over gRPC.
+  # The Execution Service calls the internal API (definition LLD §3.4).
   allowedCallers:
     - podSelector:
         app.kubernetes.io/name: workflow-execution-service
@@ -189,15 +188,15 @@ networkPolicy:
     podSelector:
       app.kubernetes.io/name: prometheus
   # Named same-namespace egress targets, replacing a blanket podSelector: {} allow.
-  # ORG_MEMBERSHIP_BASE_URL (HTTP) and EXECUTION_SERVICE_ADDR (gRPC) are this
-  # service's only same-namespace outbound dependencies.
+  # ORG_MEMBERSHIP_BASE_URL and EXECUTION_SERVICE_URL are this service's only
+  # same-namespace outbound dependencies.
   allowedEgressTargets:
     - podSelector:
         app.kubernetes.io/name: iam-user-profile
     - podSelector:
         app.kubernetes.io/name: workflow-execution-service
-  # If the Execution Service (gRPC caller) lives in a different namespace than this
-  # release, add an ingress rule here restricted to port 9090.
+  # If the Execution Service lives in a different namespace than this release, add
+  # an ingress rule here restricted to the http port.
   additionalIngressRules: []
   additionalEgressRules: []
 
@@ -225,10 +224,21 @@ ingress:
   # ── Hosts (shared by both types) ─────────────────────────────────────────
   hosts:
     - host: workflow-definition-service.example.com
+      # Only the public route groups. /api/v1/internal is service-to-service
+      # (definition LLD §3.4) and must never be routed by the gateway, so a
+      # broad /api/v1 prefix is not used.
+      # HTTPRoute types: PathPrefix | Exact
+      # Ingress types:   Prefix | Exact | ImplementationSpecific
       paths:
-        - path: /api/v1
-          # HTTPRoute types: PathPrefix | Exact
-          # Ingress types:   Prefix | Exact | ImplementationSpecific
+        - path: /api/v1/workflows
+          pathType: PathPrefix
+        - path: /api/v1/modules
+          pathType: PathPrefix
+        - path: /api/v1/starters
+          pathType: PathPrefix
+        - path: /api/v1/connectors
+          pathType: PathPrefix
+        - path: /api/v1/bpmn
           pathType: PathPrefix
 
   # ── Gateway API (type: HTTPRoute) ────────────────────────────────────────

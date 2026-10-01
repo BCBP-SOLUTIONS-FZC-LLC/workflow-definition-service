@@ -15,7 +15,6 @@ spec:
 
   ingress:
     # Allow HTTP API traffic from the ingress controller / gateway namespace.
-    # Envoy Gateway does not front the gRPC port — only HTTP is exposed here.
     - from:
         - namespaceSelector:
             matchLabels:
@@ -29,8 +28,8 @@ spec:
         - port: {{ .Values.service.ports.http }}
           protocol: TCP
 
-    # Named same-namespace callers (covers the Execution Service calling
-    # GetCompiledWorkflow) — not a blanket podSelector: {} allow.
+    # Named same-namespace callers (the Execution Service, on the internal API)
+    # — not a blanket podSelector: {} allow.
     {{- range .Values.networkPolicy.allowedCallers }}
     - from:
         - podSelector:
@@ -38,8 +37,6 @@ spec:
               {{- toYaml .podSelector | nindent 14 }}
       ports:
         - port: {{ $.Values.service.ports.http }}
-          protocol: TCP
-        - port: {{ $.Values.service.ports.grpc }}
           protocol: TCP
     {{- end }}
 
@@ -57,8 +54,8 @@ spec:
           protocol: TCP
     {{- end }}
 
-    # If the Execution Service (gRPC caller) lives in a different namespace than
-    # this release, add a rule here restricted to the grpc port via
+    # If the Execution Service lives in a different namespace than this release,
+    # add a rule here restricted to the http port via
     # networkPolicy.additionalIngressRules.
     {{- with .Values.networkPolicy.additionalIngressRules }}
     {{- toYaml . | nindent 4 }}
@@ -94,9 +91,9 @@ spec:
         - port: 4317
           protocol: TCP
 
-    # Named same-namespace egress targets — covers ORG_MEMBERSHIP_BASE_URL (HTTP)
-    # and EXECUTION_SERVICE_ADDR (gRPC), this service's only same-namespace
-    # outbound dependencies. Not a blanket podSelector: {} allow. If either target
+    # Named same-namespace egress targets — covers ORG_MEMBERSHIP_BASE_URL and
+    # EXECUTION_SERVICE_URL, this service's only same-namespace outbound
+    # dependencies. Not a blanket podSelector: {} allow. If either target
     # moves to a different namespace, add a scoped rule via
     # networkPolicy.additionalEgressRules instead of widening this one.
     {{- range .Values.networkPolicy.allowedEgressTargets }}
