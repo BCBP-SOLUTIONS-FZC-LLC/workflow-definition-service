@@ -55,7 +55,7 @@ func (c *MembershipClient) CheckEligibility(
 		select {
 		case <-ctx.Done():
 			return false, fmt.Errorf("%w: membership eligibility check: %w", domain.ErrUpstreamUnavailable, ctx.Err())
-		case <-time.After(eligibilityBackoff(attempt)):
+		case <-time.After(retryBackoff(attempt)):
 		}
 	}
 	return false, lastErr
@@ -90,7 +90,7 @@ func (c *MembershipClient) tryCheckEligibility(ctx context.Context, rawURL strin
 	return body.Eligible, false, nil
 }
 
-func eligibilityBackoff(attempt int) time.Duration {
+func retryBackoff(attempt int) time.Duration {
 	d := 50 * time.Millisecond << (attempt - 1)
 	if d > 500*time.Millisecond {
 		d = 500 * time.Millisecond

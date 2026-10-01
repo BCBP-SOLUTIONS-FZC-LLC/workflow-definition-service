@@ -28,7 +28,7 @@ func TestTryCheckEligibility_UnexpectedStatusCode(t *testing.T) {
 }
 
 func TestEligibilityBackoff_CapsAt500ms(t *testing.T) {
-	if got := eligibilityBackoff(10); got != 500*time.Millisecond {
-		t.Errorf("eligibilityBackoff(10) = %v, want 500ms cap", got)
+	if got := retryBackoff(10); got != 500*time.Millisecond {
+		t.Errorf("retryBackoff(10) = %v, want 500ms cap", got)
 	}
 }

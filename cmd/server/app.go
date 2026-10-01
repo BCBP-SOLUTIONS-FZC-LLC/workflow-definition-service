@@ -21,18 +21,17 @@ import (
 )
 
 type app struct {
-	cfg            *config.Config
-	log            port.Logger
-	pool           *pgcommon.Pool
-	systemPool     *pgcommon.Pool
-	cache          port.CacheStore
-	httpServer     *http.Server
-	metricsServer  *http.Server
-	grpcServer     *grpc.Server
-	outboxRelay    *outbox.Runner
-	shutdown       func()
-	cacheClose     io.Closer
-	executionClose io.Closer // nil when execution service is not configured
+	cfg           *config.Config
+	log           port.Logger
+	pool          *pgcommon.Pool
+	systemPool    *pgcommon.Pool
+	cache         port.CacheStore
+	httpServer    *http.Server
+	metricsServer *http.Server
+	grpcServer    *grpc.Server
+	outboxRelay   *outbox.Runner
+	shutdown      func()
+	cacheClose    io.Closer
 }
 
 func (a *app) run() {
@@ -115,11 +114,6 @@ func (a *app) stopServers(ctx context.Context) {
 	}
 	if err := a.cacheClose.Close(); err != nil {
 		a.log.Error("valkey close error", map[string]any{"error": err.Error()})
-	}
-	if a.executionClose != nil {
-		if err := a.executionClose.Close(); err != nil {
-			a.log.Error("execution client close error", map[string]any{"error": err.Error()})
-		}
 	}
 	a.shutdown()
 }

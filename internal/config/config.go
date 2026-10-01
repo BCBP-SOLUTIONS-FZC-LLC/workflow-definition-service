@@ -57,8 +57,11 @@ type Config struct {
 
 	OrgMembershipBaseURL    string
 	MembershipClientTimeout time.Duration
-	ExecutionServiceAddr    string
-	ExecutionClientTimeout  time.Duration
+	// ExecutionServiceURL is the Execution Service's internal HTTP base URL;
+	// ExecutionServiceToken is that service's INTERNAL_API_TOKEN (LLD §3.4).
+	ExecutionServiceURL    string
+	ExecutionServiceToken  string
+	ExecutionClientTimeout time.Duration
 
 	OpenBaoAddr          string
 	OpenBaoToken         string
@@ -121,7 +124,8 @@ func Load() (*Config, error) {
 
 		OrgMembershipBaseURL:    getEnvOrDefault("ORG_MEMBERSHIP_BASE_URL", ""),
 		MembershipClientTimeout: getEnvDurationOrDefault("MEMBERSHIP_CLIENT_TIMEOUT", 10*time.Second),
-		ExecutionServiceAddr:    getEnvOrDefault("EXECUTION_SERVICE_ADDR", ""),
+		ExecutionServiceURL:     getEnvOrDefault("EXECUTION_SERVICE_URL", ""),
+		ExecutionServiceToken:   getEnvOrDefault("EXECUTION_SERVICE_TOKEN", ""),
 		ExecutionClientTimeout:  getEnvDurationOrDefault("EXECUTION_CLIENT_TIMEOUT", 5*time.Second),
 
 		OpenBaoAddr:          getEnvOrDefault("OPENBAO_ADDR", ""),
@@ -196,8 +200,11 @@ func (c *Config) validate() error {
 			if c.OrgMembershipBaseURL == "" {
 				return fmt.Errorf("ORG_MEMBERSHIP_BASE_URL is required in non-dev environments when AWS_USE_STUB=false")
 			}
-			if c.ExecutionServiceAddr == "" {
-				return fmt.Errorf("EXECUTION_SERVICE_ADDR is required in non-dev environments when AWS_USE_STUB=false")
+			if c.ExecutionServiceURL == "" {
+				return fmt.Errorf("EXECUTION_SERVICE_URL is required in non-dev environments when AWS_USE_STUB=false")
+			}
+			if c.ExecutionServiceToken == "" {
+				return fmt.Errorf("EXECUTION_SERVICE_TOKEN is required in non-dev environments when AWS_USE_STUB=false")
 			}
 		}
 	}

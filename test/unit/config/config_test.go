@@ -17,7 +17,7 @@ func TestLoad_Success(t *testing.T) {
 		"PG_SLOW_QUERY_THRESHOLD_MS", "VALKEY_ADDR", "VALKEY_PASSWORD",
 		"AWS_USE_STUB", "AWS_REGION", "SNS_TOPIC_ARN",
 		"OUTBOX_POLL_INTERVAL", "OUTBOX_BATCH_SIZE", "ORG_MEMBERSHIP_BASE_URL",
-		"EXECUTION_SERVICE_ADDR", "GLUE_REGISTRY_NAME",
+		"EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN", "GLUE_REGISTRY_NAME",
 	}
 	for _, k := range keysToBackup {
 		envBackup[k] = os.Getenv(k)
@@ -52,7 +52,8 @@ func TestLoad_Success(t *testing.T) {
 	_ = os.Setenv("OUTBOX_POLL_INTERVAL", "1s")
 	_ = os.Setenv("OUTBOX_BATCH_SIZE", "100")
 	_ = os.Setenv("ORG_MEMBERSHIP_BASE_URL", "http://org")
-	_ = os.Setenv("EXECUTION_SERVICE_ADDR", "execution:9090")
+	_ = os.Setenv("EXECUTION_SERVICE_URL", "http://execution:8080")
+	_ = os.Setenv("EXECUTION_SERVICE_TOKEN", "execution-token")
 	_ = os.Setenv("GLUE_REGISTRY_NAME", "workflow-template-events")
 
 	cfg, err := config.Load()
@@ -120,8 +121,8 @@ func TestLoad_Success(t *testing.T) {
 	if cfg.OrgMembershipBaseURL != "http://org" {
 		t.Errorf("OrgMembershipBaseURL = %q, want http://org", cfg.OrgMembershipBaseURL)
 	}
-	if cfg.ExecutionServiceAddr != "execution:9090" {
-		t.Errorf("ExecutionServiceAddr = %q, want execution:9090", cfg.ExecutionServiceAddr)
+	if cfg.ExecutionServiceURL != "http://execution:8080" || cfg.ExecutionServiceToken != "execution-token" {
+		t.Errorf("ExecutionServiceURL, ExecutionServiceToken = %q, %q", cfg.ExecutionServiceURL, cfg.ExecutionServiceToken)
 	}
 	if cfg.GlueRegistryName != "workflow-template-events" {
 		t.Errorf("GlueRegistryName = %q, want workflow-template-events", cfg.GlueRegistryName)
@@ -131,7 +132,7 @@ func TestLoad_Success(t *testing.T) {
 func TestLoad_ValidationFailures(t *testing.T) {
 	keysToBackup := []string{
 		"DATABASE_URL", "AWS_USE_STUB", "SNS_TOPIC_ARN", "APP_ENV",
-		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_ADDR",
+		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
 		"GLUE_REGISTRY_NAME", "INTERNAL_API_TOKEN", "SYSTEM_DATABASE_URL",
 		"HTTP_PORT", "GRPC_PORT", "PG_MIN_CONNS", "PG_MAX_CONNS",
 		"OTEL_TRACES_SAMPLER_RATIO", "OUTBOX_BATCH_SIZE",
@@ -183,17 +184,27 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
 				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production",
-				"ORG_MEMBERSHIP_BASE_URL": "", "EXECUTION_SERVICE_ADDR": "execution:9090",
+				"ORG_MEMBERSHIP_BASE_URL": "", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
 				"GLUE_REGISTRY_NAME": "workflow-template-events",
 			},
 			wantErr: true,
 		},
 		{
-			name: "missing execution addr in non-dev when stub is false",
+			name: "missing execution url in non-dev when stub is false",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
 				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production",
-				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_ADDR": "",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "", "EXECUTION_SERVICE_TOKEN": "t",
+				"GLUE_REGISTRY_NAME": "workflow-template-events",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing execution token in non-dev when stub is false",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
+				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "",
 				"GLUE_REGISTRY_NAME": "workflow-template-events",
 			},
 			wantErr: true,
@@ -203,7 +214,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
 				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "dev",
-				"ORG_MEMBERSHIP_BASE_URL": "", "EXECUTION_SERVICE_ADDR": "",
+				"ORG_MEMBERSHIP_BASE_URL": "", "EXECUTION_SERVICE_URL": "",
 				"GLUE_REGISTRY_NAME": "workflow-template-events",
 			},
 			wantErr: false,

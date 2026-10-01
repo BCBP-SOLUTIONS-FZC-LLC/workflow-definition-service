@@ -316,7 +316,7 @@ func TestHandleDepartmentMembershipRevoked_PauseUserTasksError(t *testing.T) {
 	}
 }
 
-// NilExecution: when ExecutionServiceAddr is not configured, s.execution is nil.
+// NilExecution: when EXECUTION_SERVICE_URL is not configured, s.execution is nil.
 // PauseUserTasks must be skipped (not panicked).
 func TestHandleDepartmentMembershipRevoked_NilExecution(t *testing.T) {
 	ctrl := gomock.NewController(t)

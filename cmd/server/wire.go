@@ -21,7 +21,6 @@ import (
 	grpcadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/grpc"
 	inboundhttp "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http"
 	httphandler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
-	outboundgrpc "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/grpc"
 	outboundhttp "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/http"
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres"
 	bpmncompiler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
@@ -81,23 +80,10 @@ func newApp(cfg *config.Config) (*app, error) {
 		return nil, err
 	}
 
-	var membershipSvc *outboundhttp.MembershipClient
-	var executionSvc *outboundgrpc.ExecutionClient
+	membershipSvc := newMembershipService(cfg)
+	executionSvc := newExecutionService(cfg)
 	var secretsSvc port.SecretsClient
 
-	if cfg.OrgMembershipBaseURL != "" {
-		membershipSvc = outboundhttp.NewMembershipClient(cfg.OrgMembershipBaseURL, cfg.MembershipClientTimeout)
-	}
-	if cfg.ExecutionServiceAddr != "" {
-		executionSvc, err = outboundgrpc.NewExecutionClient(cfg.ExecutionServiceAddr, cfg.ExecutionClientTimeout)
-		if err != nil {
-			pool.Close()
-			systemPool.Close()
-			closeCache()
-			tracingShutdown()
-			return nil, fmt.Errorf("execution client: %w", err)
-		}
-	}
 	if cfg.OpenBaoAddr != "" {
 		secretsSvc = outboundhttp.NewSecretsClient(cfg.OpenBaoAddr, cfg.OpenBaoToken, cfg.OpenBaoMount, cfg.SecretsClientTimeout)
 	}
@@ -260,17 +246,16 @@ func newApp(cfg *config.Config) (*app, error) {
 	}
 
 	return &app{
-		cfg:            cfg,
-		log:            log,
-		pool:           pool,
-		systemPool:     systemPool,
-		cache:          cache,
-		httpServer:     srv,
-		metricsServer:  metricsSrv,
-		grpcServer:     grpcSrv,
-		outboxRelay:    relay,
-		shutdown:       tracingShutdown,
-		cacheClose:     redisClient,
-		executionClose: executionSvc,
+		cfg:           cfg,
+		log:           log,
+		pool:          pool,
+		systemPool:    systemPool,
+		cache:         cache,
+		httpServer:    srv,
+		metricsServer: metricsSrv,
+		grpcServer:    grpcSrv,
+		outboxRelay:   relay,
+		shutdown:      tracingShutdown,
+		cacheClose:    redisClient,
 	}, nil
 }
