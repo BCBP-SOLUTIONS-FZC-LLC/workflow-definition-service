@@ -31,11 +31,11 @@ CI uses `GO_PRIVATE_TOKEN` (GitHub PAT with `repo:read` scope) — see the secre
 ## First-time Setup
 
 ```bash
-make tools                  # install sqlc, buf, mockgen, golangci-lint to .tools/
+make tools                  # install sqlc, oasdiff, mockgen, golangci-lint to .tools/
 make setup                  # copy .env.example → .env and install .githooks/pre-commit
 make docker-up              # start PostgreSQL on :5432, Valkey on :6379
 make migrate                # apply DB schema migrations (run once, before server start)
-make generate                # buf (proto → gen/) + sqlc (queries → postgres/db/)
+make generate                # sqlc (queries → postgres/db/)
 make mock                   # regenerate GoMock stubs for port interfaces
 make build                  # compile bin/server
 go run ./cmd/server         # run locally
@@ -50,8 +50,8 @@ See [README.md § Local Development](README.md#local-development) for the AWS-st
 ## Development Cycle
 
 ```bash
-# After editing api/proto/*.proto:
-make generate-proto
+# After editing api/internal-openapi.yaml (the internal API this service serves):
+make contract-breaking      # oasdiff vs origin/main; then refresh the Execution Service's copy
 
 # After editing db/queries/*.sql or db/schema/*.sql:
 make generate-sqlc
@@ -162,7 +162,7 @@ The CI `validate-test.yml` job enforces a **95% minimum** against the merged uni
 
 `make test` and `make test-integration` each post-filter their own profile (`.coverage/unit.out`, `.coverage/integration.out`) to enforce these exclusions; `make merge-coverage` then combines both (max-count-per-block, via `scripts/merge_coverage.py`) into `.coverage/coverage.out` before the global gate runs.
 
-We target 95%+ unit test coverage for all fully implemented components, including configuration parsing (`internal/config`), the Valkey cache adapter (mockable `redis.Cmdable`, no live instance needed), the gRPC server, the internal events handler, and the execution/membership outbound clients (real local gRPC server / URL-encoding edge cases).
+We target 95%+ unit test coverage for all fully implemented components, including configuration parsing (`internal/config`), the Valkey cache adapter (mockable `redis.Cmdable`, no live instance needed), the internal API (the compiled-plan read and the internal events handler), and the execution/membership outbound clients (`httptest` servers, the execution client held to its contract copy).
 
 ### Integration and E2E tests
 
@@ -184,7 +184,7 @@ make test-integration    # runs test/integration/... and test/e2e/...
 go test -v -tags integration ./test/e2e/... -run TestE2E_WorkflowLifecycle
 ```
 
-The e2e tests are **distinct** from `scripts/smoke-test.sh` (full HTTP + gRPC against a live server, manual pre-merge, covering route/response sanity rather than business logic).
+The e2e tests are **distinct** from `scripts/smoke-test.sh` (full HTTP, internal routes included, against a live server, manual pre-merge, covering route/response sanity rather than business logic).
 
 ### Mock generation
 
@@ -222,12 +222,12 @@ Use GoMock for service-layer tests that orchestrate multiple dependencies; use h
 ```go
 import "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/unit/testkit"
 
-grpcadapter.NewServer(testkit.FakeLogger{}, repo)
+service.NewCompiledPlanService(service.CompiledPlanDeps{Versions: repo, Log: testkit.FakeLogger{}})
 ```
 
 ### End-to-end smoke testing
 
-`scripts/smoke-test.sh` covers all 13 HTTP flow groups, the gRPC `GetCompiledWorkflow` endpoint, and the `DepartmentMembershipRevoked` ingest via `POST /internal/events` — including error cases and idempotency checks. See [README.md § Local Development](README.md#local-development) for the stub-binary setup this script depends on. Optional tools (`grpcurl`, `psql`, `aws` CLI) unlock additional assertions; the script exits `0` on full pass or `1` with a summary of failures.
+`scripts/smoke-test.sh` covers all 13 HTTP flow groups, the internal compiled-plan read, and the `DepartmentMembershipRevoked` ingest via `POST /internal/events` — including error cases and idempotency checks. See [README.md § Local Development](README.md#local-development) for the stub-binary setup this script depends on. Optional tools (`grpcurl`, `psql`, `aws` CLI) unlock additional assertions; the script exits `0` on full pass or `1` with a summary of failures.
 
 ---
 
@@ -264,7 +264,6 @@ ALTER TABLE workflow DROP COLUMN foo;
 
 | Generated output | Source | Command |
 | ----------------- | -------- | --------- |
-| `gen/proto/` | `api/proto/*.proto` | `make generate-proto` |
 | `internal/adapter/outbound/postgres/db/` | `db/queries/*.sql` + `sqlc.yaml` | `make generate-sqlc` |
 | `internal/core/port/mocks/` | `internal/core/port/*.go` | `make mock` |
 
@@ -345,7 +344,7 @@ cmd/server   →  all of the above
 
 **Nothing in `core/` imports from `adapter/`.** Violating this fails CI. Additionally:
 
-- All external I/O (DB, cache, HTTP, gRPC) crosses through a `port` interface.
+- All external I/O (DB, cache, HTTP) crosses through a `port` interface.
 - Service and handler constructors accept interfaces, not concrete types.
 - Repository adapter constructors (`NewWorkflowRepo`, etc.) accept `*pgcommon.Pool` — the sqlc/pgcommon pattern is an intentional exception to the interface rule at the DB adapter layer.
 - `app.go` is the only file that wires concrete adapters to interfaces.
@@ -369,7 +368,7 @@ Keep docs in sync when making changes:
 | Change type | Docs to update |
 | --- | --- |
 | New HTTP endpoint or field | `README.md` § API Overview |
-| New gRPC method | `README.md` § API Overview |
+| New internal endpoint | `api/internal-openapi.yaml`, `README.md` § Internal API |
 | New config env var | `ARCHITECTURE.md` § Configuration reference |
 | New migration or schema change | `README.md` § Database, this file § Database Migrations |
 | Architecture / layer change | `ARCHITECTURE.md` + `docs/architecture/mermaid/*.mmd` |

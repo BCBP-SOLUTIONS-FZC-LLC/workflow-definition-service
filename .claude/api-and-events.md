@@ -1,6 +1,6 @@
 ---
 name: api-and-events
-description: HTTP API patterns, gRPC, RLS injection, idempotency, event topology, and outbound client details for workflow-definition-service
+description: HTTP API patterns, the internal API and its contracts, RLS injection, idempotency, event topology, and outbound client details for workflow-definition-service
 metadata:
   type: reference
 ---
@@ -11,7 +11,7 @@ metadata:
 
 **HTTP path:** `InjectGUCSet` middleware (`middleware/gucrls.go`) bridges gincommon → pgcommon by reading `gincommon.RequestContext(c)` and calling `pgcommon.WithGUCSet(ctx, ...)` on `c.Request`. Placed immediately after `ProtectedMiddlewares` in `router.go`. Without this bridge, RLS filtering silently passes all rows.
 
-**gRPC / internal-events path:** `GetCompiledWorkflow` and `POST /internal/events` handlers call `pgcommon.WithGUCSet` directly from `req.TenantId` / the envelope's `tenant_id` — there is no Gin context on these paths.
+**Internal path (`/api/v1/internal`):** no gateway identity reaches these routes, so `InjectGUCSet` is not on the group; each handler (the compiled-plan read, `POST /internal/events`) calls `pgcommon.WithGUCSet` itself from the `tenant_id` its request carries.
 
 ## Inbound Events: `POST /internal/events`
 
@@ -26,13 +26,13 @@ Route is on the `/internal` group guarded by `RequireInternalToken` (`x-internal
 
 This service currently emits no outbound events. The transactional outbox → SNS pipeline (`buildEnvelope` in `helpers.go`, `outbox.Enqueue` inside a `RunInTx`/`RunInTxWithRetry` callback) stays wired for whichever event is added next.
 
-## Membership Revocation: Direct gRPC PauseUserTasks
+## Membership Revocation: Direct PauseUserTasks Call
 
-When `HandleDepartmentMembershipRevoked` finishes marking template versions `is_valid=false`, it calls `ExecutionClient.PauseUserTasks(ctx, tenantID, userID)` via gRPC. Execution pauses all active task assignments for that user scoped to that tenant.
+When `HandleDepartmentMembershipRevoked` finishes marking template versions `is_valid=false`, it calls `ExecutionClient.PauseUserTasks(ctx, tenantID, userID)`, the pause-tasks endpoint of the Execution Service's internal API. Execution pauses all active task assignments for that user scoped to that tenant.
 
 - If the call fails the HTTP handler returns 5xx so the shared consumer retries the whole event.
 - `invalidateVersion` silently skips versions that are absent or ARCHIVED — one missing version does not block others.
-- All inter-service calls are gRPC — no HTTP between services.
+- Calls between the two services are internal HTTP, each endpoint specified in the server's `api/internal-openapi.yaml`; the caller keeps a copy in `api/contracts/`. `make contract-breaking` (oasdiff vs `origin/main`, in `make check`) and `make contract-check` (copy vs source branch) gate both in CI (LLD §3.4).
 
 ## HTTP Idempotency Middleware
 
@@ -51,16 +51,15 @@ Cache key: `"idem:" + tenantID + ":" + routePath + ":" + Idempotency-Key` (tenan
 
 ## Outbound Clients: Retries + Tests
 
-`ExecutionClient` (gRPC) and `MembershipClient` (HTTP) retry on transient failures — 3 attempts, 50 ms / 100 ms / 500 ms bounded backoff — wrapping final failure as `ErrUpstreamUnavailable`.
+`ExecutionClient` and `MembershipClient` (both HTTP) retry on transient failures — 3 attempts, 50 ms / 100 ms / 500 ms bounded backoff — wrapping final failure as `ErrUpstreamUnavailable`.
 
 Test patterns:
-- `test/unit/executionclient/` — real local `net.Listen("tcp", "127.0.0.1:0")` gRPC server
+- `test/contract/` — `httptest.NewServer` for the execution client, each request held to `api/contracts/execution-internal-openapi.yaml`; the real router's internal responses held to `api/internal-openapi.yaml`
 - `test/unit/membershipclient/` — `httptest.NewServer`
-- Both use hand-rolled fake server implementations (consistent with the handler-layer pattern)
 
 ## Compiled-Plan Cache (Valkey)
 
-`GetCompiledWorkflow` gRPC lazily reads/populates `wf:plan:<tenant>:<version>` in Valkey (fail-open; TTL `CACHE_COMPILED_PLAN_TTL`, env `CACHE_COMPILED_PLAN_TTL`, default 1 h).
+The internal compiled-plan read (`CompiledPlanService`) lazily reads/populates `wf:plan:<tenant>:<version>` in Valkey (fail-open; TTL `CACHE_COMPILED_PLAN_TTL`, env `CACHE_COMPILED_PLAN_TTL`, default 1 h).
 
 The Glue schema registry codec caches the schema version ID in-memory (TTL `GLUE_SCHEMA_CACHE_TTL`, env `GLUE_SCHEMA_CACHE_TTL`, default `5m`). Wired through `Config.GlueSchemaCacheTTL` → `gluecodec.NewCodec(..., cacheTTL)`.
 

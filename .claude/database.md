@@ -57,7 +57,7 @@ idx_wv_single_draft ON workflow_version(workflow_id) WHERE status = 'DRAFT'
 `ErrDraftAlreadyExists` is returned on violation.
 
 ### `is_valid` semantics
-`workflow_version.is_valid` reflects **assignee validity**, not BPMN structural validity. Set to `false` by `HandleDepartmentMembershipRevoked` when a default assignee's department membership is revoked. `GetCompiledWorkflow` gRPC returns `is_valid` so Execution can reject `StartWorkflow` calls on invalid templates.
+`workflow_version.is_valid` reflects **assignee validity**, not BPMN structural validity. Set to `false` by `HandleDepartmentMembershipRevoked` when a default assignee's department membership is revoked. The internal compiled-plan read returns `is_valid` so Execution can reject `StartWorkflow` calls on invalid templates.
 
 ### `record_version` optimistic lock
 `workflow` and `workflow_version` carry `record_version BIGINT NOT NULL DEFAULT 1`, bumped by the `update_meta_columns` BEFORE UPDATE trigger (guarded by `WHEN (OLD.* IS DISTINCT FROM NEW.*)`).
@@ -84,7 +84,7 @@ PL/pgSQL functions need no `StatementBegin/End` wrappers — pgx/v5 runs each fi
 
 ## Inbound Event Redelivery
 
-There is no dedup registry. Both consumed types converge on the same state when reprocessed: `SetVersionInvalid` rewrites an identical `is_valid = false`, and no query returns a PUBLISHED version to valid, while `PauseUserTasks` signals only `RUNNING` instances. Adding an inbound type that is not idempotent by construction means introducing the registry with it (LLD §2.3.1, §10.9).
+There is no dedup registry. Both consumed types converge on the same state when reprocessed: `SetVersionInvalid` rewrites an identical `is_valid = false`, and no query returns a PUBLISHED version to valid, while the Execution Service's pause-tasks call signals only `RUNNING` instances. Adding an inbound type that is not idempotent by construction means introducing the registry with it (LLD §2.3.1, §10.9).
 
 ## Operational Table Cleanup
 

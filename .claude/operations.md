@@ -13,7 +13,7 @@ metadata:
 |---|---|---|
 | `platform-events` | v1.4.0 | `outbox.NewRunner` returns `(*Runner, error)`. Envelope carries `actor`/`subject` fields. `events.WithCodec` moves Glue Schema Registry wire-format encoding to SNS-publish time (`cmd/server/infra.go`'s `newPublisher`), not outbox-enqueue time — keeps the outbox's `json.Marshal(env)` working on a plain-JSON payload. |
 | `platform-gincommon` | v1.3.0 | `gincommon.MetricsRegisterer()`/`MetricsConstLabels()` expose the registerer/const-labels gincommon's own HTTP metrics use, so `internal/observability.Register()` registers this service's custom collectors against the same registerer instead of guessing `prometheus.DefaultRegisterer`. |
-| `platform-pgcommon` | v1.2.1 | `port.Transactor` exposes `RunInTxWithRetry` (SERIALIZABLE + 40001/40P01 retry). gRPC health check registered for K8s liveness probes. `Config.Logger` / `migrate.Runner.Logger` are now typed against the public `pkg/domain.Logger` (since v1.2.0) — `cmd/server/pglogger.go`'s `pgCommonLogger` adapts this service's `port.Logger` to it. |
+| `platform-pgcommon` | v1.2.1 | `port.Transactor` exposes `RunInTxWithRetry` (SERIALIZABLE + 40001/40P01 retry). `Config.Logger` / `migrate.Runner.Logger` are now typed against the public `pkg/domain.Logger` (since v1.2.0) — `cmd/server/pglogger.go`'s `pgCommonLogger` adapts this service's `port.Logger` to it. |
 | `workflow-models` | v1.3.0-rc.3 | `pkg/dsl` types are field-for-field identical to the deleted `internal/core/domain/compiled_plan.go`; `pkg/enums` holds the shared `StageType*` constants. `CompiledCollaboration.SchemaVersion` (since v1.1.0) feeds Execution's DSL-compatibility layer; `CompileForPublish` stamps it on every published plan. `CallPlanStep` and `ExpandCalls` (since v1.3.0-rc.1) carry and expand library calls; every boundary sets exactly one of `TargetDept` and `Terminates`, and `Assignees` keys may be call paths (rc.2). `dsl.NodeKey`, `StageDef.CreatesHumanTask` and `StageDef.Name` (rc.3) give node keys, the human-task rule and task names, shared with Execution. `pkg/dsl/dsltest` holds the goldens `TestGolden` writes, and a golden change means a new tag before this repo can build against it. |
 
 Fetch / upgrade:
@@ -48,7 +48,7 @@ Branch protection required checks come from **two active GitHub rulesets** that 
   - `Iint` stopped matching once the standalone integration-test job was folded into `validate-test.yml`'s `test` job (matches `iam`, which has no separate integration-test job either — see below).
   - Whether this stale ruleset needs cleanup is a separate branch-protection admin decision, not resolved here.
 
-`validate-quality.yml` and `validate-test.yml` are reusable workflows that download the caller's `generate` job's `generated` artifact (proto/sqlc/mocks) rather than each regenerating it — `ci.yml` and `release.yml` both run their own `generate` job first and pass it downstream via `actions/upload-artifact`/`download-artifact`. Codegen now runs once per CI/release run instead of three times.
+`validate-quality.yml` and `validate-test.yml` are reusable workflows that download the caller's `generate` job's `generated` artifact (sqlc/mocks) rather than each regenerating it — `ci.yml` and `release.yml` both run their own `generate` job first and pass it downstream via `actions/upload-artifact`/`download-artifact`. Codegen now runs once per CI/release run instead of three times.
 
 `validate-test.yml`'s **architecture lint** step (`go-arch-lint check --project-path .`) enforces the Clean Architecture import direction rules from `.go-arch-lint.yml`.
 
@@ -75,8 +75,8 @@ Key metrics emitted by the service:
 | `wf_compile_duration_seconds` | Histogram | — | Duration of `compiler.Compile` only, isolated from DB-tx time. Observed at `publishPreFlight` (Publish) and `resolvePlan` (Diff/Export fallback-recompile). `Promote` never compiles; `ValidationService.Validate` calls the separate `compiler.Validate`, not `Compile`. |
 | `wf_validation_failures_total` | Counter | — | BPMN validate calls with at least one error |
 | `internal_events_ingest_total` | CounterVec | `event_type`, `result` | Internal event ingestion (ok/bad_payload/error) |
-| `wf_cache_hits_total` | Counter | — | gRPC compiled-plan cache hits |
-| `wf_cache_misses_total` | Counter | — | gRPC compiled-plan cache misses |
+| `wf_cache_hits_total` | Counter | — | Compiled-plan cache hits (internal compiled-plan read) |
+| `wf_cache_misses_total` | Counter | — | Compiled-plan cache misses (internal compiled-plan read) |
 
 Outcome labels use `observability.OutcomeLabel(err)`: `"ok"` when err is nil, `"err"` otherwise.
 
@@ -97,7 +97,7 @@ Keep docs in sync when making changes — see the full table in [`CONTRIBUTING.m
 | Change type | Docs to update |
 |---|---|
 | New HTTP endpoint or field | `README.md` § API Overview |
-| New gRPC method | `README.md` § API Overview |
+| New internal endpoint | `api/internal-openapi.yaml`, `README.md` § Internal API; refresh the Execution Service's copy |
 | New config env var | `ARCHITECTURE.md` § Configuration reference |
 | New migration or schema change | `README.md` § Database |
 | Architecture / layer change | `ARCHITECTURE.md` + `docs/architecture/mermaid/*.mmd` |

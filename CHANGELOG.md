@@ -10,11 +10,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- **The Execution Service link is internal HTTP; gRPC is removed.** The compiled-plan read is `GET /api/v1/internal/workflow-versions/{version_id}/compiled-plan` (the plan a JSON object; no separate `dsl_schema_version`), and the archive guard and the membership-revocation pause call the Execution Service's internal API. `EXECUTION_SERVICE_URL`/`EXECUTION_SERVICE_TOKEN` replace `EXECUTION_SERVICE_ADDR`; `GRPC_PORT`, the protos, buf and port 9090 are gone. `cmd/stub/execution` is an HTTP stub on `:8083`.
+- `RequireInternalToken` compares in constant time and answers `401` with a problem body.
+- The Helm gateway routes only the public path prefixes; it had routed all of `/api/v1`, internal routes included. `EXECUTION_SERVICE_URL` points at the Execution Service's HTTP Service (it pointed at its metrics port).
 - Node keys and the human-task rule come from workflow-models' `dsl.NodeKey` and `StageDef.CreatesHumanTask`, shared with the Execution Service.
 - **Prometheus metrics centralized into `internal/observability`** — the three previously-scattered `promauto` call sites (`internal/core/service/metrics.go`, `internal/adapter/inbound/grpc/server.go`, `internal/adapter/inbound/http/handler/internal_events.go`) are now nil-until-`Register()` vars in one package, registered against `gincommon.MetricsRegisterer()` from `cmd/server/wire.go`'s composition root instead of `promauto`'s implicit default-registry registration. Call sites go through new nil-safe `IncCounter`/`IncCounterVec`/`ObserveHistogram` helpers. No metric name/label changed. `cmd/server/wire.go`'s standalone `pgmetrics.Init` + `prometheus.MustRegister(pgmetrics.NewPoolStatsCollector(...))` calls are folded into the same `Register()`. `platform-gincommon` bumped v1.2.1 → v1.3.0 (adds `MetricsRegisterer`/`MetricsConstLabels`) and `platform-pgcommon` v1.1.2 → v1.2.1 (public `pkg/domain.Logger`, letting `cmd/server/pglogger.go` finally wire a real logger into `pgcommon.Config.Logger`).
 
 ### Added
 
+- `api/internal-openapi.yaml`, the authority for every `/api/v1/internal` route, shown beside the public spec in Swagger UI. `test/contract` validates the real router's responses against it, and the execution client's requests against the copy of the Execution Service's spec in `api/contracts/`.
+- `make contract-breaking` (oasdiff against `origin/main`, in `make check` and CI) and `make contract-check` (the copy against its source branch, in CI).
 - `GET /workflows/:id/versions/:version_id/nodes`: a published version's human tasks, module tasks included, each with its node key, department, role level, default users and name (definition LLD §3.3.12.2).
 - `GET /modules/:id/versions/:version_id/contract`: what a call of a module version binds and names — its open and fixed slots, every human task by its `Assignees` key and the slot it runs in, its messages and error codes, and whether it names users (§3.3.18).
 - Compiled stages carry their task's `name`.
@@ -118,6 +123,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - `.github/workflows/release.yml` — added coverage gate; CHANGELOG section extraction for release notes; scoped `contents: write` to release job only
 
 ### Fixed
+
+- The execution and membership clients are nil interfaces when unset; a nil pointer inside the interface had passed the services' nil checks.
+- The public OpenAPI spec is valid OpenAPI 3: a duplicate `409`, `$ref`s with `nullable` siblings and examples without `instance` are fixed.
 
 - **CRITICAL — path traversal in `POST /connectors/credentials`**: `connector_type`/`field_name` were interpolated into the OpenBao secret path with no validation, letting a `"../<other-tenant>/x"`-style value climb out of the caller's own tenant subtree. Both are now validated (`connector_type` against the registry, `field_name` against `^[a-zA-Z0-9_-]+$`) before either touches the path.
 - `secrets_client.go` leaked OpenBao's raw error text (network error / HTTP response body) into the API response and logs on failure — now a fixed generic detail, matching this file's own existing convention for BPMN validation errors; the raw error is still logged server-side.

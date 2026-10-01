@@ -9,7 +9,7 @@ graph TD
 
     subgraph Workflow_Definition_Service [Workflow Definition Service]
         API[Gin HTTP API]
-        gRPC[gRPC API]
+        Internal[Internal HTTP API]
         Parser[BPMN Parser]
         Compiler[DSL Compiler]
         Validator[Validation Engine]
@@ -18,7 +18,7 @@ graph TD
 
         API --> Validator
         API --> Parser
-        gRPC --> Compiler
+        Internal --> DB
         Parser --> Compiler
     end
 
@@ -37,7 +37,7 @@ graph TD
     UI -->|1. Get Eligible Users per Node| OrgMembership
     UI -->|2. Upload BPMN| Gateway
     Gateway -->|Headers: x-tenant-id, etc.| API
-    ExecSvc -->|gRPC: GetCompiledWorkflow| gRPC
+    ExecSvc -->|HTTP: compiled plan| Internal
 
     Compiler -->|3. Validate Assignee Eligibility| OrgMembership
     Compiler -->|4. Store Draft/Publish| DB

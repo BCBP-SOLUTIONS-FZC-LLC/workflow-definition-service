@@ -12,7 +12,7 @@ Render locally with the [Mermaid VS Code / IntelliJ plugin](https://marketplace.
 | `layer-model.mmd` | Layer model |
 | `package-dependency-graph.mmd` | Package dependency graph |
 | `http-mutation-flow.mmd` | Key runtime flows → HTTP mutation (e.g. PublishVersion) |
-| `grpc-get-compiled-workflow-flow.mmd` | Key runtime flows → gRPC GetCompiledWorkflow |
+| `internal-compiled-plan-flow.mmd` | Key runtime flows → Internal compiled-plan read |
 | `membership-revoked-flow.mmd` | Key runtime flows → DepartmentMembershipRevoked |
 | `archive-workflow-flow.mmd` | Key runtime flows → Archive workflow |
 | `outbox-relay-flow.mmd` | Key runtime flows → Outbox relay (high-level) |

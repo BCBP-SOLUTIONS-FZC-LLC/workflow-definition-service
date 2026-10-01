@@ -2,13 +2,13 @@ sequenceDiagram
     participant C as HTTP Client
     participant H as Handler
     participant S as WorkflowService
-    participant ES as ExecutionService (gRPC)
+    participant ES as Execution Service (internal HTTP)
     participant DB as PostgreSQL
     participant SNS as SNS (via outbox.Runner)
 
     C->>H: POST /workflows/:id/archive
     H->>S: Archive(ctx, tenantID, userID, workflowID)
-    S->>ES: CheckActiveInstances(tenantID, workflowID)
+    S->>ES: GET /api/v1/internal/workflows/{id}/active-instances
     ES-->>S: hasActive=false
     S->>DB: BEGIN TX
     S->>DB: UPDATE workflow_version SET status=ARCHIVED

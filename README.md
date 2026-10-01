@@ -3,12 +3,12 @@
 The **BCBP Workflow Engine** is a BPMN-driven automation platform for the BCBP services ecosystem. It has two halves:
 
 - **Definition Service** (this repo) — the design-time control plane. It parses BPMN 2.0 XML, validates it structurally and semantically, compiles it to an internal DSL plan, and manages the full `DRAFT → PUBLISHED → ARCHIVED` version lifecycle.
-- **Execution Service** — the runtime half. It receives compiled workflow plans from this service over gRPC and drives live workflow instances.
+- **Execution Service** — the runtime half. It reads compiled workflow plans from this service's internal HTTP API and drives live workflow instances.
 
-The Definition Service exposes a REST API consumed by the **frontend workflow builder** and a gRPC API consumed by the **Execution Service**.
+The Definition Service exposes a REST API consumed by the **frontend workflow builder** and an internal HTTP API consumed by the **Execution Service**.
 
 ```text
-Frontend Builder ──REST──► Definition Service ──gRPC──► Execution Service
+Frontend Builder ──REST──► Definition Service ◄──internal HTTP──► Execution Service
                                     │
                              PostgreSQL + Valkey
                                     │
@@ -21,13 +21,13 @@ Frontend Builder ──REST──► Definition Service ──gRPC──► Exec
 | **Validation** | Runs structural, semantic, and topological (DAG/cycle) checks |
 | **Compilation** | Converts validated BPMN graphs into immutable JSON DSL execution plans |
 | **Versioning** | Manages DRAFT → PUBLISHED → ARCHIVED lifecycle with optimistic concurrency |
-| **Serving** | Exposes compiled DSLs to the Execution Service over high-throughput gRPC |
+| **Serving** | Serves compiled DSLs to the Execution Service on its internal HTTP API |
 | **Event publishing** | Transactional-outbox → AWS SNS pipeline is wired but currently has no outbound event types defined |
 | **Membership sync** | Consumes `DepartmentMembershipRevoked` events (via `POST /internal/events`) to invalidate affected template assignees |
 
 > **Architecture** — [ARCHITECTURE.md](ARCHITECTURE.md): layer model, sequence diagrams, BPMN compiler reference, configuration reference, and error catalog. Diagram sources live in [docs/architecture/](docs/architecture/).
 >
-> **API specs** — REST: [docs/swagger/openapi.yaml](docs/swagger/openapi.yaml), served locally at `/swagger/*any` in dev mode. Events: [api/asyncapi.yaml](api/asyncapi.yaml). gRPC: [api/proto/](api/proto/).
+> **API specs** — REST: [docs/swagger/openapi.yaml](docs/swagger/openapi.yaml), served locally at `/swagger/*any` in dev mode. Events: [api/asyncapi.yaml](api/asyncapi.yaml). Internal (service-to-service): [api/internal-openapi.yaml](api/internal-openapi.yaml).
 >
 > **Contributing** — [CONTRIBUTING.md](CONTRIBUTING.md) for the local dev workflow, testing, and PR checklist.
 
@@ -90,7 +90,6 @@ The server is ready when you see:
 
 ```sh
 INFO  HTTP server starting         {"addr": ":8080"}
-INFO  gRPC server starting         {"addr": ":9090"}
 INFO  outbox relay starting
 ```
 
@@ -118,12 +117,12 @@ By default `AWS_USE_STUB=true` in `.env.example`. This activates a no-op stub SN
 # 1. Start everything (Postgres + Valkey + LocalStack)
 make docker-up
 
-# 2. Start outbound service stubs (gRPC + HTTP)
-go run ./cmd/stub/execution &    # :9091 (gRPC), :9092 (control)
+# 2. Start outbound service stubs (HTTP)
+go run ./cmd/stub/execution &    # :8083 (internal API + /control toggle)
 go run ./cmd/stub/membership &   # :8081 (HTTP + /control toggle)
 
 # 3. Run the server against LocalStack and stubs (AWS_USE_STUB=false)
-ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_ADDR=localhost:9091 \
+ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_URL=http://localhost:8083 \
   AWS_USE_STUB=false go run ./cmd/server &
 
 # 4. Run the smoke test
@@ -138,8 +137,8 @@ curl -X POST http://localhost:8081/control -d '{"eligible":true}'
 curl -X POST http://localhost:8081/control -d '{"eligible":false}'
 
 # Toggle active instances on execution service
-curl -X POST http://localhost:9092/control -d '{"has_active":false}'
-curl -X POST http://localhost:9092/control -d '{"has_active":true}'
+curl -X POST http://localhost:8083/control -d '{"has_active":false}'
+curl -X POST http://localhost:8083/control -d '{"has_active":true}'
 ```
 
 ### Environment variables and Make
@@ -167,9 +166,9 @@ make help
 | --- | --- |
 | `make setup` | Copy `.env.example` → `.env` and install the local `.githooks/pre-commit` hook (run once) |
 | `make install-hooks` | Reinstall the pre-commit hook after `.githooks/pre-commit` changes |
-| `make tools` | Install sqlc, buf, mockgen, golangci-lint, go-arch-lint into `.tools/` |
+| `make tools` | Install sqlc, oasdiff, mockgen, golangci-lint, go-arch-lint into `.tools/` |
 | `make tools-integration` | Pre-pull Docker images used by integration tests (testcontainers-go) |
-| `make generate` | buf generate (proto) + sqlc generate (queries) |
+| `make generate` | sqlc generate (queries) |
 | `make mock` | Regenerate GoMock stubs for `core/port` interfaces |
 | `make build` | Compile binary to `bin/server` |
 | `make migrate` | Apply schema migrations (outbox + domain) and exit — not run at server boot |
@@ -204,14 +203,12 @@ internal/
   adapter/
     inbound/
       http/              ← Gin handlers, authz, middleware, POST /internal/events
-      grpc/              ← GetCompiledWorkflow server
     outbound/
       postgres/          ← sqlc DB layer + repo adapters
       valkey/            ← Valkey cache adapter
   bpmn_compiler/         ← XML parser, validator, DSL compiler
   config/                ← env var loading
-api/                     ← REST (OpenAPI source), AsyncAPI specs, and .proto source files (committed)
-gen/                     ← buf-generated stubs (gitignored)
+api/                     ← internal OpenAPI, AsyncAPI, and contracts/ (the Execution Service's internal spec, copied)
 db/
   migrations/            ← golang-migrate SQL migrations (.up.sql/.down.sql, committed)
   queries/               ← sqlc query definitions (committed)
@@ -337,93 +334,24 @@ Validation errors include an `invalid_params` array:
 
 **BPMN status split:** a document that **cannot be parsed** returns **400 `INVALID_BPMN_XML`**; a document that parses but **fails validation** (structural/semantic, including `MISSING_NAMESPACE` and `REJECTED_ELEMENT`) returns **422 `BPMN_VALIDATION_FAILED`** with per-node `invalid_params`. Forbidden `DOCTYPE`/entity or XML-bomb input returns the **same** generic `400 INVALID_BPMN_XML` (so a probe is not confirmed) and is additionally recorded in an internal security log.
 
-### gRPC API
+### Internal API
 
-Proto source: [`api/proto/definition/v1/definition.proto`](api/proto/definition/v1/definition.proto).
+Service-to-service routes under `/api/v1/internal`, specified in [`api/internal-openapi.yaml`](api/internal-openapi.yaml) (Swagger UI offers it beside the public spec in dev). The gateway never routes them; callers present the service's `INTERNAL_API_TOKEN` in `x-internal-token`, and the tenant comes from the request, not from gateway headers.
 
-**Service: `DefinitionService`.** High-throughput internal gRPC endpoint. Called by the Execution Service during runtime workflow instantiation to fetch compiled DSL plans. Bypasses the Envoy REST gateway to eliminate serialisation overhead.
-
-**Transport.** The gRPC server accepts insecure plain-text connections on the intra-cluster network. mTLS is enforced at the Envoy sidecar layer — connections from outside the mesh are rejected there, not at the server.
-
-**Reflection.** Server reflection is registered (`reflection.Register`), so `grpcurl` works without passing proto files:
-
-```bash
-# List all services
-grpcurl -plaintext localhost:9090 list
-
-# Describe the service
-grpcurl -plaintext localhost:9090 describe definition.v1.DefinitionService
-
-# Call GetCompiledWorkflow
-grpcurl -plaintext \
-  -d '{"tenant_id":"<uuid>","workflow_version_id":"<uuid>"}' \
-  localhost:9090 definition.v1.DefinitionService/GetCompiledWorkflow
-```
-
-**`GetCompiledWorkflow`**
-
-```protobuf
-rpc GetCompiledWorkflow(GetCompiledWorkflowRequest)
-    returns (GetCompiledWorkflowResponse);
-```
-
-Request:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `tenant_id` | `string` | Tenant UUID — mandatory; sets RLS session GUC before any DB access |
-| `workflow_version_id` | `string` | UUID of the version record to fetch |
-
-Response:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `workflow_id` | `string` | Parent workflow UUID |
-| `version_id` | `string` | Requested version UUID |
-| `version_number` | `int32` | Published version number |
-| `status` | `string` | `DRAFT`, `PUBLISHED`, or `ARCHIVED` |
-| `is_valid` | `bool` | `false` if any default assignee has become ineligible |
-| `compiled_plan_json` | `string` | Pre-compiled `CompiledCollaboration` DSL as a JSON string |
-| `dsl_schema_version` | `int32` | The DSL schema major version, read off the blob's `schema_version` |
-
-The template's own version is carried on the response (`version_number`), not inside the DSL blob.
-
-**Compiled DSL shape (`compiled_plan_json`).** `{ main_plan, plans[], messages[], schema_version }`. A single-process BPMN is one plan, named by `main_plan`. Each plan is `{ name, task_queue, departments[], execution: { steps[] } }`. Each step in `execution.steps` is one of:
-
-| Step kind | Shape | Meaning |
-| --- | --- | --- |
-| `sequential` | `["deptA", "deptB"]` | departments run in order |
-| `parallel` | `["deptA", "deptB"]` | departments run concurrently (AND split/join) |
-| `exclusive` | `[{ branch }, …]` | XOR decision — runtime evaluates each branch's `condition_expression` |
-
-Each `exclusive` branch object:
-
-| Field | Meaning |
-| --- | --- |
-| `target` | Destination department for a forward branch. **Empty** when the branch terminates the workflow (routes to the end event), and empty on a revert branch. |
-| `condition_expression` | Expression the Execution Service / Temporal worker evaluates to pick the branch. |
-| `revert_to_dept` / `revert_to_stage` | Present on a **guarded-loop revert branch** (back-edge from the gateway) instead of `target`: the `(department, stage_type)` to send the task back to. |
-
-gRPC status codes:
-
-| Code | Meaning |
-| --- | --- |
-| `OK` (0) | Success |
-| `INVALID_ARGUMENT` (3) | Missing or malformed `workflow_version_id` |
-| `PERMISSION_DENIED` (7) | `tenant_id` is empty (no tenant context) |
-| `NOT_FOUND` (5) | Version not found or RLS filtered it out |
-| `INTERNAL` (13) | Unexpected server error |
-
-**Compiled-plan cache.** Responses are cached in Valkey under `wf:plan:<tenant_id>:<version_id>` (TTL `CACHE_COMPILED_PLAN_TTL`, default 1h), populated lazily on the first read. The cache is fail-open — a cache outage falls back to Postgres. Entries are invalidated when a version's `status` or `is_valid` changes (workflow archive, membership-revocation invalidation).
-
-**Health Check (`grpc.health.v1.Health`).** The server registers the standard gRPC health service at startup (`grpc_health_v1.RegisterHealthServer`), reporting `SERVING` for all service names by default — used for Kubernetes liveness/readiness probes on `:9090` and service-mesh health checks:
+| Method | Path | Caller | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/internal/workflow-versions/{version_id}/compiled-plan?tenant_id=` | Execution Service | A workflow version and its stored compiled plan (any status), from a fail-open Valkey cache in front of Postgres |
+| `POST` | `/api/v1/internal/events` | workflow-events consumer | Ingest a domain-event envelope (e.g. `DepartmentMembershipRevoked`) |
+| `GET` / `POST` / `DELETE` | `/api/v1/internal/connector-aliases…` | Execution's connector-worker, operators | The connector alias registry |
 
 ```bash
-grpcurl -plaintext localhost:9090 grpc.health.v1.Health/Check
-grpcurl -plaintext -d '{"service":"definition.v1.DefinitionService"}' localhost:9090 grpc.health.v1.Health/Check
+curl -s -H "x-internal-token: $INTERNAL_API_TOKEN" \
+  "localhost:8080/api/v1/internal/workflow-versions/$VERSION_ID/compiled-plan?tenant_id=$TENANT_ID"
 ```
 
-Proto stubs are generated via `make generate` (`buf generate`); output goes to `gen/proto/`, gitignored.
+This service calls the Execution Service's internal API the same way, sending that service's token as `EXECUTION_SERVICE_TOKEN`: its active-instances read guards archive, and its pause-tasks call follows a membership revocation. A byte-identical copy of the Execution Service's spec lives in `api/contracts/`, and the client's tests hold every request to it.
+
+**Contract gates.** `make contract-breaking` refuses a breaking change to `api/internal-openapi.yaml` against `origin/main` (oasdiff; part of `make check`). `make contract-check` refuses a copy in `api/contracts/` that differs from its source branch (`CONTRACT_SRC_DIR=../execution_service` reads a local checkout). Both run in CI.
 
 ---
 
@@ -442,12 +370,12 @@ make docker-trivy               # HIGH/CRITICAL CVE scan (source + deps)
 make docker-check                # both, no image build required
 ```
 
-The image exposes two ports:
+The image exposes the API port; `/metrics` listens on its own port:
 
 | Port | Protocol | Purpose |
 | --- | --- | --- |
-| `8080` | HTTP | REST API (`/api/v1`), `/healthz`, `/readyz`, `/metrics` |
-| `9090` | gRPC | `GetCompiledWorkflow` — called by the Execution Service |
+| `8080` | HTTP | REST API (`/api/v1`), the internal API (`/api/v1/internal`), `/healthz`, `/readyz` |
+| `9091` | HTTP | `/metrics` |
 
 The image's built-in `HEALTHCHECK` directive is best-effort for standalone `docker run` use; Kubernetes ignores it entirely and uses its own `startupProbe`/`livenessProbe`/`readinessProbe` against `/healthz` and `/readyz` instead.
 
@@ -471,7 +399,7 @@ helm template my-release ./deploy/helm --set secretValues.DATABASE_URL=... # ...
 helm upgrade workflow-definition-service ./deploy/helm --install --namespace <ns>
 ```
 
-**Ports and probes.** The Service and Deployment both expose named `http` (8080) and `grpc` (9090) ports. `startupProbe`/`livenessProbe`/`readinessProbe` all target `http` — `/healthz` is a trivial liveness check, `/readyz` actually verifies the Postgres pool and Valkey are reachable (`cmd/server/handlers.go`), so a pod only receives traffic once its real dependencies are up.
+**Ports and probes.** The Service and Deployment both expose named `http` (8080) and `metrics` (9091) ports. `startupProbe`/`livenessProbe`/`readinessProbe` all target `http` — `/healthz` is a trivial liveness check, `/readyz` actually verifies the Postgres pool and Valkey are reachable (`cmd/server/handlers.go`), so a pod only receives traffic once its real dependencies are up.
 
 **Migrations run as a Helm hook, not at boot.** `cmd/server/main.go` never migrates on the normal server boot path — schema changes are applied by a dedicated `migrate` subcommand (`/server migrate`) that runs the outbox schema and this service's own domain migrations, then exits. Running that inline at boot would let two replicas race on `golang-migrate`'s advisory lock during a rolling deploy, stalling the loser and risking a readiness-probe timeout for no reason.
 
@@ -483,14 +411,14 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 
 `podDisruptionBudget.minAvailable` is `1`: at a 2-replica floor, `minAvailable: 2` would block every voluntary disruption (node drains, cluster upgrades) — `1` allows exactly one pod to be evicted at a time while guaranteeing the service never drops to zero replicas from a voluntary action.
 
-`terminationGracePeriodSeconds` is `60`. `cmd/server/app.go`'s shutdown sequence on `SIGTERM`: an HTTP `Shutdown(ctx)` bounded by a single 30-second context, then `grpcServer.GracefulStop()` (no context — blocks unboundedly until in-flight RPCs drain), then the outbox relay's own `Stop()` (also uncancellable, ~30-second internal drain default), then a final pool drain bounded by whatever remains of the original 30-second deadline. In practice this finishes well under 30 seconds — but the grace period carries real headroom above the worst case rather than assuming 30 seconds caps the whole sequence.
+`terminationGracePeriodSeconds` is `60`. `cmd/server/app.go`'s shutdown sequence on `SIGTERM`: an HTTP `Shutdown(ctx)` bounded by a single 30-second context, then the outbox relay's own `Stop()` (also uncancellable, ~30-second internal drain default), then a final pool drain bounded by whatever remains of the original 30-second deadline. In practice this finishes well under 30 seconds — but the grace period carries real headroom above the worst case rather than assuming 30 seconds caps the whole sequence.
 
 **Secrets.** Two mutually exclusive modes, selected by whether `existingSecret` is set:
 
 - **`existingSecret: "<name>"`** (recommended beyond local testing) — points at a Secret already provisioned by External Secrets Operator, the AWS Secrets Manager CSI driver, or Sealed Secrets. The chart creates no Secret resource of its own. Bump `rotationEpoch` (`--set rotationEpoch=$(date +%s)`) to force a rollout after the external secret rotates.
-- **`secretValues.*`** (dev/CI only) — pass real values via `--set` or a Helm secrets plugin. `secret.yaml` hard-fails the render if any key required by `envFromSecret` (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `VALKEY_PASSWORD`, `SNS_TOPIC_ARN`, `INTERNAL_API_TOKEN`) is empty. These land in the Helm release history unencrypted (base64) — never use this mode against a shared cluster.
+- **`secretValues.*`** (dev/CI only) — pass real values via `--set` or a Helm secrets plugin. `secret.yaml` hard-fails the render if any key required by `envFromSecret` (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `VALKEY_PASSWORD`, `SNS_TOPIC_ARN`, `INTERNAL_API_TOKEN`, `EXECUTION_SERVICE_TOKEN`) is empty. These land in the Helm release history unencrypted (base64) — never use this mode against a shared cluster.
 
-**Networking.** `networkPolicy.enabled: true` by default. Ingress is split by port on purpose: the gateway/ingress-controller rule only opens `8080` (nothing fronts the gRPC port externally), while an intra-namespace rule opens both `8080` and `9090` so the Execution Service can reach `GetCompiledWorkflow` directly pod-to-pod. A separate rule scopes `/metrics` scraping to the monitoring namespace only. Egress allows DNS, HTTPS (AWS APIs), Postgres/PgBouncer, Valkey, and OTel OTLP explicitly, plus same-namespace pod egress for `ORG_MEMBERSHIP_BASE_URL` and `EXECUTION_SERVICE_ADDR`.
+**Networking.** `networkPolicy.enabled: true` by default. The gateway/ingress-controller rule and the named callers (the Execution Service) both reach `8080`; the gateway routes only the public path prefixes (`ingress.hosts[].paths`), so `/api/v1/internal` is reachable only in-cluster, and every internal route also requires `x-internal-token`. A separate rule scopes `/metrics` scraping to the monitoring namespace only. Egress allows DNS, HTTPS (AWS APIs), Postgres/PgBouncer, Valkey, and OTel OTLP explicitly, plus same-namespace pod egress for `ORG_MEMBERSHIP_BASE_URL` and `EXECUTION_SERVICE_URL`.
 
 `ingress.type` supports either `HTTPRoute` (Gateway API — default) or classic `Ingress`. CORS and gateway-level rate limiting attach via an Envoy Gateway `SecurityPolicy` (`ingress.securityPolicy`) when enabled.
 
@@ -498,13 +426,13 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 
 - **Availability** — no healthy scrape target for 2 minutes; replica count below the HA floor.
 - **HTTP errors/latency** — 5xx ratio and p99 latency (`http_requests_total`/`http_request_duration_seconds`).
-- **`GetCompiledWorkflow` error rate/latency** — scoped separately from the blended gRPC rate, since this is the one RPC the Execution Service depends on synchronously.
+- **Compiled-plan read error rate/latency** — the internal route's own 5xx ratio and p99, since this is the one call the Execution Service depends on synchronously.
 - **BPMN validation failure rate** — sustained activity on `wf_validation_failures_total` (emitted only by the standalone `/validate` endpoint).
 - **Publish latency and retry exhaustion** — p95 of `wf_publish_latency_seconds` exceeding 2s, and any increase in `pgcommon_retry_exhausted_total`.
 - **Outbox health** — delivery stalls (`outbox_dead_letters_total`), backlog (`outbox_pending_total`), relay-internal errors.
 - **Internal event ingest failures** — sustained `bad_payload`/`error` results on `POST /internal/events`.
 - **Postgres query error rate** — `pgcommon_query_total{status="error"}`.
-- **Panics** — any increase in `http_panic_total`/`grpc_panic_total`, paged immediately.
+- **Panics** — any increase in `http_panic_total`, paged immediately.
 - **Compiled-plan cache hit ratio** (informational) — `wf_cache_hits_total`/`wf_cache_misses_total`, not an incident trigger.
 
 **Row-level security violation alerting is intentionally not implemented.** There is no `rls_violations_total` metric anywhere in this service or `platform-pgcommon` — the `rls_violation_log` table is populated by DB triggers, not application code, and nothing currently exports it to Prometheus. Flagged here as a known gap rather than shipped as a dead alert.
@@ -597,7 +525,7 @@ See [ARCHITECTURE.md § BPMN Compiler](ARCHITECTURE.md#bpmn-compiler) for the fu
 | Database | PostgreSQL 18 · pgx/v5 · sqlc · golang-migrate · `platform-pgcommon` (pool & RLS) |
 | Cache / locks | Valkey 8 · go-redis/v9 |
 | Events | Outbound: AWS SNS via `platform-events` transactional outbox (stub available). Inbound: HTTP `POST /internal/events` from the shared workflow-events consumer |
-| gRPC | `google.golang.org/grpc` · buf toolchain |
+| Contracts | OpenAPI 3 · kin-openapi (tests) · oasdiff (breaking-change gate) |
 | Observability | OTel traces · Prometheus metrics · Zap structured logs |
 | Testing | GoMock · race detector · `testcontainers-go` (integration) |
 
@@ -677,7 +605,7 @@ See full DDL in [`db/migrations/`](db/migrations/).
 Query definitions in `db/queries/` are compiled to type-safe Go by [sqlc](https://sqlc.dev). Generated output goes to `internal/adapter/outbound/postgres/db/`. Repository adapters hold a `*pgcommon.Pool` value and use transaction/connection helpers (`WithConn`, `RunInTx`) to run sqlc-generated queries. Outbox enqueuing writes `outbox_events` through the same transaction context via `outbox.Enqueue(ctx, tx, env)`; the background delivery relay is handled entirely by the `platform-events` outbox runner.
 
 ```bash
-make generate          # runs buf generate (proto) AND sqlc generate (queries)
+make generate          # runs sqlc generate (queries)
 make generate-sqlc     # sqlc only — use after editing db/queries/*.sql
 ```
 

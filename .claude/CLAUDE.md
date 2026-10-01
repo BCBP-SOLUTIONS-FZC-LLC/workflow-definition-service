@@ -4,9 +4,9 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## What This Repo Is
 
-`workflow-definition-service` is a Go HTTP + gRPC microservice (module: `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service`, Go 1.26) that acts as the design-time control plane for the BPMN-driven Workflow Engine. It parses, validates, versions, and serves workflow templates.
+`workflow-definition-service` is a Go HTTP microservice (module: `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service`, Go 1.26) that acts as the design-time control plane for the BPMN-driven Workflow Engine. It parses, validates, versions, and serves workflow templates.
 
-Key responsibilities: BPMN ingestion, structural/semantic/topological validation, DSL compilation, DRAFT → PUBLISHED → ARCHIVED versioning, and serving compiled plans to the Execution Service over gRPC.
+Key responsibilities: BPMN ingestion, structural/semantic/topological validation, DSL compilation, DRAFT → PUBLISHED → ARCHIVED versioning, and serving compiled plans to the Execution Service over its internal HTTP API.
 
 **This service publishes no events.** `api/asyncapi.yaml` documents one inbound message and no outbound channel. The outbox table, its repository, the relay started in `cmd/server/app.go`, and `VersionService`'s wired `Outbox` field all exist and nothing writes to them. Whether that apparatus is kept against a future producer or removed is undecided — do not wire an event to it without designing the contract and naming a consumer first.
 
@@ -20,7 +20,7 @@ Four private Go modules hosted on GitHub, fetched at build time via `GOPRIVATE` 
 | --- | --- |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events` | SNS publisher, transactional outbox runner + schema, typed event envelopes |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon` | pgx pool, RLS GUC injection, transactor, `migrate.Runner` (golang-migrate) |
-| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon` | Gin middleware, OTel tracing init, Zap logger, gRPC middleware |
+| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon` | Gin middleware, OTel tracing init, Zap logger |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models` | Shared compiled-plan DSL (`pkg/dsl`) + stage-type enum constants (`pkg/enums`) used by the BPMN compiler and shared with the Execution Service. `internal/core/domain/compiled_plan.go` was deleted — every compiler/service call site imports `pkg/dsl` directly instead. |
 
 Current pinned versions, per-version quirks/gotchas, and the fetch/upgrade command live in [`.claude/operations.md`](operations.md) § Platform Library Versions — this table is deliberately version-less to avoid the two drifting out of sync.
@@ -40,13 +40,13 @@ Current pinned versions, per-version quirks/gotchas, and the fetch/upgrade comma
 ```bash
 # First-time setup
 export GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*  # required before go get / mod tidy
-make tools                  # install sqlc, buf, mockgen, golangci-lint, go-arch-lint
+make tools                  # install sqlc, oasdiff, mockgen, golangci-lint, go-arch-lint
 make setup                  # copy .env.example → .env and install .githooks/pre-commit
 make docker-up              # start PostgreSQL + Valkey + LocalStack + PgBouncer
 make migrate                # apply schema (outbox + domain) — NOT run at server boot
 
 # Development cycle
-make generate               # buf (proto) + sqlc (queries)
+make generate               # sqlc (queries)
 make mock                   # regenerate GoMock stubs
 make build                  # compile bin/server
 go run ./cmd/server         # run locally (Swagger UI at /swagger/ in dev mode)
@@ -87,7 +87,6 @@ internal/
   adapter/
     inbound/
       http/             ← Gin handlers, authz middleware
-      grpc/             ← GetCompiledWorkflow impl
     outbound/
       postgres/         ← sqlc + pgcommon repo adapters
       valkey/           ← CacheStore impl
@@ -102,14 +101,14 @@ test/
 
 **Import rules:** `core/domain` → stdlib only. `core/port` → domain only. `core/service` → domain + port. `adapter/*` → port + domain. Nothing in `core/` imports from `adapter/`. Enforced by `go-arch-lint` (`.go-arch-lint.yml`).
 
-`cmd/server/app.go` starts: HTTP (`:8080`), gRPC (`:9090`), and the outbox relay. All stop gracefully on OS signal with a 30-second timeout.
+`cmd/server/app.go` starts: HTTP (`:8080`, the internal API at `/api/v1/internal` included), metrics (`:9091`), and the outbox relay. All stop gracefully on OS signal with a 30-second timeout.
 
 ---
 
 ## Code Generation
 
 ```bash
-make generate        # must re-run after editing: api/proto/*.proto or db/queries/*.sql
+make generate        # must re-run after editing db/queries/*.sql
 make mock            # must re-run after changing core/port/ interfaces
 ```
 
@@ -135,7 +134,7 @@ Integration tests require Docker. Pre-pull the image once: `make tools-integrati
 Detailed reference is in sub-documents — load the relevant one for your task:
 
 - **[.claude/database.md](database.md)** — DB patterns, transactor, outbox, sqlc, schema decisions (#1–6, #11, #19)
-- **[.claude/api-and-events.md](api-and-events.md)** — HTTP/gRPC patterns, idempotency, events (#9, #10, #12–18)
+- **[.claude/api-and-events.md](api-and-events.md)** — HTTP patterns, the internal API and its contracts, idempotency, events (#9, #10, #12–18)
 - **[.claude/bpmn-compiler.md](bpmn-compiler.md)** — BPMN parsing, validation, compilation (#20–25)
 - **[.claude/operations.md](operations.md)** — CI/CD, Prometheus metrics, OTel, MkDocs, platform-lib constraints (#26)
 - **[.claude/development-guide.md](development-guide.md)** — extension cookbook, troubleshooting, and the full HTTP error-code appendix

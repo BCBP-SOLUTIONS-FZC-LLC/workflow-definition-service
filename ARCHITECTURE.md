@@ -2,7 +2,7 @@
 
 This document describes the internal structure, dependency rules, and runtime data flows of the `workflow-definition-service`.
 
-> **Design intent:** this service is the design-time control plane of the BCBP Workflow Engine. It owns the full lifecycle of a workflow template — from raw BPMN XML through semantic validation, DSL compilation, and version state transitions — and exposes the resulting compiled plan to the Execution Service over gRPC.
+> **Design intent:** this service is the design-time control plane of the BCBP Workflow Engine. It owns the full lifecycle of a workflow template — from raw BPMN XML through semantic validation, DSL compilation, and version state transitions — and serves the resulting compiled plan to the Execution Service over its internal HTTP API.
 
 ---
 
@@ -15,8 +15,8 @@ Where the service sits in the broader platform:
 ```mermaid
 flowchart LR
     FE["Frontend\nWorkflow Builder"]
-    DEF["workflow-definition-service\n(this repo)\nHTTP :8080 · gRPC :9090"]
-    EXEC["workflow-execution-service\ngRPC :9090"]
+    DEF["workflow-definition-service\n(this repo)\nHTTP :8080"]
+    EXEC["workflow-execution-service\nHTTP :8080"]
     DB[("PostgreSQL 18\nworkflow_definition")]
     CACHE[("Valkey 8\nidempotency · cache")]
     SNS["AWS SNS\nwf.template.events"]
@@ -25,7 +25,8 @@ flowchart LR
     DOWNSTREAM["downstream consumers\n(execution, analytics)"]
 
     FE -->|"REST"| DEF
-    EXEC -->|"GetCompiledWorkflow\ngRPC"| DEF
+    EXEC -->|"compiled-plan read\ninternal HTTP"| DEF
+    DEF -->|"active-instances · pause-tasks\ninternal HTTP"| EXEC
     DEF -->|"read/write"| DB
     DEF -->|"idempotency · quota cache"| CACHE
     DEF -->|"domain events"| SNS
@@ -54,7 +55,7 @@ graph TD
 
     subgraph Workflow_Definition_Service [Workflow Definition Service]
         API[Gin HTTP API]
-        gRPC[gRPC API]
+        Internal[Internal HTTP API]
         Parser[BPMN Parser]
         Compiler[DSL Compiler]
         Validator[Validation Engine]
@@ -63,7 +64,7 @@ graph TD
 
         API --> Validator
         API --> Parser
-        gRPC --> Compiler
+        Internal --> DB
         Parser --> Compiler
     end
 
@@ -82,7 +83,7 @@ graph TD
     UI -->|1. Get Eligible Users per Node| OrgMembership
     UI -->|2. Upload BPMN| Gateway
     Gateway -->|Headers: x-tenant-id, etc.| API
-    ExecSvc -->|gRPC: GetCompiledWorkflow| gRPC
+    ExecSvc -->|HTTP: compiled plan| Internal
 
     Compiler -->|3. Validate Assignee Eligibility| OrgMembership
     Compiler -->|4. Store Draft/Publish| DB
@@ -200,14 +201,12 @@ flowchart TD
 
     subgraph adapter["internal/adapter"]
         subgraph inbound["inbound"]
-            http["http/handler\nGin handlers + middleware\nidempotency · authz · POST /internal/events"]
-            grpc_in["grpc/server\nGetCompiledWorkflow impl"]
+            http["http/handler\nGin handlers + middleware\nidempotency · authz · /api/v1/internal"]
         end
         subgraph outbound["outbound"]
             postgres["postgres/\nsqlc repo adapters\nTransactor · RunInTx"]
             valkey["valkey/\nCacheStore impl"]
-            grpc_out["grpc/ExecutionClient"]
-            http_out["http/MembershipClient"]
+            http_out["http/\nExecutionClient · MembershipClient"]
         end
     end
 
@@ -253,10 +252,8 @@ flowchart TD
 flowchart LR
     main(["cmd/server"])
     http_h(["adapter/inbound/http/handler"])
-    grpc_s(["adapter/inbound/grpc"])
     pg(["adapter/outbound/postgres"])
     vk(["adapter/outbound/valkey"])
-    ec(["adapter/outbound/grpc"])
     mc(["adapter/outbound/http"])
     svc(["core/service"])
     port(["core/port"])
@@ -264,16 +261,12 @@ flowchart LR
     cmp(["bpmn_compiler"])
 
     main --> http_h
-    main --> grpc_s
     main --> pg
     main --> vk
-    main --> ec
     main --> mc
     main --> svc
     http_h --> port
     http_h --> dom
-    grpc_s --> port
-    grpc_s --> dom
     pg --> port
     pg --> dom
     vk --> port
@@ -311,25 +304,11 @@ Incoming request
   → handler
 ```
 
-**Why `InjectGUCSet` is needed:** `gincommon.ContextMiddleware` stores `RequestContext` in the Gin context (`c.Set`) rather than the Go request context (`c.Request.Context()`). `pgcommon.GUCSetFromContext` reads only the Go context, so without this bridge the HTTP path never sets `app.tenant_id` and PostgreSQL RLS filters against a null GUC — a multi-tenant isolation failure. The gRPC path is exempt because `grpc/server.go` calls `pgcommon.WithGUCSet` manually.
+**Why `InjectGUCSet` is needed:** `gincommon.ContextMiddleware` stores `RequestContext` in the Gin context (`c.Set`) rather than the Go request context (`c.Request.Context()`). `pgcommon.GUCSetFromContext` reads only the Go context, so without this bridge the HTTP path never sets `app.tenant_id` and PostgreSQL RLS filters against a null GUC — a multi-tenant isolation failure. The internal routes do not use it: no gateway identity reaches them, so each internal handler calls `pgcommon.WithGUCSet` itself from the `tenant_id` its request carries.
 
-## gRPC interceptor chain
+## Internal API
 
-```sh
-Incoming gRPC call
-  → grpccommon.DefaultUnaryInterceptors   ← Prometheus grpc_server_* metrics, tracing
-  → grpccommon.DefaultStreamInterceptors  ← same for streaming RPCs
-  → DefinitionServiceServer.GetCompiledWorkflow
-```
-
-Interceptors are wired via:
-
-```go
-grpcServer := grpc.NewServer(
-    grpc.ChainUnaryInterceptor(grpccommon.DefaultUnaryInterceptors(cfg)...),
-    grpc.ChainStreamInterceptor(grpccommon.DefaultStreamInterceptors(cfg)...),
-)
-```
+`/api/v1/internal` is the service-to-service route group, specified in `api/internal-openapi.yaml`. It runs the observability middleware and `RequireInternalToken` (constant-time `x-internal-token` against `INTERNAL_API_TOKEN`, a problem body on `401`), not `ProtectedMiddlewares`: no gateway identity reaches it, and the gateway never routes it. The Execution Service's own internal document is copied byte for byte into `api/contracts/`; `make contract-breaking` and `make contract-check` keep both honest in CI (definition LLD §3.4).
 
 ---
 
@@ -367,25 +346,29 @@ sequenceDiagram
     Middleware -->>- Client: response
 ```
 
-### 2. gRPC GetCompiledWorkflow
+### 2. Internal compiled-plan read
 
-> Source: [docs/architecture/mermaid/grpc-get-compiled-workflow-flow.mmd](docs/architecture/mermaid/grpc-get-compiled-workflow-flow.mmd)
+> Source: [docs/architecture/mermaid/internal-compiled-plan-flow.mmd](docs/architecture/mermaid/internal-compiled-plan-flow.mmd)
 
 ```mermaid
 sequenceDiagram
     participant ExecSvc as Execution Service
-    participant GRPCSrv as adapter/inbound/grpc
-    participant Pool as pgcommon.Pool
-    participant Repo as VersionRepo.GetCompiledPlan
+    participant H as GetCompiledPlan handler
+    participant Svc as CompiledPlanService
+    participant Cache as Valkey
+    participant Repo as WorkflowVersionRepo
 
-    ExecSvc ->>+ GRPCSrv: GetCompiledWorkflow{tenant_id, workflow_id}
-    GRPCSrv ->> GRPCSrv: pgcommon.WithGUCSet(ctx, GUCSet{TenantID: req.TenantId})
-    Note right of GRPCSrv: RLS GUC injection — manual on gRPC path
-    GRPCSrv ->>+ Pool: WithConn
-    Pool ->>+ Repo: SELECT compiled_plan_json WHERE ... AND status='PUBLISHED'
-    Repo -->>- Pool: CompiledPlan bytes
-    Pool -->>- GRPCSrv: ok
-    GRPCSrv -->>- ExecSvc: GetCompiledWorkflowResponse{plan}
+    ExecSvc ->>+ H: GET /api/v1/internal/workflow-versions/{id}/compiled-plan?tenant_id= (x-internal-token)
+    H ->> H: pgcommon.WithGUCSet(ctx, GUCSet{TenantID: tenant_id})
+    Note right of H: RLS GUC from the query — no gateway identity on internal routes
+    H ->>+ Svc: Get(tenantID, versionID)
+    Svc ->> Cache: GET wf:plan:<tenant>:<version>
+    Cache -->> Svc: miss (fail-open)
+    Svc ->>+ Repo: GetByID
+    Repo -->>- Svc: version + compiled_plan_json
+    Svc ->> Cache: SET (CACHE_COMPILED_PLAN_TTL)
+    Svc -->>- H: CompiledPlan
+    H -->>- ExecSvc: 200 {workflow_id, version_id, version_number, status, is_valid, compiled_plan}
 ```
 
 ### 3. DepartmentMembershipRevoked (inbound via POST /internal/events)
@@ -424,13 +407,13 @@ sequenceDiagram
     participant C as HTTP Client
     participant H as Handler
     participant S as WorkflowService
-    participant ES as ExecutionService (gRPC)
+    participant ES as Execution Service (internal HTTP)
     participant DB as PostgreSQL
     participant SNS as SNS (via outbox.Runner)
 
     C->>H: POST /workflows/:id/archive
     H->>S: Archive(ctx, tenantID, userID, workflowID)
-    S->>ES: CheckActiveInstances(tenantID, workflowID)
+    S->>ES: GET /api/v1/internal/workflows/{id}/active-instances
     ES-->>S: hasActive=false
     S->>DB: BEGIN TX
     S->>DB: UPDATE workflow_version SET status=ARCHIVED
@@ -592,7 +575,7 @@ The happy path is always a single query. The probe only fires on the exceptional
 | Status-guarded mutations use `statusOrNotFound` | Publish/Archive SQL filters on `status=X`; on `RowsAffected()==0` a secondary `GetByID` distinguishes absent (→ `ErrNotFound`) from wrong-status (→ `ErrVersionNotDraft` etc.) — happy path is always single-query |
 | `is_valid` reflects assignee eligibility only | `workflow_version.is_valid=false` means an assignee left a required department role; it does not reflect BPMN structural validity |
 | Idempotency-Key scoped per tenant | Cache key format: `idem:<tenant_id>:<key>` — prevents cross-tenant replay; only 2xx responses are cached (24 h TTL) |
-| gRPC path requires manual GUC injection | `WithGUCSet` must be called by the gRPC handler before any repo access; the HTTP path injects via `gincommon.ProtectedMiddlewares` automatically |
+| Internal routes require manual GUC injection | `WithGUCSet` must be called by each internal handler before any repo access; the public HTTP path injects via `InjectGUCSet` after `gincommon.ProtectedMiddlewares` |
 | `ProtectedMiddlewares` must wrap all protected routes | Missing middleware causes `RequestContext` lookup to fail → 500 (server misconfiguration, not 401) |
 
 ---
@@ -613,7 +596,6 @@ All configuration is read from environment variables via `internal/config.Config
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `HTTP_PORT` | No | `8080` | Gin HTTP listener port |
-| `GRPC_PORT` | No | `9090` | gRPC listener port |
 
 ### Observability (platform-gincommon)
 
@@ -645,7 +627,7 @@ All configuration is read from environment variables via `internal/config.Config
 | `VALKEY_DIAL_TIMEOUT` | No | `2s` | Timeout for establishing a new connection to Valkey |
 | `VALKEY_READ_TIMEOUT` | No | `1s` | Timeout for socket reads |
 | `VALKEY_WRITE_TIMEOUT` | No | `1s` | Timeout for socket writes |
-| `CACHE_COMPILED_PLAN_TTL` | No | `1h` | TTL for the gRPC `GetCompiledWorkflow` compiled-plan cache; entries are also deleted on archive / membership invalidation |
+| `CACHE_COMPILED_PLAN_TTL` | No | `1h` | TTL for the internal compiled-plan read's cache; entries are also deleted on archive / membership invalidation |
 | `IDEMPOTENCY_TTL` | No | `24h` | TTL for idempotency keys on HTTP mutations |
 
 ### AWS
@@ -682,8 +664,9 @@ All configuration is read from environment variables via `internal/config.Config
 | --- | --- | --- | --- |
 | `ORG_MEMBERSHIP_BASE_URL` | When `APP_ENV != dev` | *(empty)* | Base URL of the Org & Membership Service for assignee eligibility checks |
 | `MEMBERSHIP_CLIENT_TIMEOUT` | No | `10s` | HTTP client timeout for the Org & Membership Service |
-| `EXECUTION_SERVICE_ADDR` | When `APP_ENV != dev` | *(empty)* | gRPC dial target for `CheckActiveInstances` (archive precondition guard) |
-| `EXECUTION_CLIENT_TIMEOUT` | No | `5s` | gRPC dial timeout for the Execution Service client |
+| `EXECUTION_SERVICE_URL` | When `APP_ENV != dev` and `AWS_USE_STUB=false` | *(empty)* | The Execution Service's internal HTTP base URL (archive guard, pause-tasks); empty builds no client |
+| `EXECUTION_SERVICE_TOKEN` | With `EXECUTION_SERVICE_URL` | *(empty)* | The Execution Service's `INTERNAL_API_TOKEN`, sent as `x-internal-token` |
+| `EXECUTION_CLIENT_TIMEOUT` | No | `5s` | Per-attempt timeout for the Execution Service client |
 
 ---
 
@@ -1330,7 +1313,7 @@ The outbox eliminates the dual-write problem — enqueue inside the same transac
 
 ### platform-pgcommon (pool, RLS GUC injection, transactor, migrations)
 
-`pgcommon.NewPool` takes a `GUCProvider` (set to `pgcommon.GUCSetFromContext`), which reads the `GUCSet` stored by `WithGUCSet(ctx, gs)` on every acquired connection — the `InjectGUCSet` middleware does this for every authenticated HTTP request; the gRPC path calls it manually (see [HTTP middleware chain](#http-middleware-chain) and [flow 2](#2-grpc-getcompiledworkflow) above).
+`pgcommon.NewPool` takes a `GUCProvider` (set to `pgcommon.GUCSetFromContext`), which reads the `GUCSet` stored by `WithGUCSet(ctx, gs)` on every acquired connection — the `InjectGUCSet` middleware does this for every authenticated HTTP request; each internal handler calls it manually (see [HTTP middleware chain](#http-middleware-chain) and [flow 2](#2-internal-compiled-plan-read) above).
 
 `Config.Logger` is wired via `cmd/server/pglogger.go`'s `pgCommonLogger` — a small composition-root-only adapter from this service's own `port.Logger` (map[string]any fields) to `platform-pgcommon/pkg/domain.Logger` (variadic `domain.Field`), the public interface the library exposed starting v1.2.0. Before that, `Config.Logger` was typed against an internal, unexported interface and could not be implemented from outside the module at all. `Config.Tracer` is still **not wired** — no equivalent public adapter target exists yet.
 
@@ -1421,7 +1404,7 @@ sequenceDiagram
 
 **Migrations.** Managed by `migrate.Runner` (golang-migrate, `pgx/v5`). Files live in `db/migrations/` as `NNNNNN_description.up.sql`/`.down.sql` pairs, embedded via `db/migrations/migrations.go` (`//go:embed *.sql`). Run via the **`migrate` subcommand** (`go run ./cmd/server migrate` / `make migrate`) — never at server boot, since two replicas racing on golang-migrate's advisory lock would stall the loser and risk a readiness-probe timeout. `runMigrations` first calls `outbox.ApplySchema` (tracked under `pgcommon_migrations`), then the service domain runner over `db/migrations/` (tracked under `wf_definition_migrations`) — kept separate so the two histories never collide. Unlike goose, the pgx/v5 driver runs each migration file as a single statement, so `$$`-quoted PL/pgSQL blocks need no `StatementBegin/End` annotations.
 
-### platform-gincommon (Gin/gRPC middleware, logging, tracing)
+### platform-gincommon (Gin middleware, logging, tracing)
 
 `pkg/logger.NewLogger(appEnv)` returns a value that directly satisfies `port.Logger` — pass the same instance to `gincommon.Config{Logger: log}` and `outbox.Config{Logger: log}` as-is. `pgcommon.Config{Logger: ...}` takes a different shape (`platform-pgcommon/pkg/domain.Logger`, variadic `domain.Field` instead of `map[string]any`), so `cmd/server/pglogger.go` wraps the same `log` instance in a small `pgCommonLogger` adapter first — see [platform-pgcommon](#platform-pgcommon-pool-rls-guc-injection-transactor-migrations) below. `APP_ENV=dev` → human-readable Zap output; anything else → JSON.
 
@@ -1438,4 +1421,3 @@ api.POST("/workflows/:id/archive",
 
 `authzPort` implements `port.Authorizer`; `RequirePermission` returns `403` if denied, before the handler runs.
 
-gRPC interceptors — see [gRPC interceptor chain](#grpc-interceptor-chain) above.

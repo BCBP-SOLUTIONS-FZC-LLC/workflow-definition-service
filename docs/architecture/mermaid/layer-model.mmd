@@ -5,14 +5,12 @@ flowchart TD
 
     subgraph adapter["internal/adapter"]
         subgraph inbound["inbound"]
-            http["http/handler\nGin handlers + middleware\nidempotency · authz · POST /internal/events"]
-            grpc_in["grpc/server\nGetCompiledWorkflow impl"]
+            http["http/handler\nGin handlers + middleware\nidempotency · authz · /api/v1/internal"]
         end
         subgraph outbound["outbound"]
             postgres["postgres/\nsqlc repo adapters\nTransactor · RunInTx"]
             valkey["valkey/\nCacheStore impl"]
-            grpc_out["grpc/ExecutionClient"]
-            http_out["http/MembershipClient"]
+            http_out["http/\nExecutionClient · MembershipClient"]
         end
     end
 
