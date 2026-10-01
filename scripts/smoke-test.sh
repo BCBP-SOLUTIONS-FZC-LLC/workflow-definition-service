@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Full automated end-to-end smoke test for the definition service.
 #
-# Covers every HTTP route, the gRPC GetCompiledWorkflow endpoint, and the
-# internal /api/v1/internal/events endpoint (DepartmentMembershipRevoked).
+# Covers every HTTP route and the internal routes: the compiled-plan read and
+# /api/v1/internal/events (DepartmentMembershipRevoked).
 #
 # Prerequisites (all must be running before this script):
 #   make docker-up                             # postgres + valkey + localstack
 #   make migrate-up
-#   go run ./cmd/stub/execution &              # gRPC stub :9091, ctrl :9092
+#   go run ./cmd/stub/execution &              # HTTP stub :8083 (internal API + /control)
 #   go run ./cmd/stub/membership &             # HTTP stub :8081
-#   ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_ADDR=localhost:9091 \
-#     AWS_USE_STUB=false go run ./cmd/server & # definition service :8080/:9090
+#   ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_URL=http://localhost:8083 \
+#     AWS_USE_STUB=false go run ./cmd/server & # definition service :8080
 #
 # PgBouncer note:
 #   If running with PgBouncer in front of Postgres, set DATABASE_URL to the
@@ -20,7 +20,6 @@
 #   psql uses simple queries that PgBouncer in transaction-pool mode restricts.
 #
 # Optional tools (checks are skipped if missing):
-#   grpcurl  (brew install grpcurl)
 #   psql     (brew install postgresql)
 #
 # Usage:
@@ -35,9 +34,8 @@ done
 
 HTTP="${HTTP_BASE:-http://localhost:8080}"
 API="${HTTP}/api/v1"
-GRPC="${GRPC_ADDR:-localhost:9090}"
 MEMBERSHIP_CTRL="${MEMBERSHIP_CTRL:-http://localhost:8081}"
-EXECUTION_CTRL="${EXECUTION_CTRL:-http://localhost:9092}"
+EXECUTION_CTRL="${EXECUTION_CTRL:-http://localhost:8083}"
 DB_URL="${DB_URL:-postgres://wfdef:wfdef@localhost:5432/workflow_definition?sslmode=disable}"
 INTERNAL_TOKEN="${INTERNAL_TOKEN:-}"
 
@@ -52,8 +50,7 @@ fail() { echo -e "  ${RED}✗${NC} $1"; (( FAIL++ )) || true; }
 skip() { echo -e "  ${YELLOW}–${NC} $1 (skipped — install: $2)"; }
 section() { echo ""; echo -e "${CYAN}══ $1 ══${NC}"; }
 
-HAS_GRPCURL=false; HAS_PSQL=false
-command -v grpcurl &>/dev/null && HAS_GRPCURL=true
+HAS_PSQL=false
 command -v psql    &>/dev/null && HAS_PSQL=true
 
 wait_http() {
@@ -61,16 +58,6 @@ wait_http() {
   until curl -sf "$url" &>/dev/null; do
     (( tries++ )) || true
     [ $tries -ge 40 ] && { echo "  FATAL: $label not ready after 40s"; exit 1; }
-    sleep 1
-  done
-}
-
-wait_grpc() {
-  [ "$HAS_GRPCURL" = true ] || return 0
-  local addr="$1" tries=0
-  until grpcurl -plaintext "$addr" list &>/dev/null 2>&1; do
-    (( tries++ )) || true
-    [ $tries -ge 30 ] && { echo "  FATAL: gRPC at $addr not ready"; exit 1; }
     sleep 1
   done
 }
@@ -299,7 +286,6 @@ if [ "$HEALTH_ONLY" = "false" ]; then
     sleep 1
   done
 
-  wait_grpc "${GRPC}"
   membership_eligible
   execution_no_active
 fi
@@ -465,64 +451,40 @@ DIFF_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   && pass "GET /versions/:version_id/diff/:target_version_id → 200 (self-diff)" \
   || fail "GET /versions/:version_id/diff/:target_version_id → $DIFF_STATUS"
 
-section "10 · gRPC GetCompiledWorkflow"
+section "10 · Internal compiled-plan read"
 
-if [ "$HAS_GRPCURL" = true ]; then
-  # Published version → success with compiled_plan_json
-  GRPC_RESP=$(grpcurl -plaintext \
-    -d "{\"tenant_id\":\"${TENANT_ID}\",\"workflow_version_id\":\"${V1_ID}\"}" \
-    "$GRPC" workflow.definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
-  echo "$GRPC_RESP" | grep -q "versionId" \
-    && pass "GetCompiledWorkflow (PUBLISHED) → returns version data" \
-    || fail "GetCompiledWorkflow PUBLISHED: unexpected response: $GRPC_RESP"
+internal_plan() {
+  curl -s -o /dev/stderr -w '%{http_code}' \
+    ${INTERNAL_TOKEN:+-H "x-internal-token: ${INTERNAL_TOKEN}"} \
+    "${API}/internal/workflow-versions/$1/compiled-plan?tenant_id=$2" 2>"$3"
+}
+PLAN_BODY=$(mktemp)
 
-  echo "$GRPC_RESP" | grep -q "compiledPlanJson" \
-    && pass "GetCompiledWorkflow (PUBLISHED) → compiled_plan_json populated" \
-    || fail "GetCompiledWorkflow PUBLISHED: missing compiled_plan_json"
+# Published version: the plan as an object, stamped with its schema version
+PLAN_STATUS=$(internal_plan "$V1_ID" "$TENANT_ID" "$PLAN_BODY")
+[ "$PLAN_STATUS" = "200" ] && grep -q "\"version_id\":\"${V1_ID}\"" "$PLAN_BODY" \
+  && pass "GET /internal/workflow-versions/:id/compiled-plan (PUBLISHED) → 200 with the version" \
+  || fail "compiled-plan PUBLISHED: $PLAN_STATUS $(cat "$PLAN_BODY")"
+grep -qE '"compiled_plan":\{' "$PLAN_BODY" && grep -qE '"schema_version":1([^0-9]|$)' "$PLAN_BODY" \
+  && pass "compiled-plan (PUBLISHED) → plan object with schema_version 1" \
+  || fail "compiled-plan PUBLISHED: plan missing or not a schema-1 collaboration"
 
-  echo "$GRPC_RESP" | grep -qE '"dslSchemaVersion": 1([^0-9]|$)' \
-    && pass "GetCompiledWorkflow (PUBLISHED) → dsl_schema_version stamped" \
-    || fail "GetCompiledWorkflow PUBLISHED: dsl_schema_version not 1 (stored plan is not a collaboration)"
+# DRAFT version: returned, with a null plan
+DRAFT_FOR_PLAN=$(api_post "${API}/workflows/${WF_ID}/draft" '{}')
+V_PLAN_DRAFT=$(get_version_id "$DRAFT_FOR_PLAN")
+PLAN_STATUS=$(internal_plan "$V_PLAN_DRAFT" "$TENANT_ID" "$PLAN_BODY")
+[ "$PLAN_STATUS" = "200" ] && grep -q '"compiled_plan":null' "$PLAN_BODY" \
+  && pass "compiled-plan (DRAFT) → 200 with a null plan" \
+  || fail "compiled-plan DRAFT: $PLAN_STATUS $(cat "$PLAN_BODY")"
+api_delete "${API}/workflows/${WF_ID}/draft" > /dev/null 2>&1 || true
 
-  # DRAFT version → no compiled plan (empty string)
-  DRAFT_FOR_GRPC=$(api_post "${API}/workflows/${WF_ID}/draft" '{}')
-  V_GRPC_DRAFT=$(get_version_id "$DRAFT_FOR_GRPC")
-  GRPC_DRAFT=$(grpcurl -plaintext \
-    -d "{\"tenant_id\":\"${TENANT_ID}\",\"workflow_version_id\":\"${V_GRPC_DRAFT}\"}" \
-    "$GRPC" workflow.definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
-  echo "$GRPC_DRAFT" | grep -q "versionId" \
-    && pass "GetCompiledWorkflow (DRAFT) → returns version data" \
-    || fail "GetCompiledWorkflow DRAFT: unexpected: $GRPC_DRAFT"
-
-  # Discard the draft we just created for gRPC test
-  api_delete "${API}/workflows/${WF_ID}/draft" > /dev/null 2>&1 || true
-
-  # NOT_FOUND
-  GRPC_NF=$(grpcurl -plaintext \
-    -d "{\"tenant_id\":\"${TENANT_ID}\",\"workflow_version_id\":\"00000000-0000-0000-0000-000000000003\"}" \
-    "$GRPC" workflow.definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
-  echo "$GRPC_NF" | grep -qi "NotFound\|not_found" \
-    && pass "GetCompiledWorkflow (not found) → NOT_FOUND" \
-    || fail "GetCompiledWorkflow not-found: expected NOT_FOUND, got: $GRPC_NF"
-
-  # INVALID_ARGUMENT — bad tenant UUID
-  GRPC_BADID=$(grpcurl -plaintext \
-    -d "{\"tenant_id\":\"not-a-uuid\",\"workflow_version_id\":\"${V1_ID}\"}" \
-    "$GRPC" workflow.definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
-  echo "$GRPC_BADID" | grep -qi "InvalidArgument\|invalid_argument" \
-    && pass "GetCompiledWorkflow (bad UUID) → INVALID_ARGUMENT" \
-    || fail "GetCompiledWorkflow bad-uuid: expected INVALID_ARGUMENT, got: $GRPC_BADID"
-
-  # INVALID_ARGUMENT — bad version UUID
-  GRPC_BADV=$(grpcurl -plaintext \
-    -d "{\"tenant_id\":\"${TENANT_ID}\",\"workflow_version_id\":\"not-a-uuid\"}" \
-    "$GRPC" workflow.definition.v1.DefinitionService/GetCompiledWorkflow 2>&1) || true
-  echo "$GRPC_BADV" | grep -qi "InvalidArgument\|invalid_argument" \
-    && pass "GetCompiledWorkflow (bad version UUID) → INVALID_ARGUMENT" \
-    || fail "GetCompiledWorkflow bad-version-uuid: expected INVALID_ARGUMENT, got: $GRPC_BADV"
-else
-  skip "gRPC tests" "brew install grpcurl"
-fi
+PLAN_STATUS=$(internal_plan "00000000-0000-0000-0000-000000000003" "$TENANT_ID" "$PLAN_BODY")
+[ "$PLAN_STATUS" = "404" ] && pass "compiled-plan (not found) → 404" || fail "compiled-plan not-found: $PLAN_STATUS"
+PLAN_STATUS=$(internal_plan "$V1_ID" "not-a-uuid" "$PLAN_BODY")
+[ "$PLAN_STATUS" = "400" ] && pass "compiled-plan (bad tenant) → 400" || fail "compiled-plan bad tenant: $PLAN_STATUS"
+PLAN_STATUS=$(internal_plan "not-a-uuid" "$TENANT_ID" "$PLAN_BODY")
+[ "$PLAN_STATUS" = "400" ] && pass "compiled-plan (bad version) → 400" || fail "compiled-plan bad version: $PLAN_STATUS"
+rm -f "$PLAN_BODY"
 
 section "11 · Internal Events — DepartmentMembershipRevoked"
 

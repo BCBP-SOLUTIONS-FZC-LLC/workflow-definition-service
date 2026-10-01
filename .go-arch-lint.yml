@@ -35,8 +35,8 @@ components:
     in: "internal/bpmn_compiler/validator/**"
   config:
     in: "internal/config/**"
-  # Prometheus metric vars (internal/core/service, adapter/inbound/grpc and
-  # adapter/inbound/http/handler all record through it) plus the
+  # Prometheus metric vars (internal/core/service and
+  # adapter/inbound/http/handler record through it) plus the
   # platform-pgcommon pool-stats registration folded in from cmd/server/wire.go.
   # A peer-level leaf like domain/port, not nested under adapter, mirroring
   # execution_service's own internal/observability component.
@@ -47,9 +47,6 @@ components:
     in: "internal/adapter/outbound/postgres/db/**"
   adapter:
     in: "internal/adapter/**"
-  # proto-generated code used by both adapter and cmd
-  gen:
-    in: "gen/**"
   db_migrations:
     in: "db/**"
   cmd:
@@ -97,8 +94,7 @@ deps:
       - adapter   # internal/adapter/inbound/http/router.go wires the handler + middleware sub-packages
       - service   # handlers reference service.UpdateDraftReq / CloneReq / DiffResult
       - db        # sqlc-generated types
-      - gen       # proto-generated types (grpc server + execution client)
-      - observability # grpc/server.go + http/handler/internal_events.go record the centralized metrics
+      - observability # http/handler/internal_events.go records the centralized metrics
   cmd:
     mayDependOn:
       - domain
@@ -107,6 +103,5 @@ deps:
       - adapter
       - config
       - bpmn_compiler
-      - gen
       - db_migrations
       - observability # wire.go calls Register() at boot

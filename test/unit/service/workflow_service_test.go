@@ -358,7 +358,7 @@ func TestWorkflowService_Archive_ExecutionCheckError(t *testing.T) {
 	wfRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&domain.Workflow{ActiveVersionID: &activeVID}, nil)
 	exec.EXPECT().CheckActiveInstances(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(false, int32(0), errors.New("grpc error"))
+		Return(false, int32(0), errors.New("execution service error"))
 
 	if err := svc.Archive(context.Background(), uuid.New(), uuid.New(), uuid.New()); err == nil {
 		t.Fatal("expected error")

@@ -9,16 +9,9 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/outbox"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/grpccommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/health"
-	"google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/grpc/reflection"
 
-	definitionv1 "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/gen/proto/definition/v1"
-	grpcadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/grpc"
 	inboundhttp "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http"
 	httphandler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	outboundhttp "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/http"
@@ -208,18 +201,6 @@ func newApp(cfg *config.Config) (*app, error) {
 		Log:            log,
 	})
 
-	grpcCfg := grpccommon.Config{
-		ServiceName:  cfg.OTELServiceName,
-		BuildVersion: cfg.BuildVersion,
-	}
-	grpcSrv := grpc.NewServer(
-		grpc.ChainUnaryInterceptor(grpccommon.DefaultUnaryInterceptors(grpcCfg)...),
-		grpc.ChainStreamInterceptor(grpccommon.DefaultStreamInterceptors(grpcCfg)...),
-	)
-	definitionv1.RegisterDefinitionServiceServer(grpcSrv, grpcadapter.NewServer(log, versionRepo, cache, cfg.CacheCompiledPlanTTL))
-	grpc_health_v1.RegisterHealthServer(grpcSrv, health.NewServer())
-	reflection.Register(grpcSrv)
-
 	router := inboundhttp.NewRouter(inboundhttp.RouterConfig{
 		GinConfig:        gincommon.Config{Logger: log, ServiceName: cfg.OTELServiceName, BuildVersion: version},
 		AppEnv:           cfg.AppEnv,
@@ -253,7 +234,6 @@ func newApp(cfg *config.Config) (*app, error) {
 		cache:         cache,
 		httpServer:    srv,
 		metricsServer: metricsSrv,
-		grpcServer:    grpcSrv,
 		outboxRelay:   relay,
 		shutdown:      tracingShutdown,
 		cacheClose:    redisClient,

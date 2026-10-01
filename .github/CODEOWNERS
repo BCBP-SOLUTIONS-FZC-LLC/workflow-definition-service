@@ -17,8 +17,9 @@ docker-compose.yml                        @BCBP-SOLUTIONS-FZC-LLC/platform-engin
 # Database migrations — require explicit engineer sign-off (irreversible in prod)
 db/migrations/                            @BCBP-SOLUTIONS-FZC-LLC/platform-engineers
 
-# Proto definitions — gRPC contract changes affect Execution Service consumers
-proto/                                    @BCBP-SOLUTIONS-FZC-LLC/platform-engineers
+# Internal HTTP contracts — this service's spec, and the copy of the Execution Service's
+api/internal-openapi.yaml                 @BCBP-SOLUTIONS-FZC-LLC/platform-engineers
+api/contracts/                            @BCBP-SOLUTIONS-FZC-LLC/platform-engineers
 
 # Event contract — schema/lifecycle changes affect downstream consumers
 api/asyncapi.yaml                         @BCBP-SOLUTIONS-FZC-LLC/platform-engineers @BCBP-SOLUTIONS-FZC-LLC/platform-team

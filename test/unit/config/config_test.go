@@ -11,7 +11,7 @@ import (
 func TestLoad_Success(t *testing.T) {
 	envBackup := make(map[string]string)
 	keysToBackup := []string{
-		"DATABASE_URL", "APP_ENV", "BUILD_VERSION", "HTTP_PORT", "GRPC_PORT",
+		"DATABASE_URL", "APP_ENV", "BUILD_VERSION", "HTTP_PORT",
 		"OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_INSECURE",
 		"OTEL_TRACES_SAMPLER_RATIO", "PG_MAX_CONNS", "PG_MIN_CONNS",
 		"PG_SLOW_QUERY_THRESHOLD_MS", "VALKEY_ADDR", "VALKEY_PASSWORD",
@@ -36,7 +36,6 @@ func TestLoad_Success(t *testing.T) {
 	_ = os.Setenv("APP_ENV", "production")
 	_ = os.Setenv("BUILD_VERSION", "v1.2.3")
 	_ = os.Setenv("HTTP_PORT", "9000")
-	_ = os.Setenv("GRPC_PORT", "9001")
 	_ = os.Setenv("OTEL_SERVICE_NAME", "custom-service")
 	_ = os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel:4317")
 	_ = os.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "false")
@@ -72,9 +71,6 @@ func TestLoad_Success(t *testing.T) {
 	}
 	if cfg.HTTPPort != 9000 {
 		t.Errorf("HTTPPort = %d, want 9000", cfg.HTTPPort)
-	}
-	if cfg.GRPCPort != 9001 {
-		t.Errorf("GRPCPort = %d, want 9001", cfg.GRPCPort)
 	}
 	if cfg.OTELServiceName != "custom-service" {
 		t.Errorf("OTELServiceName = %q, want custom-service", cfg.OTELServiceName)
@@ -134,7 +130,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		"DATABASE_URL", "AWS_USE_STUB", "SNS_TOPIC_ARN", "APP_ENV",
 		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
 		"GLUE_REGISTRY_NAME", "INTERNAL_API_TOKEN", "SYSTEM_DATABASE_URL",
-		"HTTP_PORT", "GRPC_PORT", "PG_MIN_CONNS", "PG_MAX_CONNS",
+		"HTTP_PORT", "PG_MIN_CONNS", "PG_MAX_CONNS",
 		"OTEL_TRACES_SAMPLER_RATIO", "OUTBOX_BATCH_SIZE",
 		"OUTBOX_POLL_INTERVAL", "EXECUTION_CLIENT_TIMEOUT",
 	}
@@ -260,11 +256,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		{
 			name:    "http port above range",
 			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "HTTP_PORT": "65536"},
-			wantErr: true,
-		},
-		{
-			name:    "grpc port above range",
-			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "GRPC_PORT": "65536"},
 			wantErr: true,
 		},
 		{

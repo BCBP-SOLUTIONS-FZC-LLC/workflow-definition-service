@@ -8,7 +8,7 @@ ifneq ($(wildcard .env),)
 endif
 
 SQLC_VERSION         := v1.31.1
-BUF_VERSION          := v1.50.0
+OASDIFF_VERSION      := v1.32.1
 MOCKGEN_VERSION      := v0.6.0
 GOLANGCI_VERSION     := v2.12.2
 GOVULNCHECK_VERSION  := v1.1.4
@@ -28,7 +28,7 @@ COVERAGE_DIR       := .coverage
 MODULE             := github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service
 
 SQLC               := $(TOOLS_DIR)/sqlc
-BUF                := $(TOOLS_DIR)/buf
+OASDIFF            := $(TOOLS_DIR)/oasdiff
 MOCKGEN            := $(TOOLS_DIR)/mockgen
 GOLANGCI           := $(TOOLS_DIR)/golangci-lint
 GOVULNCHECK        := $(TOOLS_DIR)/govulncheck
@@ -51,19 +51,15 @@ COVER_EXCLUDE_PKG  := /postgres/db$$\|/postgres$$\|/mocks$$\|/glue$$\|/inbound/h
 COVER_EXCLUDE_FILE := /postgres/db/\|/postgres/\|/mocks/\|/glue/\|/service/noop_logger.go\|/inbound/http/asyncapi.go\|/inbound/http/swagger
 COVER_THRESHOLD    := 95  # target 97%; postgres adapter, generated pkgs, and glue codec excluded
 # Per-package floors: packages not listed must meet COVER_THRESHOLD.
-# gRPC adapters are excluded because server-reflection and transport-level paths
-# require a live gRPC connection and are covered by integration tests instead.
 # internal/adapter/inbound/http: AsyncAPI renderer is 500 lines of HTML template
 # logic only exercisable via a live dev server; swagger handlers are trivially tested.
-COVER_PKG_FLOORS   := internal/adapter/inbound/grpc:75 \
-                      internal/adapter/inbound/http:3 \
-                      internal/adapter/outbound/grpc:90 \
+COVER_PKG_FLOORS   := internal/adapter/inbound/http:3 \
                       internal/adapter/outbound/http:85 \
                       internal/bpmn_compiler:90 \
                       internal/bpmn_compiler/element:75 \
                       internal/config:90
 
-.PHONY: all tools tools-integration generate generate-proto generate-sqlc mock \
+.PHONY: all tools tools-integration generate generate-sqlc mock contract-check contract-breaking \
         build migrate test test-integration test-ci merge-coverage \
         cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
@@ -81,7 +77,7 @@ all: generate build
 tools:
 	@mkdir -p $(TOOLS_DIR)
 	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
-	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION)
+	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/oasdiff/oasdiff@$(OASDIFF_VERSION)
 	GOBIN=$(PWD)/$(TOOLS_DIR) go install go.uber.org/mock/mockgen@$(MOCKGEN_VERSION)
 	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
 		| sh -s -- -b $(PWD)/$(TOOLS_DIR) $(GOLANGCI_VERSION)
@@ -117,13 +113,8 @@ tools-integration:
 	@echo "✓ Docker images ready for integration tests"
 
 
-## generate: Run buf (proto → gen/) and sqlc (queries → postgres/db/)
-generate: generate-proto generate-sqlc
-
-generate-proto:
-	@echo "→ buf generate"
-	$(BUF) generate
-	@echo "proto stubs written to gen/proto/{definition,execution}/v1/"
+## generate: Run sqlc (queries → postgres/db/)
+generate: generate-sqlc
 
 generate-sqlc:
 	@echo "→ sqlc generate"
@@ -294,6 +285,8 @@ check:
 	go vet ./cmd/... ./internal/...
 	@echo "==> arch-lint"
 	$(MAKE) arch-lint
+	@echo "==> contract-breaking"
+	$(MAKE) contract-breaking
 	@echo "==> test-ci (unit + integration, merged coverage gate)"
 	$(MAKE) cover-check
 	@echo "✓ all checks passed"
@@ -301,6 +294,14 @@ check:
 ## arch-lint: Enforce Clean Architecture import direction via go-arch-lint
 arch-lint:
 	$(GOARCHLINT) check --project-path .
+
+## contract-check: Fail if a copied contract in api/contracts differs from its source (CONTRACT_SRC_DIR=<checkout> reads it locally)
+contract-check:
+	@scripts/contract-check.sh
+
+## contract-breaking: Fail on a breaking change to api/internal-openapi.yaml against CONTRACT_BASE_REF (default origin/main)
+contract-breaking:
+	@OASDIFF=$(OASDIFF) scripts/contract-breaking.sh
 
 ## lint: Run golangci-lint (read-only; exits non-zero on violations)
 lint:
@@ -443,7 +444,6 @@ docker-down:
 clean:
 	rm -rf $(BIN_DIR)
 	rm -rf $(COVERAGE_DIR)
-	rm -rf gen/
 	rm -rf internal/adapter/outbound/postgres/db/
 	rm -rf internal/core/port/mocks/
 

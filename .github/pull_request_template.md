@@ -43,9 +43,10 @@ Thank you for your contribution! Please complete the checklist below before requ
 
 ### Code generation
 
-- [ ] No changes to proto, sqlc queries, or port interfaces  
+- [ ] No changes to the internal API spec, sqlc queries, or port interfaces  
 - OR:
-- [ ] `make generate` was re-run after changing `.proto` or `db/queries/*.sql`
+- [ ] `make generate` was re-run after changing `db/queries/*.sql`
+- [ ] `make contract-breaking` passes after changing `api/internal-openapi.yaml`, and the Execution Service's copy is refreshed
 - [ ] `make mock` was re-run after changing `internal/core/port/*.go` interfaces
 - [ ] Generated files are **not** committed (they are gitignored and regenerated in CI)
 

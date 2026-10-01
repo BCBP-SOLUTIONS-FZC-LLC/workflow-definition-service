@@ -1,6 +1,5 @@
 // Package observability centralizes this service's Prometheus metrics —
-// previously three separate promauto call sites in internal/core/service,
-// internal/adapter/inbound/grpc, and internal/adapter/inbound/http/handler —
+// recorded from internal/core/service and internal/adapter/inbound/http/handler —
 // plus the platform-pgcommon pool-stats wiring that used to live directly in
 // cmd/server/wire.go. See .claude/operations.md § Prometheus Metrics for the
 // full metric table.
@@ -109,12 +108,12 @@ func register(serviceName, buildVersion string, pool pgmetrics.PoolStatProvider)
 
 	WFCacheHitsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "wf_cache_hits_total",
-		Help: "Total compiled-plan cache hits on GetCompiledWorkflow.",
+		Help: "Total compiled-plan cache hits on the internal compiled-plan read.",
 	})
 
 	WFCacheMissesTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "wf_cache_misses_total",
-		Help: "Total compiled-plan cache misses on GetCompiledWorkflow.",
+		Help: "Total compiled-plan cache misses on the internal compiled-plan read.",
 	})
 
 	InternalEventsIngestTotal = prometheus.NewCounterVec(prometheus.CounterOpts{

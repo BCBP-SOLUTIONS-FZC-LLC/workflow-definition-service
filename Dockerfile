@@ -53,7 +53,7 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e30dbadd3efe1310db0
 
 COPY --from=builder /build/bin/server /server
 
-EXPOSE 8080 9090
+EXPOSE 8080
 
 # Requires the binary to be running; adjust interval to match Kubernetes probe config.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs sqlc/mockgen (if not already present, e.g. via a warm .tools cache)
-# and regenerates protobuf, sqlc, and mockgen output. Run after buf-setup-action.
+# and regenerates sqlc and mockgen output.
 set -euo pipefail
 
 SQLC_VERSION="v1.31.1"
@@ -12,7 +12,6 @@ if [ ! -x .tools/sqlc ] || [ ! -x .tools/mockgen ]; then
   GOBIN="$PWD/.tools" go install "go.uber.org/mock/mockgen@${MOCKGEN_VERSION}"
 fi
 
-buf generate
 .tools/sqlc generate
 
 mkdir -p internal/core/port/mocks

@@ -22,7 +22,7 @@ Describe the API change, new behaviour, or new event type you'd like.
 
 - Does this require a database migration?
 - Does this introduce a new outbound event type (add to `wf.template.*` namespace)?
-- Does this affect the gRPC `GetCompiledWorkflow` contract used by the Execution Service?
+- Does this affect the internal compiled-plan endpoint the Execution Service reads (`api/internal-openapi.yaml`)?
 - Does this change BPMN validation rules (affects existing published templates)?
 
 ## Alternatives considered

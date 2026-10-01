@@ -3,7 +3,7 @@ name: Validate Test
 # Reusable workflow — called by ci.yml and release.yml. Unit + integration
 # tests (race + coverage, merged into one profile), arch-lint. Requires a
 # sibling `generate` job to run first in the caller workflow and upload a
-# `generated` artifact (proto/sqlc/mocks), which this workflow downloads
+# `generated` artifact (sqlc/mocks), which this workflow downloads
 # rather than regenerating. See validate-quality.yml for the static-check
 # counterpart (fmt/tidy/vet/lint/vuln/Dockerfile pin).
 

@@ -187,7 +187,7 @@ func TestHandleDepartmentMembershipRevoked_DraftVersion(t *testing.T) {
 }
 
 // Published versions are invalidated directly (SetInvalid) and Execution is
-// notified via gRPC PauseUserTasks — no outbox event is emitted.
+// asked to pause the user's tasks — no outbox event is emitted.
 func TestHandleDepartmentMembershipRevoked_PublishedVersion(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)

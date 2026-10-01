@@ -1,7 +1,6 @@
 platform-libs/
 .design/
 
-/gen/
 /internal/adapter/outbound/postgres/db/
 /internal/core/port/mocks/
 vendor/

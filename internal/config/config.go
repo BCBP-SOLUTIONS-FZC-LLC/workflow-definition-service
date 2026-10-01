@@ -18,7 +18,6 @@ type Config struct {
 	BuildVersion string
 
 	HTTPPort    int
-	GRPCPort    int
 	MetricsPort int
 
 	OTELServiceName        string
@@ -85,7 +84,6 @@ func Load() (*Config, error) {
 		BuildVersion: getEnvOrDefault("BUILD_VERSION", "dev"),
 
 		HTTPPort:    getEnvIntOrDefault("HTTP_PORT", 8080),
-		GRPCPort:    getEnvIntOrDefault("GRPC_PORT", 9090),
 		MetricsPort: getEnvIntOrDefault("METRICS_PORT", 9091),
 
 		OTELServiceName:        getEnvOrDefault("OTEL_SERVICE_NAME", "workflow-definition-svc"),
@@ -149,9 +147,6 @@ func (c *Config) validate() error {
 	}
 	if c.HTTPPort < 1 || c.HTTPPort > 65535 {
 		return fmt.Errorf("HTTP_PORT must be in [1, 65535]")
-	}
-	if c.GRPCPort < 1 || c.GRPCPort > 65535 {
-		return fmt.Errorf("GRPC_PORT must be in [1, 65535]")
 	}
 	if c.MetricsPort < 1 || c.MetricsPort > 65535 {
 		return fmt.Errorf("METRICS_PORT must be in [1, 65535]")

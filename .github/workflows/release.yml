@@ -41,10 +41,6 @@ jobs:
           GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
         run: .github/scripts/configure-private-module-access.sh
 
-      - uses: bufbuild/buf-setup-action@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Cache Go tools
         uses: actions/cache@v4
         id: cache-tools
@@ -52,14 +48,13 @@ jobs:
           path: .tools
           key: ${{ runner.os }}-go-tools-sqlc-v1.31.1-mockgen-v0.6.0
 
-      - name: Generate proto, sqlc, and mocks
+      - name: Generate sqlc and mocks
         run: .github/scripts/generate-code.sh
 
       - uses: actions/upload-artifact@v4
         with:
           name: generated
           path: |
-            gen/
             internal/adapter/outbound/postgres/db/
             internal/core/port/mocks/
 

@@ -3,7 +3,7 @@ name: Validate Quality
 # Reusable workflow — called by ci.yml and release.yml. Static/quality checks
 # only (fmt, tidy, vet, lint, vuln, Dockerfile pin). Requires a sibling
 # `generate` job to run first in the caller workflow and upload a `generated`
-# artifact (proto/sqlc/mocks), which this workflow downloads rather than
+# artifact (sqlc/mocks), which this workflow downloads rather than
 # regenerating. See validate-test.yml for the test/coverage/arch-lint
 # counterpart.
 
@@ -25,6 +25,37 @@ env:
   GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
 
 jobs:
+  contracts:
+    name: contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+          fetch-depth: 0
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # The internal spec must not break its callers (definition LLD §3.4).
+      - name: Breaking-change gate
+        env:
+          CONTRACT_BASE_REF: origin/main
+        run: |
+          GOBIN="$PWD/.tools" go install github.com/oasdiff/oasdiff@v1.32.1
+          scripts/contract-breaking.sh
+
+      # The copy of the Execution Service's spec must match its source.
+      - name: Contract copy check
+        env:
+          GH_TOKEN: ${{ secrets.CI_REPO_READ_TOKEN }}
+        run: scripts/contract-check.sh
+
   quality:
     name: quality
     runs-on: ubuntu-latest

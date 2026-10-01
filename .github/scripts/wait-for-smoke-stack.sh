@@ -22,7 +22,7 @@ wait_until() {
 wait_until "membership stub" curl -sf -X POST http://localhost:8081/control \
   -H 'Content-Type: application/json' -d '{"eligible":true}'
 
-wait_until "execution stub" curl -sf -X POST http://localhost:9092/control \
+wait_until "execution stub" curl -sf -X POST http://localhost:8083/control \
   -H 'Content-Type: application/json' -d '{"has_active":false}'
 
 wait_until "server" curl -sf http://localhost:8080/healthz

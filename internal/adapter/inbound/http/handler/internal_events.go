@@ -91,7 +91,7 @@ func (h *Handler) parseRevocation(c *gin.Context, env events.Envelope[json.RawMe
 	return revocationIdentity{
 		eventID: eventID, tenantID: tenantID, userID: userID, departmentID: p.DepartmentID,
 		// Service-to-service call: no gateway identity headers, so inject the RLS GUC
-		// from the envelope tenant_id directly (mirrors the gRPC path, §14).
+		// from the envelope tenant_id directly, as every internal route does (§3.4).
 		ctx: pgcommon.WithGUCSet(c.Request.Context(), pgdomain.GUCSet{TenantID: env.TenantID}),
 	}, true
 }

@@ -16,7 +16,7 @@ import (
 // TestE2E_Valkey_CacheIntegration verifies that WorkflowService.Archive()
 // invalidates the compiled-plan cache entry for the active version.
 //
-// The cache is written lazily (on first GetCompiledWorkflow gRPC call), so
+// The cache is written lazily (on the first internal compiled-plan read), so
 // this test seeds the cache manually before archiving and asserts it is gone.
 //
 //  1. Publish + promote a version with a real Valkey-backed CacheStore
@@ -53,7 +53,7 @@ func TestE2E_Valkey_CacheIntegration(t *testing.T) {
 		t.Fatalf("Promote: %v", err)
 	}
 
-	// 2. Seed the cache manually (simulates the gRPC GetCompiledWorkflow lazy-load path)
+	// 2. Seed the cache manually (simulates the compiled-plan read's lazy-load path)
 	cacheKey := domain.CompiledPlanCacheKey(tenantID, published.ID)
 	if err := cache.Set(ctx, cacheKey, `{"steps":[]}`, time.Minute); err != nil {
 		t.Fatalf("cache.Set: %v", err)

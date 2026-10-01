@@ -14,7 +14,7 @@ import (
 )
 
 // workflowQuotaLimit hardcodes plan-tier quotas pending a billing-service
-// integration; replace this switch with a gRPC/HTTP call once that lands.
+// integration; replace this switch with a call to it once that lands.
 func workflowQuotaLimit(planTier string) int64 {
 	switch strings.ToLower(planTier) {
 	case "starter":
