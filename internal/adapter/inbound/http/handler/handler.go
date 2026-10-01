@@ -69,6 +69,10 @@ type starterSvc interface {
 	Delete(ctx context.Context, callerTenantID, id uuid.UUID) error
 }
 
+type compiledPlanSvc interface {
+	Get(ctx context.Context, tenantID, versionID uuid.UUID) (*service.CompiledPlan, error)
+}
+
 type Handler struct {
 	workflows      workflowSvc
 	drafts         draftSvc
@@ -78,6 +82,7 @@ type Handler struct {
 	starters       starterSvc
 	membership     membershipRevoker
 	connectors     connectorSvc
+	compiledPlans  compiledPlanSvc
 	cache          port.CacheStore
 	idempotencyTTL time.Duration
 	log            port.Logger
@@ -92,6 +97,7 @@ type Services struct {
 	Starters       starterSvc
 	Membership     membershipRevoker
 	Connectors     connectorSvc
+	CompiledPlans  compiledPlanSvc
 	Cache          port.CacheStore
 	IdempotencyTTL time.Duration
 	Log            port.Logger
@@ -107,6 +113,7 @@ func New(s Services) *Handler {
 		starters:       s.Starters,
 		membership:     s.Membership,
 		connectors:     s.Connectors,
+		compiledPlans:  s.CompiledPlans,
 		cache:          s.Cache,
 		idempotencyTTL: s.IdempotencyTTL,
 		log:            s.Log,

@@ -43,6 +43,9 @@ func TestSwaggerInitializerHandler(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "/api/openapi.yaml") {
 		t.Error("swagger initializer must reference /api/openapi.yaml, not doc.json")
 	}
+	if !strings.Contains(w.Body.String(), "/api/internal-openapi.yaml") {
+		t.Error("swagger initializer must offer the internal spec beside the public one")
+	}
 }
 
 // TestAsyncAPIHandler_FileNotFound exercises the error path: when the spec file

@@ -87,6 +87,7 @@ func NewRouter(cfg RouterConfig) *Router {
 
 	if cfg.AppEnv == "dev" {
 		r.StaticFile("/api/openapi.yaml", "docs/swagger/openapi.yaml")
+		r.StaticFile("/api/internal-openapi.yaml", "api/internal-openapi.yaml")
 		stdSwagger := ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.URL("/api/openapi.yaml"))
 		r.GET("/swagger/*any", func(c *gin.Context) {
 			switch {
@@ -101,15 +102,16 @@ func NewRouter(cfg RouterConfig) *Router {
 		r.GET("/asyncapi", AsyncAPIHandler)
 	}
 
-	// Internal service-to-service routes, not exposed on the public gateway.
-	// handler injects the RLS GUC from the request envelope's tenant_id.
+	// Internal service-to-service routes, not exposed on the public gateway
+	// (api/internal-openapi.yaml). Each handler sets the RLS GUC from the
+	// tenant its request carries.
 	// Versioned under /api/v1/internal to match execution_service's own
 	// convention — event_consumer's forwarder targets one shared path shape
 	// across every service it forwards to.
 	internal := r.Group("/api/v1/internal")
 	internal.Use(httpmiddleware.RequireInternalToken(cfg.InternalAPIToken))
-	internal.Use(httpmiddleware.InjectGUCSet(cfg.Log))
 	internal.POST("/events", h.HandleInternalEvent)
+	internal.GET("/workflow-versions/:version_id/compiled-plan", h.GetCompiledPlan)
 	internal.GET("/connector-aliases", h.ListConnectorAliases)
 	internal.POST("/connector-aliases/rest", h.WriteConnectorRestAlias)
 	internal.DELETE("/connector-aliases/rest/:alias", h.DeleteConnectorRestAlias)

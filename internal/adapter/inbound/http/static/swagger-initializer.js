@@ -18,7 +18,11 @@ window.onload = function() {
   };
 
   const ui = SwaggerUIBundle({
-    url: "/api/openapi.yaml",
+    urls: [
+      { url: "/api/openapi.yaml", name: "Public API" },
+      { url: "/api/internal-openapi.yaml", name: "Internal API (service-to-service)" }
+    ],
+    "urls.primaryName": "Public API",
     dom_id: '#swagger-ui',
     validatorUrl: null,
     oauth2RedirectUrl: `${window.location.protocol}//${window.location.host}${window.location.pathname.split('/').slice(0, window.location.pathname.split('/').length - 1).join('/')}/oauth2-redirect.html`,

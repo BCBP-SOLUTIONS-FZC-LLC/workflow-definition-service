@@ -2280,86 +2280,55 @@ Starters are complete, ready-to-use BPMN diagrams a tenant can start authoring f
 
 ---
 
-### 3.4 gRPC Internal API
+### 3.4 Internal HTTP API
 
-All pod-to-pod communication within the service mesh uses mTLS gRPC, enforced by Envoy. This section documents both the inbound RPC this service exposes and the single outbound RPC it calls on the Execution Service.
+The Definition Service and the Execution Service call each other over HTTP, on each service's internal route group, `/api/v1/internal`. The public gateway does not route that group, and requests on it carry no gateway identity headers.
 
-**Shared transport rules** (apply to both directions):
+**Contracts.** Each service owns an OpenAPI document for the internal endpoints it serves, `api/internal-openapi.yaml`, with a design-repo copy (`definition_internal_openapi.yaml`, `execution_internal_openapi.yaml`). A service that calls another keeps a byte-identical copy of the callee's document in `api/contracts/`. `api/contracts/SOURCES` names the commit it was taken from, and `make contract-check` fails when the copy differs from the callee's file at that commit. Each side tests against the document:
 
-- mTLS enforced via the Envoy sidecar; plain-text connections are rejected.
-- `tenant_id` is carried in the gRPC request payload (not metadata) and is used to set the `app.tenant_id` GUC for RLS before any DB access.
-- Standard gRPC status codes apply: `OK` (0), `INVALID_ARGUMENT` (3), `NOT_FOUND` (5), `PERMISSION_DENIED` (7), `INTERNAL` (13).
+- the server sends requests through its real router and validates each response against its own document;
+- the client validates each request it sends, and parses the document's response examples, against its copy.
 
----
+Swagger UI (`/swagger/`, dev only) offers the internal document beside the public one.
 
-#### 3.4.1 Inbound — `GetCompiledWorkflow`
+**Authentication.** A caller sends the callee's token in `x-internal-token`. The callee compares it with its own `INTERNAL_API_TOKEN` in constant time and answers a missing or wrong token with `401` and a ProblemDetails body. Each caller holds the token under the callee's name:
 
-Provides high-throughput, synchronous access to the compiled workflow plan/DSL for the Execution Service and Temporal Workers during runtime instantiation and task processing. Bypasses the Envoy REST gateway to eliminate serialization overhead.
+| Caller | Variable |
+|---|---|
+| this service, calling the Execution Service | `EXECUTION_SERVICE_TOKEN` |
+| the Execution Service and `event_consumer`, calling this service | `DEFINITION_SERVICE_TOKEN` |
 
-**Service Definition** (`workflow/definition/v1/definition_service.proto`):
+Kubernetes NetworkPolicy admits only those callers. With no token configured (local dev) the check is off.
 
-```protobuf
-syntax = "proto3";
-
-package workflow.definition.v1;
-
-option go_package = "github.com/bcbpsolutions/workflow-definition-svc/gen/proto/v1;definitionv1";
-
-service DefinitionService {
-  // Called by Execution Service / Temporal Workers to fetch the compiled DSL.
-  rpc GetCompiledWorkflow(GetCompiledWorkflowRequest) returns (GetCompiledWorkflowResponse);
-}
-
-message GetCompiledWorkflowRequest {
-  string tenant_id = 1;             // Mandated for RLS isolation
-  string workflow_version_id = 2;   // UUID of the requested version
-}
-
-message GetCompiledWorkflowResponse {
-  string workflow_id = 1;
-  string version_id = 2;
-  int32 version_number = 3;
-  string status = 4;                // DRAFT, PUBLISHED, ARCHIVED
-  bool is_valid = 5;
-  string compiled_plan_json = 6;    // Pre-compiled JSON string containing the ExecutionPlan DSL
-}
-```
+**Tenant scope.** The tenant travels in the request, as a `tenant_id` query parameter or body field, or in the event envelope. The handler sets the `app.tenant_id` GUC from it before any database access.
 
 ---
 
-#### 3.4.2 Outbound — `CheckActiveInstances`
+#### 3.4.1 Served — compiled plan
 
-Called by the Definition Service on the Execution Service as a precondition guard during the archive flow (§3.3.8). The full service definition lives in the Execution Service LLD; the message contract consumed by this service is reproduced below for reference.
+- **GET** `/api/v1/internal/workflow-versions/{version_id}/compiled-plan?tenant_id={uuid}`
+- **Callers**: the Execution Service, at instance start, from its compiled-plan cache, and from the Temporal `GetCompiledPlan` activity in `cmd/worker`.
+- **Response (`200 OK`)**: `{workflow_id, version_id, version_number, status, is_valid, compiled_plan}`.
+  - `compiled_plan` is the stored `dsl.CompiledCollaboration` as a JSON object, its calls not expanded, or `null` for a version with none. Its own `schema_version` is the DSL schema major version.
+  - `version_number` is `null` for a `DRAFT`.
+  - Every status is returned; the caller refuses a version that is not `PUBLISHED` or not valid.
+- **Errors**: `400` for a malformed `version_id` or `tenant_id`; `401`; `404` when the tenant has no such version; `500`.
+- **Cache**: a fail-open Valkey entry under `wf:plan:<tenant_id>:<version_id>` (TTL `CACHE_COMPILED_PLAN_TTL`), written on a miss. A cache error falls through to Postgres.
 
-**Client stub** (`workflow/execution/v1/execution_service.proto`, consumed read-only):
+The other served endpoints, `POST /events` (§7.4) and the connector-alias registry (§10.15), are in the same document.
 
-```protobuf
-syntax = "proto3";
+#### 3.4.2 Called — the Execution Service
 
-package workflow.execution.v1;
+From the Execution Service's internal document (`execution_service.md` §5.3):
 
-// Client-side view only — canonical definition owned by the Execution Service.
-service ExecutionService {
-  // Returns the count of workflow instances currently in RUNNING or PAUSED state.
-  // Definition Service calls this before archiving a workflow to enforce the
-  // ACTIVE_INSTANCES_EXIST (409) guard.
-  rpc CheckActiveInstances(CheckActiveInstancesRequest) returns (CheckActiveInstancesResponse);
-}
+| Endpoint | Called from | Result |
+|---|---|---|
+| `GET /api/v1/internal/workflows/{workflow_id}/active-instances?tenant_id=` | the archive guard (§3.3.8) | `{has_active, count}`; `has_active` refuses the archive with `409 ACTIVE_INSTANCES_EXIST` |
+| `POST /api/v1/internal/users/{user_id}/pause-tasks`, body `{tenant_id}` | membership-revoked events (§7.4.2, §7.4.5) | `204` |
 
-message CheckActiveInstancesRequest {
-  string tenant_id = 1;    // Tenant scope for the query
-  string workflow_id = 2;  // Root workflow UUID (not version-specific)
-}
-
-message CheckActiveInstancesResponse {
-  bool   has_active = 1;   // true if any instance is RUNNING or PAUSED
-  int32  count     = 2;    // Total number of active instances found
-}
-```
-
-**Error handling**: If the Execution Service is unreachable or returns a non-OK gRPC status, the archive request fails with `503 Service Unavailable` (`UPSTREAM_UNAVAILABLE`). The archive is never committed while the guard call is unresolvable.
-
----
+- **Retries**: the client (`internal/adapter/outbound/http/execution_client.go`) makes 3 attempts, each bounded by `EXECUTION_CLIENT_TIMEOUT`. It retries a transport error or a `5xx` after 50ms, then 100ms, capped at 500ms.
+- **Errors**: any failure is `UPSTREAM_UNAVAILABLE` (`503`), and the archive is never committed while the guard is unresolved.
+- **Address**: `EXECUTION_SERVICE_URL`. With it empty (local dev only) no client is built: the archive guard is skipped and no tasks are paused.
 
 ## 4. Core Modules: Parser, Compiler & Validation
 

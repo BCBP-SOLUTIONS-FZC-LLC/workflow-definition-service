@@ -38,17 +38,6 @@ components:
         Accepted values for mutation: tenant_admin, tenant_owner.
         Read-only endpoints (GET) do not require this header.
 
-    InternalServiceAuth:
-      type: apiKey
-      in: header
-      name: x-internal-token
-      description: >
-        Service-to-service credential for the internal route group (e.g. POST /internal/events).
-        These routes are NOT exposed through the Envoy public gateway and do NOT carry gateway
-        identity headers; they are restricted to in-mesh callers by Kubernetes NetworkPolicy and
-        authenticated by this shared secret (or mTLS, depending on deployment). The tenant context
-        for these routes is taken from the request payload, not from x-tenant-id.
-
   parameters:
     TenantId:
       name: x-tenant-id
@@ -126,21 +115,6 @@ components:
       description: Optional unique client-generated request key to prevent duplicate operations on network retries.
 
   schemas:
-
-    ConnectorRestAlias:
-      type: object
-      required: [alias, method, baseURL, pathTemplate, timeout]
-      properties:
-        alias:        { type: string }
-        method:       { type: string }
-        baseURL:      { type: string }
-        pathTemplate: { type: string }
-        timeout:
-          type: integer
-          format: int64
-          description: >
-            Nanoseconds — a raw Go time.Duration, not a formatted string and not
-            the milliseconds the write request takes as timeoutMs.
 
     VersionStatus:
       type: string
@@ -597,7 +571,7 @@ components:
                   BPMN element name of the revert target. Present when revert_to_stage
                   is "sub_workflow" or empty, same rules as target_name.
         sub_workflow:
-          $ref: '#/components/schemas/SubWorkflowStep'
+          allOf: [{ $ref: '#/components/schemas/SubWorkflowStep' }]
           nullable: true
         call_pool:
           type: object
@@ -607,7 +581,7 @@ components:
           properties:
             pool: { type: string, description: "Name of the target CompiledPlan." }
         call_plan:
-          $ref: '#/components/schemas/CallPlanStep'
+          allOf: [{ $ref: '#/components/schemas/CallPlanStep' }]
           nullable: true
         io_mapping:
           type: object
@@ -974,27 +948,6 @@ components:
         code: STRUCTURAL_DIVERGENCE
         message: "Topological elements have diverged. Publishing may break active instances."
         suggested_action: CREATE_NEW_WORKFLOW
-
-    EventEnvelope:
-      type: object
-      description: >
-        A domain-event envelope forwarded by the shared workflow-events consumer to the internal
-        ingest endpoint. Mirrors the platform-events envelope. The tenant context is carried in
-        tenant_id (the RLS GUC is set from this field), and id is the idempotency anchor.
-      required: [id, type, tenant_id, data]
-      properties:
-        id:        { type: string, format: uuid, description: "Unique event id; logged for correlation. Redelivery is absorbed by handler idempotency, not by a dedup registry." }
-        type:      { type: string, example: DepartmentMembershipRevoked, description: "Event type used for dispatch. Unknown types are accepted and ignored." }
-        tenant_id: { type: string, format: uuid, description: "Tenant the event applies to; used to set the RLS GUC." }
-        data:      { type: object, additionalProperties: true, description: "Type-specific payload (e.g. user_id, department_id, role). CloudEvents data field." }
-      example:
-        id: "f0a11222-3844-42bc-938b-665cd42c9999"
-        type: "DepartmentMembershipRevoked"
-        tenant_id: "7ca648b2-b432-4744-884c-35fd556a310c"
-        data:
-          user_id: "3fa18cde-7244-47ac-986c-665cd42caaaa"
-          department_id: "engineering"
-          role: "reviewer"
 
   responses:
     Unauthorized:
@@ -1524,10 +1477,11 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example:
-                type: https://api.internal/definition/v1/errors/not-found
+                type: https://api.workflow.platform/errors/not-found
                 title: Not Found
                 status: 404
                 detail: "no draft found for this workflow"
+                instance: /api/v1/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/draft
                 code: DRAFT_NOT_FOUND
         "409":
           description: Optimistic concurrency conflict or idempotency key reused with a different payload.
@@ -1573,10 +1527,11 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example:
-                type: https://api.internal/definition/v1/errors/not-found
+                type: https://api.workflow.platform/errors/not-found
                 title: Not Found
                 status: 404
                 detail: "no draft found for this workflow"
+                instance: /api/v1/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/draft
                 code: DRAFT_NOT_FOUND
         "409":
           description: Idempotency key reused with a different payload.
@@ -2077,152 +2032,6 @@ paths:
                 instance: "/readyz"
                 code: "DATABASE_DISCONNECTED"
 
-  /api/v1/internal/events:
-    post:
-      operationId: ingestInternalEvent
-      summary: Ingest a forwarded domain-event envelope
-      description: >
-        Service-to-service ingest endpoint called by the shared workflow-events consumer (which
-        consumes the SQS queues, e.g. membership-workflow-q). Accepts a single event envelope, sets the
-        RLS GUC from the envelope tenant_id, and dispatches by type — currently
-        DepartmentMembershipRevoked → template invalidation (see LLD §7.4). Idempotent: a repeated
-        envelope id returns 2xx with no side effects. This route is internal-only — it is not
-        exposed on the public Envoy gateway and carries no gateway identity headers.
-      tags: [Internal]
-      security:
-        - InternalServiceAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/EventEnvelope' }
-      responses:
-        "200":
-          description: Event processed. A redelivered envelope id is reprocessed and converges on the same state.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status: { type: string, example: "processed", enum: [processed, ignored] }
-        "204":
-          description: Event accepted with no response body (alternative to 200).
-        "400":
-          description: Malformed envelope or payload (non-retryable — the consumer routes to its DLQ).
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "401":
-          description: Missing or invalid internal service credential.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "500":
-          description: Transient processing failure (DB/transaction). The consumer retries and eventually DLQs.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-
-  /api/v1/internal/connector-aliases:
-    get:
-      operationId: listConnectorAliases
-      summary: List every connector alias
-      description: >
-        The connector worker calls this at start-up and on each refresh tick to
-        build its alias registry. An alias added or edited after a worker
-        starts becomes visible on that worker's next refresh.
-      tags: [Internal]
-      security:
-        - InternalServiceAuth: []
-      responses:
-        "200":
-          description: The full alias registry.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  version: { type: integer, example: 1 }
-                  restCall:
-                    type: array
-                    items: { $ref: '#/components/schemas/ConnectorRestAlias' }
-        "401":
-          description: Missing or invalid internal service credential.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "500": { $ref: '#/components/responses/InternalError' }
-
-  /api/v1/internal/connector-aliases/rest:
-    post:
-      operationId: writeConnectorRestAlias
-      summary: Create or update a REST-call connector alias
-      tags: [Internal]
-      security:
-        - InternalServiceAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [alias, method, baseURL, pathTemplate]
-              properties:
-                alias:        { type: string }
-                method:       { type: string, description: HTTP method. }
-                baseURL:
-                  type: string
-                  description: >
-                    Must be http(s) and its host must appear in the configured
-                    internal-host allowlist. Dispatch sends the caller's real
-                    internal service token and department headers to this host,
-                    so an unlisted one is rejected rather than trusted. The
-                    check is fail-closed: with no allowlist configured, every
-                    baseURL is rejected. Credentials embedded in the URL
-                    (user:password@) are rejected outright.
-                pathTemplate: { type: string }
-                timeoutMs:
-                  type: integer
-                  format: int64
-                  description: Request timeout in milliseconds. Non-positive or omitted defaults to 5000ms.
-      responses:
-        "204": { description: Alias written. No response body. }
-        "400":
-          description: >
-            Missing required field, or a domain validation failure — an invalid
-            method, or a baseURL whose scheme, credentials, or host the
-            allowlist rejects.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "401":
-          description: Missing or invalid internal service credential.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "500": { $ref: '#/components/responses/InternalError' }
-
-  /api/v1/internal/connector-aliases/rest/{alias}:
-    delete:
-      operationId: deleteConnectorRestAlias
-      summary: Delete a REST-call connector alias
-      tags: [Internal]
-      security:
-        - InternalServiceAuth: []
-      parameters:
-        - in: path
-          name: alias
-          required: true
-          schema: { type: string }
-      responses:
-        "204": { description: Alias deleted, or no alias by that name existed. No response body. }
-        "401":
-          description: Missing or invalid internal service credential.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "500": { $ref: '#/components/responses/InternalError' }
-
   /api/v1/bpmn/allowed-elements:
     get:
       operationId: getAllowedBpmnElements
@@ -2495,7 +2304,7 @@ paths:
         "409":
           description: MODULE_PROCESS_ID_CONFLICT — the process id is used by a module the caller can call, or a new version's process id differs from its module's.
           content:
-            application/problem+json:
+            application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "500": { $ref: '#/components/responses/InternalError' }
@@ -2663,14 +2472,12 @@ paths:
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
         "409":
-          description: A DRAFT version already exists for this module.
+          description: >-
+            A DRAFT version already exists for this module (DRAFT_ALREADY_EXISTS),
+            or MODULE_PROCESS_ID_CONFLICT: the process id is used by a module the
+            caller can call, or a new version's process id differs from its module's.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "409":
-          description: MODULE_PROCESS_ID_CONFLICT — the process id is used by a module the caller can call, or a new version's process id differs from its module's.
-          content:
-            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
 
@@ -2970,8 +2777,6 @@ tags:
     description: Stateless BPMN validation.
   - name: Health
     description: Health and readiness checks.
-  - name: Internal
-    description: Internal service-to-service endpoints (not exposed on the public gateway).
   - name: Modules
     description: Reusable BPMN module library (tenant + platform-authored global catalog).
   - name: Starters

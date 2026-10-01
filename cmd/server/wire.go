@@ -212,8 +212,11 @@ func newApp(cfg *config.Config) (*app, error) {
 		Modules:    moduleSvc,
 		Starters:   starterSvc,
 		// Inbound events arrive over HTTP via POST /internal/events
-		Membership:     versionSvc,
-		Connectors:     connectorSvc,
+		Membership: versionSvc,
+		Connectors: connectorSvc,
+		CompiledPlans: service.NewCompiledPlanService(service.CompiledPlanDeps{
+			Versions: versionRepo, Cache: cache, CacheTTL: cfg.CacheCompiledPlanTTL, Log: log,
+		}),
 		Cache:          cache,
 		IdempotencyTTL: cfg.IdempotencyTTL,
 		Log:            log,
