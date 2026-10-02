@@ -29,7 +29,7 @@ func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string,
 
 	laneLabels := BuildLaneLabels(proc)
 	condExprs := BuildCondExprs(proc)
-	backEdges := ClassifyBackEdges(g, startID)
+	backEdges := ProcessBackEdges(proc, g, startID)
 
 	state := NewCompileState(proc, g, laneLabels, condExprs, backEdges, stageTypes, elements, defs)
 	if len(externalNodes) > 0 {
@@ -54,6 +54,7 @@ func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string,
 	if err := state.CompileBoundaryPaths(); err != nil {
 		return nil, nil, fmt.Errorf("compile: %w", err)
 	}
+	state.ResolveTargets()
 
 	var visualElems []dsl.VisualElementDef
 	for _, ds := range proc.DataStoreRefs {

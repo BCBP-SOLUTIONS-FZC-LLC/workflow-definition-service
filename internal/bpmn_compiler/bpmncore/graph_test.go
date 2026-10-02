@@ -286,53 +286,49 @@ func TestTraverseNode_ExternalParticipant_NoMapping(t *testing.T) {
 	}
 }
 
-func TestFindJoin_ReturnsOkFalseForMissingJoin(t *testing.T) {
-	// A linear graph: gw → t1 → end — no reconverging join node, so FindJoin returns false.
-	g := &Graph{
-		NodeType: map[string]FlowNodeType{
-			"gw":  NodeTypeExclusiveGateway,
-			"t1":  NodeTypeUserTask,
-			"end": NodeTypeEndEvent,
-		},
-		Outgoing: map[string][]string{
-			"gw": {"t1"},
-			"t1": {"end"},
-		},
-		Incoming: map[string][]string{
-			"t1":  {"gw"},
-			"end": {"t1"},
-		},
-	}
-	_, ok := FindJoin("gw", g, nil)
-	if ok {
-		t.Error("expected ok=false when no exclusive-gateway join node exists")
+func TestFindJoin_BranchesEndingApartHaveNoJoin(t *testing.T) {
+	g := &Graph{Outgoing: map[string][]string{
+		"gw": {"t1", "t2"},
+		"t1": {"end1"},
+		"t2": {"end2"},
+	}}
+	if join, ok := FindJoin("gw", g, nil); ok {
+		t.Errorf("FindJoin = %q, want no join: each branch ends at its own end event", join)
 	}
 }
 
-func TestReachesEndEvent_ReturnsFalse(t *testing.T) {
-	// A graph with no end event reachable from "start" — reachesEndEvent must return false.
-	g := &Graph{
-		NodeType: map[string]FlowNodeType{
-			"start": NodeTypeUserTask,
-			"loop":  NodeTypeUserTask,
-		},
-		Outgoing: map[string][]string{
-			"start": {"loop"},
-			"loop":  {},
-		},
-	}
-	got := reachesEndEvent(g, nil, "start", "")
-	if got {
-		t.Error("expected false when no end event is reachable")
+// TestFindJoin_NestedForkJoinsAtTheOuterJoin pins that the outer split's join
+// is the node every path passes, whichever flow is listed first, never the
+// inner fork's join or a merge inside one branch.
+func TestFindJoin_NestedForkJoinsAtTheOuterJoin(t *testing.T) {
+	for _, outer := range [][]string{{"x1", "p2"}, {"p2", "x1"}} {
+		g := &Graph{Outgoing: map[string][]string{
+			"p1": outer,
+			"p2": {"x2", "b"},
+			"x2": {"j2"},
+			"b":  {"j2"},
+			"j2": {"j1"},
+			"x1": {"j1"},
+			"j1": {"c"},
+		}}
+		if join, ok := FindJoin("p1", g, nil); !ok || join != "j1" {
+			t.Errorf("flows %v: FindJoin = %q, %v; want j1", outer, join, ok)
+		}
+		if join, ok := FindJoin("p2", g, nil); !ok || join != "j2" {
+			t.Errorf("flows %v: FindJoin(p2) = %q, %v; want j2", outer, join, ok)
+		}
 	}
 }
 
-func TestResolveUserTaskDept_NilTask(t *testing.T) {
-	s := newMinimalState()
-	// Call with a node ID that does not exist in the (empty) process.
-	dept, stageType := s.resolveUserTaskDept("nonexistent")
-	if dept != "" || stageType != "" {
-		t.Errorf("expected (\"\", \"\"); got (%q, %q)", dept, stageType)
+func TestFindJoin_IgnoresALoopHeadReachedByABackEdge(t *testing.T) {
+	g := &Graph{Outgoing: map[string][]string{
+		"a":  {"gw"},
+		"gw": {"a", "ca"},
+		"ca": {"end"},
+	}}
+	back := map[[2]string]bool{{"gw", "a"}: true}
+	if join, ok := FindJoin("gw", g, back); ok && join == "a" {
+		t.Errorf("FindJoin = %q: a loop head reached by a back-edge is not a join", join)
 	}
 }
 
@@ -496,24 +492,6 @@ func TestBuildCondExprs(t *testing.T) {
 	}
 }
 
-func TestForwardReaches(t *testing.T) {
-	g := &Graph{Outgoing: map[string][]string{"a": {"b"}, "b": {"c"}}}
-	if !ForwardReaches("a", "c", g, nil) {
-		t.Error("expected c to be reachable from a")
-	}
-	if ForwardReaches("a", "z", g, nil) {
-		t.Error("expected z to be unreachable")
-	}
-}
-
-func TestForwardReaches_BackEdgeExcluded(t *testing.T) {
-	g := &Graph{Outgoing: map[string][]string{"a": {"b"}}}
-	backEdges := map[[2]string]bool{{"a", "b"}: true}
-	if ForwardReaches("a", "b", g, backEdges) {
-		t.Error("expected back edge to be excluded from reachability")
-	}
-}
-
 func TestBuildLaneRefSet(t *testing.T) {
 	proc := &BPMNProcess{LaneSet: BPMNLaneSet{Lanes: []BPMNLane{
 		{Name: "Ops", FlowNodeRefs: []string{"t1", "t2"}},
@@ -524,18 +502,6 @@ func TestBuildLaneRefSet(t *testing.T) {
 	}
 	if _, ok := refs["t3"]; ok {
 		t.Error("did not expect t3 in ref set")
-	}
-}
-
-func TestLaneNameFor(t *testing.T) {
-	proc := &BPMNProcess{LaneSet: BPMNLaneSet{Lanes: []BPMNLane{
-		{Name: "Ops", FlowNodeRefs: []string{"t1"}},
-	}}}
-	if got := LaneNameFor("t1", proc); got != "Ops" {
-		t.Errorf("got %q; want Ops", got)
-	}
-	if got := LaneNameFor("unknown", proc); got != "" {
-		t.Errorf("got %q; want empty", got)
 	}
 }
 

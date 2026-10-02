@@ -25,28 +25,14 @@ func checkSplitJoin(gwID, kind string, g *bpmncore.Graph, backEdges map[[2]strin
 	if forwardOutCount(gwID, g, backEdges) <= 1 {
 		return nil
 	}
-	joinID, ok := bpmncore.FindJoin(gwID, g, backEdges)
-	if !ok {
-		if allBranchesTerminate(gwID, g, backEdges) {
-			return nil
-		}
-		return AppendErr(nil, domain.BPMNErrUnmatchedGateway, gwID,
-			fmt.Sprintf("%s split gateway has no matching join gateway", kind))
+	if _, ok := bpmncore.FindJoin(gwID, g, backEdges); ok {
+		return nil
 	}
-	for _, branch := range g.Outgoing[gwID] {
-		if backEdges[[2]string{gwID, branch}] {
-			continue
-		}
-		if bpmncore.ForwardReaches(branch, joinID, g, backEdges) {
-			continue
-		}
-		if branchTerminatesAtEndEvent(branch, g, backEdges) {
-			continue
-		}
-		return AppendErr(nil, domain.BPMNErrUnmatchedGateway, gwID,
-			fmt.Sprintf("%s split gateway has a branch that does not reconverge at its join", kind))
+	if kind == "exclusive" && allBranchesTerminate(gwID, g, backEdges) {
+		return nil
 	}
-	return nil
+	return AppendErr(nil, domain.BPMNErrUnmatchedGateway, gwID,
+		fmt.Sprintf("%s split gateway has no matching join gateway", kind))
 }
 
 func allBranchesTerminate(gwID string, g *bpmncore.Graph, backEdges map[[2]string]bool) bool {

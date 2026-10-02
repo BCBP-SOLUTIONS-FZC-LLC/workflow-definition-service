@@ -62,19 +62,30 @@ func stageNamed(t *testing.T, p *dsl.CompiledPlan, nodeID string) dsl.StageDef {
 	return dsl.StageDef{}
 }
 
+// assertMovesTo fails unless department deptID of p is a segment of lane that
+// starts at task nodeID: a boundary moving there runs that task first.
+func assertMovesTo(t *testing.T, p *dsl.CompiledPlan, deptID, lane, nodeID string) {
+	t.Helper()
+	d := departmentNamed(t, p, deptID)
+	if d.Label != lane || len(d.Stages) == 0 || d.Stages[0].NodeID != nodeID {
+		t.Errorf("department %q = %+v, want a segment of %s starting at %s", deptID, d, lane, nodeID)
+	}
+}
+
 // TestCompileForPublish_LanelessModuleBoundaries_NameTheirTarget pins that in
-// a module with no lanes a boundary moving to a task targets the module's own
-// department, and one ending at an end event terminates, instead of both
-// compiling to an empty target.
+// a module with no lanes a boundary moving to a task targets a segment of the
+// module's own department, and one ending at an end event terminates, instead
+// of both compiling to an empty target.
 func TestCompileForPublish_LanelessModuleBoundaries_NameTheirTarget(t *testing.T) {
 	bpmnXML := mainWithCalls([]callSite{{ID: "CA_1", Lane: "Engineering", Calls: "Process_L"}}, escalatingModule("Process_L"))
 	collab := compileForPublish(t, bpmnXML)
 	module := planNamed(t, collab, "Process_L")
 
 	work := stageNamed(t, module, "Task_Work")
-	if work.BoundaryTimer == nil || work.BoundaryTimer.TargetDept != "Process_L" || work.BoundaryTimer.Terminates {
-		t.Errorf("Task_Work's timer = %+v, want a move to the module's department Process_L", work.BoundaryTimer)
+	if work.BoundaryTimer == nil || work.BoundaryTimer.Terminates {
+		t.Fatalf("Task_Work's timer = %+v, want a move to Task_Escalate", work.BoundaryTimer)
 	}
+	assertMovesTo(t, module, work.BoundaryTimer.TargetDept, "Process_L", "Task_Escalate")
 	var sub *dsl.SubWorkflowStep
 	for _, s := range module.Execution.Steps {
 		if s.SubWorkflow != nil {
@@ -85,9 +96,9 @@ func TestCompileForPublish_LanelessModuleBoundaries_NameTheirTarget(t *testing.T
 		t.Fatalf("SP_Work's timer paths = %+v, want one that terminates with no target", sub)
 	}
 
-	expanded := stageNamed(t, expandedMain(t, collab), "Task_Work")
-	if got := expanded.BoundaryTimer.TargetDept; got != "CA_1::Process_L" {
-		t.Errorf("expanded Task_Work's timer target = %q, want CA_1::Process_L", got)
+	expanded := expandedMain(t, collab)
+	if got := stageNamed(t, expanded, "Task_Work").BoundaryTimer.TargetDept; got != "CA_1::"+work.BoundaryTimer.TargetDept {
+		t.Errorf("expanded Task_Work's timer target = %q, want CA_1::%s", got, work.BoundaryTimer.TargetDept)
 	}
 }
 
@@ -196,9 +207,11 @@ func TestCompileForPublish_BoundaryInsideASubProcessBody_TargetsItsLane(t *testi
 		flowXML("F1", "Start_1", "SP_1")+flowXML("F2", "SP_1", "End_1"),
 		diagramOf("Lane_eng", "Start_1", "SP_1", "End_1", "F1", "F2", "SP_Start", "Task_In", "Task_InEsc", "SP_B", "SP_End", "SP_EndEsc")+edge("SF1")+edge("SF2")+edge("SF3")+edge("SF4"))
 	main := planNamed(t, compileForPublish(t, bpmnXML), "Main")
-	if got := stageNamed(t, main, "Task_In").BoundaryTimer; got == nil || got.TargetDept != "Engineering" || got.Terminates {
-		t.Errorf("Task_In's timer = %+v, want a move to Engineering", got)
+	got := stageNamed(t, main, "Task_In").BoundaryTimer
+	if got == nil || got.Terminates {
+		t.Fatalf("Task_In's timer = %+v, want a move to Task_InEsc", got)
 	}
+	assertMovesTo(t, main, got.TargetDept, "Engineering", "Task_InEsc")
 }
 
 // lanelessRoot is a workflow with no lanes: Task_A, and, with boundary set, an

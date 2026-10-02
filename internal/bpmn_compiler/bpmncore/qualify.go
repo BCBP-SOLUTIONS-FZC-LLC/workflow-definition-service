@@ -35,6 +35,7 @@ func QualifySteps(steps []dsl.ExecutionStep, rename func(string) string) {
 		for j := range steps[i].Exclusive {
 			steps[i].Exclusive[j].Target = rename(steps[i].Exclusive[j].Target)
 			steps[i].Exclusive[j].RevertToDept = rename(steps[i].Exclusive[j].RevertToDept)
+			QualifySteps(steps[i].Exclusive[j].Steps, rename)
 		}
 		if sw := steps[i].SubWorkflow; sw != nil {
 			QualifySteps(sw.Plan.Steps, rename)

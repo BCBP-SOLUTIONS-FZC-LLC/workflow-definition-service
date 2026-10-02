@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
@@ -132,19 +134,40 @@ func TestCompileWithImplicitStart_BoundaryPathError(t *testing.T) {
 	proc := &BPMNProcess{
 		StartEvents:    []BPMNEvent{{ID: "start"}},
 		UserTasks:      []BPMNUserTask{{ID: "t1"}},
-		SequenceFlows:  []BPMNSequenceFlow{{SourceRef: "start", TargetRef: "t1"}},
+		ReceiveTasks:   []BPMNReceiveTask{{ID: "esc"}},
+		SequenceFlows:  []BPMNSequenceFlow{{SourceRef: "start", TargetRef: "t1"}, {SourceRef: "be1", TargetRef: "esc"}, {SourceRef: "esc", TargetRef: "t1"}},
 		BoundaryEvents: []BPMNBoundaryEvent{{ID: "be1", AttachedToRef: "t1", Timer: &BPMNTimerDef{}}},
 	}
 	g := BuildGraph(proc)
+	g.NodeType["esc"] = NodeTypeUserTask
 	wantErr := errors.New("boom")
 	elements := map[FlowNodeType]ElementHandler{
-		NodeTypeUserTask:           &stubElementHandler{nodeType: NodeTypeUserTask},
-		NodeTypeTimerBoundaryEvent: &stubElementHandler{nodeType: NodeTypeTimerBoundaryEvent, err: wantErr},
+		NodeTypeUserTask: &failingOn{node: "esc", err: wantErr},
 	}
 
-	if _, _, err := CompileWithImplicitStart(proc, g, "", nil, elements, &BPMNDefinitions{}); err == nil {
-		t.Fatal("expected boundary path error to propagate")
+	if _, _, err := CompileWithImplicitStart(proc, g, "", nil, elements, &BPMNDefinitions{}); !errors.Is(err, wantErr) {
+		t.Fatalf("expected the boundary path's error to propagate; got %v", err)
 	}
+}
+
+// failingOn compiles every node as a step of its own and fails on node.
+type failingOn struct {
+	node string
+	err  error
+}
+
+func (h *failingOn) NodeType() FlowNodeType { return NodeTypeUserTask }
+
+func (h *failingOn) Validate(string, *BPMNProcess, *Graph, *BPMNDefinitions, map[string]StageTypeHandler, map[FlowNodeType]ElementHandler) []domain.BPMNValidationError {
+	return nil
+}
+
+func (h *failingOn) Compile(nodeID string, cs *CompileState) error {
+	if nodeID == h.node {
+		return h.err
+	}
+	cs.AppendStep(dsl.ExecutionStep{Sequential: []string{nodeID}})
+	return nil
 }
 
 func TestCompileWithImplicitStart_ExternalNodesMerge(t *testing.T) {

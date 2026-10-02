@@ -149,12 +149,12 @@ func (c *Compiler) CompileModule(ctx context.Context, bpmnXML, moduleProcessID s
 	defs.ModuleProcesses[root.ID] = true
 	plan, called, err := bpmncore.Compile(root, bpmncore.BuildGraph(root), c.stageTypes, c.elements, defs)
 	if err != nil {
-		return nil, none, fmt.Errorf("bpmn compile-module: %w", err)
+		return nil, none, compileFailure("bpmn compile-module", root.ID, err)
 	}
 	if plan.Name == "" {
 		plan.Name = root.ID
 	}
-	plan.Departments = element.ShapeCalledPlan(plan.Departments, plan.Execution.Steps, root)
+	plan.Departments = element.ShapeCalledPlan(plan.Departments, root)
 	collab := &dsl.CompiledCollaboration{
 		MainPlan:      plan.Name,
 		Plans:         append([]*dsl.CompiledPlan{plan}, called...),

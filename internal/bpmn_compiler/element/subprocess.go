@@ -48,25 +48,12 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 		return fmt.Errorf("subprocess %q not found in process", nodeID)
 	}
 
-	inner := bpmncore.SubProcToProcess(sp)
-	innerState, err := compileInnerState(inner, cs)
+	body, err := compileSubProcessBody(bpmncore.SubProcToProcess(sp), nodeID, cs)
 	if err != nil {
 		return fmt.Errorf("subprocess %q: %w", nodeID, err)
 	}
-
-	depts := innerState.CollectedDepts()
-	steps := innerState.CollectedSteps()
-
-	if parentLane := bpmncore.LaneNameFor(nodeID, cs.Proc); parentLane != "" {
-		assignParentLaneDept(depts, steps, parentLane, bpmncore.DeptIDFor(nodeID, cs.Proc))
-	}
-
-	for _, dept := range depts {
-		cs.EnsureDept(dept.ID, dept.Label, dept.IAMDepartmentID)
-		for _, stage := range dept.Stages {
-			cs.AppendStage(dept.ID, stage)
-		}
-	}
+	steps := body.CollectedSteps()
+	cs.MarkNodeSegment(nodeID, bpmncore.FirstDepartment(steps))
 
 	errorPaths, timerPaths, messagePaths := boundaryPaths(nodeID, cs)
 
@@ -129,95 +116,4 @@ func boundaryPaths(nodeID string, cs *bpmncore.CompileState) ([]dsl.ErrorPath, [
 		}
 	}
 	return errorPaths, timerPaths, messagePaths
-}
-
-// assignParentLaneDept backfills the parent lane onto any inner dept/step left
-// with no lane of its own — an inner sub-process body has no laneSet of its
-// own, so its lane is inherited from the sub-process element's own lane.
-func assignParentLaneDept(depts []dsl.DepartmentDef, steps []dsl.ExecutionStep, parentLane, parentIAMDeptID string) {
-	for i := range depts {
-		if depts[i].ID == "" {
-			depts[i].ID = parentLane
-			depts[i].Label = parentLane
-			depts[i].IAMDepartmentID = parentIAMDeptID
-		}
-	}
-	patchEmptyStageTargets(depts, parentLane)
-	patchEmptyDepts(steps, parentLane)
-}
-
-func patchEmptyDepts(steps []dsl.ExecutionStep, lane string) {
-	fill := func(target *string, terminates bool) {
-		if *target == "" && !terminates {
-			*target = lane
-		}
-	}
-	for i := range steps {
-		for j := range steps[i].Sequential {
-			if steps[i].Sequential[j] == "" {
-				steps[i].Sequential[j] = lane
-			}
-		}
-		for j := range steps[i].Parallel {
-			if steps[i].Parallel[j].DeptID == "" {
-				steps[i].Parallel[j].DeptID = lane
-			}
-			patchEmptyDepts(steps[i].Parallel[j].Steps, lane)
-		}
-		for j := range steps[i].Exclusive {
-			b := &steps[i].Exclusive[j]
-			if b.RevertToStage != "" || b.RevertToDept != "" {
-				if b.RevertToDept == "" {
-					b.RevertToDept = lane
-				}
-			} else if !b.Terminates {
-				if b.Target == "" {
-					b.Target = lane
-				}
-			}
-		}
-		for k := range steps[i].MessagePaths {
-			fill(&steps[i].MessagePaths[k].TargetDept, steps[i].MessagePaths[k].Terminates)
-		}
-		if sw := steps[i].SubWorkflow; sw != nil {
-			patchEmptyDepts(sw.Plan.Steps, lane)
-			patchEmptyPaths(fill, sw.ErrorPaths, sw.TimerPaths, sw.MessagePaths)
-		}
-		if cp := steps[i].CallPlan; cp != nil {
-			for k, v := range cp.Departments {
-				if v == "" {
-					cp.Departments[k] = lane
-				}
-			}
-			patchEmptyPaths(fill, cp.ErrorPaths, cp.TimerPaths, cp.MessagePaths)
-		}
-	}
-}
-
-func patchEmptyPaths(fill func(*string, bool), errs []dsl.ErrorPath, timers []dsl.TimerPath, msgs []dsl.MessagePath) {
-	for k := range errs {
-		fill(&errs[k].TargetDept, errs[k].Terminates)
-	}
-	for k := range timers {
-		fill(&timers[k].TargetDept, timers[k].Terminates)
-	}
-	for k := range msgs {
-		fill(&msgs[k].TargetDept, msgs[k].Terminates)
-	}
-}
-
-// patchEmptyStageTargets gives lane to every stage boundary that moves to a
-// department but was compiled with none, as in a process without lanes.
-func patchEmptyStageTargets(depts []dsl.DepartmentDef, lane string) {
-	for i := range depts {
-		for j := range depts[i].Stages {
-			st := &depts[i].Stages[j]
-			if bt := st.BoundaryTimer; bt != nil && bt.TargetDept == "" && !bt.Terminates {
-				bt.TargetDept = lane
-			}
-			if bm := st.BoundaryMessage; bm != nil && bm.TargetDept == "" && !bm.Terminates {
-				bm.TargetDept = lane
-			}
-		}
-	}
 }

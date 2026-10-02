@@ -1,24 +1,43 @@
 package bpmncore
 
 // ClassifyBackEdges returns the set of back-edges (revert/loop flows) reachable
-// from start. An edge (u → v) is a back-edge when v is an ancestor of u on the
-// active DFS stack. Removing back-edges yields the forward DAG used by
-// reachability, loop, gateway-matching, and compilation.
-func ClassifyBackEdges(g *Graph, start string) map[[2]string]bool {
+// from roots, searched in order. An edge (u → v) is a back-edge when v is an
+// ancestor of u on the active DFS stack. Removing back-edges yields the
+// forward DAG used by reachability, loop, gateway-matching, and compilation.
+func ClassifyBackEdges(g *Graph, roots ...string) map[[2]string]bool {
 	backEdges := make(map[[2]string]bool)
 	onStack := make(map[string]bool)
-	IterativeDFS(g, start, DFSVisitor{
-		OnEnter: func(v string) bool { onStack[v] = true; return true },
-		OnEdge: func(from, to string, alreadySeen bool) bool {
-			if onStack[to] {
-				backEdges[[2]string{from, to}] = true
-				return false
-			}
-			return !alreadySeen
-		},
-		OnExit: func(v string) { onStack[v] = false },
-	})
+	done := make(map[string]bool)
+	for _, root := range roots {
+		IterativeDFS(g, root, DFSVisitor{
+			OnEnter: func(v string) bool {
+				if done[v] {
+					return false
+				}
+				done[v], onStack[v] = true, true
+				return true
+			},
+			OnEdge: func(from, to string, alreadySeen bool) bool {
+				if onStack[to] {
+					backEdges[[2]string{from, to}] = true
+					return false
+				}
+				return !alreadySeen
+			},
+			OnExit: func(v string) { onStack[v] = false },
+		})
+	}
 	return backEdges
+}
+
+// ProcessBackEdges classifies proc's back-edges from start and then from each
+// boundary event, so a loop reached only through a boundary is found too.
+func ProcessBackEdges(proc *BPMNProcess, g *Graph, start string) map[[2]string]bool {
+	roots := []string{start}
+	for _, be := range proc.BoundaryEvents {
+		roots = append(roots, be.ID)
+	}
+	return ClassifyBackEdges(g, roots...)
 }
 
 func MarkReachable(start string, g *Graph, visited map[string]bool) {

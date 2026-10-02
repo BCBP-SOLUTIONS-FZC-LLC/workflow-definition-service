@@ -42,10 +42,13 @@ All graph traversal is **iterative** (`bpmncore.IterativeDFS` + `DFSVisitor{OnEn
 
 ## Department Derived from Lane Membership
 
-The compiler derives a userTask's department from the lane it appears in via `<bpmn:flowNodeRef>`. No `dept_id` Zeebe property is read. The lane `name` attribute becomes both `DepartmentDef.ID` and `DepartmentDef.Label`; the Profile Service owns the format and the compiler trusts it as-is.
+The compiler places a task by the lane it appears in via `<bpmn:flowNodeRef>`. The lane's `dept_id` property is its IAM department. Tasks run in the order the flows reach them: a lane says who does a task, never when.
 
-- Task not listed in any lane → `TASK_NOT_IN_LANE`
-- `validateGatewayMatching` requires every forward branch of a split gateway to reconverge at the matched join — a bypassing branch is `UNMATCHED_GATEWAY`
+- **A department is a lane segment**, a stretch of one lane on one path (`CompileState.SegmentOf`). The traversal starts the lane's next segment when the lane changes or any step other than `Sequential` comes between, and a gateway branch or a boundary path starts its own. A lane's first segment is keyed by its name, later ones `<lane>~<n>`; `Label` is always the lane name. A subprocess body shares its parent's segments; a called process numbers its own.
+- **Gateways.** The join is the split's immediate post-dominator in the forward graph (`FindJoin`). Each forward branch compiles on its own state, up to the join, into its own steps: `ParallelBranch.Steps` and `ExclusiveBranch.Steps`.
+- **Targets by node.** A boundary or revert names a node; `ResolveTargets` replaces it with the node's segment once the compile is done.
+- Task not listed in any lane → `TASK_NOT_IN_LANE`; a lane name with `/`, `::` or `~` → `INVALID_LANE_NAME`
+- A parallel split with no join, or an exclusive one whose branches do not all end, is `UNMATCHED_GATEWAY`
 
 See [ARCHITECTURE.md § BPMN Compiler](../ARCHITECTURE.md#bpmn-compiler).
 
@@ -53,7 +56,7 @@ See [ARCHITECTURE.md § BPMN Compiler](../ARCHITECTURE.md#bpmn-compiler).
 
 **Stage type** comes from `<zeebe:taskDefinition type="prep|review|approve"/>` (not a custom Zeebe property). Allowed values are resolved via the `StageTypeHandler` registry — **not hardcoded** — so the set can be extended without a compiler change. Unregistered types emit `UNKNOWN_STAGE_TYPE` at warning severity (compilation continues with an `engine_note`); `INVALID_TASK_DEFINITION_TYPE` is deprecated.
 
-**Boundary node types**: `NodeTypeTimerBoundaryEvent`, `NodeTypeErrorBoundaryEvent`, and `NodeTypeMessageBoundaryEvent` are separate constants (all subtypes of the legacy `NodeTypeBoundaryEvent`). These drive different element handlers and validator paths. Timer and message boundaries attach to a `userTask` (`StageDef.BoundaryTimer`/`BoundaryMessage`); timer, message and error boundaries attach to a `subProcess` (`SubWorkflowStep.*Paths`) and a `callActivity` (`CallPlanStep.*Paths`). `BoundaryTarget` gives each one the department of the first task or subProcess on its path, or `Terminates` when an end event comes first; a path starting at a call or a message task is `UNSUPPORTED_BOUNDARY_TARGET`. An empty target is never a terminating boundary: `patchEmptyDepts`/`patchEmptyStageTargets` give it the enclosing lane or the laneless process's department.
+**Boundary node types**: `NodeTypeTimerBoundaryEvent`, `NodeTypeErrorBoundaryEvent`, and `NodeTypeMessageBoundaryEvent` are separate constants (all subtypes of the legacy `NodeTypeBoundaryEvent`). These drive different element handlers and validator paths. Timer and message boundaries attach to a `userTask` (`StageDef.BoundaryTimer`/`BoundaryMessage`); timer, message and error boundaries attach to a `subProcess` (`SubWorkflowStep.*Paths`) and a `callActivity` (`CallPlanStep.*Paths`). `BoundaryTarget` gives each one the segment of the first task or subProcess on its path, or `Terminates` when an end event comes first; a path starting at a call or a message task, or at a subProcess whose body does not start with a userTask, is `UNSUPPORTED_BOUNDARY_TARGET`. A boundary's path compiles on its own state, so its tasks never join the main steps. A laneless process's nodes are in its implicit slot, and a subprocess body's in the subprocess's lane, so no target is ever empty unless it terminates.
 
 **Canonical hash** (`hasher.go`): `canonicalHash` hashes the normalized process for `artifact_hash`, with the zeebe properties of top-level tasks and sequence flows sorted by name, copying the slices it sorts so the parsed struct is not mutated. The resulting SHA-256 hex is used by `Hash()`. A bundle with several processes (a called process, bundled modules) is hashed by `canonicalBundleHash`: each process hashed on its own, ordered by (id, hash), then hashed together. A single process's hash is exactly `canonicalHash`.
 

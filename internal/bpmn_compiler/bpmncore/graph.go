@@ -1,5 +1,10 @@
 package bpmncore
 
+import (
+	"maps"
+	"slices"
+)
+
 // Graph is the directed graph representation of a BPMN process.
 type Graph struct {
 	Outgoing map[string][]string
@@ -91,36 +96,48 @@ func BuildCondExprs(proc *BPMNProcess) map[[2]string]string {
 	return exprs
 }
 
-// FindJoin walks forward from a split gateway to find the matching join point.
-// A candidate join must have at least as many incoming edges as the split has
-// outgoing branches, ensuring sub-branch merges (e.g. a task reached by two
-// branches of an inner XOR) are not mistaken for the true outer join.
+// FindJoin returns the join of a split: its immediate post-dominator in the
+// forward graph, the nearest node every forward path from the split passes
+// through. Paths that end at different end events share none, and a node
+// with fewer than two forward flows is no split, so neither has a join.
 func FindJoin(splitID string, g *Graph, backEdges map[[2]string]bool) (string, bool) {
-	splitOut := 0
-	for _, n := range g.Outgoing[splitID] {
-		if !backEdges[[2]string{splitID, n}] {
-			splitOut++
-		}
+	forward := func(n string) []string {
+		return slices.DeleteFunc(slices.Clone(g.Outgoing[n]), func(next string) bool { return backEdges[[2]string{n, next}] })
 	}
-	curr, ok := FirstForward(splitID, g, backEdges)
-	if !ok {
+	if len(forward(splitID)) < 2 {
 		return "", false
 	}
-	visited := make(map[string]bool)
-	for {
-		if visited[curr] {
-			return "", false
+	pdom := map[string]map[string]bool{}
+	var postDominators func(n string) map[string]bool
+	postDominators = func(n string) map[string]bool {
+		if set, seen := pdom[n]; seen {
+			return set
 		}
-		visited[curr] = true
-		if len(g.Incoming[curr]) > 1 && len(g.Incoming[curr]) >= splitOut {
-			return curr, true
+		pdom[n] = map[string]bool{}
+		var common map[string]bool
+		for _, next := range forward(n) {
+			nextSet := postDominators(next)
+			if common == nil {
+				common = maps.Clone(nextSet)
+				continue
+			}
+			maps.DeleteFunc(common, func(k string, _ bool) bool { return !nextSet[k] })
 		}
-		next, ok := FirstForward(curr, g, backEdges)
-		if !ok {
-			return "", false
+		if common == nil {
+			common = map[string]bool{}
 		}
-		curr = next
+		common[n] = true
+		pdom[n] = common
+		return common
 	}
+	candidates := maps.Clone(postDominators(splitID))
+	delete(candidates, splitID)
+	for c := range candidates {
+		if len(postDominators(c)) == len(candidates) {
+			return c, true
+		}
+	}
+	return "", false
 }
 
 // FirstForward returns the first outgoing non-back-edge neighbour of node.
@@ -131,23 +148,6 @@ func FirstForward(node string, g *Graph, backEdges map[[2]string]bool) (string, 
 		}
 	}
 	return "", false
-}
-
-// ForwardReaches returns true if target is reachable from start via forward edges.
-func ForwardReaches(start, target string, g *Graph, backEdges map[[2]string]bool) bool {
-	found := false
-	IterativeDFS(g, start, DFSVisitor{
-		OnEnter: func(v string) bool {
-			if v == target {
-				found = true
-			}
-			return !found
-		},
-		OnEdge: func(from, to string, _ bool) bool {
-			return !backEdges[[2]string{from, to}] && !found
-		},
-	})
-	return found
 }
 
 func BuildLaneRefSet(proc *BPMNProcess) map[string]struct{} {
@@ -241,13 +241,6 @@ func LaneFor(taskID string, proc *BPMNProcess) *BPMNLane {
 		}
 	}
 	return nil
-}
-
-func LaneNameFor(taskID string, proc *BPMNProcess) string {
-	if lane := LaneFor(taskID, proc); lane != nil {
-		return lane.Name
-	}
-	return ""
 }
 
 func DeptIDFor(taskID string, proc *BPMNProcess) string {

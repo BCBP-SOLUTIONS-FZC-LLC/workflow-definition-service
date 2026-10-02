@@ -87,6 +87,7 @@ const (
 	BPMNErrMissingDeptInputForModule    BPMNErrorCode = "MISSING_DEPT_INPUT_FOR_MODULE"
 	BPMNErrMissingDeptID                BPMNErrorCode = "MISSING_DEPT_ID"
 	BPMNErrInvalidDeptID                BPMNErrorCode = "INVALID_DEPT_ID"
+	BPMNErrInvalidLaneName              BPMNErrorCode = "INVALID_LANE_NAME"
 	BPMNErrCalledElementCycle           BPMNErrorCode = "CALLED_ELEMENT_CYCLE"
 	BPMNErrDuplicateProcessID           BPMNErrorCode = "DUPLICATE_PROCESS_ID"
 )

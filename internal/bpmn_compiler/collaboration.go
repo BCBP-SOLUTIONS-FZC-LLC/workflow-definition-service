@@ -157,7 +157,7 @@ func (c *Compiler) compileCollaborationPlans(defs *bpmncore.BPMNDefinitions, ign
 		implicitStart := collabImplicitStart(proc, g, defs, ignoredProcIDs)
 		plan, calledPlans, err := bpmncore.CompileWithImplicitStart(proc, g, implicitStart, c.stageTypes, c.elements, defs, extNodes)
 		if err != nil {
-			return nil, fmt.Errorf("bpmn compile-collaboration participant %q: %w", participant.ID, err)
+			return nil, compileFailure(fmt.Sprintf("bpmn compile-collaboration participant %q", participant.ID), proc.ID, err)
 		}
 		bpmncore.QualifyPlanDepts(plan, plan.Name)
 		plans = append(plans, plan)

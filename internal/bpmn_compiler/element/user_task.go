@@ -41,15 +41,13 @@ func (UserTaskHandler) Compile(nodeID string, cs *bpmncore.CompileState) error {
 	if task == nil {
 		return fmt.Errorf("task %q not found in process", nodeID)
 	}
-	deptID, label, iamDeptID := cs.DeptOf(nodeID)
-
 	stage, err := bpmncore.BuildStageDef(task, cs.StageTypes, cs.Proc, cs.Defs)
 	if err != nil {
 		return err
 	}
 	cs.FillBoundaryTimerTarget(task.ID, &stage)
 	cs.FillBoundaryMessageTarget(task.ID, &stage)
-	cs.EnsureDept(deptID, label, iamDeptID)
+	deptID := cs.SegmentOf(nodeID)
 	cs.AppendStage(deptID, stage)
 	cs.AddToSeqBuf(deptID)
 

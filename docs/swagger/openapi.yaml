@@ -893,9 +893,10 @@ components:
         - MISSING_DEPT_INPUT_FOR_MODULE # a called process has two or more open lanes (no dept_id) and the call's Depts input does not map every one
         - CALLED_ELEMENT_CYCLE          # a chain of callActivity calls returns to a process already on it
         - DUPLICATE_PROCESS_ID          # two bpmn:process elements in the bundled document share an id
-        - UNSUPPORTED_BOUNDARY_TARGET   # a boundary event's path reaches a callActivity, sendTask or receiveTask before any userTask, subProcess or end event
+        - UNSUPPORTED_BOUNDARY_TARGET   # a boundary event's path reaches a callActivity, sendTask or receiveTask before any userTask, subProcess or end event, or a subProcess whose body does not start with a userTask
         - MISSING_DEPT_ID               # a task's lane has no dept_id; a call binds a module lane to a workflow lane with no dept_id; or, at publish and /validate, the workflow has no lanes or a task of its expanded plan runs in no IAM department
         - INVALID_DEPT_ID               # a lane's dept_id is not a UUID
+        - INVALID_LANE_NAME             # a lane's name contains /, :: or ~
         - UNKNOWN_CONNECTOR_TYPE        # warning: a connector serviceTask names a connector type the registry does not know
         - CONNECTOR_TASK_HAS_ASSIGNMENT # warning: a connector serviceTask carries an assignmentDefinition, which it does not use
 

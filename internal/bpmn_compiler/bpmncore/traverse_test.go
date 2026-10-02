@@ -2,6 +2,7 @@ package bpmncore
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
@@ -33,19 +34,35 @@ func (h *stubElementHandler) Compile(nodeID string, cs *CompileState) error {
 	return nil
 }
 
-func TestDeptOf(t *testing.T) {
+func TestSegmentOf_StartsASegmentWhenTheLaneChangesOrAStepIntervenes(t *testing.T) {
 	s := newMinimalState()
-	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"t1"}, ExtensionElements: BPMNExtensionElements{
-		ZeebeProps: BPMNZeebeProperties{Items: []ZeebeProperty{{Name: "dept_id", Value: "018e1f2a-0000-7000-8000-000000000099"}}},
-	}}}
-
-	id, label, iamDeptID := s.DeptOf("t1")
-	if id != "Ops" || label != "Ops" || iamDeptID != "018e1f2a-0000-7000-8000-000000000099" {
-		t.Errorf("got (%q,%q,%q); want (Ops,Ops,018e1f2a-0000-7000-8000-000000000099)", id, label, iamDeptID)
+	s.Proc.LaneSet.Lanes = []BPMNLane{
+		{Name: "Ops", FlowNodeRefs: []string{"a", "b", "d", "e"}, ExtensionElements: BPMNExtensionElements{
+			ZeebeProps: BPMNZeebeProperties{Items: []ZeebeProperty{{Name: "dept_id", Value: "018e1f2a-0000-7000-8000-000000000099"}}},
+		}},
+		{Name: "Eng", FlowNodeRefs: []string{"c"}},
 	}
-	id2, label2, iamDeptID2 := s.DeptOf("unknown")
-	if id2 != "" || label2 != "" || iamDeptID2 != "" {
-		t.Errorf("got (%q,%q,%q); want (\"\",\"\",\"\")", id2, label2, iamDeptID2)
+
+	place := func(node string) string {
+		dept := s.SegmentOf(node)
+		s.AppendStage(dept, dsl.StageDef{NodeID: node})
+		return dept
+	}
+	bound := s.LaneDepartment("c")
+	got := []string{place("a"), place("b"), place("c"), place("d")}
+	s.FlushSeqBuf()
+	got = append(got, place("e"))
+
+	if want := []string{"Ops", "Ops", "Eng", "Ops~2", "Ops~3"}; !slices.Equal(got, want) {
+		t.Errorf("segments = %v, want %v", got, want)
+	}
+	if bound != "Eng" {
+		t.Errorf("a call binding Eng before its first task got %q, want Eng, which that task then fills", bound)
+	}
+	for _, d := range s.CollectedDepts() {
+		if d.ID == "Ops~2" && (d.Label != "Ops" || d.IAMDepartmentID != "018e1f2a-0000-7000-8000-000000000099") {
+			t.Errorf("Ops~2 = %+v, want the Ops lane's label and IAM department", d)
+		}
 	}
 }
 
@@ -299,7 +316,7 @@ func TestHandleSplitNoJoin_ParallelKindErrors(t *testing.T) {
 	}
 }
 
-func TestHandleSplitNoJoin_ExclusiveWithContinuation(t *testing.T) {
+func TestHandleSplitNoJoin_EachBranchCarriesItsStepsAndTerminates(t *testing.T) {
 	s := newMinimalState()
 	s.G.NodeType["end1"] = NodeTypeEndEvent
 	s.G.NodeType["t1"] = NodeTypeUserTask
@@ -310,30 +327,15 @@ func TestHandleSplitNoJoin_ExclusiveWithContinuation(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	steps := s.CollectedSteps()
-	if len(steps) != 2 {
-		t.Fatalf("expected 2 steps (split branches + t1's continuation); got %d: %v", len(steps), steps)
+	if len(steps) != 1 || len(steps[0].Exclusive) != 2 {
+		t.Fatalf("expected one exclusive step with 2 branches; got %v", steps)
 	}
-	if len(steps[0].Exclusive) != 2 {
-		t.Fatalf("expected 2 exclusive branches; got %v", steps[0].Exclusive)
+	toEnd, toTask := steps[0].Exclusive[0], steps[0].Exclusive[1]
+	if !toEnd.Terminates || len(toEnd.Steps) != 0 {
+		t.Errorf("branch to the end event = %+v, want no steps and terminating", toEnd)
 	}
-}
-
-func TestCompileSubprocBranches_SkipsAndProcesses(t *testing.T) {
-	s := newMinimalState()
-	s.G.NodeType["plain"] = NodeTypeUserTask // not a subprocess -> skip
-	s.G.NodeType["join"] = NodeTypeExclusiveGateway
-	s.G.NodeType["sp1"] = NodeTypeSubProcess
-	s.G.Outgoing["sp1"] = []string{"join"}
-	s.visited["visited1"] = true // already visited -> skip
-	s.Elements[NodeTypeSubProcess] = &stubElementHandler{nodeType: NodeTypeSubProcess}
-
-	err := s.compileSubprocBranches([]string{"plain", "join", "visited1", "sp1"}, "join")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	steps := s.CollectedSteps()
-	if len(steps) != 1 || len(steps[0].Sequential) != 1 || steps[0].Sequential[0] != "sp1" {
-		t.Fatalf("expected sp1's branch step to be merged into parent steps; got %v", steps)
+	if !toTask.Terminates || len(toTask.Steps) != 1 || toTask.Steps[0].Sequential[0] != "t1" {
+		t.Errorf("branch to t1 = %+v, want t1's step and terminating", toTask)
 	}
 }
 
@@ -345,7 +347,7 @@ func TestHandleSplitWithJoin_Parallel(t *testing.T) {
 	s.G.Outgoing["a"] = []string{"join"}
 	s.Proc.UserTasks = []BPMNUserTask{{ID: "a"}}
 
-	if err := s.handleSplitWithJoin("gw", []string{"a"}, nil, "join", ParallelGateway); err != nil {
+	if err := s.handleSplitWithJoin("gw", nil, "join", ParallelGateway); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	steps := s.CollectedSteps()
@@ -360,26 +362,13 @@ func TestHandleSplitWithJoin_Parallel(t *testing.T) {
 func TestHandleSplitWithJoin_ExclusiveError(t *testing.T) {
 	s := newMinimalState()
 	s.G.NodeType["gw"] = NodeTypeExclusiveGateway
-	s.G.NodeType["badtask"] = NodeTypeUserTask
-	s.G.Outgoing["gw"] = []string{"badtask"}
-	// No matching proc.UserTasks entry -> FindTask returns nil -> error.
-
-	if err := s.handleSplitWithJoin("gw", []string{"badtask"}, nil, "join", ExclusiveGateway); err == nil {
-		t.Fatal("expected error to propagate from traverseExclusiveBranches")
-	}
-}
-
-func TestHandleSplitWithJoin_SubprocBranchError(t *testing.T) {
-	s := newMinimalState()
-	s.G.NodeType["gw"] = NodeTypeExclusiveGateway
 	s.G.NodeType["sp1"] = NodeTypeSubProcess
-	s.G.NodeType["join"] = NodeTypeExclusiveGateway
+	s.G.Outgoing["gw"] = []string{"sp1"}
 	wantErr := errors.New("boom")
 	s.Elements[NodeTypeSubProcess] = &stubElementHandler{nodeType: NodeTypeSubProcess, err: wantErr}
 
-	err := s.handleSplitWithJoin("gw", []string{"sp1"}, nil, "join", ExclusiveGateway)
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("expected subprocess branch error to propagate; got %v", err)
+	if err := s.handleSplitWithJoin("gw", nil, "join", ExclusiveGateway); !errors.Is(err, wantErr) {
+		t.Fatalf("expected the branch's error to propagate; got %v", err)
 	}
 }
 
@@ -391,7 +380,7 @@ func TestHandleSplitWithJoin_ParallelError(t *testing.T) {
 	wantErr := errors.New("boom")
 	s.Elements[NodeTypeUserTask] = &stubElementHandler{nodeType: NodeTypeUserTask, err: wantErr}
 
-	err := s.handleSplitWithJoin("gw", []string{"a"}, nil, "join", ParallelGateway)
+	err := s.handleSplitWithJoin("gw", nil, "join", ParallelGateway)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected parallel branch error to propagate; got %v", err)
 	}
@@ -431,8 +420,8 @@ func TestFillBoundaryTimerTarget_Resolved(t *testing.T) {
 
 	stage := &dsl.StageDef{BoundaryTimer: &dsl.BoundaryTimer{}}
 	s.FillBoundaryTimerTarget("t1", stage)
-	if stage.BoundaryTimer.TargetDept != "Ops" {
-		t.Errorf("TargetDept = %q; want Ops", stage.BoundaryTimer.TargetDept)
+	if stage.BoundaryTimer.TargetDept != segmentOfPending("target1") {
+		t.Errorf("TargetDept = %q; want target1's segment, pending", stage.BoundaryTimer.TargetDept)
 	}
 }
 
@@ -470,35 +459,58 @@ func TestFillBoundaryMessageTarget_Resolved(t *testing.T) {
 
 	stage := &dsl.StageDef{BoundaryMessage: &dsl.MessagePath{}}
 	s.FillBoundaryMessageTarget("t1", stage)
-	if stage.BoundaryMessage.TargetDept != "Ops" {
-		t.Errorf("TargetDept = %q; want Ops", stage.BoundaryMessage.TargetDept)
+	if stage.BoundaryMessage.TargetDept != segmentOfPending("target1") {
+		t.Errorf("TargetDept = %q; want target1's segment, pending", stage.BoundaryMessage.TargetDept)
 	}
 }
 
-func TestCompileBoundaryPaths_SkipsAndTraverses(t *testing.T) {
+func TestCompileBoundaryPaths_CompilesOnlyUnreachedPathsAndKeepsThemOffTheMainSteps(t *testing.T) {
 	s := newMinimalState()
 	s.Proc.BoundaryEvents = []BPMNBoundaryEvent{
-		{ID: "be_error", AttachedToRef: "t1", Error: &BPMNErrorDef{}}, // neither timer nor message -> skip
-		{ID: "be_visited", AttachedToRef: "t1", Timer: &BPMNTimerDef{}},
-		{ID: "be_ok", AttachedToRef: "t1", Message: &BPMNMessageEventDef{}},
+		{ID: "be_end", AttachedToRef: "t1", Timer: &BPMNTimerDef{}},
+		{ID: "be_done", AttachedToRef: "t1", Timer: &BPMNTimerDef{}},
+		{ID: "be_new", AttachedToRef: "t1", Message: &BPMNMessageEventDef{}},
 	}
-	s.G.NodeType["be_ok"] = NodeTypeMessageBoundaryEvent
-	s.visited["be_visited"] = true
+	s.Proc.SequenceFlows = []BPMNSequenceFlow{{SourceRef: "be_end", TargetRef: "end"}, {SourceRef: "be_done", TargetRef: "t_done"}, {SourceRef: "be_new", TargetRef: "t_new"}}
+	s.G.NodeType["end"], s.G.NodeType["t_done"], s.G.NodeType["t_new"] = NodeTypeEndEvent, NodeTypeUserTask, NodeTypeUserTask
+	s.sd.nodeSegment["t_done"] = "Ops"
+	var compiled []string
+	s.Elements[NodeTypeUserTask] = &recordingHandler{compiled: &compiled}
+	s.Elements[NodeTypeEndEvent] = &recordingHandler{compiled: &compiled}
 
 	if err := s.CompileBoundaryPaths(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !s.IsVisited("be_ok") {
-		t.Error("expected be_ok to be traversed")
+	if !slices.Equal(compiled, []string{"t_new"}) {
+		t.Errorf("compiled %v, want only t_new: the end needs no path and t_done is compiled", compiled)
 	}
+	if s.StepsCount() != 0 {
+		t.Errorf("main steps = %v, want none: a boundary's path runs only when it fires", s.CollectedSteps())
+	}
+}
+
+// recordingHandler records each node it compiles and emits a step for it.
+type recordingHandler struct{ compiled *[]string }
+
+func (h *recordingHandler) NodeType() FlowNodeType { return NodeTypeUserTask }
+
+func (h *recordingHandler) Validate(string, *BPMNProcess, *Graph, *BPMNDefinitions, map[string]StageTypeHandler, map[FlowNodeType]ElementHandler) []domain.BPMNValidationError {
+	return nil
+}
+
+func (h *recordingHandler) Compile(nodeID string, cs *CompileState) error {
+	*h.compiled = append(*h.compiled, nodeID)
+	cs.AppendStep(dsl.ExecutionStep{Sequential: []string{nodeID}})
+	return nil
 }
 
 func TestCompileBoundaryPaths_ErrorPropagation(t *testing.T) {
 	s := newMinimalState()
 	s.Proc.BoundaryEvents = []BPMNBoundaryEvent{{ID: "be1", AttachedToRef: "t1", Timer: &BPMNTimerDef{}}}
-	s.G.NodeType["be1"] = NodeTypeTimerBoundaryEvent
+	s.Proc.SequenceFlows = []BPMNSequenceFlow{{SourceRef: "be1", TargetRef: "t2"}}
+	s.G.NodeType["t2"] = NodeTypeUserTask
 	wantErr := errors.New("boom")
-	s.Elements[NodeTypeTimerBoundaryEvent] = &stubElementHandler{nodeType: NodeTypeTimerBoundaryEvent, err: wantErr}
+	s.Elements[NodeTypeUserTask] = &stubElementHandler{nodeType: NodeTypeUserTask, err: wantErr}
 
 	err := s.CompileBoundaryPaths()
 	if err == nil || !errors.Is(err, wantErr) {
@@ -517,7 +529,7 @@ func TestBoundaryTarget(t *testing.T) {
 		boundary, dept string
 		terminates     bool
 	}{
-		{"be_task", "Ops", false},
+		{"be_task", segmentOfPending("t1"), false},
 		{"be_end", "", true},
 		{"be_nowhere", "", true},
 	} {
@@ -558,31 +570,22 @@ func TestRevertBranches_SubWorkflowAndEmpty(t *testing.T) {
 	}
 }
 
-func TestFirstTaskAhead(t *testing.T) {
+func TestTaskAhead(t *testing.T) {
 	s := newMinimalState()
 
 	s.G.NodeType["dead"] = NodeTypeExclusiveGateway
-	if dept, stage := s.firstTaskAhead("dead"); dept != "" || stage != "" {
-		t.Errorf("dead end: got (%q,%q)", dept, stage)
-	}
-
 	s.G.NodeType["loop"] = NodeTypeExclusiveGateway
 	s.G.Outgoing["loop"] = []string{"loop"}
-	if dept, stage := s.firstTaskAhead("loop"); dept != "" || stage != "" {
-		t.Errorf("cycle: got (%q,%q)", dept, stage)
-	}
-
 	s.G.NodeType["sp1"] = NodeTypeSubProcess
-	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"sp1"}}}
-	if dept, stage := s.firstTaskAhead("sp1"); dept != "Ops" || stage != "sub_workflow" {
-		t.Errorf("subprocess: got (%q,%q); want (Ops,sub_workflow)", dept, stage)
-	}
-
 	s.G.NodeType["gw2"] = NodeTypeExclusiveGateway
 	s.G.NodeType["t1"] = NodeTypeUserTask
 	s.G.Outgoing["gw2"] = []string{"t1"}
-	s.Proc.UserTasks = []BPMNUserTask{{ID: "t1"}}
-	s.firstTaskAhead("gw2") // exercises the passthrough-then-userTask branch
+
+	for from, want := range map[string]string{"dead": "", "loop": "", "sp1": "sp1", "gw2": "t1"} {
+		if got := s.taskAhead(from); got != want {
+			t.Errorf("taskAhead(%s) = %q, want %q", from, got, want)
+		}
+	}
 }
 
 func TestFirstTaskNodeAhead_DanglingReferences(t *testing.T) {
@@ -599,259 +602,5 @@ func TestFirstTaskNodeAhead_DanglingReferences(t *testing.T) {
 		if nodeID, name := s.firstTaskNodeAhead(id); nodeID != "" || name != "" {
 			t.Errorf("%s: got (%q,%q); want (\"\",\"\")", id, nodeID, name)
 		}
-	}
-}
-
-func TestResolveUserTaskDept_WithTaskDefinition(t *testing.T) {
-	s := newMinimalState()
-	s.Proc.UserTasks = []BPMNUserTask{{
-		ID:                "t1",
-		ExtensionElements: BPMNExtensionElements{TaskDefinition: &ZeebeTaskDefinition{Type: "prep"}},
-	}}
-	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"t1"}}}
-
-	dept, stage := s.resolveUserTaskDept("t1")
-	if dept != "Ops" || stage != "prep" {
-		t.Errorf("got (%q,%q); want (Ops,prep)", dept, stage)
-	}
-}
-
-func TestReachesEndEvent_True(t *testing.T) {
-	g := &Graph{
-		NodeType: map[string]FlowNodeType{"a": NodeTypeUserTask, "end": NodeTypeEndEvent},
-		Outgoing: map[string][]string{"a": {"end"}},
-	}
-	if !reachesEndEvent(g, nil, "a", "") {
-		t.Error("expected true: end event reachable")
-	}
-}
-
-func TestReachesEndEvent_StopsAtBoundary(t *testing.T) {
-	g := &Graph{
-		NodeType: map[string]FlowNodeType{"a": NodeTypeUserTask, "stop": NodeTypeUserTask, "end": NodeTypeEndEvent},
-		Outgoing: map[string][]string{"a": {"stop"}, "stop": {"end"}},
-	}
-	if reachesEndEvent(g, nil, "a", "stop") {
-		t.Error("expected false: traversal must not continue past the stop node")
-	}
-}
-
-func TestReachesEndEvent_BackEdgeFiltered(t *testing.T) {
-	g := &Graph{
-		NodeType: map[string]FlowNodeType{"a": NodeTypeUserTask, "end": NodeTypeEndEvent},
-		Outgoing: map[string][]string{"a": {"end"}},
-	}
-	backEdges := map[[2]string]bool{{"a", "end"}: true}
-	if reachesEndEvent(g, backEdges, "a", "") {
-		t.Error("expected false: only edge to end is a back edge")
-	}
-}
-
-func TestCompileExclusiveBranch_NoTaskFallsBackToJoin(t *testing.T) {
-	s := newMinimalState()
-	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"join"}}}
-	s.G.NodeType["mid"] = NodeTypeExclusiveGateway
-	s.G.NodeType["join"] = NodeTypeUserTask
-	s.G.Outgoing["mid"] = []string{"join"}
-	s.Proc.UserTasks = []BPMNUserTask{{ID: "join", Name: "AfterJoin"}}
-
-	branch, err := s.compileExclusiveBranch("gw", "mid", "join")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if branch.Terminates {
-		t.Error("expected non-terminating branch")
-	}
-	if branch.Target != "Ops" {
-		t.Errorf("Target = %q; want %q", branch.Target, "Ops")
-	}
-	if branch.TargetNodeID != "join" {
-		t.Errorf("TargetNodeID = %q; want %q", branch.TargetNodeID, "join")
-	}
-}
-
-func TestCompileExclusiveBranch_DeadEndFallsBackToJoinTaskNode(t *testing.T) {
-	s := newMinimalState()
-	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"join"}}}
-	s.G.NodeType["dead1"] = NodeTypeExclusiveGateway
-	s.G.NodeType["join"] = NodeTypeUserTask
-	s.Proc.UserTasks = []BPMNUserTask{{ID: "join", Name: "AfterJoin"}}
-	// dead1 has no outgoing edges -> the branch walk dead-ends before reaching joinID.
-
-	branch, err := s.compileExclusiveBranch("gw", "dead1", "join")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if branch.TargetNodeID != "join" {
-		t.Errorf("expected fallback to join's task node; got TargetNodeID=%q", branch.TargetNodeID)
-	}
-}
-
-func TestCompileExclusiveBranch_CycleGuard(t *testing.T) {
-	s := newMinimalState()
-	s.G.NodeType["loop"] = NodeTypeExclusiveGateway
-	s.G.Outgoing["loop"] = []string{"loop"}
-
-	branch, err := s.compileExclusiveBranch("gw", "loop", "join")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if branch.Terminates {
-		t.Error("expected non-terminating branch for a self-loop with no reachable end event")
-	}
-}
-
-func TestProcessExclusiveNode_AllBranches(t *testing.T) {
-	s := newMinimalState()
-	s.Proc.UserTasks = []BPMNUserTask{{ID: "ut1"}}
-	s.Proc.SendTasks = []BPMNSendTask{{ID: "st1"}}
-	s.Proc.ReceiveTasks = []BPMNReceiveTask{{ID: "rt1"}}
-	s.G.NodeType["ut1"] = NodeTypeUserTask
-	s.G.NodeType["st1"] = NodeTypeSendTask
-	s.G.NodeType["rt1"] = NodeTypeReceiveTask
-	s.G.NodeType["sp1"] = NodeTypeSubProcess
-	s.G.NodeType["ca1"] = NodeTypeCallActivity
-	s.G.NodeType["gw1"] = NodeTypeExclusiveGateway // structural passthrough
-
-	var dept, stage string
-	if err := s.processExclusiveNode("ut1", &dept, &stage); err != nil {
-		t.Fatalf("userTask: unexpected error: %v", err)
-	}
-	if !s.IsVisited("ut1") {
-		t.Error("expected userTask to be marked visited")
-	}
-
-	dept, stage = "", ""
-	if err := s.processExclusiveNode("st1", &dept, &stage); err != nil {
-		t.Fatalf("sendTask: unexpected error: %v", err)
-	}
-	if stage != "send_task" {
-		t.Errorf("stage = %q; want send_task", stage)
-	}
-
-	dept, stage = "", ""
-	if err := s.processExclusiveNode("rt1", &dept, &stage); err != nil {
-		t.Fatalf("receiveTask: unexpected error: %v", err)
-	}
-	if stage != "receive_task" {
-		t.Errorf("stage = %q; want receive_task", stage)
-	}
-
-	dept, stage = "", ""
-	s.Proc.LaneSet.Lanes = []BPMNLane{{Name: "Ops", FlowNodeRefs: []string{"sp1"}}}
-	if err := s.processExclusiveNode("sp1", &dept, &stage); err != nil {
-		t.Fatalf("subProcess: unexpected error: %v", err)
-	}
-	if dept != "Ops" || stage != "sub_workflow" {
-		t.Errorf("subProcess: got dept=%q stage=%q", dept, stage)
-	}
-
-	dept, stage = "already", "already-stage"
-	if err := s.processExclusiveNode("ca1", &dept, &stage); err != nil {
-		t.Fatalf("callActivity: unexpected error: %v", err)
-	}
-	if dept != "already" {
-		t.Error("expected no overwrite when branchDept already set")
-	}
-
-	dept, stage = "", ""
-	if err := s.processExclusiveNode("gw1", &dept, &stage); err != nil {
-		t.Fatalf("gateway passthrough: unexpected error: %v", err)
-	}
-	if dept != "" || stage != "" {
-		t.Errorf("expected structural passthrough to leave dept/stage unset; got %q/%q", dept, stage)
-	}
-}
-
-func TestProcessExclusiveUserTask_NotFound(t *testing.T) {
-	s := newMinimalState()
-	s.G.NodeType["missing"] = NodeTypeUserTask
-	var dept, stage string
-	if err := s.processExclusiveUserTask("missing", &dept, &stage); err == nil {
-		t.Fatal("expected error when task not found in process")
-	}
-}
-
-func TestProcessExclusiveUserTask_DeptAlreadySet(t *testing.T) {
-	s := newMinimalState()
-	s.Proc.UserTasks = []BPMNUserTask{{ID: "ut1"}}
-	s.G.NodeType["ut1"] = NodeTypeUserTask
-	dept, stage := "preset", "preset-stage"
-	if err := s.processExclusiveUserTask("ut1", &dept, &stage); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if dept != "preset" || stage != "preset-stage" {
-		t.Errorf("expected no overwrite of already-set dept/stage; got %q/%q", dept, stage)
-	}
-}
-
-func TestProcessExclusiveUserTask_WithTaskDefinition(t *testing.T) {
-	s := newMinimalState()
-	s.Proc.UserTasks = []BPMNUserTask{{
-		ID:                "ut1",
-		ExtensionElements: BPMNExtensionElements{TaskDefinition: &ZeebeTaskDefinition{Type: "review"}},
-	}}
-	s.G.NodeType["ut1"] = NodeTypeUserTask
-	var dept, stage string
-	if err := s.processExclusiveUserTask("ut1", &dept, &stage); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if stage != "review" {
-		t.Errorf("stage = %q; want review", stage)
-	}
-}
-
-func TestProcessExclusiveMessageTask_SendNotFound(t *testing.T) {
-	s := newMinimalState()
-	var dept, stage string
-	if err := s.processExclusiveMessageTask("missing", "send_task", &dept, &stage); err == nil {
-		t.Fatal("expected error for missing send task")
-	}
-}
-
-func TestProcessExclusiveMessageTask_ReceiveNotFound(t *testing.T) {
-	s := newMinimalState()
-	var dept, stage string
-	if err := s.processExclusiveMessageTask("missing", "receive_task", &dept, &stage); err == nil {
-		t.Fatal("expected error for missing receive task")
-	}
-}
-
-func TestProcessExclusiveMessageTask_SendSuccess(t *testing.T) {
-	s := newMinimalState()
-	s.Proc.SendTasks = []BPMNSendTask{{ID: "st1", Name: "Notify"}}
-	dept, stage := "", ""
-	if err := s.processExclusiveMessageTask("st1", "send_task", &dept, &stage); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if stage != "send_task" {
-		t.Errorf("stage = %q; want send_task", stage)
-	}
-	if !s.IsVisited("st1") {
-		t.Error("expected send task marked visited")
-	}
-}
-
-func TestProcessExclusiveMessageTask_ReceiveSuccess(t *testing.T) {
-	s := newMinimalState()
-	s.Proc.ReceiveTasks = []BPMNReceiveTask{{ID: "rt1", Name: "Await"}}
-	dept, stage := "", ""
-	if err := s.processExclusiveMessageTask("rt1", "receive_task", &dept, &stage); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if stage != "receive_task" {
-		t.Errorf("stage = %q; want receive_task", stage)
-	}
-}
-
-func TestProcessExclusiveMessageTask_DeptAlreadySet(t *testing.T) {
-	s := newMinimalState()
-	s.Proc.SendTasks = []BPMNSendTask{{ID: "st1"}}
-	dept, stage := "preset", "preset-stage"
-	if err := s.processExclusiveMessageTask("st1", "send_task", &dept, &stage); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if dept != "preset" || stage != "preset-stage" {
-		t.Errorf("expected no overwrite; got %q/%q", dept, stage)
 	}
 }

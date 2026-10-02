@@ -632,39 +632,21 @@ const xorAllTerminateAllEndBPMN = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmndi:BPMNDiagram>
 </bpmn:definitions>`
 
-func TestCompile_AllBranchesTerminateXOR_WithContinuation(t *testing.T) {
+func TestCompile_AllBranchesTerminateXOR_EachBranchCarriesItsWork(t *testing.T) {
 	plan, err := bpmn_compiler.New().Compile(context.Background(), xorAllTerminateContinuationBPMN)
 	if err != nil {
 		t.Fatalf("Compile() error: %v", err)
 	}
-	// Expect 3 steps: Sequential["tender"], Exclusive[bid/no-bid], Sequential["tender"] (proceed)
-	if len(plan.Execution.Steps) != 3 {
-		t.Fatalf("steps: got %d, want 3; steps: %+v", len(plan.Execution.Steps), plan.Execution.Steps)
+	if len(plan.Execution.Steps) != 2 || len(plan.Execution.Steps[1].Exclusive) != 2 {
+		t.Fatalf("steps = %+v, want Sequential[tender] and one exclusive step with 2 branches", plan.Execution.Steps)
 	}
-	xorStep := plan.Execution.Steps[1]
-	if len(xorStep.Exclusive) != 2 {
-		t.Fatalf("exclusive branches: got %d, want 2", len(xorStep.Exclusive))
+	bid, noBid := plan.Execution.Steps[1].Exclusive[0], plan.Execution.Steps[1].Exclusive[1]
+	if !bid.Terminates || len(bid.Steps) != 1 || bid.Steps[0].Sequential[0] != "tender~2" {
+		t.Errorf("bid branch = %+v, want Task_proceed's segment as its steps, then the end", bid)
 	}
-	// One branch targets "tender" (Task_proceed), one is empty (End_nobid early exit).
-	var hasTarget, hasEmpty bool
-	for _, b := range xorStep.Exclusive {
-		if b.Target == "tender" {
-			hasTarget = true
-		}
-		if b.Target == "" {
-			hasEmpty = true
-		}
-	}
-	if !hasTarget {
-		t.Error("expected an exclusive branch with Target=tender (continuation)")
-	}
-	if !hasEmpty {
-		t.Error("expected an exclusive branch with Target= (early-exit to end event)")
-	}
-	// Continuation task compiled after the exclusive step.
-	lastStep := plan.Execution.Steps[2]
-	if len(lastStep.Sequential) == 0 || lastStep.Sequential[0] != "tender" {
-		t.Errorf("step[2] should be Sequential[tender] after continuation; got %+v", lastStep)
+	assertMovesTo(t, plan, "tender~2", "tender", "Task_proceed")
+	if !noBid.Terminates || len(noBid.Steps) != 0 {
+		t.Errorf("no-bid branch = %+v, want no steps and the end", noBid)
 	}
 }
 
@@ -1064,15 +1046,11 @@ func TestCompileCollaboration_QualifiesSubworkflowErrorTimerPaths(t *testing.T) 
 	if len(sw.ErrorPaths) == 0 {
 		t.Fatal("expected ErrorPaths on SubWorkflow step")
 	}
-	if sw.ErrorPaths[0].TargetDept != "Processor/ops" {
-		t.Errorf("ErrorPaths[0].TargetDept = %q, want Processor/ops", sw.ErrorPaths[0].TargetDept)
-	}
+	assertMovesTo(t, processor, sw.ErrorPaths[0].TargetDept, "ops", "Task_final_sw")
 	if len(sw.TimerPaths) == 0 {
 		t.Fatal("expected TimerPaths on SubWorkflow step")
 	}
-	if sw.TimerPaths[0].TargetDept != "Processor/ops" {
-		t.Errorf("TimerPaths[0].TargetDept = %q, want Processor/ops", sw.TimerPaths[0].TargetDept)
-	}
+	assertMovesTo(t, processor, sw.TimerPaths[0].TargetDept, "ops", "Task_final_sw")
 }
 
 // messageBoundaryUserTaskBPMN: two-pool collaboration where a message flow

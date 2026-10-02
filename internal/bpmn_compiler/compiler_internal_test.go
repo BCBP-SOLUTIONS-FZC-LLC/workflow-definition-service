@@ -1032,15 +1032,10 @@ func TestCompile_BlockingValidationErrors(t *testing.T) {
 	}
 }
 
-// TestCompile_BpmnCoreCompileError covers the case where structural validation
-// passes but bpmncore.Compile still fails: a parallel gateway whose branches
-// each terminate independently at their own end event has no matching join.
-// checkSplitJoin treats "no join, but every branch terminates" as valid for
-// ANY gateway kind, but handleSplitNoJoin only tolerates a missing join for
-// exclusive gateways — a parallel split hits the "no matching join" error.
-// Compile() must propagate that as a plain wrapped error, not a
-// ValidationFailedError, since it happens after validation already passed.
-func TestCompile_BpmnCoreCompileError(t *testing.T) {
+// TestCompile_ParallelSplitWithoutAJoin_IsUnmatchedGateway pins that a
+// parallel split whose branches each end at their own end event is refused by
+// validation: only an exclusive split may do without a join.
+func TestCompile_ParallelSplitWithoutAJoin_IsUnmatchedGateway(t *testing.T) {
 	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions
   xmlns:bpmn="` + nsBPMN + `"
@@ -1090,17 +1085,14 @@ func TestCompile_BpmnCoreCompileError(t *testing.T) {
 	c := New()
 
 	valErrs, valErr := c.Validate(context.Background(), bpmnXML)
-	if valErr != nil || len(valErrs) != 0 {
-		t.Fatalf("expected clean validation (the compile failure must occur post-validation); got err=%v errs=%v", valErr, errCodesOf(valErrs))
+	if valErr != nil || !hasCodeIn(valErrs, domain.BPMNErrUnmatchedGateway) {
+		t.Fatalf("Validate = %v, %v; want UNMATCHED_GATEWAY", valErr, errCodesOf(valErrs))
 	}
 
 	_, err := c.Compile(context.Background(), bpmnXML)
 	var vfe *domain.ValidationFailedError
-	if errors.As(err, &vfe) {
-		t.Fatalf("expected a plain wrapped compile error, not ValidationFailedError; got %v", vfe)
-	}
-	if err == nil {
-		t.Fatal("expected an error from bpmncore.Compile for an unmatched parallel split")
+	if !errors.As(err, &vfe) || !hasCodeIn(vfe.Errors, domain.BPMNErrUnmatchedGateway) {
+		t.Fatalf("Compile = %v; want a ValidationFailedError with UNMATCHED_GATEWAY", err)
 	}
 }
 

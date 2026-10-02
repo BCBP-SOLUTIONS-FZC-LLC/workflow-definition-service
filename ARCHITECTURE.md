@@ -862,7 +862,7 @@ The compiler distinguishes root entry-point processes from called processes by w
 </bpmn:laneSet>
 ```
 
-**System semantics**: each lane becomes a `DepartmentDef`. `lane.name` is used as both `DepartmentDef.ID` and `DepartmentDef.Label` — the format is owned by the Profile Service and is trusted as-is. Every `<bpmn:userTask>` must appear in exactly one lane; the compiler derives the department from `<bpmn:flowNodeRef>` membership, not from any Zeebe property. A task not listed in any lane is `TASK_NOT_IN_LANE`.
+**System semantics**: tasks run in the order the flows reach them; a lane says who does a task, never when. Each stretch of a lane on one path becomes a `DepartmentDef`: the lane's first stretch is keyed by `lane.name`, a later one by `<lane.name>~<n>`, and every stretch has `lane.name` as its `Label` and the lane's `dept_id` as its IAM department. A flow that returns to a lane, a gateway branch and a boundary path each start a stretch of their own. Every `<bpmn:userTask>` must appear in exactly one lane, placed by `<bpmn:flowNodeRef>` membership. A task not listed in any lane is `TASK_NOT_IN_LANE`, and a lane name containing `/`, `::` or `~` is `INVALID_LANE_NAME`.
 
 Additional `DepartmentDef` fields populated by the compiler:
 
@@ -1276,9 +1276,10 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `MISSING_DEPT_INPUT_FOR_MODULE` | A called process has two or more open lanes and the call's `Depts` input does not map every one |
 | `CALLED_ELEMENT_CYCLE` | A chain of `callActivity` calls returns to a process already on it |
 | `DUPLICATE_PROCESS_ID` | Two processes in the bundled document share an `id` |
-| `UNSUPPORTED_BOUNDARY_TARGET` | A boundary event's path reaches a `callActivity`, `sendTask` or `receiveTask` before any `userTask`, `subProcess` or end event |
+| `UNSUPPORTED_BOUNDARY_TARGET` | A boundary event's path reaches a `callActivity`, `sendTask` or `receiveTask` before any `userTask`, `subProcess` or end event, or a `subProcess` whose body does not start with a `userTask` |
 | `MISSING_DEPT_ID` | A task's lane has no `dept_id`; a call binds a module lane to a workflow lane with no `dept_id`; or, at publish and `/validate`, a workflow has no lanes, or a task of its expanded plan runs in no IAM department |
 | `INVALID_DEPT_ID` | A lane's `dept_id` is not a UUID |
+| `INVALID_LANE_NAME` | A lane's `name` contains `/`, `::` or `~` |
 | `UNKNOWN_CONNECTOR_TYPE` | *(warning severity)* A connector `serviceTask` names a connector type the registry does not know |
 | `CONNECTOR_TASK_HAS_ASSIGNMENT` | *(warning severity)* A connector `serviceTask` carries a `zeebe:assignmentDefinition`, which it ignores |
 | `UNSUPPORTED_ELEMENT` | Tier 2 element present (e.g. `inclusiveGateway`) — parsed but compile handler absent |

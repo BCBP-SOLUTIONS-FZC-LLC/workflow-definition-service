@@ -724,7 +724,7 @@ func TestValidateBoundaryEvents_DanglingAttachedToRef(t *testing.T) {
 		},
 	}
 	g := &bpmncore.Graph{NodeIDs: map[string]struct{}{"Task_1": {}}}
-	errs := validator.ValidateBoundaryEvents(proc, g)
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
 	if !hasCodeIn(errs, domain.BPMNErrDanglingNode) {
 		t.Errorf("expected DANGLING_NODE for unknown attachedToRef; got %v", errCodesOf(errs))
 	}
@@ -737,7 +737,7 @@ func TestValidateBoundaryEvents_NoDefinition(t *testing.T) {
 		},
 	}
 	g := &bpmncore.Graph{NodeIDs: map[string]struct{}{"Task_1": {}}}
-	errs := validator.ValidateBoundaryEvents(proc, g)
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
 	if !hasCodeIn(errs, domain.BPMNErrMissingTaskDefinition) {
 		t.Errorf("expected MISSING_TASK_DEFINITION for boundary event with no definition; got %v", errCodesOf(errs))
 	}
@@ -753,7 +753,7 @@ func TestValidateBoundaryEvents_BothTimerAndError(t *testing.T) {
 		NodeIDs:  map[string]struct{}{"Sub_1": {}},
 		NodeType: map[string]bpmncore.FlowNodeType{"Sub_1": bpmncore.NodeTypeSubProcess},
 	}
-	errs := validator.ValidateBoundaryEvents(proc, g)
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
 	if !hasCodeIn(errs, domain.BPMNErrInvalidBoundaryAttachment) {
 		t.Errorf("expected INVALID_BOUNDARY_ATTACHMENT for both timer and error; got %v", errCodesOf(errs))
 	}
@@ -769,7 +769,7 @@ func TestValidateBoundaryEvents_InvalidSLADuration(t *testing.T) {
 		NodeIDs:  map[string]struct{}{"Task_1": {}},
 		NodeType: map[string]bpmncore.FlowNodeType{"Task_1": bpmncore.NodeTypeUserTask},
 	}
-	errs := validator.ValidateBoundaryEvents(proc, g)
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
 	if !hasCodeIn(errs, domain.BPMNErrInvalidSLADuration) {
 		t.Errorf("expected INVALID_SLA_DURATION; got %v", errCodesOf(errs))
 	}
@@ -786,7 +786,7 @@ func TestValidateBoundaryEvents_MultipleTimersOnSameHost(t *testing.T) {
 		NodeIDs:  map[string]struct{}{"Task_1": {}},
 		NodeType: map[string]bpmncore.FlowNodeType{"Task_1": bpmncore.NodeTypeUserTask},
 	}
-	errs := validator.ValidateBoundaryEvents(proc, g)
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
 	if !hasCodeIn(errs, domain.BPMNErrInvalidBoundaryAttachment) {
 		t.Errorf("expected INVALID_BOUNDARY_ATTACHMENT for duplicate timer on same host; got %v", errCodesOf(errs))
 	}
@@ -802,7 +802,7 @@ func TestValidateBoundaryEvents_ErrorBoundaryOnUserTask(t *testing.T) {
 		NodeIDs:  map[string]struct{}{"Task_1": {}},
 		NodeType: map[string]bpmncore.FlowNodeType{"Task_1": bpmncore.NodeTypeUserTask},
 	}
-	errs := validator.ValidateBoundaryEvents(proc, g)
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
 	if !hasCodeIn(errs, domain.BPMNErrInvalidBoundaryAttachment) {
 		t.Errorf("expected INVALID_BOUNDARY_ATTACHMENT for error boundary on userTask; got %v", errCodesOf(errs))
 	}
@@ -818,7 +818,7 @@ func TestValidateBoundaryEvents_ValidTimerOnTask(t *testing.T) {
 		NodeIDs:  map[string]struct{}{"Task_1": {}},
 		NodeType: map[string]bpmncore.FlowNodeType{"Task_1": bpmncore.NodeTypeUserTask},
 	}
-	if errs := validator.ValidateBoundaryEvents(proc, g); len(errs) != 0 {
+	if errs := validator.ValidateBoundaryEvents(proc, g, nil); len(errs) != 0 {
 		t.Errorf("expected no errors for valid timer boundary on task; got %v", errs)
 	}
 }
@@ -833,7 +833,7 @@ func TestValidateBoundaryEvents_ValidErrorOnSubProcess(t *testing.T) {
 		NodeIDs:  map[string]struct{}{"Sub_1": {}},
 		NodeType: map[string]bpmncore.FlowNodeType{"Sub_1": bpmncore.NodeTypeSubProcess},
 	}
-	if errs := validator.ValidateBoundaryEvents(proc, g); len(errs) != 0 {
+	if errs := validator.ValidateBoundaryEvents(proc, g, nil); len(errs) != 0 {
 		t.Errorf("expected no errors for valid error boundary on subprocess; got %v", errs)
 	}
 }

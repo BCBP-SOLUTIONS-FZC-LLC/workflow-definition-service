@@ -16,9 +16,13 @@ Your diagram must pass all checks before it can go live.
 
 ---
 
-## Lanes are departments
+## Lanes say who does the work
 
-**Every task must sit inside a lane.** Lanes map directly to departments in the compiled plan and the UI. The lane name becomes the department identifier — it is used for routing, display, and access control.
+**Every task must sit inside a lane.** A lane stands for a department: its `dept_id` is the IAM department whose people do the lane's tasks, and its name is what the UI shows.
+
+**The arrows decide the order.** Tasks run in the order the sequence flows reach them, whatever lane they sit in. A lane only says which department does a task, so work can move from one lane to another and back as often as the process needs.
+
+A lane name cannot contain `/`, `::` or `~`.
 
 Name lanes after real organisational departments. Do not rename a lane after a workflow has gone live without coordinating with the engineering and IAM teams.
 
@@ -120,6 +124,8 @@ The loop can run as many times as the reviewer keeps rejecting — every rejecti
 
 Splits the flow into simultaneous branches. All branches must converge at a matching AND join. Use when multiple departments work at the same time.
 
+No branch may leave the fork early. To let a reviewer inside a branch reject the whole item, record the decision in that branch and put the exclusive gateway that ends the process after the AND join.
+
 ### Inclusive Gateway (OR) — one or more paths fire
 
 Like parallel, but only branches whose conditions are true fire. Prefer XOR or AND unless you specifically need conditional fan-out.
@@ -184,7 +190,8 @@ These are checked on every upload. Breaking them causes rejection.
 | At least one end event per process | `NO_END_EVENT` |
 | Every node connected (no floating elements) | `DANGLING_NODE` |
 | Every node reachable from start | `UNREACHABLE_NODE` |
-| Parallel/inclusive split has a matching join | `UNMATCHED_GATEWAY` |
+| Parallel/inclusive split has a matching join; an exclusive split has one unless every branch ends | `UNMATCHED_GATEWAY` |
+| Lane names have no `/`, `::` or `~` | `INVALID_LANE_NAME` |
 | Revert loops always have a forward exit (guarded) | `UNGUARDED_LOOP` |
 | Sub-processes have their own start and end events | compile error |
 | Diagram block present (Camunda Modeler adds this) | `MISSING_DIAGRAM` |

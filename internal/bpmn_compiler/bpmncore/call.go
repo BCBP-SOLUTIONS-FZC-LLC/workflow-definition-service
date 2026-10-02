@@ -157,6 +157,9 @@ func (c *CalledPlans) Claim(id string) bool {
 
 func (c *CalledPlans) Put(plan *dsl.CompiledPlan) { c.plans[plan.Name] = plan }
 
+// Get returns the compiled plan of id, or nil while it is still compiling.
+func (c *CalledPlans) Get(id string) *dsl.CompiledPlan { return c.plans[id] }
+
 // All returns the compiled plans ordered by name.
 func (c *CalledPlans) All() []*dsl.CompiledPlan {
 	var out []*dsl.CompiledPlan

@@ -14,11 +14,6 @@ const (
 	ExclusiveGateway GatewayKind = true
 )
 
-func (s *CompileState) DeptOf(taskID string) (id, label, iamDeptID string) {
-	name := LaneNameFor(taskID, s.Proc)
-	return name, name, DeptIDFor(taskID, s.Proc)
-}
-
 func (s *CompileState) ForwardNexts(node string) []string {
 	outs := s.G.Outgoing[node]
 	fwd := make([]string, 0, len(outs))
@@ -41,6 +36,7 @@ func (s *CompileState) EnsureDept(id, label, iamDeptID string) {
 func (s *CompileState) AppendStage(deptID string, stage dsl.StageDef) {
 	i := s.sd.deptIdx[deptID]
 	s.sd.depts[i].Stages = append(s.sd.depts[i].Stages, stage)
+	s.sd.stages++
 }
 
 func (s *CompileState) AddToSeqBuf(deptID string) {
@@ -49,7 +45,11 @@ func (s *CompileState) AddToSeqBuf(deptID string) {
 	}
 }
 
+// FlushSeqBuf ends the open segment and emits the buffered departments as a
+// Sequential step. Every other kind of step is emitted after it, so a task
+// after a gateway, a subprocess or a call starts a segment of its own.
 func (s *CompileState) FlushSeqBuf() {
+	s.openLane, s.openSegment = "", ""
 	if len(s.seqBuf) == 0 {
 		return
 	}
@@ -63,10 +63,15 @@ func (s *CompileState) TraverseNode(nodeID string) error {
 	if s.StopAt != "" && nodeID == s.StopAt {
 		return nil
 	}
-	if s.visited[nodeID] {
+	if s.visited[nodeID] || (s.stopAtCompiled && s.sd.visited[nodeID]) {
 		return nil
 	}
+	s.sd.nodes++
+	if s.sd.stages > StageBudget || s.sd.nodes > nodeBudget {
+		return ErrStageBudget
+	}
 	s.visited[nodeID] = true
+	s.sd.visited[nodeID] = true
 
 	if s.G.NodeType[nodeID] == NodeTypeExternalParticipant {
 		s.FlushSeqBuf()
@@ -118,7 +123,7 @@ func (s *CompileState) HandleGateway(nodeID string, kind GatewayKind) error {
 	if !ok {
 		return s.handleSplitNoJoin(nodeID, fwd, backTargets, kind)
 	}
-	return s.handleSplitWithJoin(nodeID, fwd, backTargets, joinID, kind)
+	return s.handleSplitWithJoin(nodeID, backTargets, joinID, kind)
 }
 
 func (s *CompileState) handleSingleForwardWithReverts(
@@ -127,13 +132,9 @@ func (s *CompileState) handleSingleForwardWithReverts(
 	step := dsl.ExecutionStep{}
 	if len(fwd) == 1 {
 		// The forward path is emitted as its own subsequent steps by the
-		// TraverseNode(fwd[0]) call below, so this branch carries no Target:
-		// it exists only to let the gateway tell "go forward" apart from
-		// "send back". Naming a Target here as well would dispatch the
-		// forward department twice — once from this branch and once from the
-		// continuation step. The split shapes differ and do set a Target:
-		// their branches diverge, and their continuation starts at the join,
-		// after the branch departments rather than on top of them.
+		// TraverseNode(fwd[0]) call below, so this branch carries neither
+		// Steps nor a Target: it exists only to let the gateway tell "go
+		// forward" apart from "send back".
 		step.Exclusive = append(step.Exclusive, dsl.ExclusiveBranch{
 			ConditionExpression: s.condExprs[[2]string{nodeID, fwd[0]}],
 			Terminates:          s.G.NodeType[fwd[0]] == NodeTypeEndEvent,
@@ -147,6 +148,8 @@ func (s *CompileState) handleSingleForwardWithReverts(
 	return nil
 }
 
+// handleSplitNoJoin compiles an exclusive split whose branches each run to an
+// end event: each branch's work is its Steps, after which its path ends.
 func (s *CompileState) handleSplitNoJoin(
 	nodeID string, fwd, backTargets []string, kind GatewayKind,
 ) error {
@@ -154,35 +157,21 @@ func (s *CompileState) handleSplitNoJoin(
 		return fmt.Errorf("split gateway %q has no matching join", nodeID)
 	}
 	step := dsl.ExecutionStep{}
-	var continuationNode string
 	for _, branchStart := range fwd {
-		dept, stage := s.firstTaskAhead(branchStart)
-		nodeID0, name0 := "", ""
-		if stage == "sub_workflow" || stage == "" {
-			nodeID0, name0 = s.firstTaskNodeAhead(branchStart)
+		b, err := s.exclusiveBranch(nodeID, branchStart, "")
+		if err != nil {
+			return err
 		}
-		step.Exclusive = append(step.Exclusive, dsl.ExclusiveBranch{
-			Target:              dept,
-			TargetStage:         stage,
-			TargetNodeID:        nodeID0,
-			TargetName:          name0,
-			ConditionExpression: s.condExprs[[2]string{nodeID, branchStart}],
-			Terminates:          true,
-		})
-		if s.G.NodeType[branchStart] != NodeTypeEndEvent {
-			continuationNode = branchStart
-		}
+		b.Terminates = true
+		step.Exclusive = append(step.Exclusive, b)
 	}
 	step.Exclusive = append(step.Exclusive, s.revertBranches(nodeID, backTargets)...)
 	s.steps = append(s.steps, step)
-	if continuationNode != "" {
-		return s.TraverseNode(continuationNode)
-	}
 	return nil
 }
 
 func (s *CompileState) handleSplitWithJoin(
-	nodeID string, fwd, backTargets []string, joinID string, kind GatewayKind,
+	nodeID string, backTargets []string, joinID string, kind GatewayKind,
 ) error {
 	var step dsl.ExecutionStep
 	var err error
@@ -196,30 +185,7 @@ func (s *CompileState) handleSplitWithJoin(
 	}
 	step.Exclusive = append(step.Exclusive, s.revertBranches(nodeID, backTargets)...)
 	s.steps = append(s.steps, step)
-	if kind == ExclusiveGateway {
-		if err := s.compileSubprocBranches(fwd, joinID); err != nil {
-			return err
-		}
-	}
 	return s.TraverseNode(joinID)
-}
-
-func (s *CompileState) compileSubprocBranches(fwd []string, joinID string) error {
-	for _, branchStart := range fwd {
-		if branchStart == joinID || s.visited[branchStart] {
-			continue
-		}
-		if s.G.NodeType[branchStart] != NodeTypeSubProcess {
-			continue
-		}
-		bs := NewBranchState(s, joinID)
-		if err := bs.TraverseNode(branchStart); err != nil {
-			return err
-		}
-		bs.FlushSeqBuf()
-		s.steps = append(s.steps, bs.CollectedSteps()...)
-	}
-	return nil
 }
 
 func (s *CompileState) FillBoundaryTimerTarget(taskID string, stage *dsl.StageDef) {
@@ -240,25 +206,34 @@ func (s *CompileState) FillBoundaryMessageTarget(taskID string, stage *dsl.Stage
 	}
 }
 
-// BoundaryTarget is where boundary event boundaryID leads: the department of
-// the first task or subProcess on its path, or, when the path meets no such
-// node, nowhere, and the boundary terminates. In a laneless process the
-// department is empty until the process's own department is named.
+// BoundaryTarget is where boundary event boundaryID leads: the segment of the
+// first task or subProcess on its path, or, when the path meets no such node,
+// nowhere, and the boundary terminates. The segment is pending until
+// ResolveTargets, since the path may not be compiled yet.
 func (s *CompileState) BoundaryTarget(boundaryID string) (dept string, terminates bool) {
-	target := OutgoingTargetOf(boundaryID, s.Proc)
-	if target == "" {
+	node := s.taskAhead(OutgoingTargetOf(boundaryID, s.Proc))
+	if node == "" {
 		return "", true
 	}
-	dept, _, found := s.taskAhead(target)
-	return dept, !found
+	return segmentOfPending(node), false
 }
 
+// CompileBoundaryPaths compiles each boundary's path the main traversal did
+// not reach, each on a state of its own: its tasks take segments of their
+// own, and its steps are dropped, so they run only when the boundary moves
+// to their department.
 func (s *CompileState) CompileBoundaryPaths() error {
 	for _, be := range s.Proc.BoundaryEvents {
-		if (be.Timer == nil && be.Message == nil) || s.visited[be.ID] {
+		node := s.taskAhead(OutgoingTargetOf(be.ID, s.Proc))
+		if node == "" {
 			continue
 		}
-		if err := s.TraverseNode(be.ID); err != nil {
+		if _, compiled := s.sd.nodeSegment[node]; compiled {
+			continue
+		}
+		path := NewBranchState(s, "")
+		path.stopAtCompiled = true
+		if err := path.TraverseNode(OutgoingTargetOf(be.ID, s.Proc)); err != nil {
 			return fmt.Errorf("boundary continuation from %q: %w", be.ID, err)
 		}
 	}
@@ -293,50 +268,38 @@ func (s *CompileState) revertBranches(
 ) []dsl.ExclusiveBranch {
 	branches := make([]dsl.ExclusiveBranch, 0, len(backTargets))
 	for _, backTarget := range backTargets {
-		dept, stage := s.firstTaskAhead(backTarget)
-		nodeID0, name0 := "", ""
-		if stage == "sub_workflow" || stage == "" {
-			nodeID0, name0 = s.firstTaskNodeAhead(backTarget)
+		nodeID, name := s.firstTaskNodeAhead(backTarget)
+		dept, onPath := s.pathSegment[nodeID]
+		if !onPath {
+			dept = segmentOfPending(nodeID)
 		}
 		branches = append(branches, dsl.ExclusiveBranch{
 			ConditionExpression: s.condExprs[[2]string{gatewayID, backTarget}],
 			RevertToDept:        dept,
-			RevertToStage:       stage,
-			RevertToNodeID:      nodeID0,
-			RevertToName:        name0,
+			RevertToStage:       s.stageTypeOf(nodeID),
+			RevertToNodeID:      nodeID,
+			RevertToName:        name,
 		})
 	}
 	return branches
 }
 
-func (s *CompileState) firstTaskAhead(node string) (dept, stageType string) {
-	dept, stageType, _ = s.taskAhead(node)
-	return dept, stageType
-}
-
-// taskAhead follows node's first forward flow to the first userTask or
-// subProcess, reporting whether it found one.
-func (s *CompileState) taskAhead(node string) (dept, stageType string, found bool) {
+// taskAhead follows node's first forward flows to the first userTask or
+// subProcess, or returns "" when an end or a dead end comes first.
+func (s *CompileState) taskAhead(node string) string {
 	visited := make(map[string]bool)
-	curr := node
-	for {
-		if visited[curr] {
-			return "", "", false
-		}
+	for curr := node; curr != "" && !visited[curr]; {
 		visited[curr] = true
-		if s.G.NodeType[curr] == NodeTypeUserTask {
-			dept, stageType = s.resolveUserTaskDept(curr)
-			return dept, stageType, true
-		}
-		if s.G.NodeType[curr] == NodeTypeSubProcess {
-			return LaneNameFor(curr, s.Proc), "sub_workflow", true
+		if t := s.G.NodeType[curr]; t == NodeTypeUserTask || t == NodeTypeSubProcess {
+			return curr
 		}
 		fwd := s.ForwardNexts(curr)
 		if len(fwd) == 0 {
-			return "", "", false
+			return ""
 		}
 		curr = fwd[0]
 	}
+	return ""
 }
 
 func (s *CompileState) firstTaskNodeAhead(node string) (id, name string) {
@@ -391,66 +354,46 @@ func (s *CompileState) firstTaskNodeAhead(node string) (id, name string) {
 	}
 }
 
-func (s *CompileState) resolveUserTaskDept(curr string) (dept, stageType string) {
-	task := FindTask(s.Proc, curr)
-	if task == nil {
-		return "", ""
+// stageTypeOf is the stage type nodeID compiles to, for display beside the
+// node it names.
+func (s *CompileState) stageTypeOf(nodeID string) string {
+	switch s.G.NodeType[nodeID] {
+	case NodeTypeUserTask:
+		if task := FindTask(s.Proc, nodeID); task != nil && task.ExtensionElements.TaskDefinition != nil {
+			return task.ExtensionElements.TaskDefinition.Type
+		}
+	case NodeTypeSendTask:
+		return "send_task"
+	case NodeTypeReceiveTask:
+		return "receive_task"
+	case NodeTypeSubProcess, NodeTypeCallActivity:
+		return "sub_workflow"
+	case NodeTypeStartEvent, NodeTypeEndEvent,
+		NodeTypeParallelGateway, NodeTypeExclusiveGateway, NodeTypeInclusiveGateway,
+		NodeTypeBoundaryEvent, NodeTypeTimerBoundaryEvent, NodeTypeErrorBoundaryEvent,
+		NodeTypeMessageBoundaryEvent, NodeTypeExternalParticipant:
 	}
-	deptName := LaneNameFor(curr, s.Proc)
-	if task.ExtensionElements.TaskDefinition != nil {
-		return deptName, task.ExtensionElements.TaskDefinition.Type
-	}
-	return deptName, ""
+	return ""
 }
 
-func reachesEndEvent(g *Graph, backEdges map[[2]string]bool, from, stop string) bool {
-	queue := []string{from}
-	seen := map[string]bool{from: true}
-	for len(queue) > 0 {
-		curr := queue[0]
-		queue = queue[1:]
-		if curr == stop {
-			continue
-		}
-		if g.NodeType[curr] == NodeTypeEndEvent {
-			return true
-		}
-		for _, next := range g.Outgoing[curr] {
-			if !backEdges[[2]string{curr, next}] && !seen[next] {
-				seen[next] = true
-				queue = append(queue, next)
-			}
-		}
-	}
-	return false
-}
-
+// traverseBranches compiles each forward branch of a parallel split, up to
+// joinID, into its own steps.
 func (s *CompileState) traverseBranches(splitID, joinID string) ([]dsl.ParallelBranch, error) {
 	var branches []dsl.ParallelBranch
-
 	for _, branchStart := range s.ForwardNexts(splitID) {
-		leadDept, _ := s.firstTaskAhead(branchStart)
-
-		bs := NewBranchState(s, joinID)
-		if err := bs.TraverseNode(branchStart); err != nil {
+		steps, err := s.branchSteps(branchStart, joinID)
+		if err != nil {
 			return nil, err
 		}
-		bs.FlushSeqBuf()
-
-		branches = append(branches, dsl.ParallelBranch{
-			DeptID: leadDept,
-			Steps:  bs.CollectedSteps(),
-		})
+		branches = append(branches, dsl.ParallelBranch{DeptID: FirstDepartment(steps), Steps: steps})
 	}
 	return branches, nil
 }
 
-func (s *CompileState) traverseExclusiveBranches(
-	splitID, joinID string,
-) ([]dsl.ExclusiveBranch, error) {
+func (s *CompileState) traverseExclusiveBranches(splitID, joinID string) ([]dsl.ExclusiveBranch, error) {
 	var branches []dsl.ExclusiveBranch
 	for _, branchStart := range s.ForwardNexts(splitID) {
-		b, err := s.compileExclusiveBranch(splitID, branchStart, joinID)
+		b, err := s.exclusiveBranch(splitID, branchStart, joinID)
 		if err != nil {
 			return nil, err
 		}
@@ -459,136 +402,32 @@ func (s *CompileState) traverseExclusiveBranches(
 	return branches, nil
 }
 
-func (s *CompileState) compileExclusiveBranch(
-	splitID, branchStart, joinID string,
-) (dsl.ExclusiveBranch, error) {
-	condExpr := s.condExprs[[2]string{splitID, branchStart}]
-	var branchDept, branchStage string
-	curr := branchStart
-	walked := make(map[string]bool)
-
-	for curr != joinID {
-		if walked[curr] {
-			break
-		}
-		walked[curr] = true
-
-		if err := s.processExclusiveNode(curr, &branchDept, &branchStage); err != nil {
-			return dsl.ExclusiveBranch{}, err
-		}
-
-		fwd := s.ForwardNexts(curr)
-		if len(fwd) == 0 {
-			break
-		}
-		curr = fwd[0]
-	}
-
-	terminates := branchDept == "" &&
-		reachesEndEvent(s.G, s.backEdges, branchStart, joinID)
-	if branchDept == "" && !terminates {
-		branchDept, branchStage = s.firstTaskAhead(joinID)
-	}
-	targetNodeID, targetName := "", ""
-	if branchStage == "sub_workflow" || branchStage == "" ||
-		branchStage == "send_task" || branchStage == "receive_task" {
-		targetNodeID, targetName = s.firstTaskNodeAhead(branchStart)
-		if targetNodeID == "" && branchDept != "" {
-			targetNodeID, targetName = s.firstTaskNodeAhead(joinID)
-		}
-	}
-	return dsl.ExclusiveBranch{
-		Target:              branchDept,
-		TargetStage:         branchStage,
-		TargetNodeID:        targetNodeID,
-		TargetName:          targetName,
-		ConditionExpression: condExpr,
-		Terminates:          terminates,
-	}, nil
-}
-
-func (s *CompileState) processExclusiveNode(
-	curr string,
-	branchDept, branchStage *string,
-) error {
-	switch s.G.NodeType[curr] {
-	case NodeTypeUserTask:
-		return s.processExclusiveUserTask(curr, branchDept, branchStage)
-	case NodeTypeSendTask:
-		return s.processExclusiveMessageTask(curr, "send_task", branchDept, branchStage)
-	case NodeTypeReceiveTask:
-		return s.processExclusiveMessageTask(curr, "receive_task", branchDept, branchStage)
-	case NodeTypeSubProcess, NodeTypeCallActivity:
-		if *branchDept == "" {
-			*branchDept = LaneNameFor(curr, s.Proc)
-			*branchStage = "sub_workflow"
-		}
-	case NodeTypeStartEvent, NodeTypeEndEvent,
-		NodeTypeParallelGateway, NodeTypeExclusiveGateway, NodeTypeInclusiveGateway,
-		NodeTypeBoundaryEvent, NodeTypeTimerBoundaryEvent, NodeTypeErrorBoundaryEvent,
-		NodeTypeMessageBoundaryEvent, NodeTypeExternalParticipant:
-	}
-	return nil
-}
-
-func (s *CompileState) processExclusiveUserTask(
-	curr string,
-	branchDept, branchStage *string,
-) error {
-	task := FindTask(s.Proc, curr)
-	if task == nil {
-		return fmt.Errorf(errTaskNotFound, curr)
-	}
-	deptID, label, iamDeptID := s.DeptOf(curr)
-	if *branchDept == "" {
-		*branchDept = deptID
-		if task.ExtensionElements.TaskDefinition != nil {
-			*branchStage = task.ExtensionElements.TaskDefinition.Type
-		}
-	}
-	stage, err := BuildStageDef(task, s.StageTypes, s.Proc, s.Defs)
+// exclusiveBranch compiles the forward branch of splitID that starts at
+// branchStart, up to stopAt, into its Steps. Target and the fields beside it
+// name the branch's first department and node, for display.
+func (s *CompileState) exclusiveBranch(splitID, branchStart, stopAt string) (dsl.ExclusiveBranch, error) {
+	b := dsl.ExclusiveBranch{ConditionExpression: s.condExprs[[2]string{splitID, branchStart}]}
+	steps, err := s.branchSteps(branchStart, stopAt)
 	if err != nil {
-		return err
+		return b, err
 	}
-	s.FillBoundaryTimerTarget(task.ID, &stage)
-	s.FillBoundaryMessageTarget(task.ID, &stage)
-	s.EnsureDept(deptID, label, iamDeptID)
-	s.AppendStage(deptID, stage)
-	s.visited[curr] = true
-	return nil
+	if len(steps) == 0 {
+		return b, nil
+	}
+	b.Steps = steps
+	b.Target = FirstDepartment(steps)
+	b.TargetNodeID, b.TargetName = s.firstTaskNodeAhead(branchStart)
+	b.TargetStage = s.stageTypeOf(b.TargetNodeID)
+	return b, nil
 }
 
-func (s *CompileState) processExclusiveMessageTask(
-	curr, stageType string,
-	branchDept, branchStage *string,
-) error {
-	deptID, label, iamDeptID := s.DeptOf(curr)
-	if *branchDept == "" {
-		*branchDept = deptID
-		*branchStage = stageType
+// branchSteps compiles the path from branchStart up to stopAt on a state of
+// its own.
+func (s *CompileState) branchSteps(branchStart, stopAt string) ([]dsl.ExecutionStep, error) {
+	bs := NewBranchState(s, stopAt)
+	if err := bs.TraverseNode(branchStart); err != nil {
+		return nil, err
 	}
-	var (
-		taskID, taskName, msgName string
-		ext                       BPMNExtensionElements
-	)
-	if stageType == "send_task" {
-		t := FindSendTask(s.Proc, curr)
-		if t == nil {
-			return fmt.Errorf("sendTask %q not found in process", curr)
-		}
-		taskID, taskName, msgName = t.ID, t.Name, ResolveMessageName(t.MessageRef, s.Defs)
-		ext = t.ExtensionElements
-	} else {
-		t := FindReceiveTask(s.Proc, curr)
-		if t == nil {
-			return fmt.Errorf("receiveTask %q not found in process", curr)
-		}
-		taskID, taskName, msgName = t.ID, t.Name, ResolveMessageName(t.MessageRef, s.Defs)
-		ext = t.ExtensionElements
-	}
-	stage := BuildMessageStageDef(taskID, taskName, stageType, msgName, ext)
-	s.EnsureDept(deptID, label, iamDeptID)
-	s.AppendStage(deptID, stage)
-	s.visited[curr] = true
-	return nil
+	bs.FlushSeqBuf()
+	return bs.CollectedSteps(), nil
 }

@@ -2,29 +2,45 @@ package element
 
 import "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 
-// compileInnerState builds a CompileState for a nested process — a
-// subprocess body or a called process — and runs it from that process's
-// start event, ready for the caller to harvest CollectedDepts/CollectedSteps.
-func compileInnerState(inner *bpmncore.BPMNProcess, cs *bpmncore.CompileState) (*bpmncore.CompileState, error) {
-	innerG := bpmncore.BuildGraph(inner)
-	innerLaneLabels := bpmncore.BuildLaneLabels(inner)
-	innerCondExprs := bpmncore.BuildCondExprs(inner)
-	innerBackEdges := map[[2]string]bool{}
-	if len(inner.StartEvents) > 0 {
-		innerBackEdges = bpmncore.ClassifyBackEdges(innerG, inner.StartEvents[0].ID)
+// compileCalledState compiles a called process into a plan of its own, its
+// departments and pending targets complete.
+func compileCalledState(called *bpmncore.BPMNProcess, cs *bpmncore.CompileState) (*bpmncore.CompileState, error) {
+	state := newInnerState(called, cs)
+	state.Called = cs.Called
+	if err := runInnerState(called, state); err != nil {
+		return nil, err
 	}
+	state.ResolveTargets()
+	return state, nil
+}
 
-	innerState := bpmncore.NewCompileState(inner, innerG, innerLaneLabels, innerCondExprs, innerBackEdges, cs.StageTypes, cs.Elements, cs.Defs)
-	innerState.Called = cs.Called
+// compileSubProcessBody compiles subprocess subProcessID's body into the
+// departments of cs, whose own ResolveTargets completes its targets.
+func compileSubProcessBody(body *bpmncore.BPMNProcess, subProcessID string, cs *bpmncore.CompileState) (*bpmncore.CompileState, error) {
+	state := newInnerState(body, cs)
+	state.ShareSegmentsWith(cs, subProcessID)
+	if err := runInnerState(body, state); err != nil {
+		return nil, err
+	}
+	return state, nil
+}
+
+func newInnerState(inner *bpmncore.BPMNProcess, cs *bpmncore.CompileState) *bpmncore.CompileState {
+	g := bpmncore.BuildGraph(inner)
+	backEdges := map[[2]string]bool{}
 	if len(inner.StartEvents) > 0 {
-		if nexts := innerState.ForwardNexts(inner.StartEvents[0].ID); len(nexts) > 0 {
-			if err := innerState.TraverseNode(nexts[0]); err != nil {
-				return nil, err
+		backEdges = bpmncore.ProcessBackEdges(inner, g, inner.StartEvents[0].ID)
+	}
+	return bpmncore.NewCompileState(inner, g, bpmncore.BuildLaneLabels(inner), bpmncore.BuildCondExprs(inner), backEdges, cs.StageTypes, cs.Elements, cs.Defs)
+}
+
+func runInnerState(inner *bpmncore.BPMNProcess, state *bpmncore.CompileState) error {
+	if len(inner.StartEvents) > 0 {
+		if nexts := state.ForwardNexts(inner.StartEvents[0].ID); len(nexts) > 0 {
+			if err := state.TraverseNode(nexts[0]); err != nil {
+				return err
 			}
 		}
 	}
-	if err := innerState.CompileBoundaryPaths(); err != nil {
-		return nil, err
-	}
-	return innerState, nil
+	return state.CompileBoundaryPaths()
 }

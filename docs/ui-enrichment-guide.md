@@ -22,7 +22,7 @@ The compiled plan is a JSON document returned by the Definition Service. The fie
 
 ### `DepartmentDef.id`
 
-The department slug derived verbatim from the BPMN lane name. It must match an IAM department slug exactly — casing and hyphens included.
+The department's key in the plan: the BPMN lane name for the lane's first stretch of work, and `<lane>~<n>` where the flow comes back to the lane later. `label` is always the lane name, and `iam_department_id` is the lane's `dept_id`, the IAM department whose people do the work.
 
 ```json
 { "id": "design-review", "stages": [...] }
@@ -63,11 +63,11 @@ The BPMN element ID (e.g. `Activity_0abc123`). Read-only — used by the Executi
 
 ## Department IDs
 
-Department IDs come from lane names set by the BPMN designer. Before activation:
+Department IDs come from lane names set by the BPMN designer, and each department's IAM identity from its lane's `dept_id`. Before activation:
 
-1. List all `DepartmentDef.id` values in the compiled plan.
-2. Cross-check each against the IAM department slug list.
-3. If a slug does not exist in IAM, raise it with the designer — the BPMN lane name must be corrected and the file re-uploaded. Do not patch the compiled JSON.
+1. List all `DepartmentDef.iam_department_id` values in the compiled plan.
+2. Cross-check each against the IAM department list.
+3. If a department does not exist in IAM, raise it with the designer — the lane's `dept_id` must be corrected and the file re-uploaded. Do not patch the compiled JSON.
 
 ---
 

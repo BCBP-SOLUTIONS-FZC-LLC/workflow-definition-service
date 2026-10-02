@@ -2,6 +2,9 @@ package validator
 
 import (
 	"fmt"
+	"strings"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -42,6 +45,20 @@ func ValidateCounts(proc *bpmncore.BPMNProcess, implicitStart string) []domain.B
 				maxLanes, len(proc.LaneSet.Lanes)))
 	}
 
+	return errs
+}
+
+// ValidateLaneNames refuses a lane name holding a character a department
+// key gives meaning to: "/" ends the department in a node key, "::" separates
+// calls, and "~" numbers a lane's later segments.
+func ValidateLaneNames(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	for _, lane := range proc.LaneSet.Lanes {
+		if strings.Contains(lane.Name, "/") || strings.Contains(lane.Name, dsl.CallScopeSeparator) || strings.Contains(lane.Name, bpmncore.SegmentSeparator) {
+			errs = AppendErr(errs, domain.BPMNErrInvalidLaneName, lane.ID,
+				fmt.Sprintf("lane name %q contains /, %s or %s, which department keys reserve", lane.Name, dsl.CallScopeSeparator, bpmncore.SegmentSeparator))
+		}
+	}
 	return errs
 }
 

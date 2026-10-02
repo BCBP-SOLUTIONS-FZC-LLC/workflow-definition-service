@@ -1701,7 +1701,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
    - **Scope**: user tasks only. `sendTask`/`receiveTask` keep an optional `assignmentDefinition` — the interpreter resolves them through the message buffer and creates no task, so they need no assignee.
 
 9. **`TASK_LIMIT_EXCEEDED`**
-   - **Trigger Scenario**: The process model contains more than 1000 user task nodes, or its plan does once its calls are expanded.
+   - **Trigger Scenario**: The process model contains more than 1000 user task nodes, its compile makes more than 1000 stages or visits more than 10000 nodes, or its plan does once its calls are expanded. Exclusive splits whose branches merge only in part compile the merged tail once per branch, so a chain of them can pass 1000 stages with few tasks; the compile stops there (`bpmncore.StageBudget`, and a node budget for a tail of gateways alone).
    - **Trigger Logic**: `ValidateCounts` counts the process's task nodes: `<bpmn:userTask>`, `<bpmn:task>` and connector `<bpmn:serviceTask>`. Above 1000 the model is rejected. A called process runs once at every call site, so `ValidateCallGraph` also counts, for each process that makes calls and that no other process calls, its own task nodes plus, for every call site, one plus the called process's count. Above 1000 the error names that process. Without it, a chain of small modules that each call the next twice stays under the per-process count while the plan doubles at every level. At publish, `CompileForPublish` also expands the compiled collaboration (`dsl.ExpandCalls`, `workflow_models_lib.md` §2.6) with a budget of 1000 stages, subprocess bodies included, and refuses a plan over it with this code. `POST /workflows/validate` expands the same way; the module gates run the static counts only.
 
 10. **`LANE_LIMIT_EXCEEDED`**
@@ -1816,7 +1816,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Logic**: `ValidateCallGraph` in `bpmn_compiler/validator/call_graph.go` emits one error per repeated id. A `calledElement` must resolve to exactly one process. Library modules are bundled under their plan names, so only the author's own file can repeat an id.
 
 34. **`UNSUPPORTED_BOUNDARY_TARGET`**
-    - **Trigger Scenario**: A boundary event whose path reaches a `callActivity`, `sendTask` or `receiveTask` before any `userTask`, `subProcess` or end event.
+    - **Trigger Scenario**: A boundary event whose path reaches a `callActivity`, `sendTask` or `receiveTask` before any `userTask`, `subProcess` or end event, or reaches a `subProcess` whose body does not start with a `userTask`.
     - **Trigger Logic**: `ValidateBoundaryEvents` in `bpmn_compiler/validator/boundary.go` follows the boundary's first outgoing flow. A compiled boundary either moves to the department of the first task or subProcess on its path, or terminates when the path reaches an end event first or the boundary has no outgoing flow (workflow-models LLD §2.3). A path that starts with a call or a message task has neither, so it is refused on the boundary event; putting a userTask before the call or message task gives it one.
 
 35. **`MISSING_DEPT_ID`**
@@ -1826,6 +1826,10 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
 36. **`INVALID_DEPT_ID`**
     - **Trigger Scenario**: A lane's `dept_id` property is not a UUID.
     - **Trigger Logic**: `ValidateDeptID` parses the value; it is the IAM department every task in the lane runs in.
+
+37. **`INVALID_LANE_NAME`**
+    - **Trigger Scenario**: A lane's `name` contains `/`, `::` or `~`.
+    - **Trigger Logic**: `ValidateLaneNames` in `bpmn_compiler/validator/process.go` checks every lane of every process in the document. A lane's name is the first part of its tasks' node keys, which consumers split at the first `/`; `::` separates the calls in a scoped key; `~` numbers a lane's later segments (§4.2).
 
 ---
 
@@ -2077,7 +2081,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 #### 3.3.12.2 Published Version Nodes
 
 - **GET** `/workflows/:id/versions/:version_id/nodes`
-- **Semantics**: Lists the nodes of a `PUBLISHED` or `ARCHIVED` version, read from its stored compiled plan with its calls expanded (`dsl.ExpandCalls`, workflow-models LLD §2.6). A node is a stage of the expanded main plan for which `StageDef.CreatesHumanTask()` holds, in a department that is not ignored: the stages the Execution Service checks for eligibility at instance start and keys in `override_map` (`execution_service.md` §5.5). Nodes come in plan order: department by department, a workflow's own lanes first, then each call's departments in the order the calls are expanded.
+- **Semantics**: Lists the nodes of a `PUBLISHED` or `ARCHIVED` version, read from its stored compiled plan with its calls expanded (`dsl.ExpandCalls`, workflow-models LLD §2.6). A node is a stage of the expanded main plan for which `StageDef.CreatesHumanTask()` holds, in a department that is not ignored: the stages the Execution Service checks for eligibility at instance start and keys in `override_map` (`execution_service.md` §5.5). Nodes come in plan order: department by department, a workflow's own lane segments first, then each call's departments in the order the calls are expanded. A department is a lane segment (§4.2): a task where the flow returns to a lane has the key `<lane>~<n>/<task id>`. Segments are numbered in compile order, so a version that adds a task earlier in a lane, or a branch, can renumber an unchanged task's key: node keys are read per version, never carried from one version to the next.
 - **Who reads it**: the Tender Service maps a Deliverable's Sections to a workflow's nodes and may name a different assignee per node when it starts the workflow (Tender HLD §6.3, §12.4); the workflow UI renders the start-time assignee form from it.
 - **Response (`200 OK`)**:
 
@@ -2203,7 +2207,7 @@ Modules are tenant-authored (or platform-authored, `scope=global`) BPMN processe
 - **GET** `/modules/:id/versions` — a module's version history (`page`/`limit` pagination), so the frontend can review non-active versions, including a pending DRAFT before it's published.
 - **GET** `/modules/:id/versions/:version_id` — a specific module version's metadata + `bpmn_xml`, including a pending DRAFT.
 - **GET** `/modules/:id/versions/:version_id/contract` — what a workflow calling this module version binds and names, for the call's `Depts` and `Assignees` forms. Any status, a DRAFT included. The module's own library calls resolve against the library as it is now, as when the version is saved, and the module is compiled with its own process as the root and its open lanes allowed.
-  - `slots`: the module's own departments, in plan order, each `{id, label, open}`. A slot's `id` is its lane's name, the key a call's `Depts` maps. An open slot has no `dept_id` and a call binds it (§4.1.2); a fixed slot carries its `iam_department_id`. A laneless module has one open slot, named by its process id. The module is compiled as a call compiles it, so an open lane that holds only a call is a slot too.
+  - `slots`: the module's own lanes, in plan order, each `{id, label, open}`, one per lane however many segments it has (§4.2). A slot's `id` is its lane's name, the key a call's `Depts` maps, which binds every segment of the lane. An open slot has no `dept_id` and a call binds it (§4.1.2); a fixed slot carries its `iam_department_id`. A laneless module has one open slot, named by its process id. The module is compiled as a call compiles it, so an open lane that holds only a call is a slot too.
   - `tasks`: every human task the module runs, its called modules' included, each `{assignee_key, node_id, name, slot, stage_type, role_level, default_user_ids}`. `assignee_key` is the key a call's `Assignees` takes: the task's id, or the ids of the calls leading to it and then its own, joined by `::`. `slot` is the module's own slot the task runs in, found by following each call's `Departments` binding back up; a task in a called module's fixed lane has no `slot` and carries that lane's `iam_department_id`. The module's own tasks come first, department by department, then each call's tasks in the order the calls run.
   - `messages` and `error_codes`: the names of the `<bpmn:message>` elements and the codes of the `<bpmn:error>` elements in the module's document and its called modules', deduplicated and sorted.
   - `names_users`: whether any task has a default user. A global module never names one.
@@ -2516,7 +2520,7 @@ Attach a `<bpmn:boundaryEvent>` with a `<bpmn:timerEventDefinition>` to the user
 - `cancelActivity="false"` (non-interrupting): task continues; escalation path runs concurrently.
 - `cancelActivity="true"` (interrupting): task is cancelled; only the escalation path continues.
 
-**Stage ordering within a department**: Multiple `UserTask` nodes in the same lane form the stage sequence for that department. Their order is determined by topological position in the `sequenceFlow` graph, **not** by XML document order. The compiler resolves stage order during graph traversal (§4.2).
+**Order follows the flows**: tasks run in the order the sequence flows reach them, **not** in XML document order and not grouped by lane. A lane says who does a task, never when. A department is one stretch of a lane on one path (a *segment*, §4.2): consecutive tasks in one lane form its stage sequence, and a flow that returns to a lane later starts another segment of that lane.
 
 #### 4.1.3.3 Service Task / Connector Extension Contract
 
@@ -2808,30 +2812,30 @@ The Graph Compiler translates the raw, flat BPMN elements into a structured, hie
 2. **Gateway Type Categorization**:
    - Gateways with multiple outgoing flows (`len(outgoing) > 1`) are flagged as **Split Gateways** (`splitGWs`).
    - Gateways with multiple incoming flows (`len(incoming) > 1`) are flagged as **Join Gateways** (`joinGWs`).
-3. **Back-edge Classification**: A DFS from the Start Event labels each sequence flow as a forward edge
-   or a **back-edge** (target is an ancestor on the DFS stack — a revert/loop flow; see §4.4). The set
+3. **Back-edge Classification**: A DFS from the Start Event, then from each boundary event, labels each
+   sequence flow as a forward edge or a **back-edge** (target is an ancestor on the DFS stack — a
+   revert/loop flow; see §4.4), so a loop reached only through a boundary is classified too. The set
    of back-edges is computed once and shared by validation and compilation. The **forward graph**
    (all edges minus back-edges) is a DAG; split→join matching and traversal run over it, so they always
    terminate.
 
 #### Graph Traversal & Parsing Engine
 
-Starting at the primary `StartEvent`'s ID, the compiler traverses the graph node-by-node:
+Starting at the primary `StartEvent`'s ID, the compiler traverses the graph node-by-node over the forward graph:
 
-1. **Task Nodes**: The compiler resolves the task's department from its lane membership. The lane-derived department `id` is appended to a running sequential buffer (`seqBuf`).
+1. **Task Nodes and lane segments**: a task's stage is appended to the department of its lane *segment*, a stretch of one lane on one path. The traversal keeps the segment it is filling open while consecutive tasks stay in that lane. It starts the lane's next segment when a task's lane differs from the open one, and every step other than `Sequential` (a gateway, a subprocess, a call) closes the open segment. A lane's first segment is keyed by the lane's `name`, and its n-th by `<name>~<n>`. Every segment carries the lane's `name` as `Label` and its `dept_id` as `IAMDepartmentID`. Each segment opened is appended to a running sequential buffer (`seqBuf`), so the Execution Service, which runs a department's stages in order (`execution_service.md` §2.5), runs the tasks in the order the flows give. A subprocess body shares its parent's segments, and a body task outside every lane takes the subprocess's lane. A called process numbers its own segments in its own plan, and a laneless one names its segments by its process id.
 2. **Split Gateways (Parallel/Exclusive)**:
    - Flushes any pending `seqBuf` to a `Sequential` execution step.
-   - Traces all independent branches concurrently using a Breadth-First Search (BFS) starting at `outgoing[split_node]`.
-   - Resolves all departments involved in the split paths (using `collectGroupDepts`).
-   - Spawns either a `Parallel` or `Exclusive` step containing the collected departments.
-   - Finds the matching intersection point (Join Gateway) using a traversal queue (`findJoinNode`), walking forward edges only (back-edges are skipped, so the walk cannot loop).
-   - Marks the join gateway as visited and continues traversal from the join gateway's target.
+   - Finds the join: the split's immediate post-dominator in the forward graph, the nearest node every forward path from the split passes through. A merge inside one branch, or a loop head reached again by a back-edge, is never taken for the join.
+   - Compiles each forward branch with its own state, from the branch's first node up to the join, into that branch's `Steps`: tasks in their own segments, nested gateways, subprocesses and calls alike. A parallel branch's `DeptID` is the first department its steps run, found through a leading gateway or subprocess, or empty when its first step is a call or a pool. Each branch stops at the join, so a region is compiled once whatever the order of the flows. A node that two exclusive branches pass through before the join is compiled into each, since only one branch runs; a revert to it names the copy on the revert's own path, and a boundary to it names the first copy, which starts a segment of its own.
+   - Emits a `Parallel` step, or an `Exclusive` step whose forward branches carry their `Steps`, `ConditionExpression` and, for display, `Target`/`TargetNodeID`/`TargetName` of the branch's first department and node. A branch that goes straight to the join has no `Steps` and no `Target`.
+   - Continues traversal from the join.
 3. **Revert / Loop Branches (Exclusive Gateways)**: When an exclusive gateway has an outgoing
    **back-edge** (a revert/loop flow), that branch is not traversed forward; instead it is emitted on
-   the `exclusive` step as a revert branch carrying the target **(dept_id, stage_type)** node reference
-   (never a `user_id`) plus its `condition_expression`. Forward branches of the same gateway compile as
-   normal. The Execution Service maps the revert branch onto its `stage-defer` / `stage-transition`
-   signals (§4.1.7) and enforces a loop-iteration bound at runtime.
+   the `exclusive` step as a revert branch naming the segment and node of the first task on the
+   back-edge's path, **(dept_id, node_id)**, never a `user_id`, plus its `condition_expression`. Forward
+   branches of the same gateway compile as normal. The Execution Service maps the revert branch onto its
+   `stage-defer` / `stage-transition` signals (§4.1.7) and enforces a loop-iteration bound at runtime.
 
 #### Parser-to-DSL Mapping Example
 
@@ -3077,23 +3081,17 @@ The authoritative field-by-field reference for every type above is `workflow_mod
 
 #### All-Branches-Terminate Exclusive Gateway
 
-When an exclusive gateway has no matching join gateway (all branches lead to end events or to a continuation path with no reconvergence point), the compiler uses the following strategy instead of the normal split→join walk:
-
-- Each branch's first node is inspected. If it is an end event, it contributes an `ExclusiveBranch` entry with `Terminates: true` and an empty `Target` (early-exit branch).
-- The single branch whose first node is **not** an end event is the continuation path (`continuationNode`). After recording all branch entries, the compiler calls `traverseNode(continuationNode)` to continue compilation normally — this means subprocesses and nested gateways on the continuation path go through the full traversal pipeline, not a shallow walk.
-- Revert back-edges on the same gateway are appended as revert branches (unchanged behaviour).
+When an exclusive gateway's forward paths share no node (each ends at its own end event), it has no join. Each forward branch is compiled with its own state into its `Steps`, through to its end event, and carries `Terminates: true`: the Execution Service runs the chosen branch's `Steps` and then ends the path. A branch whose first node is an end event has no `Steps`. Revert back-edges on the same gateway are appended as revert branches.
 
 #### Single-Forward Exclusive Gateway With Revert Back-Edges
 
-A gateway with exactly one forward exit and one or more revert back-edges compiles to an `exclusive` step whose forward branch carries **only its condition** — no `Target`, `TargetStage`, `TargetNodeID` or `TargetName` — followed by the forward path's own steps, appended by continuing traversal from the forward node. The branch exists to let the Execution Service tell "go forward" apart from "send back"; the forward path *is* the following steps, so naming a target on the branch as well makes that department run twice, once from the branch and once from the continuation. The split shapes above do name a target, because their branches diverge and their continuation begins at the join rather than on top of the branch departments. `execution_service.md` §2.6 step 4 carries the runtime half of this contract.
+A gateway with exactly one forward exit and one or more revert back-edges compiles to an `exclusive` step whose forward branch carries **only its condition** — no `Target`, `TargetStage`, `TargetNodeID` or `TargetName` — followed by the forward path's own steps, appended by continuing traversal from the forward node. The branch exists to let the Execution Service tell "go forward" apart from "send back"; the forward path *is* the following steps, so naming a target on the branch as well makes that department run twice, once from the branch and once from the continuation. The split shapes above carry their branches' work as `Steps` instead, because their branches diverge and their continuation begins at the join. `execution_service.md` §2.6 step 4 carries the runtime half of this contract.
 
 This pattern is needed for bid/no-bid style decisions where one branch exits early and the other continues through a complex subprocess and parallel section.
 
-#### Timer Boundary Continuation Paths
+#### Boundary Continuation Paths
 
-Timer boundary events on user tasks create continuation tasks (`Task_escalate_...`) that are reachable only via the timer — not from the start event via sequence flows. The main traversal therefore never visits them.
-
-After the main traversal completes (both in `compile()` and inside `handleSubProcess()` for inner state), `compileTimerBoundaryPaths()` iterates all `<bpmn:boundaryEvent>` elements in the process that carry a timer definition. For each such event, it resolves the outgoing sequence flow's target and calls `traverseNode` only if that target has not already been visited. This guarantees escalation tasks are compiled into the owning department's `Stages` list.
+A boundary's path, timer, message or error, can lead to tasks the main path never reaches (`Task_escalate_...`). After the main traversal, in a process and in each subprocess body or called process, each such path not yet compiled is compiled with its own state: its tasks go into their own segments, it stops where it meets a node already compiled, and its steps never join the main steps. A boundary names, as its `TargetDept`, the segment of the first task or subprocess on its path, or terminates when an end event comes first (boundary event rules below). Each node a boundary leads to starts a segment of its own, so the boundary runs from that task and never re-runs the tasks before it. When the boundary fires, the Execution Service runs that one department; the rest of a longer path does not run (Appendix E).
 
 #### Implicit Process Root (No Explicit Start Event)
 
@@ -3114,13 +3112,13 @@ In a `CompiledCollaboration`, two pools may define lanes with the same name (e.g
 
 - `DepartmentDef.ID` entries in `plan.Departments`
 - `BoundaryTimer.TargetDept` inside each stage's boundary timer, and `BoundaryMessage.TargetDept` inside each stage's boundary message
-- All `ExecutionStep.Sequential`, `Parallel`, and `Exclusive[*].Target` / `Exclusive[*].RevertToDept` entries
+- All `ExecutionStep.Sequential`, `Parallel`, and `Exclusive[*].Target` / `Exclusive[*].RevertToDept` entries, and the steps of every `Parallel[*].Steps` and `Exclusive[*].Steps`
 - `SubWorkflowStep.ErrorPaths[*].TargetDept`, `SubWorkflowStep.TimerPaths[*].TargetDept`, and `SubWorkflowStep.MessagePaths[*].TargetDept`
 - `ExecutionStep.MessagePaths[*].TargetDept`
 - `CallPlanStep.Departments` values (the calling plan's departments) and its `ErrorPaths`/`TimerPaths`/`MessagePaths` `TargetDept`s. Called plans are not qualified — `ExpandCalls` scopes their departments by call — so the `Departments` keys stay as they are.
 - Inner plan steps inside `SubWorkflowStep.Plan` (recursively via `qualifySteps`)
 
-For example, in the BNB collaboration: `"Tender"` → `"Bid-No-Bid Review/Tender"`, `"Client"` → `"Issue RFQ/Client"`. The `Compile()` path (single-process, no collaboration) is unaffected — dept IDs remain plain lane names.
+For example, in the BNB collaboration: `"Tender"` → `"Bid-No-Bid Review/Tender"`, `"Client"` → `"Issue RFQ/Client"`. The `Compile()` path (single-process, no collaboration) is unaffected — dept IDs remain lane segment keys (§4.2).
 
 ---
 
@@ -3154,7 +3152,7 @@ Prior to saving drafts or completing publishing transactions, the compiler runs 
 - **Single Start Event**: Verify `len(StartEvents) == 1`.
 - **Reachability Pass**: A Depth-First Search (DFS) is run from the start event to ensure all declared user tasks and gateways are reachable.
 - **Dangling Nodes**: Every node (except start/end events) must have at least one incoming and one outgoing sequence flow.
-- **Closed Gateways**: Each parallel/exclusive split gateway must resolve to exactly one valid matching join gateway.
+- **Closed Gateways**: Each parallel split, and each exclusive split whose branches do not all end at an end event, must have a join: its immediate post-dominator in the forward graph (§4.2).
 
 #### Metadata Rules
 
@@ -3217,7 +3215,7 @@ so that termination is always possible. Uncontrolled cycles are rejected.
 - **Timer boundary on userTask**: Generates `BoundaryTimer` on the referenced `StageDef`. Multiple timer boundary events on the same task are rejected (emit first error, stop).
 - **Error boundary attachment**: Error boundary events may be attached to `bpmn:subProcess` or `bpmn:callActivity` elements (not individual user tasks). Attachment to a user task emits `INVALID_BOUNDARY_ATTACHMENT`. On a callActivity it compiles to `CallPlanStep.ErrorPaths`.
 - **Message boundary attachment**: Message boundary events may be attached to `bpmn:userTask`, `bpmn:subProcess`, or `bpmn:callActivity`. Generates `StageDef.BoundaryMessage`, `SubWorkflowStep.MessagePaths`, or `CallPlanStep.MessagePaths` respectively.
-- **Where a boundary leads**: to the department of the first task or subProcess on its path, or nowhere when the path reaches an end event first or the boundary has no outgoing flow, in which case it compiles with `Terminates` and ends its path when it fires. A path that starts with a callActivity, sendTask or receiveTask is `UNSUPPORTED_BOUNDARY_TARGET`.
+- **Where a boundary leads**: to the department segment of the first task or subProcess on its path, found by following the path's forward flows, or nowhere when the path reaches an end event first or the boundary has no outgoing flow, in which case it compiles with `Terminates` and ends its path when it fires. A path that starts with a callActivity, sendTask or receiveTask, or with a subProcess whose body does not start with a userTask, is `UNSUPPORTED_BOUNDARY_TARGET`: the boundary runs one department from its first task.
 - **Duration format**: `timeDuration` inside a timer event definition must be parseable ISO 8601 (`P3D`, `PT72H`) or Go duration syntax (`72h`, `3h30m`). Invalid format emits `INVALID_SLA_DURATION`.
 - **Boundary event outgoing flow**: A boundary event must have exactly one outgoing sequence flow into the parent flow, **with one exception**: a **message boundary event with no outgoing sequence flow** is valid — it models a terminal interrupt (the message fires, the host activity is cancelled, and execution does not continue on that path). No `DANGLING_NODE` error is emitted for such a boundary event. Timer and error boundary events still require at least one outgoing sequence flow. For all other boundary events with outgoing flows, the target must be reachable from the parent start event (after stripping boundary flows from the reachability check to avoid false cycles).
 
@@ -5336,6 +5334,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.26 | 2026-10-01 | **Two reads for the Tender Service and the workflow UI** (§3.2, new §3.3.12.2, §3.3.18, §2.2.2, §7.5 readers, Appendix E). `GET /workflows/:id/versions/:version_id/nodes` lists a published version's human tasks, module tasks included, with each one's node key, department, role level, default users and name: what the Tender Service maps Sections to and may override at start, which it could otherwise only get by expanding the stored plan itself. `GET /modules/:id/versions/:version_id/contract` returns what a call of the module binds and names: its open and fixed slots, every human task by the key a call's `Assignees` takes and the slot it runs in, its messages and error codes, and whether it names users. Node keys and the human-task rule come from workflow-models (`dsl.NodeKey`, `StageDef.CreatesHumanTask`), which the Execution Service uses too, and stages carry their task's `name`. New Appendix E row: declared start variables. |
 | 1.27 | 2026-10-01 | **The Execution Service link is internal HTTP; gRPC is gone** (§1.1–§1.5, §1.6 renumbered, new §3.4, §3.2, §3.3.8, §7.4.2, §7.4.5, §8.2, §9.2, §9.3, §11, §12, glossary). The compiled-plan read is `GET /api/v1/internal/workflow-versions/{version_id}/compiled-plan`, its plan a JSON object; `dsl_schema_version` is dropped, the plan's own `schema_version` being the one source. The archive guard and the pause of a removed member's tasks call the Execution Service's internal API. `api/internal-openapi.yaml` is the authority for every internal route, with a design-repo copy; each caller keeps a byte-identical copy in `api/contracts`, checked against its source by `make contract-check`, and `make contract-breaking` refuses a breaking change against `main` with oasdiff, the gate platform-schemagov's `diff` gives event schemas. Tests hold responses from the real router, and every request a client sends, to the documents. Each caller sends the callee's token under the callee's name (`EXECUTION_SERVICE_TOKEN`, `DEFINITION_SERVICE_TOKEN`), compared in constant time. The gateway routes only the public path prefixes: it had routed all of `/api/v1`, `/api/v1/internal` included. §1.6.2's gRPC interceptor chain, which named an auth interceptor that did not exist, is removed. |
 | 1.28 | 2026-10-01 | **`INTERNAL_API_TOKEN` is required outside dev** (§3.4). It had been required only for `APP_ENV=prod`, so any other non-dev environment served the internal routes with no token check. `DELETE /api/v1/internal/connector-aliases/rest/{alias}` declares its `404` in `api/internal-openapi.yaml`. |
+| 1.29 | 2026-10-02 | **Tasks run in the order the flows give** (§3.1.4 codes 9 and 34 and new code 37, §3.3.12.2, §3.3.18, §4.1.3.2, §4.2, §4.4, boundary event rules). A department was a whole lane, and the Execution Service runs every stage of a department wherever a step names it: a flow returning to a lane ran its later task before the tasks between, the steps after a join ran the lane's earlier tasks again, and an exclusive branch ran every later task in its lane. A department is now a lane segment, a stretch of one lane on one path, keyed `<lane>`, then `<lane>~<n>`; module slots stay one per lane. A gateway's join is its immediate post-dominator in the forward graph, so an inner join or a loop head is no longer taken for it, and each branch stops at that join, so a nested fork no longer compiles the region after its inner join twice. Each exclusive branch carries its work as `Steps` (workflow-models LLD rev 2.14): a call on a branch had been left out of the plan, a subprocess on a branch ran on every branch, and a branch whose first task had a task type named a stage the Execution Service could not find. A boundary's path compiles on its own and stops at a node already compiled, so the task it leads to no longer runs on the normal path, and each node a boundary leads to starts a segment. Back-edges are classified from boundary events too. A compile stops at 1000 stages or 10000 nodes (`TASK_LIMIT_EXCEEDED`): exclusive splits that merge only in part compile their merged tail once per branch. A revert names the segment on its own path. A boundary to a subprocess whose body does not start with a userTask is `UNSUPPORTED_BOUNDARY_TARGET`. New `INVALID_LANE_NAME`: a lane name containing `/`, `::` or `~`. |
 
 ---
 
@@ -5347,6 +5346,7 @@ This document had no dedicated Open Items tracker before rev 1.6 — items below
 | --- | --- | --- |
 | Constraint | **A new inbound event type needs the dedup registry introduced with it, unless its handler is idempotent by construction (§2.3.1, §10.9).** The two types consumed today converge on the same state when reprocessed, which is why no `processed_event` table exists here. That property belongs to those handlers, not to `POST /internal/events`, so it has to be re-established — or the registry built, as the Execution Service has — whenever the inbound surface grows. | Definition Service team, at the time a third inbound type is added |
 | Deferred | **Declared start variables.** A workflow declares no variables it needs at start, so the node read (§3.3.12.2) lists only what the Execution Service checks at start: each human task's department, role level and default users. Declaring start variables — on the start event, compiled into the plan and checked at instance start — spans this compiler, workflow-models and the Execution Service. | Definition + Execution Service teams, once a caller needs it |
+| Deferred | **A boundary runs only the first department on its path.** A compiled boundary names one `TargetDept`, and the Execution Service runs that department when the boundary fires, then carries on after the host. A path with tasks in two lanes, or a gateway, runs its first segment alone (§4.2). Carrying a boundary's path as steps, as an exclusive branch carries its work, spans this compiler, workflow-models and the Execution Service. | Definition + Execution Service teams |
 | Deferred | **Module/starter library's product shape (§10.16).** Designed here as "just another versioned BPMN entity" (module) or a simple CRUD row (starter). If the intended UI turns out to be CMS-like — cross-tenant search, tagging, thumbnails, marketplace-style discovery across a large catalog — that product shape could justify pulling this back into a dedicated service later, independent of the data-ownership reasoning that put it here. Not pre-built for; revisit once real product/UI requirements exist. | Definition Service team + product, once UI requirements are known |
 | ~~Security~~ | ~~**`POST /connectors/credentials` has no role check despite being documented Admin-only (§3.2, `workflow_connectors.md` §4.3/§6.2).**~~ **Resolved 2026-08-24**: `WriteConnectorCredential` now gates on `requireAdmin` before writing, mirroring `execution_service`'s own `adminRoles`/`requireAdmin` pattern. | Definition Service team |
 | ~~Cross-team~~ | ~~**Global-catalog write path for `workflow_module`/`workflow_template` (§10.16) needs its `platform_operator`-gated handler + `BYPASSRLS`-role wiring actually built**~~ **Resolved 2026-08-26**: Module CRUD, Template CRUD, the RLS DDL, and a genuinely new second (`SYSTEM_DATABASE_URL`) pool + `platform_operator` handler-layer gate all shipped — see §10.16's "Implemented" note and Appendix A's implementation note below the module/template RLS block for the two corrections made to the original design along the way. **Not resolved**: the `platform_operator` role/claim source itself is still provisional (see §10.16) — needs sign-off from whoever owns the gateway/IAM claim contract before this path can be trusted in a real environment; tracked as a new row below. | Definition Service team |

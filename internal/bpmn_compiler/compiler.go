@@ -244,6 +244,20 @@ func checkExpanded(collab *dsl.CompiledCollaboration, rootID string) error {
 	return nil
 }
 
+// compileFailure reports a compile that ran over the stage budget as
+// TASK_LIMIT_EXCEEDED on the root, and wraps any other failure as op's.
+func compileFailure(op, rootID string, err error) error {
+	if errors.Is(err, bpmncore.ErrStageBudget) {
+		return &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
+			Code:     domain.BPMNErrTaskLimitExceeded,
+			NodeID:   rootID,
+			Message:  fmt.Sprintf("process compiles to more than the %d task limit allows: branches that merge only in part are compiled once per branch", bpmncore.StageBudget),
+			Severity: domain.SeverityError,
+		}}}
+	}
+	return fmt.Errorf("%s: %w", op, err)
+}
+
 // expand runs ExpandCalls within the task limit, reporting a plan over it as
 // TASK_LIMIT_EXCEEDED on the root.
 func expand(collab *dsl.CompiledCollaboration, rootID string) (*dsl.CompiledCollaboration, error) {
@@ -324,7 +338,7 @@ func (c *Compiler) compileSingleRoot(ctx context.Context, bpmnXML string) (plan 
 
 	plan, called, err = bpmncore.Compile(root, bpmncore.BuildGraph(root), c.stageTypes, c.elements, defs)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("bpmn compile: %w", err)
+		return nil, nil, nil, compileFailure("bpmn compile", root.ID, err)
 	}
 	return plan, called, root, nil
 }

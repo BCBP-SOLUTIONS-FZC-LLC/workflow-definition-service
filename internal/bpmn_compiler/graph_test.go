@@ -218,31 +218,6 @@ func TestValidateMaxDepth_Boundary(t *testing.T) {
 	}
 }
 
-func TestForwardReaches(t *testing.T) {
-	g := &bpmncore.Graph{
-		Outgoing: map[string][]string{"A": {"B"}, "B": {"C", "A"}},
-	}
-	back := map[[2]string]bool{{"B", "A"}: true}
-	if !bpmncore.ForwardReaches("A", "C", g, back) {
-		t.Error("A should reach C over forward edges")
-	}
-	if bpmncore.ForwardReaches("C", "A", g, back) {
-		t.Error("C should not reach A over forward edges (only a back-edge leads there)")
-	}
-
-	gc := &bpmncore.Graph{Outgoing: map[string][]string{"A": {"B"}, "B": {"A"}}}
-	done := make(chan struct{})
-	go func() {
-		bpmncore.ForwardReaches("A", "Z", gc, nil)
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("ForwardReaches did not terminate on a cyclic graph")
-	}
-}
-
 func TestRevertBranches_MultipleBackEdges(t *testing.T) {
 	proc := &bpmncore.BPMNProcess{
 		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{
@@ -271,17 +246,17 @@ func TestRevertBranches_MultipleBackEdges(t *testing.T) {
 	}
 	state := bpmncore.NewCompileState(proc, g, nil, condExprs, map[[2]string]bool{}, defaultStageTypes(), element.DefaultElementHandlers(), nil)
 
-	branches := state.RevertBranches("GW", []string{"TaskRev1", "TaskRev2"})
+	state.AppendStep(dsl.ExecutionStep{Exclusive: state.RevertBranches("GW", []string{"TaskRev1", "TaskRev2"})})
+	state.ResolveTargets()
+	branches := state.CollectedSteps()[0].Exclusive
 	if len(branches) != 2 {
 		t.Fatalf("expected 2 revert branches; got %d", len(branches))
 	}
-	if branches[0].RevertToDept != "design" || branches[0].RevertToStage != "review" ||
-		branches[0].ConditionExpression != "x" {
-		t.Errorf("branch[0] = %+v, want design/review/x", branches[0])
+	if b := branches[0]; b.RevertToDept != "design" || b.RevertToStage != "review" || b.RevertToNodeID != "TaskRev1" || b.ConditionExpression != "x" {
+		t.Errorf("branch[0] = %+v, want design/review/TaskRev1/x", b)
 	}
-	if branches[1].RevertToDept != "contracts" || branches[1].RevertToStage != "prep" ||
-		branches[1].ConditionExpression != "y" {
-		t.Errorf("branch[1] = %+v, want contracts/prep/y", branches[1])
+	if b := branches[1]; b.RevertToDept != "contracts" || b.RevertToStage != "prep" || b.RevertToNodeID != "TaskRev2" || b.ConditionExpression != "y" {
+		t.Errorf("branch[1] = %+v, want contracts/prep/TaskRev2/y", b)
 	}
 }
 

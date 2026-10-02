@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 	"github.com/google/uuid"
@@ -76,12 +77,14 @@ func (s *ModuleService) Contract(ctx context.Context, callerTenantID, moduleID, 
 
 	root := r.plans[collab.MainPlan]
 	c := &ModuleContract{Version: v, Messages: decl.Messages, ErrorCodes: decl.ErrorCodes}
+	lanes := map[string]string{}
 	for _, d := range root.Departments {
-		if !d.Ignore {
-			c.Slots = append(c.Slots, ModuleSlot{ID: d.ID, Label: d.Label, Open: d.IAMDepartmentID == "", IAMDepartmentID: d.IAMDepartmentID})
+		lanes[d.ID] = d.Label
+		if !d.Ignore && !slices.ContainsFunc(c.Slots, func(s ModuleSlot) bool { return s.ID == d.Label }) {
+			c.Slots = append(c.Slots, ModuleSlot{ID: d.Label, Label: d.Label, Open: d.IAMDepartmentID == "", IAMDepartmentID: d.IAMDepartmentID})
 		}
 	}
-	c.Tasks = r.tasks(root, "", func(deptID string) (string, string) { return deptID, "" })
+	c.Tasks = r.tasks(root, "", func(deptID string) (string, string) { return lanes[deptID], "" })
 	for _, t := range c.Tasks {
 		c.NamesUsers = c.NamesUsers || len(t.DefaultUserIDs) > 0
 	}
@@ -135,6 +138,9 @@ func callSteps(steps []dsl.ExecutionStep, into []*dsl.CallPlanStep) []*dsl.CallP
 		st := &steps[i]
 		for j := range st.Parallel {
 			into = callSteps(st.Parallel[j].Steps, into)
+		}
+		for j := range st.Exclusive {
+			into = callSteps(st.Exclusive[j].Steps, into)
 		}
 		if st.SubWorkflow != nil {
 			into = callSteps(st.SubWorkflow.Plan.Steps, into)

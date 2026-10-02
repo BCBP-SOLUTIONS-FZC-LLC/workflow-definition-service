@@ -24,8 +24,7 @@ func (SendTaskHandler) Compile(nodeID string, cs *bpmncore.CompileState) error {
 	msgName := bpmncore.ResolveMessageName(task.MessageRef, cs.Defs)
 	stage := bpmncore.BuildMessageStageDef(task.ID, task.Name, "send_task", msgName, task.ExtensionElements)
 
-	deptID, label, iamDeptID := cs.DeptOf(nodeID)
-	cs.EnsureDept(deptID, label, iamDeptID)
+	deptID := cs.SegmentOf(nodeID)
 	cs.AppendStage(deptID, stage)
 	cs.AddToSeqBuf(deptID)
 

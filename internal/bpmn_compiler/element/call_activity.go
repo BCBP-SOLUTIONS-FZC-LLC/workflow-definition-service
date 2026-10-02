@@ -50,7 +50,7 @@ func (CallActivityHandler) Compile(nodeID string, cs *bpmncore.CompileState) err
 			NodeID:       ca.ID,
 			Name:         ca.Name,
 			Plan:         calledProc.ID,
-			Departments:  bindDepartments(ca, cs, calledProc, inputs.Depts),
+			Departments:  bindDepartments(ca, cs, calledProc, cs.Called.Get(calledProc.ID), inputs.Depts),
 			Assignees:    inputs.Assignees,
 			ErrorPaths:   errorPaths,
 			TimerPaths:   timerPaths,
@@ -74,38 +74,22 @@ func compileCalledPlan(calledProc *bpmncore.BPMNProcess, cs *bpmncore.CompileSta
 	if !cs.Called.Claim(calledProc.ID) {
 		return nil
 	}
-	inner, err := compileInnerState(calledProc, cs)
+	inner, err := compileCalledState(calledProc, cs)
 	if err != nil {
 		return err
 	}
-	depts, steps := inner.CollectedDepts(), inner.CollectedSteps()
-	depts = ShapeCalledPlan(depts, steps, calledProc)
 	cs.Called.Put(&dsl.CompiledPlan{
 		Name:        calledProc.ID,
-		Departments: depts,
-		Execution:   dsl.ExecutionPlan{Steps: steps},
+		Departments: ShapeCalledPlan(inner.CollectedDepts(), calledProc),
+		Execution:   dsl.ExecutionPlan{Steps: inner.CollectedSteps()},
 	})
 	return nil
 }
 
 // ShapeCalledPlan gives a called process's compiled departments the shape a
-// call binds: a laneless process's department named by its implicit slot, and
-// a department for every open slot.
-func ShapeCalledPlan(depts []dsl.DepartmentDef, steps []dsl.ExecutionStep, calledProc *bpmncore.BPMNProcess) []dsl.DepartmentDef {
-	nameImplicitDept(depts, steps, bpmncore.ImplicitSlot(calledProc))
+// call binds: a department for every open slot.
+func ShapeCalledPlan(depts []dsl.DepartmentDef, calledProc *bpmncore.BPMNProcess) []dsl.DepartmentDef {
 	return withOpenSlots(depts, calledProc)
-}
-
-// nameImplicitDept gives a laneless called process's single department,
-// compiled with an empty ID, its implicit slot name, so a call can bind it.
-func nameImplicitDept(depts []dsl.DepartmentDef, steps []dsl.ExecutionStep, slot string) {
-	for i := range depts {
-		if depts[i].ID == "" {
-			depts[i].ID, depts[i].Label = slot, slot
-		}
-	}
-	patchEmptyStageTargets(depts, slot)
-	patchEmptyDepts(steps, slot)
 }
 
 // withOpenSlots adds a department for every open slot the compile left
@@ -120,31 +104,49 @@ func withOpenSlots(depts []dsl.DepartmentDef, calledProc *bpmncore.BPMNProcess) 
 	return depts
 }
 
-// bindDepartments maps each open department of the called process to a
-// department of the caller: as Depts names it, or, for the only open
-// department, the lane the call sits in. It makes sure every bound caller
-// department exists in the caller's plan.
-func bindDepartments(ca *bpmncore.BPMNCallActivity, cs *bpmncore.CompileState, calledProc *bpmncore.BPMNProcess, depts map[string]string) map[string]string {
-	bound := map[string]string{}
+// bindDepartments maps each department of an open lane of the called
+// process, every segment of it, to a department of the caller: as Depts
+// names it, or, for the only open lane, the lane the call sits in. It makes
+// sure every bound caller department exists in the caller's plan.
+func bindDepartments(ca *bpmncore.BPMNCallActivity, cs *bpmncore.CompileState, calledProc *bpmncore.BPMNProcess, called *dsl.CompiledPlan, depts map[string]string) map[string]string {
+	callerFor := map[string]string{}
 	for _, key := range slices.Sorted(maps.Keys(depts)) {
 		calledLane, callerLane := bpmncore.LaneNamed(calledProc, key), bpmncore.LaneNamed(cs.Proc, depts[key])
 		if calledLane == nil || callerLane == nil {
 			continue
 		}
-		bound[calledLane.Name] = callerLane.Name
-		cs.EnsureDept(callerLane.Name, callerLane.Name, bpmncore.LaneDeptID(callerLane))
+		callerFor[calledLane.Name] = cs.NamedLaneDepartment(callerLane.Name, bpmncore.LaneDeptID(callerLane))
 	}
 	if open := bpmncore.OpenSlots(calledProc); len(open) == 1 {
-		if _, ok := bound[open[0]]; !ok {
-			id, label, iamDeptID := cs.DeptOf(ca.ID)
-			bound[open[0]] = id
-			cs.EnsureDept(id, label, iamDeptID)
+		if _, ok := callerFor[open[0]]; !ok {
+			callerFor[open[0]] = cs.LaneDepartment(ca.ID)
+		}
+	}
+	bound := map[string]string{}
+	for lane, caller := range callerFor {
+		for _, segment := range laneSegments(called, lane) {
+			bound[segment] = caller
 		}
 	}
 	if len(bound) == 0 {
 		return nil
 	}
 	return bound
+}
+
+// laneSegments lists the departments of plan that are segments of lane, or
+// lane alone while plan is still compiling.
+func laneSegments(plan *dsl.CompiledPlan, lane string) []string {
+	if plan == nil {
+		return []string{lane}
+	}
+	var ids []string
+	for _, d := range plan.Departments {
+		if d.Label == lane {
+			ids = append(ids, d.ID)
+		}
+	}
+	return ids
 }
 
 func toIOMapping(m *bpmncore.ZeebeIOMapping) *dsl.IOMapping {

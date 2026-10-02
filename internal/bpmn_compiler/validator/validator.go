@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	maxUserTasks = 1000
+	maxUserTasks = bpmncore.StageBudget
 	maxLanes     = 100
 	maxCondExpr  = 4096
 
@@ -30,15 +30,16 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 	var backEdges map[[2]string]bool
 	switch {
 	case len(proc.StartEvents) > 0:
-		backEdges = bpmncore.ClassifyBackEdges(g, proc.StartEvents[0].ID)
+		backEdges = bpmncore.ProcessBackEdges(proc, g, proc.StartEvents[0].ID)
 	case implicitStart != "":
-		backEdges = bpmncore.ClassifyBackEdges(g, implicitStart)
+		backEdges = bpmncore.ProcessBackEdges(proc, g, implicitStart)
 	default:
 		backEdges = map[[2]string]bool{}
 	}
 
 	var errs []domain.BPMNValidationError
 	errs = append(errs, ValidateCounts(proc, implicitStart)...)
+	errs = append(errs, ValidateLaneNames(proc)...)
 	errs = append(errs, ValidateNoNestedSubProcess(proc)...)
 	errs = append(errs, ValidateSeqFlowRefs(proc, g)...)
 	errs = append(errs, ValidateDanglingNodes(proc, g, implicitStart)...)
@@ -47,7 +48,7 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 	errs = append(errs, ValidateMaxDepth(proc, g, backEdges)...)
 	errs = append(errs, ValidateGatewayMatching(proc, g, backEdges)...)
 	errs = append(errs, ValidateConditionExprs(proc, g)...)
-	errs = append(errs, ValidateBoundaryEvents(proc, g)...)
+	errs = append(errs, ValidateBoundaryEvents(proc, g, backEdges)...)
 	errs = append(errs, ValidateMessageBoundaryNames(proc, defs)...)
 	errs = append(errs, validatePerElement(proc, g, stageTypes, elements, defs)...)
 

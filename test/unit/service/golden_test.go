@@ -30,6 +30,9 @@ var goldenCheckBPMN string
 //go:embed testdata/golden-library-boundaries.bpmn
 var goldenBoundariesBPMN string
 
+//go:embed testdata/golden-flow-order.bpmn
+var goldenFlowOrderBPMN string
+
 // updateGolden rewrites workflow-models' golden from this service's publish.
 // Run it with GOWORK naming a workflow-models checkout:
 //
@@ -48,6 +51,7 @@ func TestGolden(t *testing.T) {
 	}{
 		{"LibraryCalls", goldenMainBPMN, dsltest.LibraryCallsFile, dsltest.LibraryCalls()},
 		{"LibraryCallBoundaries", goldenBoundariesBPMN, dsltest.LibraryCallBoundariesFile, dsltest.LibraryCallBoundaries()},
+		{"FlowOrder", goldenFlowOrderBPMN, dsltest.FlowOrderFile, dsltest.FlowOrder()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := publishWithLibrary(t, tc.bpmnXML, map[libraryKey]*domain.ModuleVersion{

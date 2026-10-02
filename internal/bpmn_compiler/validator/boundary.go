@@ -32,7 +32,7 @@ func ValidateMessageBoundaryNames(proc *bpmncore.BPMNProcess, defs *bpmncore.BPM
 	return errs
 }
 
-func ValidateBoundaryEvents(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain.BPMNValidationError {
+func ValidateBoundaryEvents(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
 	timerCountByHost := make(map[string]int)
 	var errs []domain.BPMNValidationError
 	for _, be := range proc.BoundaryEvents {
@@ -52,20 +52,26 @@ func ValidateBoundaryEvents(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []dom
 		if be.Error != nil {
 			errs = append(errs, validateErrorBoundary(be, g)...)
 		}
-		errs = append(errs, validateBoundaryTarget(be, proc, g)...)
+		errs = append(errs, validateBoundaryTarget(be, proc, g, backEdges)...)
 	}
 	return errs
 }
 
-// validateBoundaryTarget refuses a boundary whose path reaches a call or a
-// message task before any userTask, subProcess or end: the compiled plan can
-// only move a boundary to a department or end its path.
-func validateBoundaryTarget(be bpmncore.BPMNBoundaryEvent, proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain.BPMNValidationError {
+// validateBoundaryTarget refuses a boundary whose path, followed along its
+// forward flows as the compiler follows it, reaches a call or a message task
+// before any userTask, subProcess or end, or reaches a subProcess whose body
+// does not start with a userTask: the compiled plan can only move a boundary
+// to one department, from its first task, or end its path.
+func validateBoundaryTarget(be bpmncore.BPMNBoundaryEvent, proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
 	targets := []bpmncore.FlowNodeType{bpmncore.NodeTypeUserTask, bpmncore.NodeTypeSubProcess, bpmncore.NodeTypeEndEvent}
 	untargetable := []bpmncore.FlowNodeType{bpmncore.NodeTypeCallActivity, bpmncore.NodeTypeSendTask, bpmncore.NodeTypeReceiveTask}
 	visited := map[string]bool{}
 	for curr := bpmncore.OutgoingTargetOf(be.ID, proc); curr != "" && !visited[curr]; {
 		visited[curr] = true
+		if g.NodeType[curr] == bpmncore.NodeTypeSubProcess && !bodyStartsWithTask(proc, curr) {
+			return AppendErr(nil, domain.BPMNErrUnsupportedBoundaryTarget, be.ID,
+				fmt.Sprintf("boundary event leads to subProcess %q, whose body does not start with a userTask; a boundary runs one department from its first task, so start the body with a userTask", curr))
+		}
 		if slices.Contains(targets, g.NodeType[curr]) {
 			return nil
 		}
@@ -73,11 +79,11 @@ func validateBoundaryTarget(be bpmncore.BPMNBoundaryEvent, proc *bpmncore.BPMNPr
 			return AppendErr(nil, domain.BPMNErrUnsupportedBoundaryTarget, be.ID,
 				fmt.Sprintf("boundary event leads to %s %q; a boundary's path must start with a userTask or subProcess, or end, so put a userTask before it", g.NodeType[curr], curr))
 		}
-		next := g.Outgoing[curr]
-		if len(next) == 0 {
+		next, ok := bpmncore.FirstForward(curr, g, backEdges)
+		if !ok {
 			return nil
 		}
-		curr = next[0]
+		curr = next
 	}
 	return nil
 }
@@ -142,4 +148,17 @@ func IsValidDuration(s string) bool {
 		return true
 	}
 	return iso8601DurationRe.MatchString(s) && strings.ContainsAny(s, "0123456789")
+}
+
+// bodyStartsWithTask reports whether subprocess spID's body leads from its
+// start event straight to a userTask. A body with no start event is reported
+// by its own checks.
+func bodyStartsWithTask(proc *bpmncore.BPMNProcess, spID string) bool {
+	sp := bpmncore.FindSubProcess(proc, spID)
+	if sp == nil || len(sp.StartEvents) == 0 {
+		return true
+	}
+	body := bpmncore.BuildGraph(bpmncore.SubProcToProcess(sp))
+	next := body.Outgoing[sp.StartEvents[0].ID]
+	return len(next) > 0 && body.NodeType[next[0]] == bpmncore.NodeTypeUserTask
 }
