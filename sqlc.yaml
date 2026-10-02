@@ -22,3 +22,5 @@ sql:
           - db_type: jsonb
             nullable: true
             go_type: encoding/json.RawMessage
+          - db_type: jsonb
+            go_type: encoding/json.RawMessage

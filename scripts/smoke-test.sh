@@ -6,7 +6,7 @@
 #
 # Prerequisites (all must be running before this script):
 #   make docker-up                             # postgres + valkey + localstack
-#   make migrate-up
+#   make migrate
 #   go run ./cmd/stub/execution &              # HTTP stub :8083 (internal API + /control)
 #   go run ./cmd/stub/membership &             # HTTP stub :8081
 #   ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_URL=http://localhost:8083 \
@@ -34,6 +34,7 @@ done
 
 HTTP="${HTTP_BASE:-http://localhost:8080}"
 API="${HTTP}/api/v1"
+METRICS="${METRICS_BASE:-http://localhost:9091}"
 MEMBERSHIP_CTRL="${MEMBERSHIP_CTRL:-http://localhost:8081}"
 EXECUTION_CTRL="${EXECUTION_CTRL:-http://localhost:8083}"
 DB_URL="${DB_URL:-postgres://wfdef:wfdef@localhost:5432/workflow_definition?sslmode=disable}"
@@ -85,18 +86,19 @@ execution_has_active() {
 
 TENANT_ID="${TENANT_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 USER_ID="${USER_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
+TENANT_ROLES="${TENANT_ROLES:-tenant_admin}"
 
-api_get()    { curl -sf -X GET    "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}"; }
-api_post()   { curl -sf -X POST   "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" \
+api_get()    { curl -sf -X GET    "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}"; }
+api_post()   { curl -sf -X POST   "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" \
                     -H "Content-Type: application/json" -d "$2"; }
-api_put()    { curl -sf -X PUT    "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" \
+api_put()    { curl -sf -X PUT    "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" \
                     -H "Content-Type: application/json" -d "$2"; }
-api_delete() { curl -sf -X DELETE "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}"; }
+api_delete() { curl -sf -X DELETE "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}"; }
 
 # Returns HTTP status code only, does not fail on 4xx/5xx.
 api_status() {
   curl -s -o /dev/null -w "%{http_code}" -X "${1}" "${2}" \
-    -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" \
+    -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" \
     -H "Content-Type: application/json" ${3:+-d "$3"}
 }
 
@@ -298,7 +300,7 @@ STATUS=$(api_status GET "${HTTP}/healthz")
 STATUS=$(api_status GET "${HTTP}/readyz")
 [ "$STATUS" = "200" ] && pass "GET /readyz → 200" || fail "GET /readyz → $STATUS"
 
-STATUS=$(api_status GET "${HTTP}/metrics")
+STATUS=$(api_status GET "${METRICS}/metrics")
 [ "$STATUS" = "200" ] && pass "GET /metrics → 200" || fail "GET /metrics → $STATUS"
 
 if [ "$HEALTH_ONLY" = "true" ]; then
@@ -390,7 +392,7 @@ STATUS=$(api_status GET "${API}/workflows/${WF_ID}/versions/00000000-0000-0000-0
 
 # Export BPMN
 EXPORT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" \
+  -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" \
   "${API}/workflows/${WF_ID}/versions/${V1_ID}/export")
 [ "$EXPORT_STATUS" = "200" ] && pass "GET /versions/:id/export → 200" || fail "GET /versions/:id/export → $EXPORT_STATUS"
 
@@ -445,7 +447,7 @@ STATUS=$(api_status POST "${API}/workflows/${CLONE_WF_ID}/versions/${CLONE_V_ID}
 # Diff within the original workflow (need two versions — publish a second one)
 # Use V1 as both sides of the diff for simplicity; result should be empty diff
 DIFF_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" \
+  -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" \
   "${API}/workflows/${WF_ID}/versions/${V1_ID}/diff/${V1_ID}")
 [ "$DIFF_STATUS" = "200" ] \
   && pass "GET /versions/:version_id/diff/:target_version_id → 200 (self-diff)" \
@@ -548,7 +550,7 @@ else
   skip "DB assertions" "brew install postgresql"
 fi
 
-# Also test with a PUBLISHED version — should invalidate and emit outbox event
+# Also test with a PUBLISHED version — should invalidate it
 WF3_RESP=$(api_post "${API}/workflows" \
   "{\"key\":\"ie-pub-wf\",\"name\":\"ie-pub-test\",\"description\":\"ie published invalidation\",\"bpmn_xml\":${BPMN_IE_JSON}}")
 WF3_ID=$(get_workflow_id "$WF3_RESP")
@@ -590,11 +592,12 @@ if [ "$HAS_PSQL" = true ]; then
     && pass "PUBLISHED version is_valid=false after revocation" \
     || fail "PUBLISHED version is_valid='${PUB_VALID}' (want false)"
 
+  # This service publishes no events, so the invalidation writes no outbox row.
   PUB_OUTBOX=$(psql "$DB_URL" -tAc \
     "SELECT COUNT(*) FROM outbox_events WHERE payload::text LIKE '%${V3_DRAFT_ID}%'" 2>/dev/null || echo "?")
-  [ "$PUB_OUTBOX" = "1" ] \
-    && pass "Outbox event created for PUBLISHED invalidation" \
-    || fail "outbox_events count=${PUB_OUTBOX} for PUBLISHED version (want 1)"
+  [ "$PUB_OUTBOX" = "0" ] \
+    && pass "No outbox event for PUBLISHED invalidation" \
+    || fail "outbox_events count=${PUB_OUTBOX} for PUBLISHED version (want 0)"
 
   # Redelivery converges on the same state — the property that stands in for a
   # dedup registry (LLD §2.3.1). Re-send the same envelope and assert the

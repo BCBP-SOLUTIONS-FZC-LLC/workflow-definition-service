@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,6 +155,9 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		name    string
 		env     map[string]string
 		wantErr bool
+		// wantErrVar is the variable the error must name, so a case cannot
+		// pass on another check's failure.
+		wantErrVar string
 	}{
 		{
 			name:    "missing database url",
@@ -181,31 +185,34 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			name: "missing org membership url in non-dev when stub is false",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
-				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production",
+				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production", "INTERNAL_API_TOKEN": "t",
 				"ORG_MEMBERSHIP_BASE_URL": "", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
 				"GLUE_REGISTRY_NAME": "workflow-template-events",
 			},
-			wantErr: true,
+			wantErr:    true,
+			wantErrVar: "ORG_MEMBERSHIP_BASE_URL",
 		},
 		{
 			name: "missing execution url in non-dev when stub is false",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
-				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production",
+				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production", "INTERNAL_API_TOKEN": "t",
 				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "", "EXECUTION_SERVICE_TOKEN": "t",
 				"GLUE_REGISTRY_NAME": "workflow-template-events",
 			},
-			wantErr: true,
+			wantErr:    true,
+			wantErrVar: "EXECUTION_SERVICE_URL",
 		},
 		{
 			name: "missing execution token in non-dev when stub is false",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
-				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production",
+				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production", "INTERNAL_API_TOKEN": "t",
 				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "",
 				"GLUE_REGISTRY_NAME": "workflow-template-events",
 			},
-			wantErr: true,
+			wantErr:    true,
+			wantErrVar: "EXECUTION_SERVICE_TOKEN",
 		},
 		{
 			name: "valid in dev when stub is false without org/execution",
@@ -232,7 +239,8 @@ func TestLoad_ValidationFailures(t *testing.T) {
 				"DATABASE_URL": "postgres://localhost", "APP_ENV": "staging",
 				"INTERNAL_API_TOKEN": "",
 			},
-			wantErr: true,
+			wantErr:    true,
+			wantErrVar: "INTERNAL_API_TOKEN",
 		},
 		{
 			name: "missing internal api token in prod",
@@ -240,7 +248,8 @@ func TestLoad_ValidationFailures(t *testing.T) {
 				"DATABASE_URL": "postgres://localhost", "APP_ENV": "prod",
 				"INTERNAL_API_TOKEN": "",
 			},
-			wantErr: true,
+			wantErr:    true,
+			wantErrVar: "INTERNAL_API_TOKEN",
 		},
 		{
 			name: "valid in prod with internal api token set",
@@ -321,6 +330,9 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			_, err := config.Load()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Load() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErrVar != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErrVar)) {
+				t.Errorf("Load() error = %v, want one naming %s", err, tt.wantErrVar)
 			}
 		})
 	}

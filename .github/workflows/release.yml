@@ -232,6 +232,7 @@ jobs:
             --timeout=5m \
             --namespace="$K8S_NAMESPACE" \
             --set image.tag="$IMAGE_VERSION" \
+            --set existingSecret=workflow-definition-service-secrets \
             --atomic
 
       # Verify the running image digest matches what was signed and published.

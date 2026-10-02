@@ -6,8 +6,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/fixtures"
 )
 
 func TestWorkflowVersionRepo_CreateAndGet(t *testing.T) {
@@ -235,6 +238,39 @@ func TestWorkflowVersionRepo_Publish(t *testing.T) {
 	}
 	if got.PublishedAt == nil {
 		t.Error("PublishedAt should not be nil after Publish")
+	}
+}
+
+// PgBouncer mode runs pgx on the simple protocol, where a JSONB parameter
+// typed []byte goes out as bytea hex and Postgres refuses it.
+func TestWorkflowVersionRepo_Publish_PgBouncerMode(t *testing.T) {
+	_, dsn := fixtures.NewTestPoolAndDSN(t)
+	ctx := context.Background()
+	pool, err := pgcommon.NewPool(ctx, pgcommon.Config{DSN: dsn, PGBouncerMode: true})
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	wfRepo := postgres.NewWorkflowRepo(pool)
+	vRepo := postgres.NewWorkflowVersionRepo(pool)
+
+	tenantID := uuid.New()
+	wf := &domain.Workflow{
+		ID: uuid.New(), TenantID: tenantID,
+		CreatedByUserID: uuid.New(), BusinessKey: "wv-pub-bouncer", Name: "X",
+	}
+	if err := wfRepo.Create(ctx, wf); err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	ref := domain.ModuleRef{ModuleID: uuid.New(), VersionID: uuid.New(), ProcessID: "m", VersionNumber: 1}
+	for _, refs := range [][]domain.ModuleRef{nil, {ref}} {
+		v := newDraftVersion(wf.ID, tenantID)
+		if err := vRepo.Create(ctx, v); err != nil {
+			t.Fatalf("create draft: %v", err)
+		}
+		if err := vRepo.Publish(ctx, tenantID, v.ID, int32(len(refs)+1), `{"steps":[]}`, "abc123", refs); err != nil {
+			t.Fatalf("Publish with %d module refs: %v", len(refs), err)
+		}
 	}
 }
 

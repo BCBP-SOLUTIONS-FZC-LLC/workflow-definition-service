@@ -114,8 +114,9 @@ By default `AWS_USE_STUB=true` in `.env.example`. This activates a no-op stub SN
 `make docker-up` includes a LocalStack container that emulates SNS locally. To run the service against real AWS clients and test the full event pipeline:
 
 ```bash
-# 1. Start everything (Postgres + Valkey + LocalStack)
+# 1. Start everything (Postgres + Valkey + LocalStack) and apply the schema
 make docker-up
+make migrate
 
 # 2. Start outbound service stubs (HTTP)
 go run ./cmd/stub/execution &    # :8083 (internal API + /control toggle)
