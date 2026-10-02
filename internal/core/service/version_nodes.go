@@ -51,9 +51,6 @@ func (s *VersionService) Nodes(ctx context.Context, tenantID, workflowID, versio
 	}
 	out := &VersionNodes{Version: v}
 	for _, d := range main.Departments {
-		if d.Ignore {
-			continue
-		}
 		for i := range d.Stages {
 			st := &d.Stages[i]
 			if !st.CreatesHumanTask() {

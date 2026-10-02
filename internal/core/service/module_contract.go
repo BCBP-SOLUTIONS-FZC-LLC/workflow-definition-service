@@ -80,7 +80,7 @@ func (s *ModuleService) Contract(ctx context.Context, callerTenantID, moduleID, 
 	lanes := map[string]string{}
 	for _, d := range root.Departments {
 		lanes[d.ID] = d.Label
-		if !d.Ignore && !slices.ContainsFunc(c.Slots, func(s ModuleSlot) bool { return s.ID == d.Label }) {
+		if !slices.ContainsFunc(c.Slots, func(s ModuleSlot) bool { return s.ID == d.Label }) {
 			c.Slots = append(c.Slots, ModuleSlot{ID: d.Label, Label: d.Label, Open: d.IAMDepartmentID == "", IAMDepartmentID: d.IAMDepartmentID})
 		}
 	}
@@ -106,9 +106,6 @@ type contractReader struct {
 func (r contractReader) tasks(plan *dsl.CompiledPlan, prefix string, place func(deptID string) (slot, iam string)) []ModuleTask {
 	var out []ModuleTask
 	for _, d := range plan.Departments {
-		if d.Ignore {
-			continue
-		}
 		slot, iam := place(d.ID)
 		for i := range d.Stages {
 			st := &d.Stages[i]

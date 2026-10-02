@@ -170,24 +170,6 @@ func (h *failingOn) Compile(nodeID string, cs *CompileState) error {
 	return nil
 }
 
-func TestCompileWithImplicitStart_ExternalNodesMerge(t *testing.T) {
-	proc := &BPMNProcess{
-		StartEvents:   []BPMNEvent{{ID: "start"}},
-		SequenceFlows: []BPMNSequenceFlow{{SourceRef: "start", TargetRef: "ext1"}},
-	}
-	g := BuildGraph(proc)
-	g.NodeType["ext1"] = NodeTypeExternalParticipant
-	g.NodeIDs["ext1"] = struct{}{}
-
-	plan, _, err := CompileWithImplicitStart(proc, g, "", nil, nil, &BPMNDefinitions{}, map[string]string{"ext1": "Partner"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(plan.Execution.Steps) != 1 || plan.Execution.Steps[0].CallPool == nil || plan.Execution.Steps[0].CallPool.Pool != "Partner" {
-		t.Fatalf("expected CallPool step for merged external node; got %v", plan.Execution.Steps)
-	}
-}
-
 func TestCompileWithImplicitStart_VisualElements(t *testing.T) {
 	proc := &BPMNProcess{
 		StartEvents:   []BPMNEvent{{ID: "start"}},

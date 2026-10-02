@@ -132,9 +132,6 @@
     <bpmn:callActivity id="Activity_0tcolgg" name="Handle Docs Prep">
       <bpmn:extensionElements>
         <zeebe:calledElement processId="Docs_preparation_ex" propagateAllChildVariables="false" />
-        <zeebe:ioMapping>
-          <zeebe:input source="{&#34;sender&#34;: &#34;Consultant&#34;, &#34;receiver&#34;:&#34;Tender&#34;}" target="Depts" />
-        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:outgoing>Flow_1hi64gm</bpmn:outgoing>
     </bpmn:callActivity>

@@ -487,9 +487,6 @@ components:
           type: string
           description: "Department identifier from the BPMN lane name. Sourced from the lane name attribute; format is owned by the Profile Service."
         label:  { type: string }
-        ignore:
-          type: boolean
-          description: "true when the lane carries a <zeebe:property name=\"ignore\" value=\"true\"/> extension — marks an ignored-pool lane. Omitted (false) otherwise."
         props:
           type: object
           nullable: true
@@ -573,13 +570,6 @@ components:
         sub_workflow:
           allOf: [{ $ref: '#/components/schemas/SubWorkflowStep' }]
           nullable: true
-        call_pool:
-          type: object
-          nullable: true
-          description: "Present when this step hands control to another compiled pool (Temporal child workflow). Only emitted by the main pool."
-          required: [pool]
-          properties:
-            pool: { type: string, description: "Name of the target CompiledPlan." }
         call_plan:
           allOf: [{ $ref: '#/components/schemas/CallPlanStep' }]
           nullable: true
@@ -623,7 +613,7 @@ components:
       properties:
         dept:
           type: string
-          description: "Lead department ID for this branch (qualified with plan name prefix)."
+          description: "Lead department ID for this branch."
         steps:
           type: array
           items: { $ref: '#/components/schemas/ExecutionStep' }
@@ -710,22 +700,13 @@ components:
 
     CompiledCollaboration:
       type: object
-      description: "The stored compiled_plan_json. A single-process BPMN is a collaboration of one plan."
-      required: [main_plan, plans, messages, schema_version]
+      description: "The stored compiled_plan_json: the document's one runnable pool as the main plan, with a plan for each process it calls."
+      required: [main_plan, plans, schema_version]
       properties:
         main_plan:      { type: string, description: "Name of the plan in `plans` that an instance starts." }
         plans:
           type: array
           items: { $ref: '#/components/schemas/CompiledPlan' }
-        messages:
-          type: array
-          items:
-            type: object
-            required: [name, source_plan, target_plan]
-            properties:
-              name:        { type: string }
-              source_plan: { type: string }
-              target_plan: { type: string }
         schema_version: { type: integer, description: "DSL schema major version, stamped at publish." }
 
     CompiledPlan:
@@ -733,10 +714,7 @@ components:
       required: [name, departments, execution]
       properties:
         name:        { type: string }
-        task_queue:  { type: string, description: "Temporal task queue. Omitted for ignored pools." }
-        ignored:
-          type: boolean
-          description: "True when this pool was marked ignore=true in the BPMN. Consumers decide how to handle it."
+        task_queue:  { type: string, description: "Temporal task queue." }
         departments:
           type: array
           items: { $ref: '#/components/schemas/DepartmentDef' }
@@ -883,7 +861,8 @@ components:
         - UNGUARDED_LOOP                # a back-edge is a self-loop, originates at an exclusive gateway with no forward exit, or originates at a node type that may not source a back-edge
         - UNMATCHED_GATEWAY             # split gateway has no reachable matching join gateway
         - INVALID_SEQUENCE_FLOW_REF     # sequenceFlow references unknown sourceRef or targetRef
-        - MULTIPLE_PROCESSES            # more than one bpmn:process without a wrapping collaboration
+        - MULTIPLE_PROCESSES            # more than one process would run: executable, not called, not marked ignore
+        - NO_RUNNABLE_PROCESS           # no process would run: every one is marked ignore, not executable, or called
         - MAX_DEPTH_EXCEEDED            # longest forward path exceeds 2000 nodes
         - INVALID_BOUNDARY_ATTACHMENT   # more than one event definition on a boundary event, more than one timer boundary on the same host, an error boundary attached to a host other than subProcess/callActivity, or an unknown errorRef
         - MISSING_DIAGRAM               # bpmndi:BPMNDiagram section absent
@@ -897,6 +876,7 @@ components:
         - MISSING_DEPT_ID               # a task's lane has no dept_id; a call binds a module lane to a workflow lane with no dept_id; or, at publish and /validate, the workflow has no lanes or a task of its expanded plan runs in no IAM department
         - INVALID_DEPT_ID               # a lane's dept_id is not a UUID
         - INVALID_LANE_NAME             # a lane's name contains /, :: or ~
+        - IGNORED_LANE_WORK             # a lane marked ignore holds a callActivity, subProcess or connector task, a boundary on one of its skipped tasks, or a loop whose way back holds only skipped tasks
         - UNKNOWN_CONNECTOR_TYPE        # warning: a connector serviceTask names a connector type the registry does not know
         - CONNECTOR_TASK_HAS_ASSIGNMENT # warning: a connector serviceTask carries an assignmentDefinition, which it does not use
 
@@ -1881,8 +1861,7 @@ paths:
       summary: List a published version's human tasks, module tasks included
       description: >-
         Reads a PUBLISHED or ARCHIVED version's stored plan with its calls
-        expanded and lists every human task in a department that is not ignored,
-        in plan order: the nodes the Execution Service checks for eligibility at
+        expanded and lists every human task, in plan order: the nodes the Execution Service checks for eligibility at
         instance start and keys in override_map. Writes nothing.
       tags: [Versions]
       parameters:

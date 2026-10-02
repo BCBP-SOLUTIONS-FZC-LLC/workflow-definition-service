@@ -712,31 +712,3 @@ func taskWithProps(props map[string]string) *bpmncore.BPMNUserTask {
 		},
 	}
 }
-
-func TestStepsHaveCallPool(t *testing.T) {
-	if stepsHaveCallPool(nil) {
-		t.Error("nil steps: expected false")
-	}
-	if stepsHaveCallPool([]dsl.ExecutionStep{{Sequential: []string{"dept"}}}) {
-		t.Error("no call pool anywhere: expected false")
-	}
-	if !stepsHaveCallPool([]dsl.ExecutionStep{{CallPool: &dsl.CallPoolStep{Pool: "other"}}}) {
-		t.Error("top-level call pool: expected true")
-	}
-	nestedInParallel := []dsl.ExecutionStep{{
-		Parallel: []dsl.ParallelBranch{{
-			Steps: []dsl.ExecutionStep{{CallPool: &dsl.CallPoolStep{Pool: "other"}}},
-		}},
-	}}
-	if !stepsHaveCallPool(nestedInParallel) {
-		t.Error("call pool nested in parallel branch: expected true")
-	}
-	nestedInSubWorkflow := []dsl.ExecutionStep{{
-		SubWorkflow: &dsl.SubWorkflowStep{
-			Plan: dsl.ExecutionPlan{Steps: []dsl.ExecutionStep{{CallPool: &dsl.CallPoolStep{Pool: "other"}}}},
-		},
-	}}
-	if !stepsHaveCallPool(nestedInSubWorkflow) {
-		t.Error("call pool nested in sub_workflow: expected true")
-	}
-}

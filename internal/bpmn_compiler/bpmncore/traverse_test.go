@@ -162,19 +162,6 @@ func TestTraverseNode_PassthroughErrorPropagation(t *testing.T) {
 	}
 }
 
-func TestTraverseNode_ExternalParticipant_ErrorPropagation(t *testing.T) {
-	s := newMinimalState()
-	s.G.NodeType["pool_ext"] = NodeTypeExternalParticipant
-	s.G.NodeType["t1"] = NodeTypeUserTask
-	s.G.Outgoing["pool_ext"] = []string{"t1"}
-	wantErr := errors.New("boom")
-	s.Elements[NodeTypeUserTask] = &stubElementHandler{nodeType: NodeTypeUserTask, err: wantErr}
-
-	if err := s.TraverseNode("pool_ext"); !errors.Is(err, wantErr) {
-		t.Fatalf("expected error to propagate from external participant successor; got %v", err)
-	}
-}
-
 func TestHandleGateway_NoForwardNoBack(t *testing.T) {
 	s := newMinimalState()
 	s.G.NodeType["gw"] = NodeTypeExclusiveGateway

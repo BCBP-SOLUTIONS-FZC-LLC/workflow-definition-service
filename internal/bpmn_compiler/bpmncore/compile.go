@@ -16,7 +16,7 @@ func Compile(proc *BPMNProcess, g *Graph, stageTypes map[string]StageTypeHandler
 	return CompileWithImplicitStart(proc, g, implicit, stageTypes, elements, defs)
 }
 
-func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string, stageTypes map[string]StageTypeHandler, elements map[FlowNodeType]ElementHandler, defs *BPMNDefinitions, externalNodes ...map[string]string) (*dsl.CompiledPlan, []*dsl.CompiledPlan, error) {
+func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string, stageTypes map[string]StageTypeHandler, elements map[FlowNodeType]ElementHandler, defs *BPMNDefinitions) (*dsl.CompiledPlan, []*dsl.CompiledPlan, error) {
 	startID := ""
 	if len(proc.StartEvents) > 0 {
 		startID = proc.StartEvents[0].ID
@@ -32,11 +32,6 @@ func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string,
 	backEdges := ProcessBackEdges(proc, g, startID)
 
 	state := NewCompileState(proc, g, laneLabels, condExprs, backEdges, stageTypes, elements, defs)
-	if len(externalNodes) > 0 {
-		for k, v := range externalNodes[0] {
-			state.ExternalNodes[k] = v
-		}
-	}
 	// An implicit-start node (e.g. a receiveTask) is itself the first real
 	// task, unlike an explicit <bpmn:startEvent> whose successor is.
 	if len(proc.StartEvents) > 0 {

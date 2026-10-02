@@ -68,32 +68,20 @@ func (c *Compiler) Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNV
 	}
 
 	callGraphErrs := validator.ValidateCallGraph(defs)
-	execProcs := executableProcesses(defs)
-	if len(execProcs) != 1 && defs.Collaboration == nil {
-		return append(callGraphErrs, domain.BPMNValidationError{
-			Code:     domain.BPMNErrMultipleProcesses,
-			Message:  fmt.Sprintf("definitions contains %d executable processes without a collaboration wrapper; use <bpmn:collaboration> for multi-pool BPMN", len(execProcs)),
-			Severity: domain.SeverityError,
-		}), nil
+	root, rootErr := runnableRoot(defs)
+	if rootErr != nil {
+		return append(callGraphErrs, *rootErr), nil
 	}
-
-	if defs.Collaboration != nil {
-		return c.validateCollaboration(append(scanRejected(bpmnXML), callGraphErrs...), defs), nil
-	}
-	return append(callGraphErrs, c.validateSingleRoot(bpmnXML, execProcs[0], defs)...), nil
+	return append(callGraphErrs, c.validateSingleRoot(bpmnXML, root, defs)...), nil
 }
 
 // ValidateForPublish is Validate plus what only the compiled plan, with its
 // calls expanded, shows and publish refuses: the task limit and a task no one
-// is named for. A document with a blocking error, or a collaboration, which
-// publish refuses outright, gets Validate's answer alone.
+// is named for. A document with a blocking error gets Validate's answer alone.
 func (c *Compiler) ValidateForPublish(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error) {
 	errs, err := c.Validate(ctx, bpmnXML)
 	if err != nil || slices.ContainsFunc(errs, isBlocking) {
 		return errs, err
-	}
-	if defs, err := parse(ctx, bpmnXML); err != nil || defs.Collaboration != nil {
-		return errs, nil
 	}
 	_, err = c.CompileForPublish(ctx, bpmnXML)
 	var failed *domain.ValidationFailedError
@@ -120,7 +108,12 @@ func withoutCode(errs []domain.BPMNValidationError, code domain.BPMNErrorCode) [
 // MULTIPLE_PROCESSES caused by a duplicated process id.
 func (c *Compiler) validateSingleRoot(bpmnXML string, proc *bpmncore.BPMNProcess, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	g := bpmncore.BuildGraph(proc)
-	errs := append(scanRejected(bpmnXML), validator.Validate(proc, g, c.stageTypes, c.elements, defs)...)
+	implicitStart := ""
+	if len(proc.StartEvents) == 0 && defs.Collaboration != nil {
+		implicitStart = bpmncore.FindImplicitStart(proc, g)
+	}
+	errs := append(scanRejected(bpmnXML), validator.ValidateWithImplicitStart(proc, g, implicitStart, c.stageTypes, c.elements, defs)...)
+	errs = append(errs, validator.ValidateCollaboration(defs.Collaboration, defs, proc)...)
 	errs = append(errs, validator.ValidateCalledBodies(proc, c.stageTypes, c.elements, defs)...)
 	return append(errs, validator.ValidateDiagramCompleteness(proc, defs)...)
 }
@@ -147,11 +140,9 @@ func (c *Compiler) CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.
 	return collab, nil
 }
 
-// CompileDraft wraps a single root as a one-plan collaboration, the shape the
+// CompileDraft compiles the document's one runnable pool, in the shape the
 // Execution Service decodes, with the document's structural rules only, so a
-// draft can be compared before it is publishable. A collaboration BPMN is
-// refused by compileSingleRoot until an ignored pool's call-pool task can be
-// completed.
+// draft can be compared before it is publishable.
 func (c *Compiler) CompileDraft(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error) {
 	collab, _, err := c.compileCollaboration(ctx, bpmnXML)
 	return collab, err
@@ -168,7 +159,6 @@ func (c *Compiler) compileCollaboration(ctx context.Context, bpmnXML string) (*d
 	return &dsl.CompiledCollaboration{
 		MainPlan:      plan.Name,
 		Plans:         append([]*dsl.CompiledPlan{plan}, called...),
-		Messages:      []dsl.MessageDef{},
 		SchemaVersion: dsl.CurrentSchemaVersion,
 	}, root, nil
 }
@@ -213,7 +203,7 @@ func lanelessWork(root *bpmncore.BPMNProcess) []domain.BPMNValidationError {
 func unplacedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, d := range plan.Departments {
-		if d.Ignore || d.IAMDepartmentID != "" {
+		if d.IAMDepartmentID != "" {
 			continue
 		}
 		for _, s := range d.Stages {
@@ -291,9 +281,6 @@ func authoredNode(d dsl.DepartmentDef, s dsl.StageDef) string {
 func unassignedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, d := range plan.Departments {
-		if d.Ignore {
-			continue
-		}
 		for _, s := range d.Stages {
 			if !s.CreatesHumanTask() || len(s.DefaultAssignees) > 0 {
 				continue
@@ -321,15 +308,10 @@ func (c *Compiler) compileSingleRoot(ctx context.Context, bpmnXML string) (plan 
 		return nil, nil, nil, classifyParseError("compile", err)
 	}
 	callGraphErrs := validator.ValidateCallGraph(defs)
-	execProcs := executableProcesses(defs)
-	if len(execProcs) != 1 {
-		return nil, nil, nil, &domain.ValidationFailedError{Errors: append(callGraphErrs, domain.BPMNValidationError{
-			Code:     domain.BPMNErrMultipleProcesses,
-			Message:  fmt.Sprintf("Compile expects a single executable process; got %d — use CompileCollaboration for multi-pool BPMN", len(execProcs)),
-			Severity: domain.SeverityError,
-		})}
+	root, rootErr := runnableRoot(defs)
+	if rootErr != nil {
+		return nil, nil, nil, &domain.ValidationFailedError{Errors: append(callGraphErrs, *rootErr)}
 	}
-	root = execProcs[0]
 
 	errs := append(callGraphErrs, c.validateSingleRoot(bpmnXML, root, defs)...)
 	if hasBlockingErrors(errs) {
@@ -343,15 +325,45 @@ func (c *Compiler) compileSingleRoot(ctx context.Context, bpmnXML string) (plan 
 	return plan, called, root, nil
 }
 
-// executableProcesses returns the root entry-point processes to compile — see
-// .claude/bpmn-compiler.md § isExecutable Flag for the isExecutable and
-// root-vs-called-process rules this applies.
+// runnableRoot is the one process a document runs: in a collaboration, the
+// pool that is executable, not marked ignore and not called. Every other pool
+// is external and produces nothing; a called process runs as a module.
+func runnableRoot(defs *bpmncore.BPMNDefinitions) (*bpmncore.BPMNProcess, *domain.BPMNValidationError) {
+	roots := executableProcesses(defs)
+	switch len(roots) {
+	case 1:
+		return roots[0], nil
+	case 0:
+		return nil, &domain.BPMNValidationError{
+			Code:     domain.BPMNErrNoRunnableProcess,
+			Message:  "no process runs: every pool is marked ignore, not executable, or called by another; leave the ignore property off the pool the workflow runs",
+			Severity: domain.SeverityError,
+		}
+	}
+	return nil, &domain.BPMNValidationError{
+		Code:     domain.BPMNErrMultipleProcesses,
+		Message:  fmt.Sprintf("%d pools would run; a workflow runs one, so mark every external pool with the zeebe property ignore=true", len(roots)),
+		Severity: domain.SeverityError,
+	}
+}
+
+// executableProcesses returns the root entry-point processes to compile: the
+// executable processes that are neither external pools (ignore=true) nor
+// called by another process. An external pool's calls are drawn, never made,
+// so they do not count. A document with one process runs it unless it
+// is marked ignore.
 func executableProcesses(defs *bpmncore.BPMNDefinitions) []*bpmncore.BPMNProcess {
 	if len(defs.Processes) == 1 {
+		if bpmncore.IsIgnored(&defs.Processes[0]) {
+			return nil
+		}
 		return []*bpmncore.BPMNProcess{&defs.Processes[0]}
 	}
 	calledIDs := map[string]bool{}
 	for i := range defs.Processes {
+		if bpmncore.IsIgnored(&defs.Processes[i]) {
+			continue
+		}
 		for _, ca := range defs.Processes[i].CallActivities {
 			if ca.ExtensionElements.ZeebeCalledElement != nil && ca.ExtensionElements.ZeebeCalledElement.ProcessID != "" {
 				calledIDs[ca.ExtensionElements.ZeebeCalledElement.ProcessID] = true
@@ -361,20 +373,11 @@ func executableProcesses(defs *bpmncore.BPMNDefinitions) []*bpmncore.BPMNProcess
 	var out []*bpmncore.BPMNProcess
 	for i := range defs.Processes {
 		p := &defs.Processes[i]
-		if p.IsExecutable && !calledIDs[p.ID] {
+		if p.IsExecutable && !calledIDs[p.ID] && !bpmncore.IsIgnored(p) {
 			out = append(out, p)
 		}
 	}
 	return out
-}
-
-func isIgnoredProcess(proc *bpmncore.BPMNProcess) bool {
-	for _, p := range proc.ExtensionElements.ZeebeProps.Items {
-		if p.Name == "ignore" && p.Value == "true" {
-			return true
-		}
-	}
-	return false
 }
 
 // hasBlockingErrors treats an unset Severity as blocking too, for callers

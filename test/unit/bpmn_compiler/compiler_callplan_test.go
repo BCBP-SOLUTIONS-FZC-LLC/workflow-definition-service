@@ -655,49 +655,6 @@ func TestCompileForPublish_ModuleCalledOnlyInsideAParallelBranch(t *testing.T) {
 	}
 }
 
-func TestCompileCollaboration_QualifiesTheCallsCallerDepartmentsAndKeepsCalledPlans(t *testing.T) {
-	bpmnXML := asCollaboration(mainWithCalls([]callSite{{
-		ID: "CA_1", Lane: "Engineering", Calls: "Process_R",
-		Inputs: [][2]string{{"Depts", `{"Sender":"Ops","Receiver":"Engineering"}`}},
-	}}, lanedModule("Process_R", moduleLane{"Sender", "", "R_Send"}, moduleLane{"Receiver", "", "R_Receive"})))
-
-	collab, err := bpmn_compiler.New().CompileCollaboration(context.Background(), bpmnXML)
-	if err != nil {
-		t.Fatalf("CompileCollaboration: %v", err)
-	}
-	call := callSteps(planNamed(t, collab, "Main"))[0]
-	if want := map[string]string{"Sender": "Main/Ops", "Receiver": "Main/Engineering"}; !reflect.DeepEqual(call.Departments, want) {
-		t.Errorf("departments = %v, want the caller's qualified departments %v", call.Departments, want)
-	}
-	planNamed(t, collab, "Process_R")
-	if _, err := dsl.ExpandCalls(collab, 0); err != nil {
-		t.Errorf("the collaboration does not expand: %v", err)
-	}
-}
-
-func TestCompileCollaboration_IgnoredPoolKeepsTheModulesItCalls(t *testing.T) {
-	ignored := `  <bpmn:process id="Process_Ign" name="Partner" isExecutable="true">
-    <bpmn:extensionElements><zeebe:properties><zeebe:property name="ignore" value="true"/></zeebe:properties></bpmn:extensionElements>
-    <bpmn:startEvent id="Ign_Start"/>
-    <bpmn:callActivity id="Ign_CA"><bpmn:extensionElements><zeebe:calledElement processId="Process_P"/></bpmn:extensionElements></bpmn:callActivity>
-    <bpmn:endEvent id="Ign_End"/>
-    <bpmn:sequenceFlow id="Ign_F1" sourceRef="Ign_Start" targetRef="Ign_CA"/>
-    <bpmn:sequenceFlow id="Ign_F2" sourceRef="Ign_CA" targetRef="Ign_End"/>
-  </bpmn:process>`
-	bpmnXML := asCollaboration(mainWithCalls([]callSite{{ID: "CA_1", Lane: "Engineering", Calls: "Process_M"}},
-		moduleWithTask("Process_M", validCandidateUser), ignored, moduleWithTask("Process_P", validCandidateUser)))
-	bpmnXML = strings.Replace(bpmnXML, `processRef="Process_Main"/>`, `processRef="Process_Main"/><bpmn:participant id="P_ign" name="Partner" processRef="Process_Ign"/>`, 1)
-
-	collab, err := bpmn_compiler.New().CompileCollaboration(context.Background(), bpmnXML)
-	if err != nil {
-		t.Fatalf("CompileCollaboration: %v", err)
-	}
-	planNamed(t, collab, "Process_P")
-	if _, err := dsl.ExpandCalls(collab, 0); err != nil {
-		t.Errorf("the collaboration does not expand: %v", err)
-	}
-}
-
 // TestValidate_ModuleSlotBoundToALaneWithoutADepartment_IsRefused pins that
 // every department a call binds in a workflow has an IAM department, whether
 // Depts names the lane or the module's one open slot takes the call's own.

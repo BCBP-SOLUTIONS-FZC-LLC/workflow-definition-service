@@ -762,9 +762,9 @@ Two namespaces are **required** on `<bpmn:definitions>` and validated:
 
 - `name` is required; becomes `CompiledPlan.Name`.
 - `isExecutable="true"` required.
-- One `<bpmn:process>` per definitions file when no collaboration is present (`MULTIPLE_PROCESSES` otherwise).
+- One process runs: two runnable processes are `MULTIPLE_PROCESSES`, none is `NO_RUNNABLE_PROCESS`.
 
-#### Multi-participant collaboration
+#### Collaboration: one pool runs
 
 ```xml
 <bpmn:collaboration id="Collab_1">
@@ -777,7 +777,7 @@ Two namespaces are **required** on `<bpmn:definitions>` and validated:
 </bpmn:collaboration>
 ```
 
-**System semantics**: each `isExecutable="true"` participant process compiles to a separate `CompiledPlan`. The compiler wraps them in a `CompiledCollaboration`. Non-executable participants (external parties with no lanes) are parsed for structural integrity but produce no compiled plan. Message flows compile to `MessageDef` entries linking source and target plans by message name; the Execution Service starts each plan and correlates them via the shared message.
+**System semantics**: one pool runs, the process that is executable, not called by another and not marked ignore. Every other pool is an outside party's, drawn for context, and produces nothing. The pool that runs talks to an outside pool only through message flows: its receive tasks and message boundaries wait for a message delivered into the instance, and its send tasks have no effect outside it.
 
 **Message Flow Name Resolution.** A `<bpmn:messageFlow>` element is rarely annotated with `name` or `messageRef` in practice — the message reference usually lives on the *connected node* instead. The compiler resolves each flow's display name in this order:
 
@@ -786,9 +786,9 @@ Two namespaces are **required** on `<bpmn:definitions>` and validated:
 3. The target node's own `messageRef` — a `sendTask`/`receiveTask`'s `messageRef` attribute, or a boundary event's `messageEventDefinition messageRef`.
 4. The same lookup against the source node.
 
-If none of these resolve, `MessageDef.Name` (and `StageDef.BoundaryMessage.MessageName` / `*.MessagePaths[].MessageName` for boundary events) is empty, and `MISSING_MESSAGE_DEFINITION` is emitted as a **warning** — the flow still compiles, but the Execution Service will not be able to correlate that message. Declare a `<bpmn:message>` and reference it via `messageRef` on the flow or the connected node to fix it.
+A receive task or message boundary whose own `messageRef` does not resolve waits for the name of the flow into it; a receive task with neither waits for its own id. A flow into the pool that runs with no name gets `MISSING_MESSAGE_DEFINITION` as a **warning**. Declare a `<bpmn:message>` and reference it via `messageRef` on the flow or the connected node to fix it.
 
-**Ignored pool pattern**: A participant process may carry `<zeebe:property name="ignore" value="true"/>` inside its process-level `<zeebe:properties>`. The compiler skips it entirely — it is not validated, not compiled, and does not appear in the `CompiledCollaboration`'s plans. Use this pattern to model message-flow context for the main pool (e.g. a consultant pool that only sends a trigger message) without bringing that pool's logic into the execution engine.
+**Ignored pool pattern**: A process carrying `<zeebe:property name="ignore" value="true"/>` inside its process-level `<zeebe:properties>` is an outside party's pool. Its tasks are not checked, its drawn calls are never made, and it does not appear in the `CompiledCollaboration`'s plans. A pool that is not executable and that nothing calls is treated the same way. A call to a pool marked ignore is `UNRESOLVED_CALLED_ELEMENT`: a module always runs.
 
 ```xml
 <bpmn:process id="Process_consultant" isExecutable="true">
@@ -801,7 +801,7 @@ If none of these resolve, `MessageDef.Name` (and `StageDef.BoundaryMessage.Messa
 </bpmn:process>
 ```
 
-**Implicit-start pattern**: A process in a collaboration may have **no explicit start event**. This is valid when the process is started externally (by the execution engine or orchestrator) and its root activity has no incoming sequence flow. The compiler identifies the implicit root via `FindImplicitStart` — the single node with no incoming sequence flow and at least one outgoing sequence flow. This node is exempt from the "no incoming sequence flow" dangling check. A `NO_START_EVENT` error is only raised if no implicit root can be identified.
+**Implicit-start pattern**: The pool that runs in a collaboration may have **no explicit start event**, its root activity having no incoming sequence flow. The compiler identifies the implicit root via `FindImplicitStart` — the single node with no incoming sequence flow and at least one outgoing sequence flow. This node is exempt from the "no incoming sequence flow" dangling check. A `NO_START_EVENT` error is only raised if no implicit root can be identified.
 
 Typical use: a `callActivity` is the first element in the process; an ignored pool sends a message that arrives at a `messageEventDefinition` boundary event **on** that callActivity, acting as a concurrent notification or interrupt without the main process requiring an explicit start event.
 
@@ -841,12 +841,7 @@ A `<bpmn:callActivity>` calls either a process in the same file, private to that
 
 `Depts` and `Assignees` are JSON objects of strings, written plain or with a leading `=`, and compile to the call step's `Departments` and `Assignees`; they never reach `io_mapping`. `Depts` maps module lane names to caller lane names, matched case-insensitively. A malformed value, an unknown lane or task, or a retired `dept_id` input is `INVALID_ZEEBE_PROPERTY`; an unmapped slot when there are two or more is `MISSING_DEPT_INPUT_FOR_MODULE`. Other inputs (like `clarificationId`) compile to the call step's `io_mapping`.
 
-**isExecutable semantics:**
-
-- `isExecutable="false"` → visual-only pool (e.g. a Client pool showing only message flows); skipped entirely by the compiler — not compiled, not usable as a called process.
-- `isExecutable="true"` → required for all pools with real business logic, including module/called processes.
-
-The compiler distinguishes root entry-point processes from called processes by whether the process ID appears as a `zeebe:calledElement` target — NOT by the `isExecutable` flag.
+**isExecutable semantics:** a called process runs as a module whether or not it is executable. Among the processes nothing calls, only an executable one that is not marked ignore runs.
 
 ### Lanes and Departments
 
@@ -862,13 +857,14 @@ The compiler distinguishes root entry-point processes from called processes by w
 </bpmn:laneSet>
 ```
 
+**Ignored lane**: a lane carrying `<zeebe:property name="ignore" value="true"/>` is an outside party inside the process that runs. Its user, send and receive tasks are skipped: no stage, no department, no user needed. Its events and gateways still apply; a gateway after a skipped task decides on the result of the last task that ran, so the person doing it waits for the outside party and records its answer. A call, subprocess or connector task in an ignored lane, a boundary on one of its tasks, and a loop whose way back holds only its tasks are `IGNORED_LANE_WORK`; a call's `Depts` cannot map a module lane to an ignored lane.
+
 **System semantics**: tasks run in the order the flows reach them; a lane says who does a task, never when. Each stretch of a lane on one path becomes a `DepartmentDef`: the lane's first stretch is keyed by `lane.name`, a later one by `<lane.name>~<n>`, and every stretch has `lane.name` as its `Label` and the lane's `dept_id` as its IAM department. A flow that returns to a lane, a gateway branch and a boundary path each start a stretch of their own. Every `<bpmn:userTask>` must appear in exactly one lane, placed by `<bpmn:flowNodeRef>` membership. A task not listed in any lane is `TASK_NOT_IN_LANE`, and a lane name containing `/`, `::` or `~` is `INVALID_LANE_NAME`.
 
 Additional `DepartmentDef` fields populated by the compiler:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `Ignore` | `bool` | `true` when the department's participant pool is an ignored pool (carries `ignore = "true"` on the process-level `<zeebe:properties>`) |
 | `Props` | `map[string]string` | Arbitrary key/value pairs from `<zeebe:properties>` on the lane element itself |
 
 Limits: 1–100 lanes per process.
@@ -879,9 +875,9 @@ Limits: 1–100 lanes per process.
 
 | Element | System semantics |
 |---|---|
-| `<bpmn:collaboration>` | Wraps N participants → `CompiledCollaboration` |
-| `<bpmn:participant>` | `isExecutable="true"` → `CompiledPlan`; non-executable → compiled as `Ignored: true` plan in `CompiledCollaboration`; execution skipped |
-| `<bpmn:messageFlow>` | Cross-participant handoff → `MessageDef` linking plans by message name |
+| `<bpmn:collaboration>` | Wraps the pool that runs and outside parties' pools; only the one runnable pool compiles |
+| `<bpmn:participant>` | Names a pool; an outside party's pool (ignored, or not executable and not called) produces nothing |
+| `<bpmn:messageFlow>` | Names the message a receive task or message boundary in the pool that runs waits for |
 | `<bpmn:message>` | Message definition referenced by start/send/receive elements |
 | `<bpmn:process>` | Core container → `CompiledPlan` |
 | `<bpmn:laneSet>` / `<bpmn:lane>` | Department grouping → `DepartmentDef` |
@@ -1131,7 +1127,8 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | No element from the Tier-3 denylist | `REJECTED_ELEMENT` |
 | Exactly one start event per process | `NO_START_EVENT` / `MULTIPLE_START_EVENTS` |
 | At least one end event per process | `NO_END_EVENT` |
-| One `<bpmn:process>` per definitions (unless wrapped in `<bpmn:collaboration>`) | `MULTIPLE_PROCESSES` |
+| Exactly one runnable process: executable, not called, not marked ignore | `MULTIPLE_PROCESSES` / `NO_RUNNABLE_PROCESS` |
+| No call, subprocess or connector task in a lane marked ignore, no boundary on its tasks, no loop whose way back holds only them | `IGNORED_LANE_WORK` |
 | Every non-event node has an in- and out-edge | `DANGLING_NODE` |
 | Sequence flows reference known nodes | `INVALID_SEQUENCE_FLOW_REF` |
 | Every node reachable from start (DFS) | `UNREACHABLE_NODE` |
@@ -1260,7 +1257,8 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `MULTIPLE_END_EVENTS` | More than one `endEvent` (only raised when collaboration is absent and single process has > 1 end events without guarded exits) |
 | `NO_START_EVENT` | Process has no `startEvent` |
 | `NO_END_EVENT` | Process has no `endEvent` |
-| `MULTIPLE_PROCESSES` | More than one `<bpmn:process>` without a wrapping collaboration |
+| `MULTIPLE_PROCESSES` | More than one process would run: executable, not called, not marked ignore |
+| `NO_RUNNABLE_PROCESS` | No process would run: every one is marked ignore, not executable, or called |
 | `DANGLING_NODE` | Node has no incoming or outgoing sequence flow |
 | `UNREACHABLE_NODE` | Node not reachable from `startEvent` via DFS |
 | `INVALID_SEQUENCE_FLOW_REF` | `sequenceFlow` references unknown `sourceRef` or `targetRef` |
@@ -1280,6 +1278,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `MISSING_DEPT_ID` | A task's lane has no `dept_id`; a call binds a module lane to a workflow lane with no `dept_id`; or, at publish and `/validate`, a workflow has no lanes, or a task of its expanded plan runs in no IAM department |
 | `INVALID_DEPT_ID` | A lane's `dept_id` is not a UUID |
 | `INVALID_LANE_NAME` | A lane's `name` contains `/`, `::` or `~` |
+| `IGNORED_LANE_WORK` | A lane marked ignore holds a call, subprocess or connector task, one of its tasks carries a boundary event, or a loop's way back holds only its tasks |
 | `UNKNOWN_CONNECTOR_TYPE` | *(warning severity)* A connector `serviceTask` names a connector type the registry does not know |
 | `CONNECTOR_TASK_HAS_ASSIGNMENT` | *(warning severity)* A connector `serviceTask` carries a `zeebe:assignmentDefinition`, which it ignores |
 | `UNSUPPORTED_ELEMENT` | Tier 2 element present (e.g. `inclusiveGateway`) — parsed but compile handler absent |

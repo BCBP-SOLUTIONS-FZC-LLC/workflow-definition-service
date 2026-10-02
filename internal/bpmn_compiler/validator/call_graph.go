@@ -34,7 +34,7 @@ func ValidateCallGraph(defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationEr
 		size := len(p.UserTasks)
 		for _, ca := range p.CallActivities {
 			called := calledProcess(ca, defs)
-			if called == nil {
+			if called == nil || bpmncore.IsIgnored(p) {
 				continue
 			}
 			isCalled[called.ID] = true

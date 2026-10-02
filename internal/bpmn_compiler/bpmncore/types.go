@@ -23,7 +23,6 @@ const (
 	NodeTypeTimerBoundaryEvent   FlowNodeType = "timerBoundaryEvent"
 	NodeTypeErrorBoundaryEvent   FlowNodeType = "errorBoundaryEvent"
 	NodeTypeMessageBoundaryEvent FlowNodeType = "messageBoundaryEvent"
-	NodeTypeExternalParticipant  FlowNodeType = "externalParticipant"
 	NodeTypeCallActivity         FlowNodeType = "callActivity"
 )
 

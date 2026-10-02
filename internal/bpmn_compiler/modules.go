@@ -158,7 +158,6 @@ func (c *Compiler) CompileModule(ctx context.Context, bpmnXML, moduleProcessID s
 	collab := &dsl.CompiledCollaboration{
 		MainPlan:      plan.Name,
 		Plans:         append([]*dsl.CompiledPlan{plan}, called...),
-		Messages:      []dsl.MessageDef{},
 		SchemaVersion: dsl.CurrentSchemaVersion,
 	}
 	if _, err := expand(collab, root.ID); err != nil {

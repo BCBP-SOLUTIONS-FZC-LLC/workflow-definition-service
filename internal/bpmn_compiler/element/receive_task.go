@@ -22,6 +22,12 @@ func (ReceiveTaskHandler) Compile(nodeID string, cs *bpmncore.CompileState) erro
 	}
 
 	msgName := bpmncore.ResolveMessageName(task.MessageRef, cs.Defs)
+	if msgName == "" {
+		msgName = bpmncore.ResolveMessageFlowTarget(task.ID, cs.Defs)
+	}
+	if msgName == "" {
+		msgName = task.ID
+	}
 	stage := bpmncore.BuildMessageStageDef(task.ID, task.Name, "receive_task", msgName, task.ExtensionElements)
 
 	deptID := cs.SegmentOf(nodeID)

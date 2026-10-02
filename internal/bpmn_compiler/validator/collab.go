@@ -7,7 +7,11 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-func ValidateCollaboration(collab *bpmncore.BPMNCollaboration, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
+// ValidateCollaboration checks a collaboration's message flows: each names a
+// declared message and known nodes, and each flow into a receive task or
+// message boundary that runs, in root or a process it calls, has a name it
+// can wait for. A flow into anything else needs none: nothing waits for it.
+func ValidateCollaboration(collab *bpmncore.BPMNCollaboration, defs *bpmncore.BPMNDefinitions, root *bpmncore.BPMNProcess) []domain.BPMNValidationError {
 	if collab == nil {
 		return nil
 	}
@@ -18,6 +22,16 @@ func ValidateCollaboration(collab *bpmncore.BPMNCollaboration, defs *bpmncore.BP
 	}
 
 	knownRefs := collabReachableIDs(collab, defs)
+	waiting := map[string]bool{}
+	for _, p := range bpmncore.RunningProcesses(defs, root) {
+		skipped := bpmncore.SkippedTasks(p, bpmncore.BuildGraph(p))
+		for _, t := range p.ReceiveTasks {
+			waiting[t.ID] = !skipped[t.ID]
+		}
+		for _, be := range p.BoundaryEvents {
+			waiting[be.ID] = be.Message != nil
+		}
+	}
 
 	var errs []domain.BPMNValidationError
 	for _, mf := range collab.MessageFlows {
@@ -35,7 +49,7 @@ func ValidateCollaboration(collab *bpmncore.BPMNCollaboration, defs *bpmncore.BP
 			errs = AppendErr(errs, domain.BPMNErrUnmatchedMessageFlow, mf.ID,
 				fmt.Sprintf("messageFlow targetRef %q does not reference a known participant or flow node", mf.TargetRef))
 		}
-		if bpmncore.ResolveMessageFlowName(&mf, defs) == "" {
+		if waiting[mf.TargetRef] && bpmncore.ResolveMessageFlowName(&mf, defs) == "" {
 			errs = AppendWarn(errs, domain.BPMNErrMissingMessageDefinition, mf.ID,
 				"message flow has no resolvable name; the Execution Service cannot correlate this message — declare a <bpmn:message> and reference it via messageRef on the flow or the connected send/receive task/boundary event")
 		}

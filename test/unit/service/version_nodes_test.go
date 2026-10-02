@@ -145,9 +145,8 @@ func TestVersionNodes_UnreadableStoredPlanIsAnError(t *testing.T) {
 	}
 }
 
-// TestVersionNodes_SkipsIgnoredDepartmentsAndAutomaticStages: a node is a task
-// a person completes, in a department that runs.
-func TestVersionNodes_SkipsIgnoredDepartmentsAndAutomaticStages(t *testing.T) {
+// TestVersionNodes_SkipsAutomaticStages: a node is a task a person completes.
+func TestVersionNodes_SkipsAutomaticStages(t *testing.T) {
 	plan, err := json.Marshal(dsl.CompiledCollaboration{MainPlan: "main", SchemaVersion: dsl.CurrentSchemaVersion, Plans: []*dsl.CompiledPlan{{
 		Name: "main",
 		Departments: []dsl.DepartmentDef{
@@ -156,7 +155,6 @@ func TestVersionNodes_SkipsIgnoredDepartmentsAndAutomaticStages(t *testing.T) {
 				{Type: "send_task", NodeID: "S1"},
 				{Type: "connector", NodeID: "C1", ConnectorType: "storage"},
 			}},
-			{ID: "Client", Label: "Client", Ignore: true, Stages: []dsl.StageDef{{Type: "review", NodeID: "T2", Role: "L1"}}},
 		},
 		Execution: dsl.ExecutionPlan{Steps: []dsl.ExecutionStep{{Sequential: []string{"Eng"}}}},
 	}}})

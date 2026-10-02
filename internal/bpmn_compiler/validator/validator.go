@@ -25,7 +25,7 @@ func Validate(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, stageTypes map[stri
 
 // ValidateWithImplicitStart is like Validate but accepts a caller-supplied
 // implicit start node ID. Use this when the caller has already determined the
-// entry point (e.g. CompileCollaboration tracing message flows from ignored pools).
+// entry point: a pool entered by a message, with no start event.
 func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, implicitStart string, stageTypes map[string]bpmncore.StageTypeHandler, elements map[bpmncore.FlowNodeType]bpmncore.ElementHandler, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	var backEdges map[[2]string]bool
 	switch {
@@ -50,6 +50,7 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 	errs = append(errs, ValidateConditionExprs(proc, g)...)
 	errs = append(errs, ValidateBoundaryEvents(proc, g, backEdges)...)
 	errs = append(errs, ValidateMessageBoundaryNames(proc, defs)...)
+	errs = append(errs, ValidateIgnoredLanes(proc, g, backEdges)...)
 	errs = append(errs, validatePerElement(proc, g, stageTypes, elements, defs)...)
 
 	return errs
@@ -64,16 +65,26 @@ func validatePerElement(
 ) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	laneRefs := bpmncore.BuildLaneRefSet(proc)
+	skipped := bpmncore.SkippedTasks(proc, g)
 
 	if h, ok := elements[bpmncore.NodeTypeUserTask]; ok {
 		for _, t := range proc.UserTasks {
+			if skipped[t.ID] {
+				continue
+			}
 			errs = append(errs, h.Validate(t.ID, proc, g, defs, stageTypes, elements)...)
 		}
 	}
 	for _, t := range proc.SendTasks {
+		if skipped[t.ID] {
+			continue
+		}
 		errs = append(errs, validateOptionalTaskMembership(t.ID, t.ExtensionElements, proc, laneRefs, defs)...)
 	}
 	for _, t := range proc.ReceiveTasks {
+		if skipped[t.ID] {
+			continue
+		}
 		errs = append(errs, validateOptionalTaskMembership(t.ID, t.ExtensionElements, proc, laneRefs, defs)...)
 	}
 	for _, ca := range proc.CallActivities {

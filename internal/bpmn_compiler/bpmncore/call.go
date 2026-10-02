@@ -103,7 +103,7 @@ func WorkLanes(proc *BPMNProcess) []*BPMNLane {
 	var lanes []*BPMNLane
 	for i := range proc.LaneSet.Lanes {
 		lane := &proc.LaneSet.Lanes[i]
-		if slices.ContainsFunc(lane.FlowNodeRefs, func(id string) bool { return work[id] }) {
+		if !IsIgnoredLane(lane) && slices.ContainsFunc(lane.FlowNodeRefs, func(id string) bool { return work[id] }) {
 			lanes = append(lanes, lane)
 		}
 	}
@@ -124,6 +124,60 @@ func OpenSlots(proc *BPMNProcess) []string {
 		}
 	}
 	return open
+}
+
+// IsIgnored reports whether proc is an external pool: drawn for context, with
+// the zeebe property ignore=true, and never run.
+func IsIgnored(proc *BPMNProcess) bool {
+	for _, p := range proc.ExtensionElements.ZeebeProps.Items {
+		if p.Name == "ignore" && p.Value == "true" {
+			return true
+		}
+	}
+	return false
+}
+
+// IsIgnoredLane reports whether lane stands for an outside party, with the
+// zeebe property ignore=true: as with an ignored pool, its tasks never run.
+func IsIgnoredLane(lane *BPMNLane) bool {
+	return PropsMap(lane.ExtensionElements)["ignore"] == "true"
+}
+
+// SkippedTasks is the set of tasks in proc's ignored lanes: user, send and
+// receive tasks an outside party does, which compile to nothing.
+func SkippedTasks(proc *BPMNProcess, g *Graph) map[string]bool {
+	skipped := map[string]bool{}
+	for i := range proc.LaneSet.Lanes {
+		if !IsIgnoredLane(&proc.LaneSet.Lanes[i]) {
+			continue
+		}
+		for _, id := range proc.LaneSet.Lanes[i].FlowNodeRefs {
+			if t := g.NodeType[id]; t == NodeTypeUserTask || t == NodeTypeSendTask || t == NodeTypeReceiveTask {
+				skipped[id] = true
+			}
+		}
+	}
+	return skipped
+}
+
+// RunningProcesses is root and every process of defs it calls, directly or
+// through another call: the processes whose tasks run.
+func RunningProcesses(defs *BPMNDefinitions, root *BPMNProcess) []*BPMNProcess {
+	byID := map[string]*BPMNProcess{}
+	for i := range defs.Processes {
+		byID[defs.Processes[i].ID] = &defs.Processes[i]
+	}
+	seen := map[string]bool{root.ID: true}
+	running := []*BPMNProcess{root}
+	for i := 0; i < len(running); i++ {
+		for _, ca := range running[i].CallActivities {
+			if ce := ca.ExtensionElements.ZeebeCalledElement; ce != nil && byID[ce.ProcessID] != nil && !seen[ce.ProcessID] {
+				seen[ce.ProcessID] = true
+				running = append(running, byID[ce.ProcessID])
+			}
+		}
+	}
+	return running
 }
 
 // ImplicitSlot names the one department of a process without lanes: its

@@ -29,7 +29,6 @@ func collabOf(plan *dsl.CompiledPlan) *dsl.CompiledCollaboration {
 	return &dsl.CompiledCollaboration{
 		MainPlan:      plan.Name,
 		Plans:         []*dsl.CompiledPlan{plan},
-		Messages:      []dsl.MessageDef{},
 		SchemaVersion: dsl.CurrentSchemaVersion,
 	}
 }

@@ -181,33 +181,6 @@ func TestResolveMessageFlowTarget(t *testing.T) {
 	}
 }
 
-func TestSetDeptMeta(t *testing.T) {
-	s := newMinimalState()
-
-	// No-op when the department doesn't exist yet.
-	s.SetDeptMeta("missing", true, map[string]string{"a": "b"})
-	if len(s.CollectedDepts()) != 0 {
-		t.Fatalf("expected no departments to be created; got %v", s.CollectedDepts())
-	}
-
-	s.EnsureDept("ops", "Ops", "")
-	s.SetDeptMeta("ops", true, map[string]string{"ignore": "true", "sla": "24h"})
-
-	depts := s.CollectedDepts()
-	if len(depts) != 1 || depts[0].ID != "ops" {
-		t.Fatalf("expected dept 'ops'; got %v", depts)
-	}
-	if !depts[0].Ignore {
-		t.Error("expected Ignore = true")
-	}
-	if _, ok := depts[0].Props["ignore"]; ok {
-		t.Error("the 'ignore' key itself should not be copied into Props")
-	}
-	if depts[0].Props["sla"] != "24h" {
-		t.Errorf("Props[sla] = %q, want 24h", depts[0].Props["sla"])
-	}
-}
-
 func TestResolveErrorCode_NotFound(t *testing.T) {
 	s := &CompileState{
 		Defs: &BPMNDefinitions{
@@ -254,38 +227,6 @@ func TestTraverseNode_StopAt(t *testing.T) {
 	}
 }
 
-func TestTraverseNode_ExternalParticipant_WithPool(t *testing.T) {
-	s := newMinimalState()
-	s.G.NodeType["pool_ext"] = NodeTypeExternalParticipant
-	s.G.Outgoing["pool_ext"] = nil
-	s.ExternalNodes["pool_ext"] = "ExternalOrg"
-
-	if err := s.TraverseNode("pool_ext"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	steps := s.CollectedSteps()
-	if len(steps) != 1 || steps[0].CallPool == nil {
-		t.Fatalf("expected one CallPool step; got %v", steps)
-	}
-	if steps[0].CallPool.Pool != "ExternalOrg" {
-		t.Errorf("CallPool.Pool = %q; want %q", steps[0].CallPool.Pool, "ExternalOrg")
-	}
-}
-
-func TestTraverseNode_ExternalParticipant_NoMapping(t *testing.T) {
-	// ExternalParticipant node that has no entry in ExternalNodes — should not emit a step.
-	s := newMinimalState()
-	s.G.NodeType["pool_unmapped"] = NodeTypeExternalParticipant
-	s.G.Outgoing["pool_unmapped"] = nil
-
-	if err := s.TraverseNode("pool_unmapped"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(s.CollectedSteps()) != 0 {
-		t.Error("expected no steps for unmapped external participant")
-	}
-}
-
 func TestFindJoin_BranchesEndingApartHaveNoJoin(t *testing.T) {
 	g := &Graph{Outgoing: map[string][]string{
 		"gw": {"t1", "t2"},
@@ -329,22 +270,6 @@ func TestFindJoin_IgnoresALoopHeadReachedByABackEdge(t *testing.T) {
 	back := map[[2]string]bool{{"gw", "a"}: true}
 	if join, ok := FindJoin("gw", g, back); ok && join == "a" {
 		t.Errorf("FindJoin = %q: a loop head reached by a back-edge is not a join", join)
-	}
-}
-
-func TestTraverseNode_ExternalParticipant_WithSuccessor(t *testing.T) {
-	// ExternalParticipant with a successor — exercises the for-loop in the ext-participant block.
-	s := newMinimalState()
-	s.G.NodeType["pool_ext"] = NodeTypeExternalParticipant
-	s.G.NodeType["end"] = NodeTypeEndEvent
-	s.G.Outgoing["pool_ext"] = []string{"end"}
-	s.ExternalNodes["pool_ext"] = "Partner"
-
-	if err := s.TraverseNode("pool_ext"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(s.CollectedSteps()) != 1 {
-		t.Fatalf("expected 1 step; got %d", len(s.CollectedSteps()))
 	}
 }
 
@@ -509,46 +434,6 @@ func TestOutgoingTargetOf_Found(t *testing.T) {
 	proc := &BPMNProcess{SequenceFlows: []BPMNSequenceFlow{{SourceRef: "a", TargetRef: "b"}}}
 	if got := OutgoingTargetOf("a", proc); got != "b" {
 		t.Errorf("got %q; want b", got)
-	}
-}
-
-func TestInjectMessageBridges_RoundTripAndTerminal(t *testing.T) {
-	g := &Graph{
-		Outgoing: make(map[string][]string),
-		Incoming: make(map[string][]string),
-		NodeType: make(map[string]FlowNodeType),
-		NodeIDs:  make(map[string]struct{}),
-	}
-	bridges := []MessageBridge{
-		{FromTaskID: "send1", ToTaskID: "recv1", SyntheticNodeID: "syn1"},
-		{FromTaskID: "send2", ToTaskID: "", SyntheticNodeID: "syn2"},
-	}
-	InjectMessageBridges(g, bridges)
-
-	if g.NodeType["syn1"] != NodeTypeExternalParticipant {
-		t.Errorf("syn1 NodeType = %v; want ExternalParticipant", g.NodeType["syn1"])
-	}
-	if len(g.Outgoing["send1"]) != 1 || g.Outgoing["send1"][0] != "syn1" {
-		t.Errorf("Outgoing[send1] = %v", g.Outgoing["send1"])
-	}
-	if len(g.Incoming["syn1"]) != 1 || g.Incoming["syn1"][0] != "send1" {
-		t.Errorf("Incoming[syn1] = %v", g.Incoming["syn1"])
-	}
-	if len(g.Outgoing["syn1"]) != 1 || g.Outgoing["syn1"][0] != "recv1" {
-		t.Errorf("Outgoing[syn1] = %v", g.Outgoing["syn1"])
-	}
-	if len(g.Incoming["recv1"]) != 1 || g.Incoming["recv1"][0] != "syn1" {
-		t.Errorf("Incoming[recv1] = %v", g.Incoming["recv1"])
-	}
-
-	if g.NodeType["syn2"] != NodeTypeEndEvent {
-		t.Errorf("syn2 NodeType = %v; want EndEvent", g.NodeType["syn2"])
-	}
-	if len(g.Outgoing["syn2"]) != 0 {
-		t.Errorf("expected no outgoing edges from terminal synthetic node; got %v", g.Outgoing["syn2"])
-	}
-	if len(g.Incoming[""]) != 0 {
-		t.Errorf("expected no incoming edges registered on empty ToTaskID; got %v", g.Incoming[""])
 	}
 }
 

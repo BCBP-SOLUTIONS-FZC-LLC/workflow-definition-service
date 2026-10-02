@@ -45,10 +45,10 @@ func ValidateLoops(g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPM
 
 // isExternallyGuardedLoopSource reports whether a back-edge sourced at this
 // node type is gated by something outside the sequence-flow graph (a receive
-// task's inbound message, or an external participant's message back into an
-// ignored pool), so it needs no exclusive gateway to be considered terminable.
+// task's inbound message), so it needs no exclusive gateway to be considered
+// terminable.
 func isExternallyGuardedLoopSource(t bpmncore.FlowNodeType) bool {
-	return t == bpmncore.NodeTypeReceiveTask || t == bpmncore.NodeTypeExternalParticipant
+	return t == bpmncore.NodeTypeReceiveTask
 }
 
 func sccHasGuardedExit(scc []string, g *bpmncore.Graph) bool {
@@ -58,9 +58,6 @@ func sccHasGuardedExit(scc []string, g *bpmncore.Graph) bool {
 	}
 	for _, n := range scc {
 		t := g.NodeType[n]
-		if t == bpmncore.NodeTypeExternalParticipant {
-			return true
-		}
 		if !canExitSCCViaOutgoingEdge(t) {
 			continue
 		}

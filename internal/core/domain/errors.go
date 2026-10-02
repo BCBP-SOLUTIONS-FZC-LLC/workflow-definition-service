@@ -77,6 +77,8 @@ const (
 	BPMNErrUnmatchedGateway             BPMNErrorCode = "UNMATCHED_GATEWAY"
 	BPMNErrInvalidSequenceFlowRef       BPMNErrorCode = "INVALID_SEQUENCE_FLOW_REF"
 	BPMNErrMultipleProcesses            BPMNErrorCode = "MULTIPLE_PROCESSES"
+	BPMNErrNoRunnableProcess            BPMNErrorCode = "NO_RUNNABLE_PROCESS"
+	BPMNErrIgnoredLaneWork              BPMNErrorCode = "IGNORED_LANE_WORK"
 	BPMNErrInvalidBoundaryAttachment    BPMNErrorCode = "INVALID_BOUNDARY_ATTACHMENT"
 	BPMNErrUnsupportedBoundaryTarget    BPMNErrorCode = "UNSUPPORTED_BOUNDARY_TARGET"
 	BPMNErrMissingDiagram               BPMNErrorCode = "MISSING_DIAGRAM"

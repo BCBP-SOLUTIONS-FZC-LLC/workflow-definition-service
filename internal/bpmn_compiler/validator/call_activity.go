@@ -27,6 +27,10 @@ func ValidateCallActivity(ca bpmncore.BPMNCallActivity, caller *bpmncore.BPMNPro
 		return AppendErr(nil, domain.BPMNErrUnresolvedCalledElement, ca.ID,
 			fmt.Sprintf("callActivity references processId %q which is not defined in this BPMN document", ext.ProcessID))
 	}
+	if bpmncore.IsIgnored(calledProc) {
+		return AppendErr(nil, domain.BPMNErrUnresolvedCalledElement, ca.ID,
+			fmt.Sprintf("callActivity references processId %q, an external pool marked ignore; a call runs a module, so drop the ignore property from it", ext.ProcessID))
+	}
 	if len(calledProc.StartEvents) == 0 {
 		return AppendErr(nil, domain.BPMNErrNoStartEvent, ca.ID,
 			fmt.Sprintf("callActivity references processId %q which has no start event", ext.ProcessID))
@@ -93,9 +97,13 @@ func (c callSite) departments() []domain.BPMNValidationError {
 		default:
 			mapped[lane.Name] = true
 		}
-		if bpmncore.LaneNamed(c.caller, value) == nil {
+		switch target := bpmncore.LaneNamed(c.caller, value); {
+		case target == nil:
 			errs = append(errs, c.err(domain.BPMNErrInvalidZeebeProperty,
 				"call %q maps %q to %q in Depts, but this process has no lane of that name", c.name(), key, value))
+		case bpmncore.IsIgnoredLane(target):
+			errs = append(errs, c.err(domain.BPMNErrInvalidZeebeProperty,
+				"call %q maps %q to %q in Depts, a lane marked ignore; a module's work is the workflow's own, so map it to a lane that runs", c.name(), key, value))
 		}
 	}
 	open := bpmncore.OpenSlots(c.called)

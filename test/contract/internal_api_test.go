@@ -63,7 +63,7 @@ func TestInternalContract_CompiledPlan(t *testing.T) {
 	spec := contract.Load(t, internalSpec)
 	tenantID := uuid.New()
 	n := int32(4)
-	plan := `{"main_plan":"Main","plans":[],"messages":[],"schema_version":1}`
+	plan := `{"main_plan":"Main","plans":[],"schema_version":1}`
 	published := &domain.WorkflowVersion{ID: uuid.New(), WorkflowID: uuid.New(), Status: domain.VersionStatusPublished, IsValid: true, VersionNumber: &n, CompiledPlanJSON: &plan}
 	draft := &domain.WorkflowVersion{ID: uuid.New(), WorkflowID: uuid.New(), Status: domain.VersionStatusDraft, IsValid: true}
 	router := internalRouter(t, published, draft)
@@ -110,7 +110,7 @@ func TestInternalContract_CompiledPlan(t *testing.T) {
 
 func TestInternalContract_CompiledPlanBody(t *testing.T) {
 	n := int32(4)
-	plan := `{"main_plan":"Main","plans":[],"messages":[],"schema_version":1}`
+	plan := `{"main_plan":"Main","plans":[],"schema_version":1}`
 	published := &domain.WorkflowVersion{ID: uuid.New(), WorkflowID: uuid.New(), Status: domain.VersionStatusPublished, IsValid: true, VersionNumber: &n, CompiledPlanJSON: &plan}
 	draft := &domain.WorkflowVersion{ID: uuid.New(), WorkflowID: uuid.New(), Status: domain.VersionStatusDraft}
 	router := internalRouter(t, published, draft)

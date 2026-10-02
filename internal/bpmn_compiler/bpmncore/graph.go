@@ -285,35 +285,6 @@ func OutgoingTargetOf(nodeID string, proc *BPMNProcess) string {
 	return ""
 }
 
-type MessageBridge struct {
-	FromTaskID      string // main process task that sends a message to the ignored pool
-	ToTaskID        string // main process task that receives a message back (empty = one-way)
-	ParticipantName string // display name of the ignored participant
-	SyntheticNodeID string // unique ID for the injected external node
-}
-
-// InjectMessageBridges adds synthetic external participant nodes and edges to g
-// so that message-flow connections to ignored pools are represented in the graph.
-// This makes dangling send tasks and unreachable receive tasks appear connected,
-// and allows the validator and compiler to traverse across pool boundaries.
-// For terminal bridges (ToTaskID == "") the synthetic node is registered as an
-// end-event equivalent so reachability checks pass.
-func InjectMessageBridges(g *Graph, bridges []MessageBridge) {
-	for _, b := range bridges {
-		g.NodeIDs[b.SyntheticNodeID] = struct{}{}
-		g.NodeType[b.SyntheticNodeID] = NodeTypeExternalParticipant
-		g.Outgoing[b.FromTaskID] = append(g.Outgoing[b.FromTaskID], b.SyntheticNodeID)
-		g.Incoming[b.SyntheticNodeID] = append(g.Incoming[b.SyntheticNodeID], b.FromTaskID)
-		if b.ToTaskID != "" {
-			g.Outgoing[b.SyntheticNodeID] = append(g.Outgoing[b.SyntheticNodeID], b.ToTaskID)
-			g.Incoming[b.ToTaskID] = append(g.Incoming[b.ToTaskID], b.SyntheticNodeID)
-		}
-		if b.ToTaskID == "" {
-			g.NodeType[b.SyntheticNodeID] = NodeTypeEndEvent
-		}
-	}
-}
-
 func TimerBoundaryFor(taskID string, proc *BPMNProcess) *BPMNBoundaryEvent {
 	for i := range proc.BoundaryEvents {
 		be := &proc.BoundaryEvents[i]

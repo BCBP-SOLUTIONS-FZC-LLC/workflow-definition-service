@@ -73,16 +73,9 @@ func (s *CompileState) TraverseNode(nodeID string) error {
 	s.visited[nodeID] = true
 	s.sd.visited[nodeID] = true
 
-	if s.G.NodeType[nodeID] == NodeTypeExternalParticipant {
-		s.FlushSeqBuf()
-		if pool, ok := s.ExternalNodes[nodeID]; ok {
-			s.steps = append(s.steps, dsl.ExecutionStep{
-				CallPool: &dsl.CallPoolStep{Pool: pool},
-			})
-		}
+	if s.skipped[nodeID] {
 		return s.traverseForwardNexts(nodeID)
 	}
-
 	if h, ok := s.Elements[s.G.NodeType[nodeID]]; ok {
 		return h.Compile(nodeID, s)
 	}
@@ -90,9 +83,8 @@ func (s *CompileState) TraverseNode(nodeID string) error {
 }
 
 // traverseForwardNexts continues traversal into nodeID's forward successors
-// without emitting a stage for nodeID itself — used both after an external
-// participant bridge and for a node with no registered element handler
-// (e.g. inclusiveGateway).
+// without emitting a stage for nodeID itself, for a skipped task or a node
+// with no registered element handler (e.g. inclusiveGateway).
 func (s *CompileState) traverseForwardNexts(nodeID string) error {
 	for _, next := range s.ForwardNexts(nodeID) {
 		if err := s.TraverseNode(next); err != nil {
@@ -285,12 +277,12 @@ func (s *CompileState) revertBranches(
 }
 
 // taskAhead follows node's first forward flows to the first userTask or
-// subProcess, or returns "" when an end or a dead end comes first.
+// subProcess that runs, or returns "" when an end or a dead end comes first.
 func (s *CompileState) taskAhead(node string) string {
 	visited := make(map[string]bool)
 	for curr := node; curr != "" && !visited[curr]; {
 		visited[curr] = true
-		if t := s.G.NodeType[curr]; t == NodeTypeUserTask || t == NodeTypeSubProcess {
+		if t := s.G.NodeType[curr]; !s.skipped[curr] && (t == NodeTypeUserTask || t == NodeTypeSubProcess) {
 			return curr
 		}
 		fwd := s.ForwardNexts(curr)
@@ -310,41 +302,43 @@ func (s *CompileState) firstTaskNodeAhead(node string) (id, name string) {
 			return "", ""
 		}
 		visited[curr] = true
-		switch s.G.NodeType[curr] {
-		case NodeTypeUserTask:
-			task := FindTask(s.Proc, curr)
-			if task != nil {
-				return task.ID, task.Name
+		if !s.skipped[curr] {
+			switch s.G.NodeType[curr] {
+			case NodeTypeUserTask:
+				task := FindTask(s.Proc, curr)
+				if task != nil {
+					return task.ID, task.Name
+				}
+				return "", ""
+			case NodeTypeSendTask:
+				task := FindSendTask(s.Proc, curr)
+				if task != nil {
+					return task.ID, task.Name
+				}
+				return "", ""
+			case NodeTypeReceiveTask:
+				task := FindReceiveTask(s.Proc, curr)
+				if task != nil {
+					return task.ID, task.Name
+				}
+				return "", ""
+			case NodeTypeSubProcess:
+				sp := FindSubProcess(s.Proc, curr)
+				if sp != nil {
+					return sp.ID, sp.Name
+				}
+				return "", ""
+			case NodeTypeCallActivity:
+				ca := FindCallActivity(s.Proc, curr)
+				if ca != nil {
+					return ca.ID, ca.Name
+				}
+				return "", ""
+			case NodeTypeStartEvent, NodeTypeEndEvent,
+				NodeTypeParallelGateway, NodeTypeExclusiveGateway, NodeTypeInclusiveGateway,
+				NodeTypeBoundaryEvent, NodeTypeTimerBoundaryEvent, NodeTypeErrorBoundaryEvent,
+				NodeTypeMessageBoundaryEvent:
 			}
-			return "", ""
-		case NodeTypeSendTask:
-			task := FindSendTask(s.Proc, curr)
-			if task != nil {
-				return task.ID, task.Name
-			}
-			return "", ""
-		case NodeTypeReceiveTask:
-			task := FindReceiveTask(s.Proc, curr)
-			if task != nil {
-				return task.ID, task.Name
-			}
-			return "", ""
-		case NodeTypeSubProcess:
-			sp := FindSubProcess(s.Proc, curr)
-			if sp != nil {
-				return sp.ID, sp.Name
-			}
-			return "", ""
-		case NodeTypeCallActivity:
-			ca := FindCallActivity(s.Proc, curr)
-			if ca != nil {
-				return ca.ID, ca.Name
-			}
-			return "", ""
-		case NodeTypeStartEvent, NodeTypeEndEvent,
-			NodeTypeParallelGateway, NodeTypeExclusiveGateway, NodeTypeInclusiveGateway,
-			NodeTypeBoundaryEvent, NodeTypeTimerBoundaryEvent, NodeTypeErrorBoundaryEvent,
-			NodeTypeMessageBoundaryEvent, NodeTypeExternalParticipant:
 		}
 		fwd := s.ForwardNexts(curr)
 		if len(fwd) == 0 {
@@ -371,7 +365,7 @@ func (s *CompileState) stageTypeOf(nodeID string) string {
 	case NodeTypeStartEvent, NodeTypeEndEvent,
 		NodeTypeParallelGateway, NodeTypeExclusiveGateway, NodeTypeInclusiveGateway,
 		NodeTypeBoundaryEvent, NodeTypeTimerBoundaryEvent, NodeTypeErrorBoundaryEvent,
-		NodeTypeMessageBoundaryEvent, NodeTypeExternalParticipant:
+		NodeTypeMessageBoundaryEvent:
 	}
 	return ""
 }

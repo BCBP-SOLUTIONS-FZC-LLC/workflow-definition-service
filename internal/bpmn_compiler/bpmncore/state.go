@@ -42,15 +42,16 @@ type sharedDeptsStore struct {
 }
 
 type CompileState struct {
-	Proc          *BPMNProcess
-	G             *Graph
-	laneLabels    map[string]string
-	condExprs     map[[2]string]string
-	backEdges     map[[2]string]bool
-	StageTypes    map[string]StageTypeHandler
-	Elements      map[FlowNodeType]ElementHandler
-	Defs          *BPMNDefinitions
-	ExternalNodes map[string]string
+	Proc       *BPMNProcess
+	G          *Graph
+	laneLabels map[string]string
+	condExprs  map[[2]string]string
+	backEdges  map[[2]string]bool
+	StageTypes map[string]StageTypeHandler
+	Elements   map[FlowNodeType]ElementHandler
+	Defs       *BPMNDefinitions
+	// skipped holds the tasks of ignored lanes, which compile to nothing.
+	skipped map[string]bool
 	// StopAt, when non-empty, causes TraverseNode to return immediately without
 	// processing the node. Used by branch states to stop at the gateway's join.
 	StopAt string
@@ -99,12 +100,12 @@ func NewCompileState(
 		StageTypes:    stageTypes,
 		Elements:      elements,
 		Defs:          defs,
-		ExternalNodes: make(map[string]string),
 		Called:        NewCalledPlans(),
 		sd:            &sharedDeptsStore{deptIdx: map[string]int{}, segments: map[string]int{}, nodeSegment: map[string]string{}, visited: map[string]bool{}},
 		visited:       make(map[string]bool),
 		segmentStarts: map[string]bool{},
 		pathSegment:   map[string]string{},
+		skipped:       SkippedTasks(proc, g),
 	}
 	if len(proc.LaneSet.Lanes) == 0 {
 		s.defaultLane = ImplicitSlot(proc)
@@ -127,7 +128,6 @@ func NewBranchState(parent *CompileState, stopAt string) *CompileState {
 		StageTypes:       parent.StageTypes,
 		Elements:         parent.Elements,
 		Defs:             parent.Defs,
-		ExternalNodes:    parent.ExternalNodes,
 		StopAt:           stopAt,
 		Called:           parent.Called,
 		sd:               parent.sd,
@@ -136,6 +136,7 @@ func NewBranchState(parent *CompileState, stopAt string) *CompileState {
 		defaultIAMDeptID: parent.defaultIAMDeptID,
 		segmentStarts:    parent.segmentStarts,
 		pathSegment:      maps.Clone(parent.pathSegment),
+		skipped:          parent.skipped,
 	}
 }
 
@@ -162,23 +163,6 @@ func (s *CompileState) StepsCount() int { return len(s.steps) }
 func (s *CompileState) PatchStep(idx int, f func(*dsl.ExecutionStep)) {
 	if idx >= 0 && idx < len(s.steps) {
 		f(&s.steps[idx])
-	}
-}
-
-func (s *CompileState) SetDeptMeta(deptID string, ignore bool, props map[string]string) {
-	idx, ok := s.sd.deptIdx[deptID]
-	if !ok {
-		return
-	}
-	s.sd.depts[idx].Ignore = ignore
-	for k, v := range props {
-		if k == "ignore" {
-			continue
-		}
-		if s.sd.depts[idx].Props == nil {
-			s.sd.depts[idx].Props = make(map[string]string)
-		}
-		s.sd.depts[idx].Props[k] = v
 	}
 }
 
@@ -329,7 +313,7 @@ func resolveStepTargets(steps []dsl.ExecutionStep, resolve func(*string)) {
 
 // FirstDepartment is the first department steps run, looking into a leading
 // gateway's first branch that runs one and a leading subprocess's body, or
-// empty when they start with a call or a pool.
+// empty when they start with a call.
 func FirstDepartment(steps []dsl.ExecutionStep) string {
 	if len(steps) == 0 {
 		return ""

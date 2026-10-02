@@ -34,7 +34,7 @@ Cycles are not rejected outright. `classifyBackEdges` does a DFS; back-edges are
 
 - Every back-edge must originate at an **exclusive gateway** with a forward exit.
 - Every multi-node SCC must contain such a gateway — else `UNGUARDED_LOOP` / `CYCLE_DETECTED`.
-- Exception: `receiveTask` and external-participant bridge nodes may be back-edge targets without a preceding XOR gateway (they are externally guarded by the inbound message or external system).
+- Exception: a `receiveTask` may be a back-edge target without a preceding XOR gateway (it is externally guarded by the inbound message).
 
 The compiler walks **forward edges only** (skipping back-edges) so traversal always terminates. `validateMaxDepth` caps forward path length at 2000.
 
@@ -60,8 +60,6 @@ See [ARCHITECTURE.md § BPMN Compiler](../ARCHITECTURE.md#bpmn-compiler).
 
 **Canonical hash** (`hasher.go`): `canonicalHash` hashes the normalized process for `artifact_hash`, with the zeebe properties of top-level tasks and sequence flows sorted by name, copying the slices it sorts so the parsed struct is not mutated. The resulting SHA-256 hex is used by `Hash()`. A bundle with several processes (a called process, bundled modules) is hashed by `canonicalBundleHash`: each process hashed on its own, ordered by (id, hash), then hashed together. A single process's hash is exactly `canonicalHash`.
 
-**Synthetic node IDs** (`compiler.go`): collaboration bridge nodes injected by the compiler receive IDs of the form `__ext__` + 4-byte SHA-256 hex of the originating `sendTask` ID, preventing collisions.
-
 **`zeebe:taskSchedule`**: optional `<zeebe:taskSchedule dueDate="…" followUpDate="…"/>` on `userTask` is extracted into `StageDef.DueDate` and `StageDef.FollowUpDate` (both strings, omitted from JSON when absent). Values are treated as opaque FEEL expressions; the compiler does not validate them.
 
 **Role and default assignees** come from `<zeebe:assignmentDefinition candidateGroups="…" candidateUsers="…"/>` (standard Camunda 8 extension elements). `candidateUsers` is a single UUID v7 (enforced via a named validation function; will be relaxed to multi-assignee later). Eligibility of `candidateGroups` is delegated to `MembershipClient.CheckEligibility` at publish time.
@@ -74,14 +72,11 @@ See [ARCHITECTURE.md § BPMN Compiler](../ARCHITECTURE.md#bpmn-compiler).
 
 See [ARCHITECTURE.md § BPMN Compiler](../ARCHITECTURE.md#bpmn-compiler) §Routing vs Rejection.
 
-## isExecutable Flag
+## One Pool Runs; Ignored Pools and Lanes
 
-`isExecutable` on `<bpmn:process>` is actively used by the compiler:
-
-- `isExecutable="false"` → **visual-only pool** (e.g. a Client pool showing only message flows). Skipped entirely by the compiler — not compiled, not usable as a called process.
-- `isExecutable="true"` → **real executable process**. Required for all pools with business logic, including module/called processes referenced by callActivity.
-
-The compiler distinguishes root entry-point processes from called processes by whether the process ID appears as a `zeebe:calledElement` target in another process — NOT by this flag. A called process must still have `isExecutable="true"`.
+- **The root** is the one process that is executable, not called and not marked ignore (`runnableRoot`, `executableProcesses` in `compiler.go`): two are `MULTIPLE_PROCESSES`, none `NO_RUNNABLE_PROCESS`. Every other uncalled pool is an outside party's and produces nothing; its calls are not counted (`executableProcesses`) or followed (`ValidateCallGraph`). In a collaboration, the root may lack a start event (`FindImplicitStart`).
+- **A called process always runs as a module**, executable or not. A call to a pool marked ignore is `UNRESOLVED_CALLED_ELEMENT`, so ignoring can never drop a module.
+- **An ignored lane** (`bpmncore.IsIgnoredLane`) is an outside party inside a process that runs. Its user, send and receive tasks (`bpmncore.SkippedTasks`) are pass-through nodes in `TraverseNode`, `taskAhead` and `firstTaskNodeAhead`, exempt from the per-element checks, passed over by `validateBoundaryTarget`, not waited on by `ValidateCollaboration` (which warns only for receive tasks and message boundaries that run), and not module slots (`WorkLanes`). A call, subprocess or connector task in one, a boundary on a skipped task, and a back-edge whose way back passes no task that runs (`loopRunsWork`) are `IGNORED_LANE_WORK` (`validator/ignored_lane.go`); a `Depts` value naming an ignored caller lane is `INVALID_ZEEBE_PROPERTY`.
 
 ## callActivity: referenced plans
 
@@ -101,14 +96,8 @@ Each called process compiles **once, into its own plan** in `CompiledCollaborati
 - Each called process reachable from the root is validated once with the root's rules, minus the diagram rules (`BundleModules` drops module diagrams). A call cycle is `CALLED_ELEMENT_CYCLE`, and a repeated process `id` is `DUPLICATE_PROCESS_ID` (`validator/call_graph.go`).
 - `CANDIDATE_USERS_EMPTY` is a warning on a document and an error on a workflow's expanded plan: `CompileForPublish` (`checkExpanded`) refuses every human stage with no default user, on the task or on the top-level call that runs it, naming the node key. `ValidateForPublish`, which `/workflows/validate` uses, runs the same check; workflow and starter creation run `Validate` alone, so a draft can be saved first. `CompileDraft` compiles without these publish-only rules (default users, IAM departments via `lanelessWork`/`unplacedTasks`, the expanded task limit); the diff and the divergence baseline use it.
 
-## Multi-Participant Collaboration
+## Publish Shape
 
-The compiler accepts `<bpmn:collaboration>` with multiple `<bpmn:participant>` elements:
+- **Publish always stores a `CompiledCollaboration`**, built by `CompileForPublish`: the one runnable pool becomes the main plan, `main_plan` is the process name (or its id when unnamed), each called process is a plan beside it, and `schema_version` is stamped there. A collaboration publishes the same way; outside parties' pools produce nothing.
 
-- Each `isExecutable="true"` participant process compiles to a separate `CompiledPlan` wrapped in a `CompiledCollaboration`.
-- Message flows (`<bpmn:messageFlow>`) compile to `MessageDef` entries linking plans by message name.
-- Non-executable participants (external-party context only) are parsed for structural integrity but produce no compiled plan.
-- Single-process BPMN (no collaboration wrapper) compiles to `*CompiledPlan` through `Compile`.
-- **Publish always stores a `CompiledCollaboration`**, built by `CompileForPublish`: a single root becomes a one-plan collaboration, `main_plan` is the process name (or its id when unnamed), and `schema_version` is stamped there. A collaboration BPMN validates but does not publish yet; `CompileCollaboration` has no production caller until the ignored-pool task can be completed in the Execution Service.
-
-**Message name resolution** (`ResolveMessageFlowName`, `bpmncore/compile.go`): real-world BPMN rarely annotates the `<bpmn:messageFlow>` element itself with `name`/`messageRef` — the messageRef almost always lives on the connected node instead. Resolution order: the flow's own `name` → the flow's own `messageRef` (via root `<bpmn:message>`) → the target node's `messageRef` (`nodeMessageRef`: sendTask/receiveTask attribute, or boundary event's `messageEventDefinition`) → the same lookup on the source node. `ResolveMessageFlowTarget` provides the inverse (node ID → message name) for boundary-event resolution when the boundary's own `messageRef` doesn't resolve. If nothing resolves, `validator/collab.go`'s `ValidateCollaboration` emits `MISSING_MESSAGE_DEFINITION` as a warning — the flow still compiles with an empty name.
+**Message name resolution** (`ResolveMessageFlowName`, `bpmncore/compile.go`): real-world BPMN rarely annotates the `<bpmn:messageFlow>` element itself with `name`/`messageRef` — the messageRef almost always lives on the connected node instead. Resolution order: the flow's own `name` → the flow's own `messageRef` (via root `<bpmn:message>`) → the target node's `messageRef` (`nodeMessageRef`: sendTask/receiveTask attribute, or boundary event's `messageEventDefinition`) → the same lookup on the source node. `ResolveMessageFlowTarget` provides the inverse (node ID → message name) for a receive task or boundary whose own `messageRef` doesn't resolve; a receive task with neither waits for its own id. A flow into the root with no name gets `MISSING_MESSAGE_DEFINITION` as a warning from `validator/collab.go`'s `ValidateCollaboration`.

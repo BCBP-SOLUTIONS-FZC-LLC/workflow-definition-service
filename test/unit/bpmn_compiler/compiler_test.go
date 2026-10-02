@@ -37,6 +37,9 @@ var subprocessBPMN string
 //go:embed testdata/subprocess-error.bpmn
 var subprocessErrorBPMN string
 
+//go:embed testdata/bnb.bpmn
+var bnbBPMN string
+
 func mustReadBPMN(_ *testing.T, name string) string {
 	switch name {
 	case "initial-diagram.bpmn":
@@ -53,6 +56,8 @@ func mustReadBPMN(_ *testing.T, name string) string {
 		return subprocessBPMN
 	case "subprocess-error.bpmn":
 		return subprocessErrorBPMN
+	case "bnb.bpmn":
+		return bnbBPMN
 	default:
 		panic("unknown fixture: " + name)
 	}
@@ -879,8 +884,8 @@ func TestValidate_ZeroProcesses_ErrorCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
 	}
-	if !hasCode(errs, domain.BPMNErrMultipleProcesses) {
-		t.Errorf("0-process definitions should emit MULTIPLE_PROCESSES; got %v", errCodes(errs))
+	if !hasCode(errs, domain.BPMNErrNoRunnableProcess) {
+		t.Errorf("0-process definitions should emit NO_RUNNABLE_PROCESS; got %v", errCodes(errs))
 	}
 }
 

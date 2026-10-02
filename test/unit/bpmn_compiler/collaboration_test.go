@@ -2,10 +2,7 @@ package bpmn_compiler_test
 
 import (
 	"context"
-	"errors"
 	"testing"
-
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -112,7 +109,7 @@ func TestValidate_Collaboration_UnknownMessageRef(t *testing.T) {
     <bpmn:endEvent id="E_a"><bpmn:incoming>F_a</bpmn:incoming></bpmn:endEvent>
     <bpmn:sequenceFlow id="F_a" sourceRef="S_a" targetRef="E_a"/>
   </bpmn:process>
-  <bpmn:process id="Proc_b" name="B" isExecutable="true">
+  <bpmn:process id="Proc_b" name="B" isExecutable="true"><bpmn:extensionElements><zeebe:properties><zeebe:property name="ignore" value="true"/></zeebe:properties></bpmn:extensionElements>
     <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a6fa83e8-b796-501d-9b76-5dbf249271df"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_b</bpmn:flowNodeRef><bpmn:flowNodeRef>E_b</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="S_b"><bpmn:outgoing>F_b</bpmn:outgoing></bpmn:startEvent>
     <bpmn:endEvent id="E_b"><bpmn:incoming>F_b</bpmn:incoming></bpmn:endEvent>
@@ -149,7 +146,7 @@ func TestValidate_Collaboration_UnmatchedMessageFlow_UnknownSource(t *testing.T)
     <bpmn:endEvent id="E_a"><bpmn:incoming>F_a</bpmn:incoming></bpmn:endEvent>
     <bpmn:sequenceFlow id="F_a" sourceRef="S_a" targetRef="E_a"/>
   </bpmn:process>
-  <bpmn:process id="Proc_b" name="B" isExecutable="true">
+  <bpmn:process id="Proc_b" name="B" isExecutable="true"><bpmn:extensionElements><zeebe:properties><zeebe:property name="ignore" value="true"/></zeebe:properties></bpmn:extensionElements>
     <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a6fa83e8-b796-501d-9b76-5dbf249271df"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_b</bpmn:flowNodeRef><bpmn:flowNodeRef>E_b</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="S_b"><bpmn:outgoing>F_b</bpmn:outgoing></bpmn:startEvent>
     <bpmn:endEvent id="E_b"><bpmn:incoming>F_b</bpmn:incoming></bpmn:endEvent>
@@ -181,7 +178,7 @@ func TestValidate_Collaboration_MessageFlowToFlowNode(t *testing.T) {
 
 func TestValidate_Collaboration_MessageFlowUnresolvableName_Warns(t *testing.T) {
 	// messageFlow has no name, no messageRef, and neither connected node carries
-	// a messageRef either — ResolveMessageFlowName returns "", which should warn
+	// a messageRef, and its target is a receive task that waits — so it should warn
 	// (not error) since the flow/source/target refs are otherwise all valid.
 	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions
@@ -192,19 +189,21 @@ func TestValidate_Collaboration_MessageFlowUnresolvableName_Warns(t *testing.T) 
   <bpmn:collaboration id="Collab_1">
     <bpmn:participant id="P_a" processRef="Proc_a"/>
     <bpmn:participant id="P_b" processRef="Proc_b"/>
-    <bpmn:messageFlow id="MF_1" sourceRef="S_a" targetRef="S_b"/>
+    <bpmn:messageFlow id="MF_1" sourceRef="S_a" targetRef="R_b"/>
   </bpmn:collaboration>
-  <bpmn:process id="Proc_a" name="A" isExecutable="true">
+  <bpmn:process id="Proc_a" name="A" isExecutable="true"><bpmn:extensionElements><zeebe:properties><zeebe:property name="ignore" value="true"/></zeebe:properties></bpmn:extensionElements>
     <bpmn:laneSet id="LS_a"><bpmn:lane id="L_a" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="207141b1-baba-5be9-9c4c-fda8b6fa0eaa"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_a</bpmn:flowNodeRef><bpmn:flowNodeRef>E_a</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="S_a"><bpmn:outgoing>F_a</bpmn:outgoing></bpmn:startEvent>
     <bpmn:endEvent id="E_a"><bpmn:incoming>F_a</bpmn:incoming></bpmn:endEvent>
     <bpmn:sequenceFlow id="F_a" sourceRef="S_a" targetRef="E_a"/>
   </bpmn:process>
   <bpmn:process id="Proc_b" name="B" isExecutable="true">
-    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a6fa83e8-b796-501d-9b76-5dbf249271df"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_b</bpmn:flowNodeRef><bpmn:flowNodeRef>E_b</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
-    <bpmn:startEvent id="S_b"><bpmn:outgoing>F_b</bpmn:outgoing></bpmn:startEvent>
-    <bpmn:endEvent id="E_b"><bpmn:incoming>F_b</bpmn:incoming></bpmn:endEvent>
-    <bpmn:sequenceFlow id="F_b" sourceRef="S_b" targetRef="E_b"/>
+    <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a6fa83e8-b796-501d-9b76-5dbf249271df"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>S_b</bpmn:flowNodeRef><bpmn:flowNodeRef>R_b</bpmn:flowNodeRef><bpmn:flowNodeRef>E_b</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
+    <bpmn:startEvent id="S_b"/>
+    <bpmn:receiveTask id="R_b"/>
+    <bpmn:endEvent id="E_b"/>
+    <bpmn:sequenceFlow id="F_b" sourceRef="S_b" targetRef="R_b"/>
+    <bpmn:sequenceFlow id="F_b2" sourceRef="R_b" targetRef="E_b"/>
   </bpmn:process>
   <bpmndi:BPMNDiagram id="BPMNDiagram_1"><bpmndi:BPMNPlane id="P_1" bpmnElement="Collab_1"/></bpmndi:BPMNDiagram>
 </bpmn:definitions>`
@@ -245,7 +244,7 @@ func TestValidate_Collaboration_MessageFlowNameViaConnectedNode_NoWarn(t *testin
     <bpmn:endEvent id="E_a"><bpmn:incoming>F_a</bpmn:incoming></bpmn:endEvent>
     <bpmn:sequenceFlow id="F_a" sourceRef="S_a" targetRef="E_a"/>
   </bpmn:process>
-  <bpmn:process id="Proc_b" name="B" isExecutable="true">
+  <bpmn:process id="Proc_b" name="B" isExecutable="true"><bpmn:extensionElements><zeebe:properties><zeebe:property name="ignore" value="true"/></zeebe:properties></bpmn:extensionElements>
     <bpmn:laneSet id="LS_b"><bpmn:lane id="L_b" name="l"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="a6fa83e8-b796-501d-9b76-5dbf249271df"/></zeebe:properties></bpmn:extensionElements>
       <bpmn:flowNodeRef>S_b</bpmn:flowNodeRef>
       <bpmn:flowNodeRef>T_b</bpmn:flowNodeRef>
@@ -288,71 +287,6 @@ func TestValidate_NonExecutableProcess_NoTaskExtensionErrors(t *testing.T) {
 	}
 	if hasCode(errs, domain.BPMNErrMissingAssignmentDefinition) || hasCode(errs, domain.BPMNErrTaskNotInLane) {
 		t.Errorf("non-executable pool should not trigger task-extension errors; got %v", errCodes(errs))
-	}
-}
-
-func TestCompileCollaboration_Valid(t *testing.T) {
-	bpmnXML := minimalCollabBPMN(collabExtBody, collabMainLanes, collabMainBody)
-	collab, err := bpmn_compiler.New().CompileCollaboration(context.Background(), bpmnXML)
-	if err != nil {
-		t.Fatalf("CompileCollaboration() error: %v", err)
-	}
-	if collab == nil {
-		t.Fatal("expected non-nil CompiledCollaboration")
-	}
-	if len(collab.Plans) == 0 {
-		t.Error("expected at least one compiled plan")
-	}
-}
-
-func TestCompileCollaboration_RequiresCollaboration(t *testing.T) {
-	// Compile (single-process) BPMN fed to CompileCollaboration must return an error.
-	bpmnXML := minimalBPMN(validTask("T1", "design", "prep") + `
-    <bpmn:startEvent id="StartEvent_1"><bpmn:outgoing>F1</bpmn:outgoing></bpmn:startEvent>
-    <bpmn:endEvent id="EndEvent_1"><bpmn:incoming>F2</bpmn:incoming></bpmn:endEvent>
-    <bpmn:sequenceFlow id="F1" sourceRef="StartEvent_1" targetRef="Task_1"/>
-    <bpmn:sequenceFlow id="F2" sourceRef="Task_1" targetRef="EndEvent_1"/>`)
-
-	_, err := bpmn_compiler.New().CompileCollaboration(context.Background(), bpmnXML)
-	if err == nil {
-		t.Fatal("expected error for single-process BPMN; got nil")
-	}
-	var vfe *domain.ValidationFailedError
-	if !errors.As(err, &vfe) {
-		t.Errorf("expected ValidationFailedError; got %T: %v", err, err)
-	}
-}
-
-func TestCompileCollaboration_ValidationError(t *testing.T) {
-	// A collaboration with a validation failure returns ValidationFailedError.
-	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions
-  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
-  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
-  id="Def_1" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn:collaboration id="Collab_1">
-    <bpmn:participant id="P_a" processRef="Proc_a"/>
-  </bpmn:collaboration>
-  <bpmn:process id="Proc_a" name="A" isExecutable="true">
-    <bpmn:laneSet id="LS"><bpmn:lane id="L" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="c3e61f3a-a879-5734-8bc7-de880d2bb9d9"/></zeebe:properties></bpmn:extensionElements><bpmn:flowNodeRef>T1</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
-    <bpmn:userTask id="T1" name="T">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="g" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BD"><bpmndi:BPMNPlane id="BP" bpmnElement="Collab_1"/></bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-
-	_, err := bpmn_compiler.New().CompileCollaboration(context.Background(), bpmnXML)
-	if err == nil {
-		t.Fatal("expected error for BPMN missing start event; got nil")
-	}
-	var vfe *domain.ValidationFailedError
-	if !errors.As(err, &vfe) {
-		t.Errorf("expected ValidationFailedError; got %T: %v", err, err)
 	}
 }
 
@@ -670,544 +604,7 @@ func TestCompile_AllBranchesTerminateXOR_AllTerminate(t *testing.T) {
 	}
 }
 
-// ─── Collaboration: qualifySteps Parallel + Exclusive coverage ───────────────
-
-// parallelExclusiveCollabBPMN: two-pool collaboration where Reviewer pool has a
-// parallel split/join and an exclusive split/join. Exercises qualifySteps Parallel
-// (line 682) and Exclusive (line 685) paths via CompileCollaboration.
-const parallelExclusiveCollabBPMN = `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions
-  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
-  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
-  id="Def_pe" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn:message id="Msg_pe" name="pe-trigger"/>
-  <bpmn:collaboration id="Collab_pe">
-    <bpmn:participant id="P_iss_pe" name="Issuer"   processRef="Proc_iss_pe"/>
-    <bpmn:participant id="P_rev_pe" name="Reviewer" processRef="Proc_rev_pe"/>
-    <bpmn:messageFlow id="MF_pe" sourceRef="Task_rfq_pe" targetRef="Start_rev_pe" messageRef="Msg_pe"/>
-  </bpmn:collaboration>
-  <bpmn:process id="Proc_iss_pe" name="Issuer">
-    <bpmn:laneSet id="LS_iss_pe">
-      <bpmn:lane id="Lane_cli_pe" name="client"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="cf7f5730-b8d5-50ce-a147-c96e426b72cd"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>Start_iss_pe</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_rfq_pe</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>End_iss_pe</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="Start_iss_pe"><bpmn:outgoing>FI_pe1</bpmn:outgoing></bpmn:startEvent>
-    <bpmn:userTask id="Task_rfq_pe" name="Issue RFQ">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="client" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FI_pe1</bpmn:incoming><bpmn:outgoing>FI_pe2</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:endEvent id="End_iss_pe"><bpmn:incoming>FI_pe2</bpmn:incoming></bpmn:endEvent>
-    <bpmn:sequenceFlow id="FI_pe1" sourceRef="Start_iss_pe" targetRef="Task_rfq_pe"/>
-    <bpmn:sequenceFlow id="FI_pe2" sourceRef="Task_rfq_pe"  targetRef="End_iss_pe"/>
-  </bpmn:process>
-  <bpmn:process id="Proc_rev_pe" name="Reviewer">
-    <bpmn:laneSet id="LS_rev_pe">
-      <bpmn:lane id="Lane_ops_pe" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="b6b23a4d-79e2-5b1f-bd6b-e856cfa0963e"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>Start_rev_pe</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_init_pe</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_par_ops</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_appr</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_rej</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_fin_pe</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>End_rev_pe</bpmn:flowNodeRef>
-      </bpmn:lane>
-      <bpmn:lane id="Lane_fin_pe" name="finance"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="d1d6a21d-333b-5aec-958c-5ae470f74633"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>Task_par_fin</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="Start_rev_pe">
-      <bpmn:messageEventDefinition messageRef="Msg_pe"/>
-      <bpmn:outgoing>FR_pe1</bpmn:outgoing>
-    </bpmn:startEvent>
-    <bpmn:userTask id="Task_init_pe" name="Initial">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FR_pe1</bpmn:incoming><bpmn:outgoing>FR_pe2</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:parallelGateway id="Par_fork_pe">
-      <bpmn:incoming>FR_pe2</bpmn:incoming>
-      <bpmn:outgoing>FR_pe3</bpmn:outgoing><bpmn:outgoing>FR_pe4</bpmn:outgoing>
-    </bpmn:parallelGateway>
-    <bpmn:userTask id="Task_par_ops" name="Ops Review">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FR_pe3</bpmn:incoming><bpmn:outgoing>FR_pe5</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:userTask id="Task_par_fin" name="Finance Review">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="finance" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FR_pe4</bpmn:incoming><bpmn:outgoing>FR_pe6</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:parallelGateway id="Par_join_pe">
-      <bpmn:incoming>FR_pe5</bpmn:incoming><bpmn:incoming>FR_pe6</bpmn:incoming>
-      <bpmn:outgoing>FR_pe7</bpmn:outgoing>
-    </bpmn:parallelGateway>
-    <bpmn:exclusiveGateway id="XOR_dec_pe">
-      <bpmn:incoming>FR_pe7</bpmn:incoming>
-      <bpmn:outgoing>FR_pe8</bpmn:outgoing><bpmn:outgoing>FR_pe9</bpmn:outgoing>
-    </bpmn:exclusiveGateway>
-    <bpmn:userTask id="Task_appr" name="Approved Path">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="approve"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FR_pe8</bpmn:incoming><bpmn:outgoing>FR_peA</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:userTask id="Task_rej" name="Rejected Path">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FR_pe9</bpmn:incoming><bpmn:outgoing>FR_peB</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:exclusiveGateway id="XOR_join_pe">
-      <bpmn:incoming>FR_peA</bpmn:incoming><bpmn:incoming>FR_peB</bpmn:incoming>
-      <bpmn:outgoing>FR_peC</bpmn:outgoing>
-    </bpmn:exclusiveGateway>
-    <bpmn:userTask id="Task_fin_pe" name="Finalize">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FR_peC</bpmn:incoming><bpmn:outgoing>FR_peD</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:endEvent id="End_rev_pe"><bpmn:incoming>FR_peD</bpmn:incoming></bpmn:endEvent>
-    <bpmn:sequenceFlow id="FR_pe1" sourceRef="Start_rev_pe" targetRef="Task_init_pe"/>
-    <bpmn:sequenceFlow id="FR_pe2" sourceRef="Task_init_pe" targetRef="Par_fork_pe"/>
-    <bpmn:sequenceFlow id="FR_pe3" sourceRef="Par_fork_pe"  targetRef="Task_par_ops"/>
-    <bpmn:sequenceFlow id="FR_pe4" sourceRef="Par_fork_pe"  targetRef="Task_par_fin"/>
-    <bpmn:sequenceFlow id="FR_pe5" sourceRef="Task_par_ops" targetRef="Par_join_pe"/>
-    <bpmn:sequenceFlow id="FR_pe6" sourceRef="Task_par_fin" targetRef="Par_join_pe"/>
-    <bpmn:sequenceFlow id="FR_pe7" sourceRef="Par_join_pe"  targetRef="XOR_dec_pe"/>
-    <bpmn:sequenceFlow id="FR_pe8" sourceRef="XOR_dec_pe"   targetRef="Task_appr">
-      <bpmn:conditionExpression>approved</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="FR_pe9" sourceRef="XOR_dec_pe"   targetRef="Task_rej">
-      <bpmn:conditionExpression>rejected</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="FR_peA" sourceRef="Task_appr"    targetRef="XOR_join_pe"/>
-    <bpmn:sequenceFlow id="FR_peB" sourceRef="Task_rej"     targetRef="XOR_join_pe"/>
-    <bpmn:sequenceFlow id="FR_peC" sourceRef="XOR_join_pe"  targetRef="Task_fin_pe"/>
-    <bpmn:sequenceFlow id="FR_peD" sourceRef="Task_fin_pe"  targetRef="End_rev_pe"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BD_pe"><bpmndi:BPMNPlane id="BP_pe" bpmnElement="Collab_pe"/></bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-
-func TestCompileCollaboration_QualifiesParallelAndExclusiveSteps(t *testing.T) {
-	collab, err := bpmn_compiler.New().CompileCollaboration(context.Background(), parallelExclusiveCollabBPMN)
-	if err != nil {
-		t.Fatalf("CompileCollaboration() error: %v", err)
-	}
-	// Find the Reviewer plan.
-	var reviewer *dsl.CompiledPlan
-	for _, p := range collab.Plans {
-		if p.Name == "Reviewer" {
-			reviewer = p
-		}
-	}
-	if reviewer == nil {
-		t.Fatal("expected Reviewer plan in collaboration")
-	}
-	// Dept IDs must be qualified with "Reviewer/" prefix.
-	for _, d := range reviewer.Departments {
-		if len(d.ID) < len("Reviewer/") || d.ID[:len("Reviewer/")] != "Reviewer/" {
-			t.Errorf("dept %q not qualified with Reviewer/ prefix", d.ID)
-		}
-	}
-	// Must have a Parallel step and an Exclusive step.
-	var hasParallel, hasExclusive bool
-	for _, step := range reviewer.Execution.Steps {
-		if len(step.Parallel) > 0 {
-			hasParallel = true
-			for _, branch := range step.Parallel {
-				id := branch.DeptID
-				if len(id) < len("Reviewer/") || id[:len("Reviewer/")] != "Reviewer/" {
-					t.Errorf("parallel dept %q not qualified", id)
-				}
-			}
-		}
-		if len(step.Exclusive) > 0 {
-			hasExclusive = true
-			for _, b := range step.Exclusive {
-				if b.Target != "" && (len(b.Target) < len("Reviewer/") || b.Target[:len("Reviewer/")] != "Reviewer/") {
-					t.Errorf("exclusive branch target %q not qualified", b.Target)
-				}
-			}
-		}
-	}
-	if !hasParallel {
-		t.Error("expected a Parallel step in Reviewer plan")
-	}
-	if !hasExclusive {
-		t.Error("expected an Exclusive step in Reviewer plan")
-	}
-	// Message flow must resolve plan names correctly.
-	if len(collab.Messages) == 0 {
-		t.Fatal("expected at least one message flow")
-	}
-	mf := collab.Messages[0]
-	if mf.SourcePlan != "Issuer" {
-		t.Errorf("message SourcePlan = %q, want Issuer", mf.SourcePlan)
-	}
-	if mf.TargetPlan != "Reviewer" {
-		t.Errorf("message TargetPlan = %q, want Reviewer", mf.TargetPlan)
-	}
-}
-
-// ─── Collaboration: qualifySteps SubWorkflow + ErrorPaths + TimerPaths ───────
-
-// subworkflowCollabBPMN: two-pool collaboration where Processor pool has a
-// subprocess with an error and timer boundary event. The outer Task_prep has a
-// non-interrupting timer boundary leading to Task_escalate (different lane).
-// Exercises qualifySteps SubWorkflow (line 689), ErrorPaths (line 692), TimerPaths
-// (line 694) and qualifyPlanDepts BoundaryTimer.TargetDept (line 669).
-const subworkflowCollabBPMN = `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions
-  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
-  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
-  id="Def_sw" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn:error id="Err_sw" errorCode="PROC_REJECTED"/>
-  <bpmn:message id="Msg_sw" name="sw-trigger"/>
-  <bpmn:collaboration id="Collab_sw">
-    <bpmn:participant id="P_iss_sw"  name="Issuer"    processRef="Proc_iss_sw"/>
-    <bpmn:participant id="P_proc_sw" name="Processor" processRef="Proc_proc_sw"/>
-    <bpmn:messageFlow id="MF_sw" sourceRef="Task_iss_sw" targetRef="Start_proc_sw" messageRef="Msg_sw"/>
-  </bpmn:collaboration>
-  <bpmn:process id="Proc_iss_sw" name="Issuer">
-    <bpmn:laneSet id="LS_iss_sw">
-      <bpmn:lane id="Lane_iss_sw" name="client"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="8d9a46a9-d049-555e-8b9e-8791ef8116bd"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>Start_iss_sw</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_iss_sw</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>End_iss_sw</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="Start_iss_sw"><bpmn:outgoing>FIS1</bpmn:outgoing></bpmn:startEvent>
-    <bpmn:userTask id="Task_iss_sw" name="Issue">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="client" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FIS1</bpmn:incoming><bpmn:outgoing>FIS2</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:endEvent id="End_iss_sw"><bpmn:incoming>FIS2</bpmn:incoming></bpmn:endEvent>
-    <bpmn:sequenceFlow id="FIS1" sourceRef="Start_iss_sw" targetRef="Task_iss_sw"/>
-    <bpmn:sequenceFlow id="FIS2" sourceRef="Task_iss_sw"  targetRef="End_iss_sw"/>
-  </bpmn:process>
-  <bpmn:process id="Proc_proc_sw" name="Processor">
-    <bpmn:laneSet id="LS_proc_sw">
-      <bpmn:lane id="Lane_ops_sw" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="25c934d6-c6b6-5892-94ab-88d77191de07"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>Start_proc_sw</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_prep_sw</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>SubProc_sw</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_final_sw</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>End_proc_sw</bpmn:flowNodeRef>
-      </bpmn:lane>
-      <bpmn:lane id="Lane_esc_sw" name="escalation"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="4c08a2ca-7e6f-50a7-8ea9-ab77b8342cc2"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>Task_escalate_sw</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>End_esc_sw</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="Start_proc_sw">
-      <bpmn:messageEventDefinition messageRef="Msg_sw"/>
-      <bpmn:outgoing>FP1</bpmn:outgoing>
-    </bpmn:startEvent>
-    <bpmn:userTask id="Task_prep_sw" name="Prep">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FP1</bpmn:incoming><bpmn:outgoing>FP2</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:boundaryEvent id="BE_timer_prep_sw" attachedToRef="Task_prep_sw" cancelActivity="false">
-      <bpmn:timerEventDefinition><bpmn:timeDuration>PT1H</bpmn:timeDuration></bpmn:timerEventDefinition>
-      <bpmn:outgoing>FP_bt</bpmn:outgoing>
-    </bpmn:boundaryEvent>
-    <bpmn:subProcess id="SubProc_sw" name="Review Sub">
-      <bpmn:incoming>FP2</bpmn:incoming><bpmn:outgoing>FP3</bpmn:outgoing>
-      <bpmn:laneSet id="LS_inner_sw">
-        <bpmn:lane id="Lane_inner_sw" name="inner_ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="0fc8e228-772d-5015-9975-a5f5aa09a868"/></zeebe:properties></bpmn:extensionElements>
-          <bpmn:flowNodeRef>InnerStart_sw</bpmn:flowNodeRef>
-          <bpmn:flowNodeRef>InnerTask_sw</bpmn:flowNodeRef>
-          <bpmn:flowNodeRef>InnerEnd_sw</bpmn:flowNodeRef>
-        </bpmn:lane>
-      </bpmn:laneSet>
-      <bpmn:startEvent id="InnerStart_sw"><bpmn:outgoing>FPI1</bpmn:outgoing></bpmn:startEvent>
-      <bpmn:userTask id="InnerTask_sw" name="Inner Review">
-        <bpmn:extensionElements>
-          <zeebe:taskDefinition type="review"/>
-          <zeebe:assignmentDefinition candidateGroups="inner_ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-        </bpmn:extensionElements>
-        <bpmn:incoming>FPI1</bpmn:incoming><bpmn:outgoing>FPI2</bpmn:outgoing>
-      </bpmn:userTask>
-      <bpmn:endEvent id="InnerEnd_sw"><bpmn:incoming>FPI2</bpmn:incoming></bpmn:endEvent>
-      <bpmn:sequenceFlow id="FPI1" sourceRef="InnerStart_sw" targetRef="InnerTask_sw"/>
-      <bpmn:sequenceFlow id="FPI2" sourceRef="InnerTask_sw"  targetRef="InnerEnd_sw"/>
-    </bpmn:subProcess>
-    <bpmn:boundaryEvent id="BE_error_sp_sw" attachedToRef="SubProc_sw">
-      <bpmn:errorEventDefinition errorRef="Err_sw"/>
-      <bpmn:outgoing>FP_err</bpmn:outgoing>
-    </bpmn:boundaryEvent>
-    <bpmn:boundaryEvent id="BE_timer_sp_sw" attachedToRef="SubProc_sw" cancelActivity="false">
-      <bpmn:timerEventDefinition><bpmn:timeDuration>PT24H</bpmn:timeDuration></bpmn:timerEventDefinition>
-      <bpmn:outgoing>FP_tsp</bpmn:outgoing>
-    </bpmn:boundaryEvent>
-    <bpmn:userTask id="Task_final_sw" name="Finalize">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FP3</bpmn:incoming><bpmn:outgoing>FP4</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:userTask id="Task_escalate_sw" name="Escalate">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="escalation" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FP_bt</bpmn:incoming><bpmn:outgoing>FP5</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:endEvent id="End_proc_sw"><bpmn:incoming>FP4</bpmn:incoming></bpmn:endEvent>
-    <bpmn:endEvent id="End_esc_sw"><bpmn:incoming>FP5</bpmn:incoming></bpmn:endEvent>
-    <bpmn:sequenceFlow id="FP1"    sourceRef="Start_proc_sw"    targetRef="Task_prep_sw"/>
-    <bpmn:sequenceFlow id="FP2"    sourceRef="Task_prep_sw"     targetRef="SubProc_sw"/>
-    <bpmn:sequenceFlow id="FP3"    sourceRef="SubProc_sw"       targetRef="Task_final_sw"/>
-    <bpmn:sequenceFlow id="FP4"    sourceRef="Task_final_sw"    targetRef="End_proc_sw"/>
-    <bpmn:sequenceFlow id="FP_bt"  sourceRef="BE_timer_prep_sw" targetRef="Task_escalate_sw"/>
-    <bpmn:sequenceFlow id="FP_err" sourceRef="BE_error_sp_sw"   targetRef="Task_final_sw"/>
-    <bpmn:sequenceFlow id="FP_tsp" sourceRef="BE_timer_sp_sw"   targetRef="Task_final_sw"/>
-    <bpmn:sequenceFlow id="FP5"    sourceRef="Task_escalate_sw" targetRef="End_esc_sw"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BD_sw"><bpmndi:BPMNPlane id="BP_sw" bpmnElement="Collab_sw"/></bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-
-func TestCompileCollaboration_QualifiesSubworkflowErrorTimerPaths(t *testing.T) {
-	collab, err := bpmn_compiler.New().CompileCollaboration(context.Background(), subworkflowCollabBPMN)
-	if err != nil {
-		t.Fatalf("CompileCollaboration() error: %v", err)
-	}
-	var processor *dsl.CompiledPlan
-	for _, p := range collab.Plans {
-		if p.Name == "Processor" {
-			processor = p
-		}
-	}
-	if processor == nil {
-		t.Fatal("expected Processor plan in collaboration")
-	}
-
-	// All dept IDs must carry the "Processor/" prefix.
-	for _, d := range processor.Departments {
-		if len(d.ID) < len("Processor/") || d.ID[:len("Processor/")] != "Processor/" {
-			t.Errorf("dept %q not qualified with Processor/ prefix", d.ID)
-		}
-	}
-
-	// BoundaryTimer.TargetDept on Task_prep_sw stage must be qualified.
-	var foundBT bool
-	for _, d := range processor.Departments {
-		for _, stage := range d.Stages {
-			if stage.BoundaryTimer != nil && stage.BoundaryTimer.TargetDept != "" {
-				foundBT = true
-				if stage.BoundaryTimer.TargetDept != "Processor/escalation" {
-					t.Errorf("BoundaryTimer.TargetDept = %q, want Processor/escalation",
-						stage.BoundaryTimer.TargetDept)
-				}
-			}
-		}
-	}
-	if !foundBT {
-		t.Error("expected a stage with qualified BoundaryTimer.TargetDept")
-	}
-
-	// Must have a SubWorkflow step with qualified ErrorPaths and TimerPaths.
-	var sw *dsl.SubWorkflowStep
-	for i := range processor.Execution.Steps {
-		if processor.Execution.Steps[i].SubWorkflow != nil {
-			sw = processor.Execution.Steps[i].SubWorkflow
-			break
-		}
-	}
-	if sw == nil {
-		t.Fatal("expected a SubWorkflow step in Processor plan")
-	}
-	if len(sw.ErrorPaths) == 0 {
-		t.Fatal("expected ErrorPaths on SubWorkflow step")
-	}
-	assertMovesTo(t, processor, sw.ErrorPaths[0].TargetDept, "ops", "Task_final_sw")
-	if len(sw.TimerPaths) == 0 {
-		t.Fatal("expected TimerPaths on SubWorkflow step")
-	}
-	assertMovesTo(t, processor, sw.TimerPaths[0].TargetDept, "ops", "Task_final_sw")
-}
-
-// messageBoundaryUserTaskBPMN: two-pool collaboration where a message flow
-// targets a message boundary event (messageRef lives on the boundary event's
-// messageEventDefinition, not on the messageFlow itself — the real-world
-// authoring pattern) attached to a plain userTask. The boundary's escape path
-// leads to a task in a different lane that is otherwise unreachable, mirroring
-// subworkflowCollabBPMN's timer-boundary escalation shape but for a message
-// boundary. Exercises ResolveMessageFlowName (MessageDef.Name/TargetPlan),
-// StageDef.BoundaryMessage, MessageBoundaryHandler continuation compilation,
-// and qualifyPlanDepts BoundaryMessage.TargetDept.
-const messageBoundaryUserTaskBPMN = `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions
-  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
-  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
-  id="Def_mb" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn:message id="Msg_mb" name="mb-trigger"/>
-  <bpmn:collaboration id="Collab_mb">
-    <bpmn:participant id="P_iss_mb"  name="Issuer"    processRef="Proc_iss_mb"/>
-    <bpmn:participant id="P_proc_mb" name="Processor" processRef="Proc_proc_mb"/>
-    <bpmn:messageFlow id="MF_mb" sourceRef="Task_iss_mb" targetRef="BE_msg_prep_mb"/>
-  </bpmn:collaboration>
-  <bpmn:process id="Proc_iss_mb" name="Issuer">
-    <bpmn:laneSet id="LS_iss_mb">
-      <bpmn:lane id="Lane_iss_mb" name="client"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="2099679d-bd14-5a0c-9009-5a116f503016"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>Start_iss_mb</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_iss_mb</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>End_iss_mb</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="Start_iss_mb"><bpmn:outgoing>FIS1</bpmn:outgoing></bpmn:startEvent>
-    <bpmn:userTask id="Task_iss_mb" name="Issue">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="client" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FIS1</bpmn:incoming><bpmn:outgoing>FIS2</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:endEvent id="End_iss_mb"><bpmn:incoming>FIS2</bpmn:incoming></bpmn:endEvent>
-    <bpmn:sequenceFlow id="FIS1" sourceRef="Start_iss_mb" targetRef="Task_iss_mb"/>
-    <bpmn:sequenceFlow id="FIS2" sourceRef="Task_iss_mb"  targetRef="End_iss_mb"/>
-  </bpmn:process>
-  <bpmn:process id="Proc_proc_mb" name="Processor">
-    <bpmn:laneSet id="LS_proc_mb">
-      <bpmn:lane id="Lane_ops_mb" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="895bbb2f-0a7d-5d46-95c1-0794e1b571ab"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>Start_proc_mb</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_prep_mb</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>End_proc_mb</bpmn:flowNodeRef>
-      </bpmn:lane>
-      <bpmn:lane id="Lane_esc_mb" name="escalation"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="aeb319c5-0647-5954-b8df-51967797340f"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>Task_escalate_mb</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>End_esc_mb</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="Start_proc_mb"><bpmn:outgoing>FP1</bpmn:outgoing></bpmn:startEvent>
-    <bpmn:userTask id="Task_prep_mb" name="Prep">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FP1</bpmn:incoming><bpmn:outgoing>FP2</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:boundaryEvent id="BE_msg_prep_mb" attachedToRef="Task_prep_mb" cancelActivity="false">
-      <bpmn:messageEventDefinition id="MED_mb" messageRef="Msg_mb"/>
-      <bpmn:outgoing>FP_bm</bpmn:outgoing>
-    </bpmn:boundaryEvent>
-    <bpmn:userTask id="Task_escalate_mb" name="Escalate">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="escalation" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-      <bpmn:incoming>FP_bm</bpmn:incoming><bpmn:outgoing>FP3</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:endEvent id="End_proc_mb"><bpmn:incoming>FP2b</bpmn:incoming></bpmn:endEvent>
-    <bpmn:endEvent id="End_esc_mb"><bpmn:incoming>FP3</bpmn:incoming></bpmn:endEvent>
-    <bpmn:sequenceFlow id="FP1"  sourceRef="Start_proc_mb"  targetRef="Task_prep_mb"/>
-    <bpmn:sequenceFlow id="FP2b" sourceRef="Task_prep_mb"   targetRef="End_proc_mb"/>
-    <bpmn:sequenceFlow id="FP_bm" sourceRef="BE_msg_prep_mb" targetRef="Task_escalate_mb"/>
-    <bpmn:sequenceFlow id="FP3"  sourceRef="Task_escalate_mb" targetRef="End_esc_mb"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BD_mb"><bpmndi:BPMNPlane id="BP_mb" bpmnElement="Collab_mb"/></bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-
-func TestCompileCollaboration_MessageBoundaryOnUserTask(t *testing.T) {
-	collab, err := bpmn_compiler.New().CompileCollaboration(context.Background(), messageBoundaryUserTaskBPMN)
-	if err != nil {
-		t.Fatalf("CompileCollaboration() error: %v", err)
-	}
-
-	// Finding 1: MessageDef.Name/TargetPlan must resolve even though the
-	// messageFlow targets a boundary event and carries neither name nor
-	// messageRef itself — the messageRef lives on the boundary event.
-	if len(collab.Messages) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(collab.Messages))
-	}
-	if collab.Messages[0].Name != "mb-trigger" {
-		t.Errorf("Messages[0].Name = %q, want mb-trigger", collab.Messages[0].Name)
-	}
-	if collab.Messages[0].TargetPlan != "Processor" {
-		t.Errorf("Messages[0].TargetPlan = %q, want Processor", collab.Messages[0].TargetPlan)
-	}
-
-	var processor *dsl.CompiledPlan
-	for _, p := range collab.Plans {
-		if p.Name == "Processor" {
-			processor = p
-		}
-	}
-	if processor == nil {
-		t.Fatal("expected Processor plan in collaboration")
-	}
-
-	// Finding 2: StageDef.BoundaryMessage must be populated on Task_prep_mb's
-	// stage, with a qualified TargetDept pointing at the escalation lane.
-	var foundBM bool
-	for _, d := range processor.Departments {
-		for _, stage := range d.Stages {
-			if stage.BoundaryMessage != nil {
-				foundBM = true
-				if stage.BoundaryMessage.MessageName != "mb-trigger" {
-					t.Errorf("BoundaryMessage.MessageName = %q, want mb-trigger", stage.BoundaryMessage.MessageName)
-				}
-				if stage.BoundaryMessage.TargetDept != "Processor/escalation" {
-					t.Errorf("BoundaryMessage.TargetDept = %q, want Processor/escalation", stage.BoundaryMessage.TargetDept)
-				}
-			}
-		}
-	}
-	if !foundBM {
-		t.Error("expected a stage with populated BoundaryMessage")
-	}
-
-	// The escalation continuation (Task_escalate_mb) is otherwise unreachable
-	// except via the message boundary escape path — it must still be compiled.
-	var foundEscalate bool
-	for _, d := range processor.Departments {
-		for _, stage := range d.Stages {
-			if stage.NodeID == "Task_escalate_mb" {
-				foundEscalate = true
-			}
-		}
-	}
-	if !foundEscalate {
-		t.Error("expected Task_escalate_mb to be compiled via the message boundary continuation")
-	}
-}
-
-func TestCompileCollaboration_ParseError(t *testing.T) {
-	_, err := bpmn_compiler.New().CompileCollaboration(context.Background(), "not xml at all <<<")
-	if err == nil {
-		t.Fatal("expected error for invalid XML; got nil")
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("unexpected context error: %v", err)
-	}
-}
+// ─── Receive tasks ───────────────────────────────────────────────────────────
 
 func TestValidate_ReceiveTask_NoTaskDefRequired(t *testing.T) {
 	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
@@ -1241,85 +638,6 @@ func TestValidate_ReceiveTask_NoTaskDefRequired(t *testing.T) {
 	}
 	if hasCode(errs, domain.BPMNErrMissingTaskDefinition) {
 		t.Errorf("receiveTask without taskDef should not produce MISSING_TASK_DEFINITION; got %v", errCodes(errs))
-	}
-}
-
-// TestCompileCollaboration_WithReceiveTask exercises the receiveTask loop in
-// buildElementToProcessName — the receive task in the receiver process must be
-// registered so that a messageFlow targeting it resolves to the correct plan name.
-func TestCompileCollaboration_WithReceiveTask(t *testing.T) {
-	// Same two-pool BPMN as TestValidate_Collaboration_ReceiveTask_CollabReachable,
-	// but compiled via CompileCollaboration to exercise buildElementToProcessName.
-	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions
-  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
-  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
-  id="Def_RcvCompile" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn:collaboration id="C1">
-    <bpmn:participant id="P_sender"   name="Sender"   processRef="Proc_sender"/>
-    <bpmn:participant id="P_receiver" name="Receiver" processRef="Proc_receiver"/>
-    <bpmn:messageFlow id="MF1" sourceRef="Task_send" targetRef="Task_rcv"/>
-  </bpmn:collaboration>
-  <bpmn:process id="Proc_sender" name="Sender" isExecutable="true">
-    <bpmn:laneSet id="LS1">
-      <bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_send</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="S1"/>
-    <bpmn:userTask id="Task_send" name="Send RFQ">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:endEvent id="E1"/>
-    <bpmn:sequenceFlow id="F1" sourceRef="S1"        targetRef="Task_send"/>
-    <bpmn:sequenceFlow id="F2" sourceRef="Task_send" targetRef="E1"/>
-  </bpmn:process>
-  <bpmn:process id="Proc_receiver" name="Receiver" isExecutable="true">
-    <bpmn:laneSet id="LS2">
-      <bpmn:lane id="L2" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="63bb1e15-d338-5793-b74d-ba57f73778c4"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>S2</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_rcv</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>E2</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="S2"/>
-    <bpmn:receiveTask id="Task_rcv" name="Receive RFQ">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-    </bpmn:receiveTask>
-    <bpmn:endEvent id="E2"/>
-    <bpmn:sequenceFlow id="F3" sourceRef="S2"       targetRef="Task_rcv"/>
-    <bpmn:sequenceFlow id="F4" sourceRef="Task_rcv" targetRef="E2"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BD"><bpmndi:BPMNPlane id="BP" bpmnElement="C1"/></bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-
-	collab, err := bpmn_compiler.New().CompileCollaboration(context.Background(), bpmnXML)
-	if err != nil {
-		t.Fatalf("CompileCollaboration() unexpected error: %v", err)
-	}
-	if len(collab.Plans) != 2 {
-		t.Fatalf("expected 2 plans; got %d", len(collab.Plans))
-	}
-	// The message flow from Task_send (Sender) to Task_rcv (Receiver) must resolve
-	// to the correct plan names via buildElementToProcessName.
-	if len(collab.Messages) == 0 {
-		t.Fatal("expected at least 1 message flow entry")
-	}
-	msg := collab.Messages[0]
-	if msg.SourcePlan != "Sender" {
-		t.Errorf("message.SourcePlan = %q; want %q", msg.SourcePlan, "Sender")
-	}
-	if msg.TargetPlan != "Receiver" {
-		t.Errorf("message.TargetPlan = %q; want %q", msg.TargetPlan, "Receiver")
 	}
 }
 
@@ -1357,7 +675,7 @@ func TestValidate_Collaboration_TargetRef_UnknownNode(t *testing.T) {
     <bpmn:sequenceFlow id="F1" sourceRef="S1"     targetRef="Task_1"/>
     <bpmn:sequenceFlow id="F2" sourceRef="Task_1" targetRef="E1"/>
   </bpmn:process>
-  <bpmn:process id="Proc_2" name="Receiver" isExecutable="true">
+  <bpmn:process id="Proc_2" name="Receiver" isExecutable="true"><bpmn:extensionElements><zeebe:properties><zeebe:property name="ignore" value="true"/></zeebe:properties></bpmn:extensionElements>
     <bpmn:laneSet id="LS2">
       <bpmn:lane id="L2" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="63bb1e15-d338-5793-b74d-ba57f73778c4"/></zeebe:properties></bpmn:extensionElements>
         <bpmn:flowNodeRef>S2</bpmn:flowNodeRef>
@@ -1385,54 +703,6 @@ func TestValidate_Collaboration_TargetRef_UnknownNode(t *testing.T) {
 	}
 	if !hasCode(errs, domain.BPMNErrUnmatchedMessageFlow) {
 		t.Errorf("expected UNMATCHED_MESSAGE_FLOW for unknown targetRef; got %v", errCodes(errs))
-	}
-}
-
-// TestCompileCollaboration_ParticipantWithoutMatchingProcess verifies that a
-// participant whose processRef does not match any bpmn:process is silently skipped —
-// the collaboration still compiles (plans only contains the matched participants).
-func TestCompileCollaboration_ParticipantWithoutMatchingProcess(t *testing.T) {
-	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions
-  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
-  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
-  id="Def_MissingProc" targetNamespace="http://bpmn.io/schema/bpmn">
-  <bpmn:collaboration id="C1">
-    <bpmn:participant id="P_real"    name="Real"    processRef="Proc_real"/>
-    <bpmn:participant id="P_phantom" name="Phantom" processRef="Proc_nonexistent"/>
-  </bpmn:collaboration>
-  <bpmn:process id="Proc_real" name="Real" isExecutable="true">
-    <bpmn:laneSet id="LS1">
-      <bpmn:lane id="L1" name="ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="bd056344-b10d-5b31-8903-9f98dea26c6b"/></zeebe:properties></bpmn:extensionElements>
-        <bpmn:flowNodeRef>S1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>E1</bpmn:flowNodeRef>
-      </bpmn:lane>
-    </bpmn:laneSet>
-    <bpmn:startEvent id="S1"/>
-    <bpmn:userTask id="Task_1" name="T1">
-      <bpmn:extensionElements>
-        <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
-      </bpmn:extensionElements>
-    </bpmn:userTask>
-    <bpmn:endEvent id="E1"/>
-    <bpmn:sequenceFlow id="F1" sourceRef="S1"     targetRef="Task_1"/>
-    <bpmn:sequenceFlow id="F2" sourceRef="Task_1" targetRef="E1"/>
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="BD"><bpmndi:BPMNPlane id="BP" bpmnElement="C1"/></bpmndi:BPMNDiagram>
-</bpmn:definitions>`
-
-	collab, err := bpmn_compiler.New().CompileCollaboration(context.Background(), bpmnXML)
-	if err != nil {
-		t.Fatalf("CompileCollaboration() unexpected error: %v", err)
-	}
-	if len(collab.Plans) != 1 {
-		t.Errorf("expected 1 compiled plan (phantom participant skipped); got %d", len(collab.Plans))
-	}
-	if collab.Plans[0].Name != "Real" {
-		t.Errorf("expected plan name %q; got %q", "Real", collab.Plans[0].Name)
 	}
 }
 

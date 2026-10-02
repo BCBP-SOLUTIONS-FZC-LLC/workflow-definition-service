@@ -91,13 +91,6 @@ func moduleCallingBoth(id, first, second string) string {
 
 func moduleCallingTwice(id, calls string) string { return moduleCallingBoth(id, calls, calls) }
 
-// asCollaboration wraps a callerBPMN document's main process in a one-pool collaboration.
-func asCollaboration(bpmnXML string) string {
-	return strings.Replace(bpmnXML, "  <bpmn:process ",
-		`  <bpmn:collaboration id="Collab_1"><bpmn:participant id="P_main" name="Main" processRef="Process_Main"/></bpmn:collaboration>
-  <bpmn:process `, 1)
-}
-
 // moduleWithTask is a laneless process whose only activity is the userTask <id>_Task.
 func moduleWithTask(id, candidateUsers string) string {
 	return fmt.Sprintf(`  <bpmn:process id="%[1]s" isExecutable="true">
@@ -292,27 +285,6 @@ func TestValidate_SharedCalledProcess_IsNotACycle(t *testing.T) {
 	}
 }
 
-func TestCompileCollaboration_CalledElementCycle_IsRejected(t *testing.T) {
-	bpmnXML := asCollaboration(callerBPMN("Process_Main", "Process_A", modulePassingTo("Process_A", "Process_A")))
-	if !strings.Contains(bpmnXML, "<bpmn:collaboration") {
-		t.Fatal("fixture is not a collaboration")
-	}
-
-	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
-	if err != nil {
-		t.Fatalf("validate: %v", err)
-	}
-	if n := countCode(errs, domain.BPMNErrCalledElementCycle); n != 1 {
-		t.Errorf("CALLED_ELEMENT_CYCLE reported %d times, want 1; errors = %v", n, errCodes(errs))
-	}
-
-	_, err = bpmn_compiler.New().CompileCollaboration(context.Background(), bpmnXML)
-	var vf *domain.ValidationFailedError
-	if !errors.As(err, &vf) || !hasCode(vf.Errors, domain.BPMNErrCalledElementCycle) {
-		t.Errorf("CompileCollaboration err = %v, want a ValidationFailedError carrying CALLED_ELEMENT_CYCLE", err)
-	}
-}
-
 func TestValidate_CalledProcessWithoutStart_IsReportedAtTheCallSite(t *testing.T) {
 	module := moduleWithTask("Process_C", validCandidateUser)
 	module = strings.Replace(module, `    <bpmn:startEvent id="Process_C_Start"/>
@@ -403,33 +375,6 @@ func doublingChain(levels int) string {
 	return callerBPMN("Process_Main", "Process_L0", procs...)
 }
 
-func TestValidate_ExpandedPlanOverTaskLimit_IsRejected(t *testing.T) {
-	// 64 levels would overflow an unbounded count.
-	for _, levels := range []int{11, 64} {
-		t.Run(fmt.Sprintf("%d levels", levels), func(t *testing.T) {
-			bpmnXML := doublingChain(levels)
-
-			errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
-			if err != nil {
-				t.Fatalf("validate: %v", err)
-			}
-			if got := findCode(errs, domain.BPMNErrTaskLimitExceeded); got == nil || got.NodeID != "Process_Main" {
-				t.Fatalf("errors = %+v, want TASK_LIMIT_EXCEEDED on Process_Main; compiling it would not finish", errs)
-			}
-			if n := countCode(errs, domain.BPMNErrTaskLimitExceeded); n != 1 {
-				t.Errorf("TASK_LIMIT_EXCEEDED reported %d times, want once, on the process that is compiled", n)
-			}
-			assertCompileRefusedWith(t, bpmnXML, domain.BPMNErrTaskLimitExceeded)
-
-			_, err = bpmn_compiler.New().CompileCollaboration(context.Background(), asCollaboration(bpmnXML))
-			var vf *domain.ValidationFailedError
-			if !errors.As(err, &vf) || !hasCode(vf.Errors, domain.BPMNErrTaskLimitExceeded) {
-				t.Errorf("CompileCollaboration err = %v, want a ValidationFailedError carrying TASK_LIMIT_EXCEEDED", err)
-			}
-		})
-	}
-}
-
 func TestValidate_ExpandedPlanUnderTaskLimit_IsValid(t *testing.T) {
 	bpmnXML := doublingChain(8)
 
@@ -491,33 +436,6 @@ func TestValidate_CallSitesCountTowardTaskLimit(t *testing.T) {
 	}
 }
 
-func TestCompileCollaboration_IgnoredPoolOverOwnTaskLimit_StillCountsItsCalls(t *testing.T) {
-	var tasks strings.Builder
-	for i := range 1001 {
-		fmt.Fprintf(&tasks, "    <bpmn:task id=\"Ign_T%d\"/>\n", i)
-	}
-	ignored := `  <bpmn:process id="Process_Ignored" isExecutable="true">
-    <bpmn:extensionElements><zeebe:properties><zeebe:property name="ignore" value="true"/></zeebe:properties></bpmn:extensionElements>
-    <bpmn:startEvent id="Ign_Start"/>
-    <bpmn:callActivity id="Ign_CA"><bpmn:extensionElements><zeebe:calledElement processId="Process_L0"/></bpmn:extensionElements></bpmn:callActivity>
-    <bpmn:endEvent id="Ign_End"/>
-    <bpmn:sequenceFlow id="Ign_F1" sourceRef="Ign_Start" targetRef="Ign_CA"/>
-    <bpmn:sequenceFlow id="Ign_F2" sourceRef="Ign_CA" targetRef="Ign_End"/>
-` + tasks.String() + `  </bpmn:process>`
-	procs := []string{ignored}
-	for i := range 11 {
-		procs = append(procs, moduleCallingTwice(fmt.Sprintf("Process_L%d", i), fmt.Sprintf("Process_L%d", i+1)))
-	}
-	procs = append(procs, moduleWithTask("Process_L11", validCandidateUser))
-	bpmnXML := asCollaboration(callerBPMN("Process_Main", "Process_Other", append(procs, moduleWithTask("Process_Other", validCandidateUser))...))
-
-	_, err := bpmn_compiler.New().CompileCollaboration(context.Background(), bpmnXML)
-	var vf *domain.ValidationFailedError
-	if !errors.As(err, &vf) || !hasCode(vf.Errors, domain.BPMNErrTaskLimitExceeded) {
-		t.Errorf("CompileCollaboration err = %v, want a ValidationFailedError carrying TASK_LIMIT_EXCEEDED", err)
-	}
-}
-
 func TestValidate_UnresolvedCalledElement_ReportedOnce(t *testing.T) {
 	errs, err := bpmn_compiler.New().Validate(context.Background(), callActivityUnknownRefBPMN)
 	if err != nil {
@@ -559,4 +477,25 @@ func countCode(errs []domain.BPMNValidationError, code domain.BPMNErrorCode) int
 		}
 	}
 	return n
+}
+
+func TestValidate_ExpandedPlanOverTaskLimit_IsRejected(t *testing.T) {
+	// 64 levels would overflow an unbounded count.
+	for _, levels := range []int{11, 64} {
+		t.Run(fmt.Sprintf("%d levels", levels), func(t *testing.T) {
+			bpmnXML := doublingChain(levels)
+
+			errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
+			if err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			if got := findCode(errs, domain.BPMNErrTaskLimitExceeded); got == nil || got.NodeID != "Process_Main" {
+				t.Fatalf("errors = %+v, want TASK_LIMIT_EXCEEDED on Process_Main; compiling it would not finish", errs)
+			}
+			if n := countCode(errs, domain.BPMNErrTaskLimitExceeded); n != 1 {
+				t.Errorf("TASK_LIMIT_EXCEEDED reported %d times, want once, on the process that is compiled", n)
+			}
+			assertCompileRefusedWith(t, bpmnXML, domain.BPMNErrTaskLimitExceeded)
+		})
+	}
 }

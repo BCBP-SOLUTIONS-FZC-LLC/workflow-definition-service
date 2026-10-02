@@ -21,7 +21,6 @@ type ExecutionService interface {
 
 type PlanCompiler interface {
 	Compile(ctx context.Context, bpmnXML string) (*dsl.CompiledPlan, error)
-	CompileCollaboration(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error)
 	// CompileForPublish returns the shape stored as compiled_plan_json.
 	CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error)
 	// CompileDraft returns the same shape without the rules only publish
