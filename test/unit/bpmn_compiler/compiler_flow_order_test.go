@@ -68,8 +68,8 @@ func callXML(id, processID string) string {
 // runOrder lists the tasks the expanded main plan runs, in order, following
 // the Execution Service's rules: a department runs its stages in order, an
 // exclusive branch runs its Steps, or else its target department from its
-// target stage on, and parallel branches are listed one after another. choices picks the forward
-// branch, by index, of each exclusive step met.
+// target stage on, and parallel branches are listed one after another.
+// choices picks the forward branch, by index, of each exclusive step met.
 func runOrder(t *testing.T, collab *dsl.CompiledCollaboration, choices ...int) []string {
 	t.Helper()
 	r := &planRun{t: t, plan: expandedMain(t, collab), choices: choices}
@@ -266,7 +266,7 @@ func TestCompileForPublish_TwoLevelFork_RunsEachTaskOnceWhateverTheFlowOrder(t *
 
 // TestCompileForPublish_ParallelBranchesInOneLane_AreDistinct pins that two
 // branches whose tasks share a lane are two branches, each running only its
-// own task: the Execution Service tells branches apart by their department.
+// own task, in a department of its own.
 func TestCompileForPublish_ParallelBranchesInOneLane_AreDistinct(t *testing.T) {
 	body := "    <bpmn:startEvent id=\"S\"/>\n" + userTaskXML("A") + "    <bpmn:parallelGateway id=\"P1\"/>\n" + userTaskXML("B") + userTaskXML("C") +
 		"    <bpmn:parallelGateway id=\"J1\"/>\n" + userTaskXML("D") + "    <bpmn:endEvent id=\"E\"/>\n" +

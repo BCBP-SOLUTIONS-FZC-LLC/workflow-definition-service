@@ -1226,7 +1226,7 @@ Back-edges are classified once via DFS from the start event (`classifyBackEdges`
 |---|---|---|
 | Upload size | 10 MB | `PAYLOAD_TOO_LARGE` |
 | XML token stream | 1,000,000 tokens | parse error → 400 |
-| User tasks per process, and stages plus calls once its calls are expanded | 1000 | `TASK_LIMIT_EXCEEDED` |
+| User tasks per process, stages the compile makes (with at most 10000 nodes visited), and stages plus calls once its calls are expanded | 1000 | `TASK_LIMIT_EXCEEDED` |
 | Lanes per process | 100 | `LANE_LIMIT_EXCEEDED` |
 | Longest forward path | 2000 nodes | `MAX_DEPTH_EXCEEDED` |
 | `conditionExpression` length | 4096 chars | `INVALID_CONDITION_EXPRESSION` |
@@ -1254,7 +1254,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `INVALID_SLA_DURATION` | Timer boundary duration is not valid ISO 8601 or Go duration |
 | `MISSING_MESSAGE_DEFINITION` | `messageRef` on a flow or task references an undeclared `<bpmn:message>` |
 | `UNMATCHED_MESSAGE_FLOW` | Message flow source/target does not reference a known element |
-| `TASK_LIMIT_EXCEEDED` | User task count > 1000 in the process, or more than 1000 stages and calls once its calls are expanded |
+| `TASK_LIMIT_EXCEEDED` | User task count > 1000 in the process, a compile making more than 1000 stages or visiting more than 10000 nodes, or more than 1000 stages and calls once its calls are expanded |
 | `LANE_LIMIT_EXCEEDED` | Lane count > 100 |
 | `MULTIPLE_START_EVENTS` | More than one `startEvent` in the process |
 | `MULTIPLE_END_EVENTS` | More than one `endEvent` (only raised when collaboration is absent and single process has > 1 end events without guarded exits) |

@@ -10,6 +10,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- **Tasks run in the order the flows give.** A department is a lane segment, a stretch of one lane on one path: `<lane>` for the first, `<lane>~<n>` after, so a flow returning to a lane, the steps after a join and an exclusive branch no longer run tasks out of order. Node keys of later segments carry the suffix and can renumber between versions.
+- Every forward exclusive branch compiles into `ExclusiveBranch.Steps` (workflow-models `v1.4.0-rc.1`): a call or subprocess on a branch was dropped or ran on every branch.
+- A gateway's join is its immediate post-dominator in the forward graph; a nested fork no longer compiles the region after its inner join twice.
+- A boundary's path compiles on its own state, stops at compiled nodes, and its target starts a segment; the task it leads to no longer runs on the normal path. A revert names the segment on its own path.
+- New `INVALID_LANE_NAME` (a lane name with `/`, `::` or `~`). `UNMATCHED_GATEWAY` covers a parallel split with no join; `UNSUPPORTED_BOUNDARY_TARGET` covers a subprocess whose body does not start with a userTask; `TASK_LIMIT_EXCEEDED` covers a compile over 1000 stages or 10000 nodes.
+- New golden `dsltest.FlowOrder`, written by `TestGolden`.
 - **The Execution Service link is internal HTTP; gRPC is removed.** The compiled-plan read is `GET /api/v1/internal/workflow-versions/{version_id}/compiled-plan` (the plan a JSON object; no separate `dsl_schema_version`), and the archive guard and the membership-revocation pause call the Execution Service's internal API. `EXECUTION_SERVICE_URL`/`EXECUTION_SERVICE_TOKEN` replace `EXECUTION_SERVICE_ADDR`; `GRPC_PORT`, the protos, buf and port 9090 are gone. `cmd/stub/execution` is an HTTP stub on `:8083`.
 - `RequireInternalToken` compares in constant time and answers `401` with a problem body.
 - `INTERNAL_API_TOKEN` is required whenever `APP_ENV` is not `dev`; it was required only for `prod`.
