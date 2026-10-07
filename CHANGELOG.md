@@ -8,8 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+### Added
+
+- The published-version nodes read lists `waits`: the receive tasks and message boundaries that no send task of the plan feeds, each with the key an outside party's answer addresses (`dsl.ExternalWaits`). A compiled message boundary keeps its BPMN id (`MessagePath.BoundaryID`).
+- `CONNECTOR_SECRET_AUTHORED`: a connector task input targeting a secret field of its connector type is refused; the tenant's stored credential is always used.
+
 ### Changed
 
+- A connector input's `source` is `=name` for an instance variable or any other text for a literal (workflow-models `IOVar.InputValue`).
 - **Tasks run in the order the flows give.** A department is a lane segment, a stretch of one lane on one path: `<lane>` for the first, `<lane>~<n>` after, so a flow returning to a lane, the steps after a join and an exclusive branch no longer run tasks out of order. Node keys of later segments carry the suffix and can renumber between versions.
 - Every forward exclusive branch compiles into `ExclusiveBranch.Steps` (workflow-models `v1.4.0-rc.1`): a call or subprocess on a branch was dropped or ran on every branch.
 - A gateway's join is its immediate post-dominator in the forward graph; a nested fork no longer compiles the region after its inner join twice.

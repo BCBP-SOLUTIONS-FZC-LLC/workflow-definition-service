@@ -55,6 +55,7 @@ const (
 	BPMNWarnUnknownStageType            BPMNErrorCode = "UNKNOWN_STAGE_TYPE"
 	BPMNWarnUnknownConnectorType        BPMNErrorCode = "UNKNOWN_CONNECTOR_TYPE"
 	BPMNWarnConnectorTaskHasAssignment  BPMNErrorCode = "CONNECTOR_TASK_HAS_ASSIGNMENT"
+	BPMNErrConnectorSecretAuthored      BPMNErrorCode = "CONNECTOR_SECRET_AUTHORED"
 	BPMNErrTaskNotInLane                BPMNErrorCode = "TASK_NOT_IN_LANE"
 	BPMNErrCandidateGroupsEmpty         BPMNErrorCode = "CANDIDATE_GROUPS_EMPTY"
 	BPMNErrCandidateUsersEmpty          BPMNErrorCode = "CANDIDATE_USERS_EMPTY"

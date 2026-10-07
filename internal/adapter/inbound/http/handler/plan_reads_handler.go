@@ -25,11 +25,18 @@ type planNodeResp struct {
 	DefaultUserIDs []string         `json:"default_user_ids"`
 }
 
+type planWaitResp struct {
+	Key     string `json:"key"`
+	Kind    string `json:"kind"`
+	Message string `json:"message"`
+}
+
 type versionNodesResp struct {
 	WorkflowID    uuid.UUID      `json:"workflow_id"`
 	VersionID     uuid.UUID      `json:"version_id"`
 	VersionNumber *int32         `json:"version_number"`
 	Nodes         []planNodeResp `json:"nodes"`
+	Waits         []planWaitResp `json:"waits"`
 }
 
 func toVersionNodesResp(n *service.VersionNodes) versionNodesResp {
@@ -41,7 +48,11 @@ func toVersionNodesResp(n *service.VersionNodes) versionNodesResp {
 			DefaultUserIDs: nonNil(p.DefaultUserIDs),
 		})
 	}
-	return versionNodesResp{WorkflowID: n.Version.WorkflowID, VersionID: n.Version.ID, VersionNumber: n.Version.VersionNumber, Nodes: nodes}
+	waits := make([]planWaitResp, 0, len(n.Waits))
+	for _, w := range n.Waits {
+		waits = append(waits, planWaitResp{Key: w.Key, Kind: string(w.Kind), Message: w.Message})
+	}
+	return versionNodesResp{WorkflowID: n.Version.WorkflowID, VersionID: n.Version.ID, VersionNumber: n.Version.VersionNumber, Nodes: nodes, Waits: waits}
 }
 
 // GetVersionNodes lists a published version's human tasks, module tasks

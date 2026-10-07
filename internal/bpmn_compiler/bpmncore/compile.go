@@ -137,6 +137,7 @@ func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, p
 		}
 		stage.BoundaryMessage = &dsl.MessagePath{
 			MessageName:  msgName,
+			BoundaryID:   be.ID,
 			Interrupting: be.CancelActivity != "false",
 		}
 	}
@@ -192,6 +193,7 @@ func buildConnectorStageDef(task *BPMNUserTask, connectorType string, proc *BPMN
 		}
 		stage.BoundaryMessage = &dsl.MessagePath{
 			MessageName:  msgName,
+			BoundaryID:   be.ID,
 			Interrupting: be.CancelActivity != "false",
 		}
 	}

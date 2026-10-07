@@ -218,3 +218,46 @@ func TestValidate_UnknownConnectorType_WarnsWithoutBlocking(t *testing.T) {
 		t.Errorf("ConnectorType = %q; want %q", got, "not-a-real-connector")
 	}
 }
+
+func connectorTaskWithInput(target string) string {
+	return compilableBPMN(`
+    <bpmn:startEvent id="StartEvent_1"><bpmn:outgoing>Flow_1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:serviceTask id="Task_1" name="Fetch Packet">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="connector:storage"/>
+        <zeebe:ioMapping>
+          <zeebe:input source="aws-s3" target="provider"/>
+          <zeebe:input source="connectors/any/storage/accessKey" target="`+target+`"/>
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndEvent_1"><bpmn:incoming>Flow_2</bpmn:incoming></bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Task_1"/>
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_1" targetRef="EndEvent_1"/>`, "")
+}
+
+// TestCompile_ConnectorInputTargetingASecretField_IsRefused pins that a
+// diagram never names a credential: the worker always uses the tenant's
+// stored one, so an input aimed at a secret field of the connector is an error.
+func TestCompile_ConnectorInputTargetingASecretField_IsRefused(t *testing.T) {
+	_, err := bpmn_compiler.New().Compile(context.Background(), connectorTaskWithInput("accessKey"))
+
+	var valErr *domain.ValidationFailedError
+	if !errors.As(err, &valErr) {
+		t.Fatalf("expected *domain.ValidationFailedError; got %T: %v", err, err)
+	}
+	e := findCode(valErr.Errors, domain.BPMNErrConnectorSecretAuthored)
+	if e == nil || e.NodeID != "Task_1" {
+		t.Errorf("issues = %+v, want CONNECTOR_SECRET_AUTHORED on Task_1", valErr.Errors)
+	}
+}
+
+// TestCompile_ConnectorInputTargetingAnOrdinaryField_Compiles is the control:
+// a plain input is not a secret.
+func TestCompile_ConnectorInputTargetingAnOrdinaryField_Compiles(t *testing.T) {
+	if _, err := bpmn_compiler.New().Compile(context.Background(), connectorTaskWithInput("bucket")); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+}

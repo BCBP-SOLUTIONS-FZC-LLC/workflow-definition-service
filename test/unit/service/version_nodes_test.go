@@ -181,3 +181,44 @@ func TestVersionNodes_ReadFailureIsReturned(t *testing.T) {
 		t.Errorf("err = %v, want the repository's error", err)
 	}
 }
+
+// TestVersionNodes_ListsTheWaitsOnlyAnOutsidePartyCompletes pins what Tender
+// reads to answer an outside party: the receive task and the message boundary
+// that no send task of the plan feeds, keyed as the Execution Service
+// addresses them, while a receive task a send task feeds is not listed.
+func TestVersionNodes_ListsTheWaitsOnlyAnOutsidePartyCompletes(t *testing.T) {
+	collab := dsl.CompiledCollaboration{
+		MainPlan: "main", SchemaVersion: dsl.CurrentSchemaVersion,
+		Plans: []*dsl.CompiledPlan{{
+			Name: "main",
+			Departments: []dsl.DepartmentDef{{ID: "Ops", Stages: []dsl.StageDef{
+				{Type: "send_task", NodeID: "Send_Ack", Extras: map[string]string{"message": "ack"}},
+				{Type: "receive_task", NodeID: "Receive_Ack", Extras: map[string]string{"message": "ack"}},
+				{Type: "receive_task", NodeID: "Receive_Bid", Extras: map[string]string{"message": "bid-received"}},
+				{Type: "prep", NodeID: "Prepare", BoundaryMessage: &dsl.MessagePath{MessageName: "withdraw", BoundaryID: "Boundary_Withdraw", Interrupting: true, Terminates: true}},
+			}}},
+		}},
+	}
+	raw, err := json.Marshal(collab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := string(raw)
+	n := int32(1)
+	v := &domain.WorkflowVersion{
+		ID: uuid.New(), WorkflowID: uuid.New(), TenantID: uuid.New(), Status: domain.VersionStatusPublished,
+		VersionNumber: &n, CompiledPlanJSON: &stored,
+	}
+
+	got, err := nodesService(t, v).Nodes(context.Background(), v.TenantID, v.WorkflowID, v.ID)
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	want := []service.PlanWait{
+		{Key: "Ops/Receive_Bid", Kind: service.WaitReceiveTask, Message: "bid-received"},
+		{Key: "Ops/Prepare#Boundary_Withdraw", Kind: service.WaitMessageBoundary, Message: "withdraw"},
+	}
+	if !reflect.DeepEqual(got.Waits, want) {
+		t.Errorf("waits:\n got %+v\nwant %+v", got.Waits, want)
+	}
+}

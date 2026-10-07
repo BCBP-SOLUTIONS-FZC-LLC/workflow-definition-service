@@ -25,10 +25,29 @@ type PlanNode struct {
 	DefaultUserIDs  []string
 }
 
-// VersionNodes is a version and its nodes, in plan order.
+// WaitKind says what an outside wait is: a receive task, or a message
+// boundary attached to a task, subprocess or call.
+type WaitKind string
+
+const (
+	WaitReceiveTask     WaitKind = "receive_task"
+	WaitMessageBoundary WaitKind = "message_boundary"
+)
+
+// PlanWait is a receive task or message boundary that only an outside party's
+// answer completes (definition LLD §3.3.12.2). Key is what the Execution
+// Service takes that answer by.
+type PlanWait struct {
+	Key     string
+	Kind    WaitKind
+	Message string
+}
+
+// VersionNodes is a version, its nodes and its outside waits, in plan order.
 type VersionNodes struct {
 	Version *domain.WorkflowVersion
 	Nodes   []PlanNode
+	Waits   []PlanWait
 }
 
 // Nodes lists the human tasks of a published or archived version's stored
@@ -62,6 +81,13 @@ func (s *VersionService) Nodes(ctx context.Context, tenantID, workflowID, versio
 				DefaultUserIDs: st.DefaultAssignees,
 			})
 		}
+	}
+	for _, w := range dsl.ExternalWaits(&dsl.CompiledCollaboration{MainPlan: main.Name, Plans: []*dsl.CompiledPlan{main}}) {
+		kind := WaitReceiveTask
+		if w.Boundary {
+			kind = WaitMessageBoundary
+		}
+		out.Waits = append(out.Waits, PlanWait{Key: w.Key, Kind: kind, Message: w.Message})
 	}
 	return out, nil
 }

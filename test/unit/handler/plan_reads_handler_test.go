@@ -29,6 +29,10 @@ func TestGetVersionNodes_OK(t *testing.T) {
 				DepartmentID: "CA_Eng::Process_Review", DepartmentLabel: "Engineering", IAMDepartmentID: "2200a5ae-2466-54f7-a1d8-243106e05705",
 				DefaultUserIDs: []string{"018f2d3c-0000-7000-8000-0000000000a1"},
 			}},
+			Waits: []service.PlanWait{
+				{Key: "Ops/Receive_Bid", Kind: service.WaitReceiveTask, Message: "bid-received"},
+				{Key: "Ops/Prepare#Boundary_Withdraw", Kind: service.WaitMessageBoundary, Message: "withdraw"},
+			},
 		}, nil
 	}}
 	w := do(newRouter(newHandler(nil, nil, vs, nil)), req(http.MethodGet, nodesPath, nil))
@@ -40,7 +44,11 @@ func TestGetVersionNodes_OK(t *testing.T) {
 	    "stage_type": "review", "role_level": "reviewer",
 	    "department": {"id": "CA_Eng::Process_Review", "label": "Engineering", "iam_department_id": "2200a5ae-2466-54f7-a1d8-243106e05705"},
 	    "default_user_ids": ["018f2d3c-0000-7000-8000-0000000000a1"]
-	  }]
+	  }],
+	  "waits": [
+	    {"key": "Ops/Receive_Bid", "kind": "receive_task", "message": "bid-received"},
+	    {"key": "Ops/Prepare#Boundary_Withdraw", "kind": "message_boundary", "message": "withdraw"}
+	  ]
 	}`, w.Body.String())
 }
 
@@ -54,6 +62,7 @@ func TestGetVersionNodes_NoNodesIsAnEmptyList(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, []any{}, body["nodes"])
+	assert.Equal(t, []any{}, body["waits"])
 }
 
 func TestGetVersionNodes_Errors(t *testing.T) {

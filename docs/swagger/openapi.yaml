@@ -277,9 +277,27 @@ components:
           description: The users the version assigns when the start request names none for this node.
           items: { type: string, format: uuid }
 
+    PlanWait:
+      type: object
+      description: >-
+        A receive task or message boundary of the expanded main plan that no send
+        task of the plan feeds: only an outside party's answer completes it. key
+        is what the Execution Service takes that answer by.
+      required: [key, kind, message]
+      properties:
+        key:
+          type: string
+          description: >-
+            A receive task's node key, or a message boundary's host and boundary id
+            joined by "#" (the host stage's node key, or the id of the subprocess or
+            call the boundary is attached to).
+          example: "Ops/Prepare#Boundary_Withdraw"
+        kind:    { type: string, enum: [receive_task, message_boundary] }
+        message: { type: string, description: "The BPMN message name, for display.", example: withdraw }
+
     VersionNodes:
       type: object
-      required: [workflow_id, version_id, version_number, nodes]
+      required: [workflow_id, version_id, version_number, nodes, waits]
       properties:
         workflow_id:    { type: string, format: uuid }
         version_id:     { type: string, format: uuid }
@@ -287,6 +305,10 @@ components:
         nodes:
           type: array
           items: { $ref: '#/components/schemas/PlanNode' }
+        waits:
+          type: array
+          description: The outside waits of the expanded main plan, in plan order.
+          items: { $ref: '#/components/schemas/PlanWait' }
 
     ModuleSlot:
       type: object
@@ -879,6 +901,7 @@ components:
         - IGNORED_LANE_WORK             # a lane marked ignore holds a callActivity, subProcess or connector task, a boundary on one of its skipped tasks, or a loop whose way back holds only skipped tasks
         - UNKNOWN_CONNECTOR_TYPE        # warning: a connector serviceTask names a connector type the registry does not know
         - CONNECTOR_TASK_HAS_ASSIGNMENT # warning: a connector serviceTask carries an assignmentDefinition, which it does not use
+        - CONNECTOR_SECRET_AUTHORED     # a connector serviceTask input targets a secret field of its connector type; the tenant's stored credential is always used
 
     BpmnValidationFailure:
       type: object

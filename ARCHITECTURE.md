@@ -1281,6 +1281,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `IGNORED_LANE_WORK` | A lane marked ignore holds a call, subprocess or connector task, one of its tasks carries a boundary event, or a loop's way back holds only its tasks |
 | `UNKNOWN_CONNECTOR_TYPE` | *(warning severity)* A connector `serviceTask` names a connector type the registry does not know |
 | `CONNECTOR_TASK_HAS_ASSIGNMENT` | *(warning severity)* A connector `serviceTask` carries a `zeebe:assignmentDefinition`, which it ignores |
+| `CONNECTOR_SECRET_AUTHORED` | A connector `serviceTask` input targets a secret field of its connector type; the tenant's stored credential is always used |
 | `UNSUPPORTED_ELEMENT` | Tier 2 element present (e.g. `inclusiveGateway`) — parsed but compile handler absent |
 
 > **Unparseable documents.** Documents that fail XML parsing (bad XML, `DOCTYPE`/entity injection, token-cap exceeded) return **400 `INVALID_BPMN_XML`** — not a BPMN validation code. Forbidden `DOCTYPE`/entity additionally triggers an internal security log with client IP and tenant ID; the client sees only the generic 400.

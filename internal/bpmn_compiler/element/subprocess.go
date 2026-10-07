@@ -109,6 +109,7 @@ func boundaryPaths(nodeID string, cs *bpmncore.CompileState) ([]dsl.ErrorPath, [
 			}
 			messagePaths = append(messagePaths, dsl.MessagePath{
 				MessageName:  msgName,
+				BoundaryID:   be.ID,
 				Interrupting: be.CancelActivity != "false",
 				TargetDept:   targetDept,
 				Terminates:   terminates,

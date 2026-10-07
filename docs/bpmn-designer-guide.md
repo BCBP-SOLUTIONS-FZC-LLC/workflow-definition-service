@@ -63,6 +63,14 @@ Use when the workflow waits for a response from an external participant (e.g. wa
 
 - The task name describes what is being waited for.
 - Assignment is optional and filled by the enrichment team.
+- A receive task that no send task of the workflow feeds, such as one waiting for a message flow from an outside party's pool, is completed by that party's answer. The published version lists it among its `waits`, and the instance continues when the answer is delivered for that step. A message boundary event on a task, sub-process or call is listed the same way.
+
+### Connector Task
+
+A service task whose task definition type is `connector:<name>` runs an automated connector (storage, send-email, rest-call, and so on).
+
+- An input's `source` is `=name` to read the instance variable `name`, or any other text for a literal value. An output's `source` names a key of the connector's result, and its `target` is the instance variable it becomes.
+- Never add an input for a credential (`accessKey`, `apiKey`, and the like). The tenant's stored credential is always used, and a diagram that names one is refused (`CONNECTOR_SECRET_AUTHORED`).
 
 ### Sub-Process
 

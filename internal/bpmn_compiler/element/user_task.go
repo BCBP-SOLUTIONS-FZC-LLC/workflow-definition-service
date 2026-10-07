@@ -24,6 +24,7 @@ func (UserTaskHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *bp
 		// required or expected (design/LLD/workflow_connectors.md §5.3).
 		errs = append(errs, validator.ValidateConnectorTaskDef(task.ID, connectorType)...)
 		errs = append(errs, validator.ValidateConnectorTaskNoAssignment(task.ID, task.ExtensionElements)...)
+		errs = append(errs, validator.ValidateConnectorNoAuthoredSecret(task.ID, connectorType, task.ExtensionElements.IOMapping)...)
 	} else {
 		errs = append(errs, validator.ValidateTaskDef(task.ID, task.ExtensionElements, stageTypes)...)
 		errs = append(errs, validator.ValidateAssignmentDef(task.ID, task.ExtensionElements)...)
