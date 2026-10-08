@@ -19,18 +19,14 @@ flowchart LR
     EXEC["workflow-execution-service\nHTTP :8080"]
     DB[("PostgreSQL 18\nworkflow_definition")]
     CACHE[("Valkey 8\nidempotency · cache")]
-    SNS["AWS SNS\nwf.template.events"]
     CONSUMER["shared workflow-events\nconsumer (membership-workflow-q)"]
     IAM["iam-service\norg membership API"]
-    DOWNSTREAM["downstream consumers\n(execution, analytics)"]
 
     FE -->|"REST"| DEF
     EXEC -->|"compiled-plan read\ninternal HTTP"| DEF
     DEF -->|"active-instances · pause-tasks\ninternal HTTP"| EXEC
     DEF -->|"read/write"| DB
     DEF -->|"idempotency · quota cache"| CACHE
-    DEF -->|"domain events"| SNS
-    SNS --> DOWNSTREAM
     CONSUMER -->|"POST /internal/events\n(DepartmentMembershipRevoked)"| DEF
     DEF -->|"eligibility check"| IAM
 ```
@@ -60,7 +56,6 @@ graph TD
         Compiler[DSL Compiler]
         Validator[Validation Engine]
         InternalEvents[POST /internal/events]
-        OutboxRelay[Outbox Background Worker]
 
         API --> Validator
         API --> Parser
@@ -70,12 +65,10 @@ graph TD
 
     subgraph Persistence [RDS PostgreSQL]
         DB[(workflow_definition DB)]
-        OutboxTable[(outbox)]
     end
 
     subgraph External_Integrations [External Services]
         OrgMembership[Org & Membership Service]
-        SNS[SNS: wf.template.events]
         EventsConsumer[Shared Workflow-Events Consumer]
         SQS_Membership[SQS: membership-workflow-q]
     end
@@ -87,13 +80,10 @@ graph TD
 
     Compiler -->|3. Validate Assignee Eligibility| OrgMembership
     Compiler -->|4. Store Draft/Publish| DB
-    API -->|5. Insert Outbox Event| OutboxTable
-    SQS_Membership -.->|6. Consume Revocation Events| EventsConsumer
-    EventsConsumer -->|7. POST /internal/events| InternalEvents
+    SQS_Membership -.->|5. Consume Revocation Events| EventsConsumer
+    EventsConsumer -->|6. POST /internal/events| InternalEvents
     InternalEvents -->|Invalidate Affected Templates| DB
 
-    OutboxRelay -->|8. Read Pending Events| OutboxTable
-    OutboxRelay -->|9. Publish Event| SNS
 ```
 
 ### Component class diagram
@@ -161,16 +151,6 @@ classDiagram
         +ArchiveVersion()
     }
 
-    class OutboxRepository {
-        <<interface>>
-        +Enqueue()
-    }
-
-    class OutboxRelay {
-        +ProcessOutbox()
-        -publishToSNS()
-    }
-
     HTTPHandler --> HTTPMiddleware : Uses middleware chain
     HTTPHandler --> PublisherService : Dispatches requests
     HTTPHandler --> Validator : Calls stateless validation
@@ -180,9 +160,7 @@ classDiagram
     PublisherService --> PlanService : Verifies template quotas
     PublisherService --> MembershipService : Verifies assignee eligibility
     PublisherService --> WorkflowRepository : Persists workflow and versions
-    PublisherService --> OutboxRepository : Transactionally enqueues events
 
-    OutboxRelay --> OutboxRepository : Polls and updates pending events
 ```
 
 ---
@@ -326,7 +304,6 @@ sequenceDiagram
     participant Service as core/service
     participant Tx as Transactor.RunInTx
     participant Repo as postgres repo
-    participant Outbox as OutboxRepo.Enqueue
 
     Note over Middleware: OTel · authz · idempotency-key
     Client ->>+ Middleware: POST /versions/:id/publish
@@ -337,8 +314,6 @@ sequenceDiagram
     Service ->>+ Tx: RunInTx(ctx, fn)
     Tx ->>+ Repo: VersionRepo.Publish(ctx, ...)  [status-guarded SQL]
     Repo -->>- Tx: ok
-    Tx ->>+ Outbox: OutboxRepo.Enqueue(ctx, envelope)
-    Outbox -->>- Tx: ok
     Tx -->>- Service: commit
     Service -->>- Handler: PublishedVersion
     Handler -->>- Middleware: 200 JSON
@@ -382,7 +357,6 @@ sequenceDiagram
     participant Svc as VersionService.HandleDepartmentMembershipRevoked
     participant Tx as Transactor.RunInTx
     participant Repo as VersionRepo
-    participant Outbox as OutboxRepo.Enqueue
 
     Consumer ->>+ Handler: POST /internal/events (envelope)
     Handler ->> Handler: WithGUCSet(tenant_id) · dispatch by type
@@ -391,7 +365,6 @@ sequenceDiagram
         Svc ->>+ Tx: RunInTx(ctx, fn)
         Tx ->> Repo: VersionRepo.GetByID  →  check is_valid
         Tx ->> Repo: VersionRepo.SetInvalid(ctx, versionID, nodes)
-        Tx ->> Outbox: OutboxRepo.Enqueue(ctx, TemplateEligibilityInvalidated)
         Tx -->>- Svc: commit
     end
     Svc -->>- Handler: nil
@@ -409,7 +382,6 @@ sequenceDiagram
     participant S as WorkflowService
     participant ES as Execution Service (internal HTTP)
     participant DB as PostgreSQL
-    participant SNS as SNS (via outbox.Runner)
 
     C->>H: POST /workflows/:id/archive
     H->>S: Archive(ctx, tenantID, userID, workflowID)
@@ -418,37 +390,10 @@ sequenceDiagram
     S->>DB: BEGIN TX
     S->>DB: UPDATE workflow_version SET status=ARCHIVED
     S->>DB: UPDATE workflow SET active_version_id=NULL
-    S->>DB: INSERT INTO outbox_events (TemplateArchived payload)
     S->>DB: COMMIT
     S-->>H: ok
     H-->>C: 200 OK
-
-    Note over DB,SNS: async
-    DB->>SNS: Publish TemplateArchived event
 ```
-
-### 5. Outbox relay (high-level)
-
-> Source: [docs/architecture/mermaid/outbox-relay-flow.mmd](docs/architecture/mermaid/outbox-relay-flow.mmd)
-
-The `platform-events outbox.Runner` (started in `app.go`) runs independently:
-
-```mermaid
-sequenceDiagram
-    participant Relay as outbox.Runner (platform-events)
-    participant DB as outbox_events table
-    participant SNS as AWS SNS
-
-    loop every PollInterval (default 500 ms)
-        Relay ->> DB: SELECT id, payload WHERE status='PENDING' LIMIT BatchSize
-        Relay ->> SNS: Publish(envelope)
-        Relay ->> DB: UPDATE status='SENT' WHERE id=...
-    end
-```
-
-The service never calls `FetchPending`, `MarkSent`, or `MarkFailed` — those are internal to the relay runner.
-
----
 
 ## Transactor pattern
 
@@ -460,7 +405,7 @@ err := s.transactor.RunInTx(ctx, func(ctx context.Context) error {
     if err := s.versionRepo.Publish(ctx, ...); err != nil {
         return err
     }
-    return s.outboxRepo.Enqueue(ctx, env)
+    return s.workflowRepo.UpdateActiveVersion(ctx, ...)
 })
 ```
 
@@ -478,52 +423,7 @@ func exec(ctx context.Context, pool *pgcommon.Pool, fn func(db.DBTX) error) erro
 }
 ```
 
-This means: pgx types never escape `adapter/outbound/postgres/`; the service layer has no pgx imports; and `OutboxRepository.Enqueue` must be called inside `RunInTx` — it returns an error otherwise (enforced explicitly in the implementation).
-
----
-
-## Outbox pattern
-
-Business mutations and their associated domain events are written in the same PostgreSQL transaction, eliminating the dual-write problem. A background `outbox.Runner` worker (from `platform-events`) polls `outbox_events` where `published_at IS NULL AND scheduled_at <= NOW()`, dispatches to SNS, and marks rows published. The detailed poll cycle, including lease-claiming and dead-lettering:
-
-> Source: [docs/architecture/mermaid/outbox-poll-cycle.mmd](docs/architecture/mermaid/outbox-poll-cycle.mmd)
-
-```mermaid
-flowchart TD
-    A([Runner.Start]) --> P[pollOnce - immediate first poll]
-    P --> C[SELECT FOR UPDATE SKIP LOCKED\nWHERE published_at IS NULL AND scheduled_at <= NOW]
-    C -- 0 rows --> B[wait PollInterval]
-    B --> C
-    C -- rows --> L[UPDATE scheduled_at = NOW + claimLease\nclaim lease to prevent duplicate processing]
-    L --> D[for each OutboxRecord]
-    D --> E[Unmarshal Payload to Envelope]
-    E -- error --> F[MarkFailed: attempts++\nif attempts >= MaxAttempts: dead-letter]
-    F --> D
-    E -- ok --> G[Publisher.Publish to SNS]
-    G -- success --> H[MarkPublished: published_at = NOW]
-    H --> D
-    G -- error --> I[MarkFailed: attempts++\nrelease lease]
-    I --> J{attempts >= MaxAttempts?}
-    J -- yes --> K[INSERT outbox_dead_letters\nDELETE outbox_events]
-    J -- no --> D
-    K --> D
-    D -- done --> B
-```
-
-Runner wiring (`app.go`):
-
-```go
-runner := outbox.NewRunner(outbox.Config{
-    Pool:        pool,
-    Publisher:   snsPublisher,
-    Logger:      log,
-    PollInterval: 5 * time.Second,
-    BatchSize:   50,
-    MaxAttempts: 5,
-})
-go runner.Start(ctx)
-defer runner.Stop()
-```
+This means: pgx types never escape `adapter/outbound/postgres/`; and the service layer has no pgx imports.
 
 ---
 
@@ -571,7 +471,6 @@ The happy path is always a single query. The probe only fires on the exceptional
 | Invariant | Enforcement |
 | --------- | ----------- |
 | Single DRAFT per workflow | `UNIQUE INDEX idx_wv_single_draft ON workflow_version(workflow_id) WHERE status='DRAFT'` — DB-enforced; returns `ErrDraftAlreadyExists` on violation |
-| Outbox must be inside a transaction | `OutboxRepo.Enqueue` returns an error if no `pgx.Tx` is present in context; the caller (service) is responsible for calling it only inside `Transactor.RunInTx` |
 | Status-guarded mutations use `statusOrNotFound` | Publish/Archive SQL filters on `status=X`; on `RowsAffected()==0` a secondary `GetByID` distinguishes absent (→ `ErrNotFound`) from wrong-status (→ `ErrVersionNotDraft` etc.) — happy path is always single-query |
 | `is_valid` reflects assignee eligibility only | `workflow_version.is_valid=false` means an assignee left a required department role; it does not reflect BPMN structural validity |
 | Idempotency-Key scoped per tenant | Cache key format: `idem:<tenant_id>:<key>` — prevents cross-tenant replay; only 2xx responses are cached (24 h TTL) |
@@ -630,33 +529,11 @@ All configuration is read from environment variables via `internal/config.Config
 | `CACHE_COMPILED_PLAN_TTL` | No | `1h` | TTL for the internal compiled-plan read's cache; entries are also deleted on archive / membership invalidation |
 | `IDEMPOTENCY_TTL` | No | `24h` | TTL for idempotency keys on HTTP mutations |
 
-### AWS
-
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `AWS_USE_STUB` | No | `true` | `true` activates no-op stub adapters (no AWS credentials needed) |
-| `AWS_REGION` | No | `us-east-1` | AWS region |
-| `AWS_ENDPOINT_URL` | No | *(empty)* | Custom endpoint URL (e.g. `http://localhost:4566` for LocalStack) |
-| `SNS_TOPIC_ARN` | When `AWS_USE_STUB=false` | — | SNS topic for `wf.template.events` |
-| `GLUE_REGISTRY_NAME` | When `AWS_USE_STUB=false` | — | AWS Glue Schema Registry name; resolved by the Glue codec at SNS-publish time (via `events.WithCodec`), not at outbox-enqueue time |
-| `GLUE_SCHEMA_CACHE_TTL` | No | `5m` | TTL for the in-process Glue schema cache |
-
-> `GLUE_REGISTRY_ARN` (present in `.env.example`) is **not** read by the running service — there is no corresponding field on `internal/config.Config`. It only scopes IAM policy for the `make schema-register`/`schema-prune` CI tooling. See [Schema Governance](README.md#schema-governance).
->
-> The service doesn't consume SQS in-process. Inbound events are delivered by the shared workflow-events consumer over HTTP to `POST /internal/events`.
-
 ### Internal endpoint
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `INTERNAL_API_TOKEN` | When `APP_ENV` is not `dev` | *(empty)* | Required as the `x-internal-token` header on `/api/v1/internal`. Empty disables the check in dev; NetworkPolicy / mesh remains the primary control either way. |
-
-### Outbox relay
-
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `OUTBOX_POLL_INTERVAL` | No | `500ms` | How often the relay polls for pending events |
-| `OUTBOX_BATCH_SIZE` | No | `50` | Max rows fetched per relay cycle (`SKIP LOCKED`) |
 
 ### Outbound services
 
@@ -664,8 +541,8 @@ All configuration is read from environment variables via `internal/config.Config
 | --- | --- | --- | --- |
 | `ORG_MEMBERSHIP_BASE_URL` | When `APP_ENV != dev` | *(empty)* | Base URL of the Org & Membership Service for assignee eligibility checks |
 | `MEMBERSHIP_CLIENT_TIMEOUT` | No | `10s` | HTTP client timeout for the Org & Membership Service |
-| `EXECUTION_SERVICE_URL` | When `APP_ENV != dev` and `AWS_USE_STUB=false` | *(empty)* | The Execution Service's internal HTTP base URL (archive guard, pause-tasks); empty builds no client |
-| `EXECUTION_SERVICE_TOKEN` | With `EXECUTION_SERVICE_URL` | *(empty)* | The Execution Service's `INTERNAL_API_TOKEN`, sent as `x-internal-token` |
+| `EXECUTION_SERVICE_URL` | When `APP_ENV != dev` | *(empty)* | The Execution Service's internal HTTP base URL (archive guard, pause-tasks); empty builds no client |
+| `EXECUTION_SERVICE_TOKEN` | When `APP_ENV != dev` | *(empty)* | The Execution Service's `INTERNAL_API_TOKEN`, sent as `x-internal-token` |
 | `EXECUTION_CLIENT_TIMEOUT` | No | `5s` | Per-attempt timeout for the Execution Service client |
 
 ---
@@ -1292,25 +1169,11 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 
 The three BCBP platform libraries are private Go modules — see the table and upgrade instructions in [`.claude/CLAUDE.md`](.claude/CLAUDE.md). This section covers only the non-obvious integration points in this codebase; a read-only reference copy of each library's own source lives under `platform-libs/` (gitignored, never imported directly — see `.claude/CLAUDE.md`).
 
-### platform-events (SNS / outbox / event envelopes)
+### platform-events (event envelope)
 
-`Envelope[T]` is the canonical wire format — always construct with `NewEnvelope` (generates a UUID v7 `ID`, sets `Timestamp`). The service builds envelopes from the service layer via `buildEnvelope` in `internal/core/service/helpers.go`; because the service layer has no Gin context, it pulls the trace ID directly from the active OTel span:
+The service uses only `Envelope[T]` from this library: the inbound handler (`internal/adapter/inbound/http/handler/internal_events.go`) decodes the envelope the shared workflow-events consumer forwards to `POST /internal/events` (see [API Overview](README.md#api-overview) in the README). The service publishes nothing, so it uses neither the SNS publisher nor the outbox runner, and it does not use `NewSQSConsumer`.
 
-```go
-opts := []events.EnvelopeOpt{events.WithTenantID(tenantID)}
-if sc := trace.SpanFromContext(ctx).SpanContext(); sc.IsValid() {
-    opts = append(opts, events.WithTraceID(sc.TraceID().String()))
-}
-env := events.NewEnvelope[json.RawMessage](eventType, source, raw, opts...)
-```
-
-`sc.IsValid()` is false on non-traced paths (unit tests, stub runners), so no zero trace ID is attached. At the HTTP handler layer, use `rc.TraceID` from `gincommon.RequestContext(c)` instead — same OTel trace ID, already stringified.
-
-> **v1.3 envelope key renames (breaking wire format, Go field names unchanged):** `payload → data`, `timestamp → time`, `schema_version → specversion`, `schema_id → dataschema`. Any local struct/raw map hardcoding these JSON tags must be updated. **Deploy note:** drain the outbox before deploying — records written with old keys produce empty `data` under the v1.3 struct.
-
-The outbox eliminates the dual-write problem — enqueue inside the same transaction as the business write (see [Transactor pattern](#transactor-pattern) above); `OutboxRepository.Enqueue` extracts the tx from context and calls `outbox.Enqueue(ctx, tx, env)` internally. This service does not use `NewSQSConsumer` — inbound membership events arrive over HTTP at `POST /internal/events` (see [API Overview](README.md#api-overview) in the README), delivered by a shared workflow-events consumer.
-
-`PublishBatch` splits automatically at 10 (SNS hard limit). SNS message attributes (`EventType`, `TenantID`, `Source`, `EventID`) are always set for SQS subscription filter policies; a non-empty `Subject` is also forwarded as an SNS `Subject` attribute for filter-policy routing without body parsing. Mock for tests: `events/mock.NewMockPublisher()` — exposes `Published() []Envelope[json.RawMessage]`.
+> **v1.3 envelope key renames (breaking wire format, Go field names unchanged):** `payload → data`, `timestamp → time`, `schema_version → specversion`, `schema_id → dataschema`. Any local struct/raw map hardcoding these JSON tags must be updated.
 
 ### platform-pgcommon (pool, RLS GUC injection, transactor, migrations)
 
@@ -1403,13 +1266,13 @@ sequenceDiagram
     end
 ```
 
-**Migrations.** Managed by `migrate.Runner` (golang-migrate, `pgx/v5`). Files live in `db/migrations/` as `NNNNNN_description.up.sql`/`.down.sql` pairs, embedded via `db/migrations/migrations.go` (`//go:embed *.sql`). Run via the **`migrate` subcommand** (`go run ./cmd/server migrate` / `make migrate`) — never at server boot, since two replicas racing on golang-migrate's advisory lock would stall the loser and risk a readiness-probe timeout. `runMigrations` first calls `outbox.ApplySchema` (tracked under `pgcommon_migrations`), then the service domain runner over `db/migrations/` (tracked under `wf_definition_migrations`) — kept separate so the two histories never collide. Unlike goose, the pgx/v5 driver runs each migration file as a single statement, so `$$`-quoted PL/pgSQL blocks need no `StatementBegin/End` annotations.
+**Migrations.** Managed by `migrate.Runner` (golang-migrate, `pgx/v5`). Files live in `db/migrations/` as `NNNNNN_description.up.sql`/`.down.sql` pairs, embedded via `db/migrations/migrations.go` (`//go:embed *.sql`). Run via the **`migrate` subcommand** (`go run ./cmd/server migrate` / `make migrate`) — never at server boot, since two replicas racing on golang-migrate's advisory lock would stall the loser and risk a readiness-probe timeout. `runMigrations` runs the service domain runner over `db/migrations/`, tracked under `wf_definition_migrations`, separate from any `pgcommon_migrations` history. Unlike goose, the pgx/v5 driver runs each migration file as a single statement, so `$$`-quoted PL/pgSQL blocks need no `StatementBegin/End` annotations.
 
 ### platform-gincommon (Gin middleware, logging, tracing)
 
-`pkg/logger.NewLogger(appEnv)` returns a value that directly satisfies `port.Logger` — pass the same instance to `gincommon.Config{Logger: log}` and `outbox.Config{Logger: log}` as-is. `pgcommon.Config{Logger: ...}` takes a different shape (`platform-pgcommon/pkg/domain.Logger`, variadic `domain.Field` instead of `map[string]any`), so `cmd/server/pglogger.go` wraps the same `log` instance in a small `pgCommonLogger` adapter first — see [platform-pgcommon](#platform-pgcommon-pool-rls-guc-injection-transactor-migrations) below. `APP_ENV=dev` → human-readable Zap output; anything else → JSON.
+`pkg/logger.NewLogger(appEnv)` returns a value that directly satisfies `port.Logger` — pass the same instance to `gincommon.Config{Logger: log}` as-is. `pgcommon.Config{Logger: ...}` takes a different shape (`platform-pgcommon/pkg/domain.Logger`, variadic `domain.Field` instead of `map[string]any`), so `cmd/server/pglogger.go` wraps the same `log` instance in a small `pgCommonLogger` adapter first — see [platform-pgcommon](#platform-pgcommon-pool-rls-guc-injection-transactor-migrations) below. `APP_ENV=dev` → human-readable Zap output; anything else → JSON.
 
-`gincommon.InitTracingFromEnv()` must be called once at startup before the router handles traffic — reads `OTEL_SERVICE_NAME`/`OTEL_EXPORTER_OTLP_ENDPOINT`/`OTEL_EXPORTER_OTLP_INSECURE`. If not called, `platform-events` and `platform-pgcommon` produce no-op OTel spans rather than erroring.
+`gincommon.InitTracingFromEnv()` must be called once at startup before the router handles traffic — reads `OTEL_SERVICE_NAME`/`OTEL_EXPORTER_OTLP_ENDPOINT`/`OTEL_EXPORTER_OTLP_INSECURE`. If not called, `platform-pgcommon` produces no-op OTel spans rather than erroring.
 
 Per-route authorization:
 

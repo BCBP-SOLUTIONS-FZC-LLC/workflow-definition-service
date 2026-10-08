@@ -4,17 +4,13 @@ flowchart LR
     EXEC["workflow-execution-service\nHTTP :8080"]
     DB[("PostgreSQL 18\nworkflow_definition")]
     CACHE[("Valkey 8\nidempotency · cache")]
-    SNS["AWS SNS\nwf.template.events"]
     CONSUMER["shared workflow-events\nconsumer (membership-workflow-q)"]
     IAM["iam-service\norg membership API"]
-    DOWNSTREAM["downstream consumers\n(execution, analytics)"]
 
     FE -->|"REST"| DEF
     EXEC -->|"compiled-plan read\ninternal HTTP"| DEF
     DEF -->|"active-instances · pause-tasks\ninternal HTTP"| EXEC
     DEF -->|"read/write"| DB
     DEF -->|"idempotency · quota cache"| CACHE
-    DEF -->|"domain events"| SNS
-    SNS --> DOWNSTREAM
     CONSUMER -->|"POST /internal/events\n(DepartmentMembershipRevoked)"| DEF
     DEF -->|"eligibility check"| IAM

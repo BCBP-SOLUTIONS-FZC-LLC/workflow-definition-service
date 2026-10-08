@@ -24,7 +24,7 @@ Route is on the `/internal` group guarded by `RequireInternalToken` (`x-internal
 
 ## Outbound Event Topology
 
-This service currently emits no outbound events. The transactional outbox → SNS pipeline (`buildEnvelope` in `helpers.go`, `outbox.Enqueue` inside a `RunInTx`/`RunInTxWithRetry` callback) stays wired for whichever event is added next.
+This service emits no outbound events and keeps no outbox, relay, SNS publisher or Glue codec. An event added later designs its contract and names a consumer first, and brings its own outbox in the same change.
 
 ## Membership Revocation: Direct PauseUserTasks Call
 
@@ -61,14 +61,9 @@ Test patterns:
 
 The internal compiled-plan read (`CompiledPlanService`) lazily reads/populates `wf:plan:<tenant>:<version>` in Valkey (fail-open; TTL `CACHE_COMPILED_PLAN_TTL`, env `CACHE_COMPILED_PLAN_TTL`, default 1 h).
 
-The Glue schema registry codec caches the schema version ID in-memory (TTL `GLUE_SCHEMA_CACHE_TTL`, env `GLUE_SCHEMA_CACHE_TTL`, default `5m`). Wired through `Config.GlueSchemaCacheTTL` → `gluecodec.NewCodec(..., cacheTTL)`.
 
 - **Invalidated on:** `Archive` (status change) and `SetInvalid` membership path (is_valid change)
 - **Not invalidated on:** Publish/promote (these don't change a cached version's fields)
-
-## `buildEnvelope` Trace Propagation
-
-`internal/core/service/helpers.go` stamps `events.WithTraceID` only when `trace.SpanFromContext(ctx).SpanContext().IsValid()` — no zero trace IDs on non-traced paths (unit tests). Use `trace.SpanFromContext`, not `gincommon.RequestContext`, because `buildEnvelope` lives at the service layer without access to the Gin context.
 
 ## Event Schema Governance (platform-schemagov)
 

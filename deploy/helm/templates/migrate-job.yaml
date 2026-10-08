@@ -5,7 +5,7 @@
 #
 # IMPORTANT: cmd/server/main.go calls config.Load() (full validate()) BEFORE checking
 # for the `migrate` subcommand, so this Job needs the exact same required env vars as
-# the main Deployment (INTERNAL_API_TOKEN, SNS_TOPIC_ARN, GLUE_REGISTRY_NAME,
+# the main Deployment (INTERNAL_API_TOKEN,
 # ORG_MEMBERSHIP_BASE_URL, EXECUTION_SERVICE_URL/TOKEN, etc.) or config.Load() itself will
 # fail before migrations ever run.
 apiVersion: batch/v1

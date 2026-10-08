@@ -8,7 +8,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 Key responsibilities: BPMN ingestion, structural/semantic/topological validation, DSL compilation, DRAFT → PUBLISHED → ARCHIVED versioning, and serving compiled plans to the Execution Service over its internal HTTP API.
 
-**This service publishes no events.** `api/asyncapi.yaml` documents one inbound message and no outbound channel. The outbox table, its repository, the relay started in `cmd/server/app.go`, and `VersionService`'s wired `Outbox` field all exist and nothing writes to them. Whether that apparatus is kept against a future producer or removed is undecided — do not wire an event to it without designing the contract and naming a consumer first.
+**This service publishes no events and keeps no outbox.** `api/asyncapi.yaml` documents one inbound message and no outbound channel. A future outbound event designs its contract and names a consumer first, and brings its own outbox, relay and schema registry client in the same change.
 
 ---
 
@@ -18,7 +18,7 @@ Four private Go modules hosted on GitHub, fetched at build time via `GOPRIVATE` 
 
 | Module | Purpose |
 | --- | --- |
-| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events` | SNS publisher, transactional outbox runner + schema, typed event envelopes |
+| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events` | Typed event envelope (the inbound handler decodes it); the SNS publisher and outbox runner are unused |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon` | pgx pool, RLS GUC injection, transactor, `migrate.Runner` (golang-migrate) |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon` | Gin middleware, OTel tracing init, Zap logger |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models` | Shared compiled-plan DSL (`pkg/dsl`) + stage-type enum constants (`pkg/enums`) used by the BPMN compiler and shared with the Execution Service. `internal/core/domain/compiled_plan.go` was deleted — every compiler/service call site imports `pkg/dsl` directly instead. |
@@ -42,8 +42,8 @@ Current pinned versions, per-version quirks/gotchas, and the fetch/upgrade comma
 export GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*  # required before go get / mod tidy
 make tools                  # install sqlc, oasdiff, mockgen, golangci-lint, go-arch-lint
 make setup                  # copy .env.example → .env and install .githooks/pre-commit
-make docker-up              # start PostgreSQL + Valkey + LocalStack + PgBouncer
-make migrate                # apply schema (outbox + domain) — NOT run at server boot
+make docker-up              # start PostgreSQL + Valkey + PgBouncer
+make migrate                # apply schema — NOT run at server boot
 
 # Development cycle
 make generate               # sqlc (queries)
@@ -82,7 +82,7 @@ cmd/server/             ← bootstrap + DI (no business logic)
 internal/
   core/
     domain/             ← entities, sentinel errors, BPMN error codes
-    port/               ← interface contracts (Transactor, OutboxRepository, etc.)
+    port/               ← interface contracts (Transactor, WorkflowRepository, etc.)
     service/            ← business logic (imports domain + port only)
   adapter/
     inbound/
@@ -101,7 +101,7 @@ test/
 
 **Import rules:** `core/domain` → stdlib only. `core/port` → domain only. `core/service` → domain + port. `adapter/*` → port + domain. Nothing in `core/` imports from `adapter/`. Enforced by `go-arch-lint` (`.go-arch-lint.yml`).
 
-`cmd/server/app.go` starts: HTTP (`:8080`, the internal API at `/api/v1/internal` included), metrics (`:9091`), and the outbox relay. All stop gracefully on OS signal with a 30-second timeout.
+`cmd/server/app.go` starts: HTTP (`:8080`, the internal API at `/api/v1/internal` included), and metrics (`:9091`). Both stop gracefully on OS signal with a 30-second timeout.
 
 ---
 
@@ -133,7 +133,7 @@ Integration tests require Docker. Pre-pull the image once: `make tools-integrati
 
 Detailed reference is in sub-documents — load the relevant one for your task:
 
-- **[.claude/database.md](database.md)** — DB patterns, transactor, outbox, sqlc, schema decisions (#1–6, #11, #19)
+- **[.claude/database.md](database.md)** — DB patterns, transactor, sqlc, schema decisions (#1–6, #11, #19)
 - **[.claude/api-and-events.md](api-and-events.md)** — HTTP patterns, the internal API and its contracts, idempotency, events (#9, #10, #12–18)
 - **[.claude/bpmn-compiler.md](bpmn-compiler.md)** — BPMN parsing, validation, compilation (#20–25)
 - **[.claude/operations.md](operations.md)** — CI/CD, Prometheus metrics, OTel, MkDocs, platform-lib constraints (#26)

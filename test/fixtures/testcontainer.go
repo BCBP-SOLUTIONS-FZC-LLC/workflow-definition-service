@@ -12,7 +12,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/outbox"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/migrate"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
 
@@ -20,11 +19,11 @@ import (
 )
 
 // serviceMigrationsTable mirrors cmd/server's tracking table so the test schema
-// matches production: outbox migrations and domain migrations are tracked apart.
+// matches production.
 const serviceMigrationsTable = "wf_definition_migrations"
 
-// NewTestPool starts a throwaway Postgres 18 container, applies the outbox and
-// domain migrations, and returns a *pgcommon.Pool connected to it.
+// NewTestPool starts a throwaway Postgres 18 container, applies the domain
+// migrations, and returns a *pgcommon.Pool connected to it.
 //
 // The test is skipped when testing.Short() is true so that unit tests can
 // run without Docker. Cleanup (container termination) is registered via
@@ -90,16 +89,12 @@ func NewTestPoolAndDSN(t *testing.T) (*pgcommon.Pool, string) {
 	return pool, dsn
 }
 
-// applyMigrations runs the outbox schema first (its tables are referenced by the
-// service's outbox RLS migration) then the embedded domain migrations, matching
-// the production startup path in cmd/server/migrate.go.
+// applyMigrations runs the embedded domain migrations, matching the
+// production startup path in cmd/server/migrate.go.
 func applyMigrations(t *testing.T, dsn string) {
 	t.Helper()
 
 	ctx := context.Background()
-	if err := outbox.ApplySchema(ctx, &migrate.Runner{DSN: dsn}); err != nil {
-		t.Fatalf("fixtures: outbox ApplySchema: %v", err)
-	}
 	domainRunner := &migrate.Runner{
 		FS:              migrations.FS,
 		DSN:             dsn,

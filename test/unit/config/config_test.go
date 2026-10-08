@@ -16,9 +16,7 @@ func TestLoad_Success(t *testing.T) {
 		"OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_INSECURE",
 		"OTEL_TRACES_SAMPLER_RATIO", "PG_MAX_CONNS", "PG_MIN_CONNS",
 		"PG_SLOW_QUERY_THRESHOLD_MS", "VALKEY_ADDR", "VALKEY_PASSWORD",
-		"AWS_USE_STUB", "AWS_REGION", "SNS_TOPIC_ARN",
-		"OUTBOX_POLL_INTERVAL", "OUTBOX_BATCH_SIZE", "ORG_MEMBERSHIP_BASE_URL",
-		"EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN", "GLUE_REGISTRY_NAME",
+		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
 		"INTERNAL_API_TOKEN",
 	}
 	for _, k := range keysToBackup {
@@ -47,15 +45,9 @@ func TestLoad_Success(t *testing.T) {
 	_ = os.Setenv("PG_SLOW_QUERY_THRESHOLD_MS", "500")
 	_ = os.Setenv("VALKEY_ADDR", "valkey:6379")
 	_ = os.Setenv("VALKEY_PASSWORD", "secret")
-	_ = os.Setenv("AWS_USE_STUB", "false")
-	_ = os.Setenv("AWS_REGION", "us-west-2")
-	_ = os.Setenv("SNS_TOPIC_ARN", "arn:aws:sns:topic")
-	_ = os.Setenv("OUTBOX_POLL_INTERVAL", "1s")
-	_ = os.Setenv("OUTBOX_BATCH_SIZE", "100")
 	_ = os.Setenv("ORG_MEMBERSHIP_BASE_URL", "http://org")
 	_ = os.Setenv("EXECUTION_SERVICE_URL", "http://execution:8080")
 	_ = os.Setenv("EXECUTION_SERVICE_TOKEN", "execution-token")
-	_ = os.Setenv("GLUE_REGISTRY_NAME", "workflow-template-events")
 	_ = os.Setenv("INTERNAL_API_TOKEN", "definition-token")
 
 	cfg, err := config.Load()
@@ -102,40 +94,21 @@ func TestLoad_Success(t *testing.T) {
 	if cfg.ValkeyPassword != "secret" {
 		t.Errorf("ValkeyPassword = %q, want secret", cfg.ValkeyPassword)
 	}
-	if cfg.AWSUseStub {
-		t.Errorf("AWSUseStub = %t, want false", cfg.AWSUseStub)
-	}
-	if cfg.AWSRegion != "us-west-2" {
-		t.Errorf("AWSRegion = %q, want us-west-2", cfg.AWSRegion)
-	}
-	if cfg.SNSTopicARN != "arn:aws:sns:topic" {
-		t.Errorf("SNSTopicARN = %q, want arn:aws:sns:topic", cfg.SNSTopicARN)
-	}
-	if cfg.OutboxPollInterval != time.Second {
-		t.Errorf("OutboxPollInterval = %v, want 1s", cfg.OutboxPollInterval)
-	}
-	if cfg.OutboxBatchSize != 100 {
-		t.Errorf("OutboxBatchSize = %d, want 100", cfg.OutboxBatchSize)
-	}
 	if cfg.OrgMembershipBaseURL != "http://org" {
 		t.Errorf("OrgMembershipBaseURL = %q, want http://org", cfg.OrgMembershipBaseURL)
 	}
 	if cfg.ExecutionServiceURL != "http://execution:8080" || cfg.ExecutionServiceToken != "execution-token" {
 		t.Errorf("ExecutionServiceURL, ExecutionServiceToken = %q, %q", cfg.ExecutionServiceURL, cfg.ExecutionServiceToken)
 	}
-	if cfg.GlueRegistryName != "workflow-template-events" {
-		t.Errorf("GlueRegistryName = %q, want workflow-template-events", cfg.GlueRegistryName)
-	}
 }
 
 func TestLoad_ValidationFailures(t *testing.T) {
 	keysToBackup := []string{
-		"DATABASE_URL", "AWS_USE_STUB", "SNS_TOPIC_ARN", "APP_ENV",
+		"DATABASE_URL", "APP_ENV",
 		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
-		"GLUE_REGISTRY_NAME", "INTERNAL_API_TOKEN", "SYSTEM_DATABASE_URL",
+		"INTERNAL_API_TOKEN", "SYSTEM_DATABASE_URL",
 		"HTTP_PORT", "PG_MIN_CONNS", "PG_MAX_CONNS",
-		"OTEL_TRACES_SAMPLER_RATIO", "OUTBOX_BATCH_SIZE",
-		"OUTBOX_POLL_INTERVAL", "EXECUTION_CLIENT_TIMEOUT",
+		"OTEL_TRACES_SAMPLER_RATIO", "EXECUTION_CLIENT_TIMEOUT",
 	}
 	envBackup := make(map[string]string)
 	for _, k := range keysToBackup {
@@ -165,73 +138,52 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "missing sns topic when aws stub is false",
+			name: "valid in non-dev with every required setting",
 			env: map[string]string{
-				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
-				"SNS_TOPIC_ARN":      "",
-				"GLUE_REGISTRY_NAME": "workflow-template-events",
-			},
-			wantErr: true,
-		},
-		{
-			name: "valid when aws stub is true even without sns",
-			env: map[string]string{
-				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "true",
-				"SNS_TOPIC_ARN": "",
+				"DATABASE_URL": "postgres://localhost", "APP_ENV": "production",
+				"INTERNAL_API_TOKEN":      "t",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
 			},
 			wantErr: false,
 		},
 		{
-			name: "missing org membership url in non-dev when stub is false",
+			name: "missing org membership url in non-dev",
 			env: map[string]string{
-				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
-				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production", "INTERNAL_API_TOKEN": "t",
+				"DATABASE_URL": "postgres://localhost",
+				"APP_ENV":      "production", "INTERNAL_API_TOKEN": "t",
 				"ORG_MEMBERSHIP_BASE_URL": "", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
-				"GLUE_REGISTRY_NAME": "workflow-template-events",
 			},
 			wantErr:    true,
 			wantErrVar: "ORG_MEMBERSHIP_BASE_URL",
 		},
 		{
-			name: "missing execution url in non-dev when stub is false",
+			name: "missing execution url in non-dev",
 			env: map[string]string{
-				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
-				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production", "INTERNAL_API_TOKEN": "t",
+				"DATABASE_URL": "postgres://localhost",
+				"APP_ENV":      "production", "INTERNAL_API_TOKEN": "t",
 				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "", "EXECUTION_SERVICE_TOKEN": "t",
-				"GLUE_REGISTRY_NAME": "workflow-template-events",
 			},
 			wantErr:    true,
 			wantErrVar: "EXECUTION_SERVICE_URL",
 		},
 		{
-			name: "missing execution token in non-dev when stub is false",
+			name: "missing execution token in non-dev",
 			env: map[string]string{
-				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
-				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "production", "INTERNAL_API_TOKEN": "t",
+				"DATABASE_URL": "postgres://localhost",
+				"APP_ENV":      "production", "INTERNAL_API_TOKEN": "t",
 				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "",
-				"GLUE_REGISTRY_NAME": "workflow-template-events",
 			},
 			wantErr:    true,
 			wantErrVar: "EXECUTION_SERVICE_TOKEN",
 		},
 		{
-			name: "valid in dev when stub is false without org/execution",
+			name: "valid in dev without org/execution",
 			env: map[string]string{
-				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
-				"SNS_TOPIC_ARN": "arn:aws:sns:topic", "APP_ENV": "dev",
+				"DATABASE_URL":            "postgres://localhost",
+				"APP_ENV":                 "dev",
 				"ORG_MEMBERSHIP_BASE_URL": "", "EXECUTION_SERVICE_URL": "",
-				"GLUE_REGISTRY_NAME": "workflow-template-events",
 			},
 			wantErr: false,
-		},
-		{
-			name: "missing glue registry name when aws stub is false",
-			env: map[string]string{
-				"DATABASE_URL": "postgres://localhost", "AWS_USE_STUB": "false",
-				"SNS_TOPIC_ARN":      "arn:aws:sns:topic",
-				"GLUE_REGISTRY_NAME": "",
-			},
-			wantErr: true,
 		},
 		{
 			name: "missing internal api token outside dev",
@@ -256,6 +208,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "APP_ENV": "prod",
 				"INTERNAL_API_TOKEN": "secret-token", "SYSTEM_DATABASE_URL": "postgres://system-host/db",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
 			},
 			wantErr: false,
 		},
@@ -300,16 +253,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		{
 			name:    "otel sampler ratio below 0",
 			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "OTEL_TRACES_SAMPLER_RATIO": "-0.1"},
-			wantErr: true,
-		},
-		{
-			name:    "outbox batch size zero",
-			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "OUTBOX_BATCH_SIZE": "0"},
-			wantErr: true,
-		},
-		{
-			name:    "outbox poll interval zero",
-			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "OUTBOX_POLL_INTERVAL": "0s"},
 			wantErr: true,
 		},
 		{
@@ -397,7 +340,7 @@ func TestMigrationDSN(t *testing.T) {
 }
 
 func TestLoad_InvalidValues_FallBackToDefaults(t *testing.T) {
-	keysToBackup := []string{"HTTP_PORT", "OTEL_EXPORTER_OTLP_INSECURE", "OTEL_TRACES_SAMPLER_RATIO", "OUTBOX_POLL_INTERVAL"}
+	keysToBackup := []string{"HTTP_PORT", "OTEL_EXPORTER_OTLP_INSECURE", "OTEL_TRACES_SAMPLER_RATIO", "EXECUTION_CLIENT_TIMEOUT"}
 	envBackup := make(map[string]string)
 	for _, k := range keysToBackup {
 		envBackup[k] = os.Getenv(k)
@@ -416,7 +359,7 @@ func TestLoad_InvalidValues_FallBackToDefaults(t *testing.T) {
 	_ = os.Setenv("HTTP_PORT", "not-an-int")
 	_ = os.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "not-a-bool")
 	_ = os.Setenv("OTEL_TRACES_SAMPLER_RATIO", "not-a-float")
-	_ = os.Setenv("OUTBOX_POLL_INTERVAL", "not-a-duration")
+	_ = os.Setenv("EXECUTION_CLIENT_TIMEOUT", "not-a-duration")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -432,8 +375,8 @@ func TestLoad_InvalidValues_FallBackToDefaults(t *testing.T) {
 	if cfg.OTELTracesSamplerRatio != 1.0 {
 		t.Errorf("OTELTracesSamplerRatio fallback = %f, want 1.0", cfg.OTELTracesSamplerRatio)
 	}
-	if cfg.OutboxPollInterval != 500*time.Millisecond {
-		t.Errorf("OutboxPollInterval fallback = %v, want 500ms", cfg.OutboxPollInterval)
+	if cfg.ExecutionClientTimeout != 5*time.Second {
+		t.Errorf("ExecutionClientTimeout fallback = %v, want 5s", cfg.ExecutionClientTimeout)
 	}
 }
 

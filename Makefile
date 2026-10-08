@@ -19,7 +19,6 @@ TRIVY_VERSION        := 0.71.2
 # Docker images pulled by integration tests via testcontainers-go.
 # Run `make tools-integration` once to warm the local Docker image cache.
 TESTCONTAINERS_POSTGRES_IMAGE    := postgres:18-alpine
-TESTCONTAINERS_LOCALSTACK_IMAGE  := localstack/localstack:3
 TESTCONTAINERS_VALKEY_IMAGE      := valkey/valkey:8-alpine
 
 TOOLS_DIR          := .tools
@@ -42,14 +41,13 @@ LDFLAGS            := -X main.version=$(BUILD_VERSION)
 COVER_PROFILE      := $(COVERAGE_DIR)/coverage.out
 COVER_HTML         := $(COVERAGE_DIR)/coverage.html
 # Exclude generated packages (sqlc db/, mockgen mocks/), the postgres adapter
-# (integration-tested separately), and the glue codec (requires a live AWS Glue
-# endpoint — not unit-testable) from the coverage denominator.
+# (integration-tested separately) from the coverage denominator.
 # COVER_EXCLUDE_PKG: end-anchored, used to filter `go list` package paths.
 # COVER_EXCLUDE_FILE: path-prefix form, used to filter coverage profile lines (which
 #   contain /package/file.go:... rather than ending at the package name).
-COVER_EXCLUDE_PKG  := /postgres/db$$\|/postgres$$\|/mocks$$\|/glue$$\|/inbound/http$$
-COVER_EXCLUDE_FILE := /postgres/db/\|/postgres/\|/mocks/\|/glue/\|/service/noop_logger.go\|/inbound/http/asyncapi.go\|/inbound/http/swagger
-COVER_THRESHOLD    := 95  # target 97%; postgres adapter, generated pkgs, and glue codec excluded
+COVER_EXCLUDE_PKG  := /postgres/db$$\|/postgres$$\|/mocks$$\|/inbound/http$$
+COVER_EXCLUDE_FILE := /postgres/db/\|/postgres/\|/mocks/\|/service/noop_logger.go\|/inbound/http/asyncapi.go\|/inbound/http/swagger
+COVER_THRESHOLD    := 95  # target 97%; postgres adapter and generated pkgs excluded
 # Per-package floors: packages not listed must meet COVER_THRESHOLD.
 # internal/adapter/inbound/http: AsyncAPI renderer is 500 lines of HTML template
 # logic only exercisable via a live dev server; swagger handlers are trivially tested.
@@ -108,7 +106,6 @@ tools:
 ## tools-integration: Pre-pull Docker images used by integration tests (testcontainers-go)
 tools-integration:
 	docker pull $(TESTCONTAINERS_POSTGRES_IMAGE)
-	docker pull $(TESTCONTAINERS_LOCALSTACK_IMAGE)
 	docker pull $(TESTCONTAINERS_VALKEY_IMAGE)
 	@echo "✓ Docker images ready for integration tests"
 
@@ -128,9 +125,6 @@ mock:
 	$(MOCKGEN) -source=internal/core/port/repository.go \
 	           -destination=internal/core/port/mocks/repository_mock.go \
 	           -package=mocks
-	$(MOCKGEN) -source=internal/core/port/publisher.go \
-	           -destination=internal/core/port/mocks/publisher_mock.go \
-	           -package=mocks
 	$(MOCKGEN) -source=internal/core/port/cache.go \
 	           -destination=internal/core/port/mocks/cache_mock.go \
 	           -package=mocks
@@ -149,7 +143,7 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/server ./cmd/server
 	@echo "✓ binary: $(BIN_DIR)/server"
 
-## migrate: Apply DB schema migrations (outbox + domain) and exit. Run before the server.
+## migrate: Apply DB schema migrations and exit. Run before the server.
 migrate:
 	go run ./cmd/server migrate
 
@@ -170,9 +164,6 @@ test:
 ## test-integration: Run integration tests — spins up containers via testcontainers-go (no make docker-up needed)
 test-integration:
 	@mkdir -p $(COVERAGE_DIR)
-	AWS_ACCESS_KEY_ID=test \
-	AWS_SECRET_ACCESS_KEY=test \
-	AWS_EC2_METADATA_DISABLED=true \
 	TESTCONTAINERS_RYUK_DISABLED=true \
 	go test -race -count=1 -tags integration \
 	    -coverpkg=$$(go list ./internal/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \

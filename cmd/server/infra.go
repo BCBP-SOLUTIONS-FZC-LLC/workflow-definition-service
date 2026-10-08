@@ -5,15 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events/mock"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
 
-	gluecodec "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/glue"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/valkey"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
@@ -80,32 +75,4 @@ func newCacheStore(ctx context.Context, cfg *config.Config) (port.CacheStore, *r
 		return nil, nil, fmt.Errorf("valkey ping: %w", err)
 	}
 	return valkey.NewCache(client), client, nil
-}
-
-func newPublisher(cfg *config.Config, log port.Logger, codec events.Codec) (events.Publisher, error) {
-	if cfg.AWSUseStub {
-		return &mock.Publisher{}, nil
-	}
-	pub, err := events.NewSNSPublisher(events.SNSConfig{
-		TopicARN:    cfg.SNSTopicARN,
-		Region:      cfg.AWSRegion,
-		EndpointURL: cfg.AWSEndpointURL,
-		Logger:      log,
-	}, events.WithCodec(codec))
-	if err != nil {
-		return nil, fmt.Errorf("sns publisher: %w", err)
-	}
-	return pub, nil
-}
-
-func newGlueCodec(ctx context.Context, cfg *config.Config) (events.Codec, error) {
-	var awsCfg aws.Config
-	var err error
-	if !cfg.AWSUseStub {
-		awsCfg, err = awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.AWSRegion))
-		if err != nil {
-			return nil, fmt.Errorf("load aws config for glue: %w", err)
-		}
-	}
-	return gluecodec.NewCodec(awsCfg, cfg.GlueRegistryName, cfg.AWSUseStub, cfg.AWSEndpointURL, cfg.GlueSchemaCacheTTL), nil
 }

@@ -1,6 +1,6 @@
 ---
 name: database
-description: PostgreSQL schema patterns, transactor/outbox, migrations, and DB-level design decisions for workflow-definition-service
+description: PostgreSQL schema patterns, transactor, migrations, and DB-level design decisions for workflow-definition-service
 metadata:
   type: reference
 ---
@@ -15,28 +15,13 @@ Repo adapters participate in multi-step transactions via the `Transactor` port:
 // Service layer:
 err := s.transactor.RunInTx(ctx, func(ctx context.Context) error {
     if err := s.versionRepo.Publish(ctx, ...); err != nil { return err }
-    return s.outboxRepo.Enqueue(ctx, env)
+    return s.workflowRepo.UpdateActiveVersion(ctx, ...)
 })
 ```
 
 `Transactor.RunInTx` stores the `pgx.Tx` in context (private key). Repo adapters call `exec(ctx, pool, fn)` which checks context for a transaction first, falling back to `pool.WithConn` for non-transactional reads. This keeps pgx types entirely within `adapter/outbound/postgres/`.
 
 `port.Transactor` also exposes `RunInTxWithRetry` (SERIALIZABLE isolation + 40001/40P01 retry via pgcommon) — used for quota enforcement (see below).
-
-## Outbox Pattern
-
-**Critical:** `OutboxRepository.Enqueue` MUST be called inside a `Transactor.RunInTx` callback — it returns an error otherwise. The business write and the outbox insert commit or roll back atomically.
-
-```go
-// Correct — both in the same transaction:
-s.transactor.RunInTx(ctx, func(ctx context.Context) error {
-    s.versionRepo.Publish(ctx, ...)   // writes workflow_version
-    s.outboxRepo.Enqueue(ctx, env)    // writes outbox_events
-})
-// Never call Enqueue outside a transaction.
-```
-
-The `platform-events outbox.Runner` (started in `app.go`) handles the relay loop — polling `outbox_events`, publishing to SNS, and marking delivered. The service never calls `FetchPending` / `MarkSent` / `MarkFailed` directly.
 
 ## sqlc + `:execresult` Pattern
 
@@ -76,7 +61,7 @@ idx_wv_single_draft ON workflow_version(workflow_id) WHERE status = 'DRAFT'
 
 Migrations run via the `migrate` subcommand (`go run ./cmd/server migrate`, `cmd/server/migrate.go`), intended as a Kubernetes init container / pre-boot job. The server does **NOT** run migrations at startup.
 
-`runMigrations` calls `outbox.ApplySchema` first (under `pgcommon_migrations`), then the service runner (`wf_definition_migrations`). `test/fixtures/testcontainer.go` applies the same two steps.
+`runMigrations` runs the service runner (`wf_definition_migrations`). `test/fixtures/testcontainer.go` applies the same step.
 
 PL/pgSQL functions need no `StatementBegin/End` wrappers — pgx/v5 runs each file as one statement.
 
@@ -85,7 +70,3 @@ PL/pgSQL functions need no `StatementBegin/End` wrappers — pgx/v5 runs each fi
 ## Inbound Event Redelivery
 
 There is no dedup registry. Both consumed types converge on the same state when reprocessed: `SetVersionInvalid` rewrites an identical `is_valid = false`, and no query returns a PUBLISHED version to valid, while the Execution Service's pause-tasks call signals only `RUNNING` instances. Adding an inbound type that is not idempotent by construction means introducing the registry with it (LLD §2.3.1, §10.9).
-
-## Operational Table Cleanup
-
-The service does NOT run an in-process pruner. `outbox_events` and `outbox_dead_letters` are cleaned by an external periodic job (lambda / cron) running under `BYPASSRLS=true` per LLD §7.1.2. Until that job ships, these tables grow unbounded (GAP-11).

@@ -37,7 +37,7 @@ Thank you for your contribution! Please complete the checklist below before requ
 - [ ] No event changes in this PR  
 - OR:
 - [ ] New event type documented in `.claude/CLAUDE.md` (outbound event types section)
-- [ ] Outbound events use `outbox.Enqueue` inside a `pgcommon.RunInTx` callback — never `publisher.Publish` directly
+- [ ] No outbound event is added without a designed contract and a named consumer (this service has no outbox; see `.claude/CLAUDE.md`)
 - [ ] Inbound event handling (`POST /internal/events`) is idempotent by construction — a redelivery converges on the same state (LLD §2.3.1); a handler that cannot guarantee that brings the dedup registry with it
 - [ ] `api/asyncapi.yaml` updated with `x-lifecycle`/`x-owner` on any new/changed message; `make extract-schemas` re-run so `internal/eventschema/*.json` matches (CI's `extract --check` gate will otherwise fail)
 

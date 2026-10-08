@@ -9,8 +9,6 @@ serviceAccount:
   create: true
   # Annotations added to the ServiceAccount — use for IRSA on EKS:
   #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/workflow-definition-service-role
-  # When IRSA is configured, remove AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
-  # from envFromSecret / secretValues and rely on the pod's ambient IAM role instead.
   annotations: {}
 
 service:
@@ -56,12 +54,6 @@ env:
   VALKEY_DIAL_TIMEOUT: "2s"
   VALKEY_READ_TIMEOUT: "1s"
   VALKEY_WRITE_TIMEOUT: "1s"
-  AWS_USE_STUB: "false"                             # false in prod -> SNS_TOPIC_ARN + GLUE_REGISTRY_NAME become required
-  AWS_REGION: "us-east-1"
-  GLUE_REGISTRY_NAME: "workflow-template-events"
-  GLUE_SCHEMA_CACHE_TTL: "5m"
-  OUTBOX_POLL_INTERVAL: "500ms"
-  OUTBOX_BATCH_SIZE: "50"
   ORG_MEMBERSHIP_BASE_URL: ""                      # in-cluster org-membership service URL — required when APP_ENV != dev
   MEMBERSHIP_CLIENT_TIMEOUT: "10s"
   EXECUTION_SERVICE_URL: "http://workflow-execution-service-api:8080"  # the Execution Service API's in-cluster HTTP Service — required when APP_ENV != dev
@@ -72,12 +64,8 @@ envFromSecret:
   - MIGRATION_DATABASE_URL   # direct-Postgres DSN; required whenever DATABASE_URL points at PgBouncer
   - SYSTEM_DATABASE_URL      # BYPASSRLS DSN for scope=global module/template writes
   - VALKEY_PASSWORD
-  - SNS_TOPIC_ARN
   - INTERNAL_API_TOKEN       # required when APP_ENV != dev — pod crash-loops without it (config.validate())
   - EXECUTION_SERVICE_TOKEN  # the Execution Service's INTERNAL_API_TOKEN, sent on its internal API
-  # - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY — only if not using IRSA
-  # GLUE_REGISTRY_ARN intentionally NOT included: the running binary never reads it
-  # (no field on internal/config.Config) — only CI-time platform-schemagov tooling uses it.
 
 # existingSecret — preferred for production.
 # Set to the name of a pre-existing Kubernetes Secret whose keys match envFromSecret.
@@ -100,7 +88,6 @@ secretValues:
   MIGRATION_DATABASE_URL: ""
   SYSTEM_DATABASE_URL: ""
   VALKEY_PASSWORD: ""
-  SNS_TOPIC_ARN: ""
   INTERNAL_API_TOKEN: ""
   EXECUTION_SERVICE_TOKEN: ""
 
@@ -112,11 +99,9 @@ migrationJob:
   enabled: true
 
 terminationGracePeriodSeconds: 60
-# cmd/server/app.go stopServers() runs sequentially: HTTP Shutdown(ctx) (bounded by a
-# single 30s context) -> outboxRelay.Stop() (NO context — platform-events defaults
-# DrainTimeout to ~30s) -> pool.DrainAndClose(ctx) (bounded by whatever remains of the
-# original 30s deadline). The 30s figure does not bound the whole sequence; 60s gives
-# real headroom above the worst reasonable case before Kubernetes SIGKILLs the pod.
+# cmd/server/app.go stopServers() runs sequentially: HTTP Shutdown(ctx) and metrics
+# Shutdown(ctx), bounded by one 30s context, then pool.DrainAndClose(ctx) against what
+# remains of it. 60s gives real headroom before Kubernetes SIGKILLs the pod.
 
 # podDisruptionBudget — ensures at least 1 pod survives voluntary disruptions
 # (node drains, cluster upgrades). At replicaCount/minReplicas: 2 (LLD §11.1),

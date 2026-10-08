@@ -58,16 +58,6 @@ classDiagram
         +ArchiveVersion()
     }
 
-    class OutboxRepository {
-        <<interface>>
-        +Enqueue()
-    }
-
-    class OutboxRelay {
-        +ProcessOutbox()
-        -publishToSNS()
-    }
-
     HTTPHandler --> HTTPMiddleware : Uses middleware chain
     HTTPHandler --> PublisherService : Dispatches requests
     HTTPHandler --> Validator : Calls stateless validation
@@ -77,6 +67,4 @@ classDiagram
     PublisherService --> PlanService : Verifies template quotas
     PublisherService --> MembershipService : Verifies assignee eligibility
     PublisherService --> WorkflowRepository : Persists workflow and versions
-    PublisherService --> OutboxRepository : Transactionally enqueues events
 
-    OutboxRelay --> OutboxRepository : Polls and updates pending events

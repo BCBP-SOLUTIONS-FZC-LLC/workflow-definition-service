@@ -15,7 +15,7 @@ The **Workflow Definition Service** acts as the design-time control plane for th
 - **Database Driver**: `platform-pgcommon v1.2.1` — wraps `github.com/jackc/pgx/v5` with RLS GUC injection (`app.tenant_id`, `app.user_id`, `app.tenant_roles`), slow-query logging, OTel tracing, Prometheus pool metrics, transaction helpers, pool health check, and a golang-migrate-based `migrate.Runner`. See §1.7 for the full integration.
 - **Database Tooling**: `sqlc` for type-safe query generation, `platform-pgcommon migrate.Runner` for schema migrations.
 - **Distributed Cache / Store**: Valkey 8.0 (Redis-compatible), via `github.com/redis/go-redis/v9`. Used for: compiled-plan caching, idempotency key deduplication (`Idempotency-Key` header), and distributed draft-edit locking (prevents concurrent draft overwrites between sessions).
-- **Event Bus (Outbound only)**: `platform-events v1.2.0` — provides typed event envelopes, SNS publisher (`events.SNSPublisher`), transactional outbox runner (`outbox.Runner`), and `outbox.ApplySchema` for programmatic outbox schema migration. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /internal/events`. The AWS Glue SDK provides schema validation and encoding for outbound event payloads against the Glue Schema Registry. See §1.8 for the full integration.
+- **Events**: this service publishes none and keeps no outbox. `platform-events v1.2.0` supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /internal/events`. See §1.8 for the full integration.
 - **Structured Logging**: `go.uber.org/zap` via `platform-gincommon/pkg/logger` — used by middleware chain and all application code. See `coding_style_rules.md §5.1`.
 - **Mocks**: `go.uber.org/mock` (GoMock / `mockgen`) — generates mocks for all `core/port/` interfaces. See §1.5.3.
 
@@ -24,12 +24,10 @@ The **Workflow Definition Service** acts as the design-time control plane for th
 The Definition Service operates within a broader ecosystem and interacts with the following components:
 
 1. **Frontend / UI**: Supplies the raw BPMN 2.0 XML from the canvas modeler for upload and template editing. During node authoring, the modeler calls Org & Membership directly (`GET /tenants/:id/users?department=:dept&level=:level`) to populate filtered user pickers.
-2. **PostgreSQL**: Stores the compiled DSL, draft XMLs, historical versions, default node assignee mapping records (`workflow_node_assignee`), and transaction outbox events.
+2. **PostgreSQL**: Stores the compiled DSL, draft XMLs, historical versions, and default node assignee mapping records (`workflow_node_assignee`).
 3. **Internal API (HTTP)**: Serves the compiled plan of a workflow version to the Execution Service and its Temporal Worker on the internal route group, `/api/v1/internal`, specified in `api/internal-openapi.yaml` (§3.4.1).
 4. **Org & Membership Service (Outbound REST)**: During publish/execution transactions and validation passes, the Definition Service calls `POST /tenants/:t/users/:u/eligibility?department=:dept&level=:level` as a backend defense-in-depth check to ensure all default assignees are eligible.
-5. **Event Bus (SNS — outbound only)**:
-      - **Outbound**: Uses the Outbox Pattern to publish outbound events to SNS whenever this service has one to emit — currently none (§7.2, §10.7). The outbox relay remains in-process (it is coupled to the transactional write path and the local DB) and stays ready for the next outbound event this service adds.
-      - **Inbound**: The Definition Service does **not** consume SQS. The shared workflow-events consumer subscribes to `membership-workflow-q` (`iam.membership.events`) and forwards `DepartmentMembershipRevoked` events to `POST /internal/events` (§7.4), which triggers template invalidation via the same logic as before.
+5. **Event Bus (inbound only)**: This service publishes no events and has no outbox (§7.2, §10.7). It does **not** consume SQS: the shared workflow-events consumer subscribes to `membership-workflow-q` (`iam.membership.events`) and forwards `DepartmentMembershipRevoked` events to `POST /internal/events` (§7.4), which triggers template invalidation.
 6. **Shared Workflow-Events Consumer (Inbound HTTP)**: A separate engine-wide service consumes the SQS queues and HTTP-routes each envelope to the respective workflow service (Definition or Execution). For the Definition Service it calls the internal `POST /internal/events` endpoint.
 7. **Execution Service (Outbound HTTP)**: The Definition Service makes two calls on the Execution Service's internal API (§3.4.2). (a) During archive (`POST /workflows/:id/archive`): the active-instances read refuses the archive with `ACTIVE_INSTANCES_EXIST` (409) if any instance is RUNNING or PAUSED. (b) During membership revocation (`POST /internal/events`, §7.4.2): the pause-tasks call has Execution pause the revoked user's active task assignments. Both calls wrap errors as `ErrUpstreamUnavailable` after retries.
 8. **User Profile Service (Display Enrichment)**: The Definition Service stores only UUID references for users (`workflow_node_assignee.user_id`). It does **not** make outbound calls to User Profile — display enrichment (name, email, job title) is performed directly by the frontend calling `POST /api/v1/users:batch` with the UUID list returned by the Definition Service. This keeps the Definition Service identity-agnostic at the service layer.
@@ -55,7 +53,6 @@ graph TD
         Compiler[DSL Compiler]
         Validator[Validation Engine]
         InternalEvents[POST /internal/events]
-        OutboxRelay[Outbox Background Worker]
         
         API --> Validator
         API --> Parser
@@ -66,12 +63,10 @@ graph TD
     %% External Systems
     subgraph Persistence [RDS PostgreSQL]
         DB[(workflow_definition DB)]
-        OutboxTable[(outbox)]
     end
 
     subgraph External_Integrations [External Services]
         OrgMembership[Org & Membership Service]
-        SNS[SNS: wf.template.events]
         EventsConsumer[Shared Workflow-Events Consumer]
         SQS_Membership[SQS: membership-workflow-q]
     end
@@ -84,13 +79,10 @@ graph TD
     
     Compiler -->|3. Validate Assignee Eligibility| OrgMembership
     Compiler -->|4. Store Draft/Publish| DB
-    API -->|5. Insert Outbox Event| OutboxTable
-    SQS_Membership -.->|6. Consume Revocation Events| EventsConsumer
-    EventsConsumer -->|7. POST /internal/events| InternalEvents
+    SQS_Membership -.->|5. Consume Revocation Events| EventsConsumer
+    EventsConsumer -->|6. POST /internal/events| InternalEvents
     InternalEvents -->|Invalidate Affected Templates| DB
     
-    OutboxRelay -->|8. Read Pending Events| OutboxTable
-    OutboxRelay -->|9. Publish Event| SNS
 ```
 
 ### 1.4 Core Module Responsibilities & I/O Contracts
@@ -121,11 +113,6 @@ Below is a detailed breakdown of each internal module within the Workflow Defini
   - **Input**: Validated Go BPMN Graph AST (`bpmn.Process` struct).
   - **Output**: Orchestration-ready compiled JSON DSL (`domain.WorkflowDef` struct).
 
-- **Outbox Background Worker**
-  - **Responsibility**: Implements the transactional outbox pattern runner to guarantee reliable event delivery to external downstream systems (e.g. SNS) utilizing the `platform-events` `outbox.Runner` to eliminate dual-write inconsistencies. This is the only background worker running in-process; inbound events arrive over HTTP from the shared workflow-events consumer (see below).
-  - **Input**: Pending records from the PostgreSQL `outbox_events` table.
-  - **Output**: SNS event dispatch (to the `wf.template.events` topic) and a subsequent SQL update to flag records as published (or move to `outbox_dead_letters` after retries).
-
 - **Internal Event Ingest Handler (`POST /internal/events`)**
   - **Responsibility**: Receives domain-event envelopes forwarded over HTTP by the shared workflow-events consumer, dispatches by `env.Type`, and drives the `HandleDepartmentMembershipRevoked` invalidation logic. Redelivery is absorbed by handler idempotency (§2.3.1, §10.9); injects the RLS GUC from the envelope `tenant_id`, as every internal route does (§3.4, §14).
   - **Input**: `events.Envelope[json.RawMessage]` JSON body on the internal (non-gateway) route group, authenticated by service-to-service auth.
@@ -137,7 +124,7 @@ The service follows clean architecture: nothing in `core/` imports from `adapter
 
 - **`workflow-definition-svc/`** (Project Root)
   - **`cmd/server/`**
-    - `main.go` — Application bootstrap (concurrently starts the Gin HTTP server, the metrics server, and the Outbox background worker daemon) and dependency injection wire-up. Inbound membership events arrive via `POST /internal/events`, forwarded by the shared workflow-events consumer.
+    - `main.go` — Application bootstrap (concurrently starts the Gin HTTP server and the metrics server) and dependency injection wire-up. Inbound membership events arrive via `POST /internal/events`, forwarded by the shared workflow-events consumer.
   - **`internal/`**
     - **`core/`** — Core business domain logic, fully decoupled from external libraries.
       - `domain/` — Core entities, workflow definitions, and compiled DSL models.
@@ -165,7 +152,7 @@ The service follows clean architecture: nothing in `core/` imports from `adapter
     - `queries/` — SQL query definitions consumed by sqlc. **Committed**.
   - `sqlc.yaml` — Config file mapping schemas and queries to sqlc Go builders.
   - `.golangci.yml` — Linter configuration.
-  - `docker-compose.yml` — Local infra: PostgreSQL 16, Valkey 8, LocalStack (SNS + SQS).
+  - `docker-compose.yml` — Local infra: PostgreSQL 16, Valkey 8, PgBouncer.
   - `.env.example` — All required env vars documented with defaults.
   - `Makefile` — Targets: `tools`, `generate`, `mock`, `migrate-up/down`, `build`, `test`, `test-integration`, `lint`, `contract-check`, `contract-breaking`, `docker-up/down`.
 
@@ -309,8 +296,7 @@ Incoming HTTP request
 1. OS signal received
 2. HTTP server: stop accepting new connections (httpServer.Shutdown)
 3. gincommon.Shutdown(logger)   — flushes OTel HTTP spans + Zap buffer (platform-gincommon v1.2.0)
-4. Outbox relay: runner.Stop()
-5. DB pool: pool.Close()
+4. DB pool: pool.Close()
 ```
 
 Step 3 must run before pool.Close() to ensure any in-flight DB-related spans are flushed before the pool drains.
@@ -391,7 +377,7 @@ pool, err := pgcommon.NewPool(ctx, pgcommon.Config{
 
 > **`Config.Logger` is wired** via `cmd/server/pglogger.go`'s `pgCommonLogger`, which adapts this service's own `port.Logger` (`map[string]any` fields) to `platform-pgcommon`'s public `pkg/domain.Logger` interface (`Debug/Info/Warn/Error(msg string, fields ...domain.Field)`), converting the variadic `Field` slice into a map. Wired into every `pgcommon.Config` construction site (`newDBPool`/`newSystemDBPool` both), so slow-query warnings and GUC-injection failures flow through the service's real logger. **`Config.Tracer` is not wired**; per-query OTel spans are not emitted.
 
-`pool.Close()` is deferred in the shutdown hook (step 8 in the shutdown sequence) to drain in-use connections after all servers and the outbox relay have stopped.
+`pool.Close()` is deferred in the shutdown hook (step 8 in the shutdown sequence) to drain in-use connections after all servers have stopped.
 
 #### 1.7.2 RLS GUC Injection
 
@@ -474,126 +460,40 @@ func readyzHandler(pool *pgcommon.Pool, cache port.CacheStore) gin.HandlerFunc {
 
 All of the above, §6.1.1's pool gauges, and this service's own `wf_*`/`internal_events_ingest_total` metrics land on the same `gincommon.MetricsRegisterer()`, exposed together on the `/metrics` endpoint.
 
-### 1.8 Events Integration (`platform-events`)
+### 1.8 Events and Startup Migration
 
-The Definition Service uses the `platform-events` library to implement event publishing, message consumption, and the transactional outbox pattern.
+The Definition Service publishes no events and keeps no outbox (§7.2). `platform-events` supplies only the typed envelope that inbound events arrive in (§1.8.2).
 
-#### 1.8.1 Initialization & Schema Migration
+#### 1.8.1 Schema Migration
 
-Schema migrations run **programmatically at process startup** via two platform runners before any application logic executes:
+The server does not migrate at boot. The chart's pre-install and pre-upgrade hook runs `/server migrate` (`make migrate` locally), which applies the service's domain migrations through `platform-pgcommon`'s `migrate.Runner` before the Deployment rolls out:
 
 ```go
-// 1. Outbox tables (tracked under "outbox_migrations")
-if err := outbox.ApplySchema(ctx, &migrate.Runner{DSN: cfg.DatabaseURL}); err != nil {
-    return nil, fmt.Errorf("outbox schema: %w", err)
-}
-
-// 2. Service domain tables + RLS policies (tracked under "wf_definition_migrations")
 svcRunner := &migrate.Runner{
-    FS:              servicemigrations.FS,
-    DSN:             cfg.DatabaseURL,
+    FS:              migrations.FS,
+    DSN:             cfg.MigrationDSN(),
     MigrationsTable: "wf_definition_migrations",
 }
 if err := svcRunner.Up(ctx); err != nil {
-    return nil, fmt.Errorf("service migrations: %w", err)
+    return fmt.Errorf("domain migrations: %w", err)
 }
 ```
 
-**Why this order matters:** migration `0005_outbox_rls` adds `ENABLE ROW LEVEL SECURITY` and `CREATE POLICY` to `outbox_events` and `outbox_dead_letters`. Those tables must exist first, hence `outbox.ApplySchema` runs before the service runner.
-
-**Three isolated tracking tables** coexist in the same database with no version-number collisions:
-
-| Runner | Tracking table | Who runs it |
-| --- | --- | --- |
-| `platform-pgcommon` internal migrations | `pgcommon_migrations` | `platform-pgcommon` (auto, if any) |
-| `platform-events outbox.ApplySchema` | `outbox_migrations` | Called at service startup |
-| Service domain migrations | `wf_definition_migrations` | Called at service startup |
+The service's own tracking table, `wf_definition_migrations`, coexists with any `pgcommon_migrations` table, with no version-number collisions.
 
 **Migration file format:** `db/migrations/NNNN_name.up.sql` / `NNNN_name.down.sql` pairs (golang-migrate convention). No goose annotations. The pgx/v5 driver executes each file as a single unit, so PL/pgSQL function bodies with semicolons inside `$$...$$` blocks work without any special delimiters.
 
-**RLS policies for outbox tables** are a service migration (`0005_outbox_rls.up.sql`), not embedded in `platform-events`. They are service-specific policy decisions that must be versioned alongside the rest of the service schema.
+On application startup the tracing initialisation runs first, then the pool is built and `observability.Register(cfg.OTELServiceName, cfg.BuildVersion, pool)` registers the metrics. `observability.Register` needs the constructed `*pgcommon.Pool` (for `PoolStatsCollector`), so it runs after `newDBPool` — see §1.7.5.
 
-On application startup the metrics and tracing initialisation happens before migrations:
-
-```go
-events.Init(cfg.OTELServiceName, cfg.BuildVersion)
-// then: outbox.ApplySchema → svcRunner.Up → newDBPool →
-//       observability.Register(cfg.OTELServiceName, cfg.BuildVersion, pool) → wire services
-```
-
-`observability.Register` needs the constructed `*pgcommon.Pool` (for `PoolStatsCollector`), so it runs after `newDBPool` rather than alongside `events.Init` at the top of startup — see §1.7.5.
-
-#### 1.8.2 SNS Publisher & Outbox Runner
-
-The SNS Publisher is initialized to publish event envelopes. To guarantee reliable at-least-once delivery, events are enqueued via `outbox.Enqueue` inside business transactions and dispatched asynchronously by the `outbox.Runner`:
-
-```go
-publisher, err := events.NewSNSPublisher(events.SNSConfig{
-    TopicARN: cfg.SNSTopicARN,
-    Region:   cfg.AWSRegion,
-    Logger:   logger,
-})
-if err != nil {
-    log.Fatal(err)
-}
-
-runner := outbox.NewRunner(outbox.Config{
-    Pool:         pool,
-    Publisher:    publisher,
-    Logger:       logger,
-    PollInterval: cfg.OutboxPollInterval,
-    BatchSize:    cfg.OutboxBatchSize,
-})
-go runner.Start(ctx)
-defer runner.Stop()
-```
-
-All outbound event envelopes are constructed via `buildEnvelope` in `internal/core/service/helpers.go`. Each envelope includes `WithTenantID` and `WithTraceID` (when an active OTel span is present in context). Add `events.WithSchemaVersion("1")` to all `buildEnvelope` calls and increment on additive payload changes. Prior to enqueuing, payloads are JSON-serialized and validated/encoded against the AWS Glue Schema Registry using the `GlueCodec` (§7.2.5).
-
-```go
-runner := outbox.NewRunner(outbox.Config{
-    // existing fields ...
-    ClaimLeaseDuration: cfg.OutboxClaimLeaseDuration, // default 10m — prevents duplicate processing
-    StartupJitter:      cfg.OutboxStartupJitter,       // default 5s — staggers multi-instance startup
-    PublishConcurrency: cfg.OutboxPublishConcurrency,  // default 5 — parallel SNS publish goroutines
-    PublishTimeout:     cfg.OutboxPublishTimeout,      // default 10s — per-record SNS call timeout
-    DrainTimeout:       cfg.OutboxDrainTimeout,        // default 30s — wait for in-flight publishes on Stop
-})
-```
-
-`outbox.Runner.ReprocessDeadLetters(ctx context.Context, limit int) (int, error)` is available in `platform-events v1.2.0` as an admin/ops call to move up to `limit` records from `outbox_dead_letters` back to `outbox_events` for redelivery, resetting attempt counters. Wiring it as an HTTP admin endpoint is pending.
-
-#### 1.8.3 Inbound Event Ingest (HTTP)
+#### 1.8.2 Inbound Event Ingest (HTTP)
 
 Inbound domain events are consumed by the shared workflow-events consumer service, which forwards each envelope over HTTP to `POST /internal/events`. The handler injects the RLS tenant context (`pgcommon.WithGUCSet`) from the envelope `tenant_id` — the same manual-injection pattern every internal route uses (§3.4, §14) — and dispatches by `env.Type` to the existing handler logic (e.g. `HandleDepartmentMembershipRevoked`). Redelivery is absorbed by handler idempotency (§2.3.1, §10.9). See §7.4 for the full flow.
 
-#### 1.8.4 Environment Variables
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `AWS_REGION` | `us-east-1` | AWS Region for SNS client construction |
-| `SNS_TOPIC_ARN` | — | Topic ARN to publish workflow template events |
-| `OUTBOX_POLL_INTERVAL` | `500ms` | Polling interval for processing pending outbox records |
-| `OUTBOX_BATCH_SIZE` | `50` | Maximum number of records processed per poll cycle |
-| `OUTBOX_CLAIM_LEASE_DURATION` | `10m` | Lease duration to prevent duplicate processing across replicas |
-| `OUTBOX_STARTUP_JITTER` | `5s` | Random delay added to first poll to stagger multi-replica startup |
-| `OUTBOX_PUBLISH_CONCURRENCY` | `5` | Parallel goroutines for SNS publish per batch |
-| `OUTBOX_PUBLISH_TIMEOUT` | `10s` | Per-record SNS call timeout |
-| `OUTBOX_DRAIN_TIMEOUT` | `30s` | Grace period for in-flight SNS publishes when the outbox runner stops |
-| `GLUE_REGISTRY_NAME` | `workflow-template-events` | Glue Schema Registry name for `wf.template.events` payload validation |
-| `GLUE_REGISTRY_ARN` | — | Full ARN; used for IAM policy scoping |
-
-#### 1.8.5 Prometheus Metrics
-
-The library registers the following Prometheus metrics under the hood during `events.Init`:
+#### 1.8.3 Prometheus Metrics
 
 | Metric | Type | Description |
 | --- | --- | --- |
-| `events_published_total` | Counter | Total published events |
-| `events_publish_duration_seconds` | Histogram | Publish call latency |
 | `internal_events_ingest_total` | Counter | Inbound envelopes received at `POST /internal/events` (labels: `type`, `result`) |
-| `outbox_pending_total` | Gauge | Active queue records pending dispatch |
-| `outbox_dead_letters_total` | Counter | Failed events transitioned to dead letters |
 
 ---
 
@@ -672,18 +572,6 @@ classDiagram
         +ArchiveVersion()
     }
 
-    class OutboxRepository {
-        <<interface>>
-        +InsertEvent()
-        +FetchPending()
-        +MarkProcessed()
-    }
-
-    class OutboxRelay {
-        +ProcessOutbox()
-        -publishToSNS()
-    }
-
     HTTPHandler --> HTTPMiddleware : Uses middleware chain
     HTTPHandler --> PublisherService : Dispatches requests
     HTTPHandler --> Validator : Calls stateless validation
@@ -693,20 +581,17 @@ classDiagram
     PublisherService --> PlanService : Verifies template quotas
     PublisherService --> MembershipService : Verifies assignee eligibility
     PublisherService --> WorkflowRepository : Persists workflow and versions
-    PublisherService --> OutboxRepository : Transactionally enqueues events
 
-    OutboxRelay --> OutboxRepository : Polls and updates pending events
 ```
 
 ##### Core Component Descriptions
 
 - **HTTPHandler (Inbound Adapter)**: Exposes REST APIs, enforces size limits (10MB) on incoming payloads, validates request schemas, and delegates workflow management use cases to core services.
 - **HTTPMiddleware (Inbound Adapter)**: Extracts gateway-injected identity headers (`x-tenant-id`, `x-user-id`, `x-tenant-roles`, etc.) and manages transactional session boundaries (such as configuring the PostgreSQL GUC for RLS).
-- **PublisherService (Core Application Service)**: Orchestrates the draft compilation and publish lifecycle. Initiates database transactions, calls the validation engine and compiler, verifies assignee eligibility via external ports, and writes transactional outbox logs.
+- **PublisherService (Core Application Service)**: Orchestrates the draft compilation and publish lifecycle. Initiates database transactions, calls the validation engine and compiler, and verifies assignee eligibility via external ports.
 - **DraftCompiler (Domain Service)**: Traverses the unmarshalled BPMN sequence flows to construct the compiled JSON DSL execution plan for the runtime.
 - **Validator (Domain Service)**: Runs topological correctness rules (back-edge classification, guarded-loop checking, and gateway matching over the forward graph — see §4.4) on the parsed process definition.
-- **OutboxRelay (Background Worker)**: worker that polls the transactional outbox table and dispatches pending event payloads to the event bus (Amazon SNS).
-- **Ports (WorkflowRepository, PlanService, MembershipService, OutboxRepository)**: Explicit interface contracts isolating the core business logic from database schema libraries (`sqlc`) and external HTTP services.
+- **Ports (WorkflowRepository, PlanService, MembershipService)**: Explicit interface contracts isolating the core business logic from database schema libraries (`sqlc`) and external HTTP services.
 
 ---
 
@@ -715,16 +600,12 @@ classDiagram
 - **publish.go**: Entrypoint orchestrator for publishing a draft workflow version.
 - **validator.go**: Structural, semantic, metadata, and guarded-loop validation (back-edge classification + Tarjan SCC).
 - **compiler.go**: Graph traversal engine mapping BPMN sequence flows to the JSON DSL execution steps.
-- **outbox_repo.go**: Database persistence layer for appending and fetching outbox event logs.
-- **relay.go**: Background daemon executing polling, backoff, and dispatching loops.
 
 #### 1.5.7 Interface Contracts (Ports)
 
 To maintain clean architecture, core services rely on explicitly defined port interfaces located in `core/port/`:
 
 - **`WorkflowRepository`**: Handles transaction boundaries and schema interactions (`GetDraft`, `CreateVersion`, `UpdateActiveVersion`).
-- **`OutboxRepository`**: Handles generic outbox appending and transactional retrieval (`InsertEvent`, `FetchPending`, `MarkSent`).
-- **`EventPublisher`**: Cloud-agnostic event distribution contract implemented by the SNS adapter (`PublishMessage`).
 - **`Transactor`**: Wraps `pgcommon.RunInTx`. The publish path requires `SERIALIZABLE` isolation with retry on `40001`/`40P01` — the port interface must expose a `RunInTxWithRetry` method (or accept `pgx.TxOptions` + retry config) so `VersionService.Publish` can use `pgcommon.RunInTxWithRetry` without importing pgcommon directly. See §10.8.
 
 ---
@@ -750,7 +631,6 @@ The compiled-plan cache is populated lazily: on the first internal compiled-plan
 - **Workflow list / metadata** — `GET /workflows`, `GET /workflows/:id` always reads from Postgres.
 - **Raw `bpmn_xml`** — stored only in Postgres; never cached.
 - **Workflow version history** — always from Postgres.
-- **Outbox events** — DB-only for durability guarantees.
 - **Assignee eligibility** — checked live against Org & Membership at publish time; not cached.
 
 #### 1.9.3 Cache Failure Behaviour
@@ -892,31 +772,6 @@ erDiagram
 erDiagram
     direction TB
 
-    OUTBOX_EVENTS {
-        UUID id PK
-        TEXT event_type
-        JSONB payload
-        TEXT tenant_id
-        TEXT trace_id
-        INT attempts
-        TEXT last_error
-        TIMESTAMP created_at
-        TIMESTAMP scheduled_at
-        TIMESTAMP published_at
-    }
-
-    OUTBOX_DEAD_LETTERS {
-        UUID id PK
-        TEXT event_type
-        JSONB payload
-        TEXT tenant_id
-        TEXT trace_id
-        INT attempts
-        TEXT last_error
-        TIMESTAMP created_at
-        TIMESTAMP failed_at
-    }
-
     PROCESSED_EVENT {
         UUID event_id PK
         TEXT consumer PK
@@ -1012,41 +867,6 @@ A **denormalized reverse index** that inverts the compiled DSL's `default_assign
 
 ---
 
-#### `outbox_events`
-
-Stores outbound events queued for processing.
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | UUID | Primary key (UUID v7) |
-| `event_type` | TEXT | Event type name |
-| `payload` | JSONB | Serialized event payload |
-| `tenant_id` | TEXT | Tenant isolation key |
-| `trace_id` | TEXT | Trace ID for context propagation |
-| `attempts` | INT | Number of dispatch attempts |
-| `last_error` | TEXT | Last error message encountered |
-| `created_at` | TIMESTAMP | Record creation time |
-| `scheduled_at` | TIMESTAMP | Scheduled execution time |
-| `published_at` | TIMESTAMP | Time when successfully published |
-
-#### `outbox_dead_letters`
-
-Stores failed outbox events that exhausted maximum retries.
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | UUID | Primary key (UUID v7) |
-| `event_type` | TEXT | Event type name |
-| `payload` | JSONB | Serialized event payload |
-| `tenant_id` | TEXT | Tenant isolation key |
-| `trace_id` | TEXT | Trace ID |
-| `attempts` | INT | Final attempt count |
-| `last_error` | TEXT | Final error message |
-| `created_at` | TIMESTAMP | Original event creation time |
-| `failed_at` | TIMESTAMP | Dead-letter transition time |
-
----
-
 ### 2.2.2 Table and Column Details
 
 1. workflow Table
@@ -1093,49 +913,7 @@ Stores failed outbox events that exhausted maximum retries.
 
     updated_at (TIMESTAMP): Last modification time, maintained automatically by the same `BEFORE UPDATE` trigger as `record_version`.
 
-3. outbox_events Table
-
-    id (UUID): Primary key, UUID v7.
-
-    event_type (TEXT): Name of the event type, dotted-lowercase under the `workflow.` namespace. No event type is currently emitted by this service (§7.2).
-
-    payload (JSONB): The raw serialized event envelope.
-
-    tenant_id (TEXT): Tenant isolation key.
-
-    trace_id (TEXT): Trace ID for context propagation.
-
-    attempts (INT): Number of dispatch attempts. Defaults to 0.
-
-    last_error (TEXT): Last error message encountered during publishing.
-
-    created_at (TIMESTAMP): Record creation timestamp.
-
-    scheduled_at (TIMESTAMP): Scheduled execution time. Used for lease management and retries.
-
-    published_at (TIMESTAMP): Timestamp when the event was successfully published.
-
-4. outbox_dead_letters Table
-
-    id (UUID): Primary key, UUID v7.
-
-    event_type (TEXT): Name of the event type.
-
-    payload (JSONB): The raw serialized event envelope.
-
-    tenant_id (TEXT): Tenant isolation key.
-
-    trace_id (TEXT): Trace ID.
-
-    attempts (INT): Final attempt count.
-
-    last_error (TEXT): Final error message before dead-lettering.
-
-    created_at (TIMESTAMP): Original event creation time.
-
-    failed_at (TIMESTAMP): Timestamp when moved to dead-letter table.
-
-5. workflow_node_assignee Table
+3. workflow_node_assignee Table
 
     id (UUID): Primary key, utilizing globally unique identifiers to isolate mappings.
 
@@ -1153,52 +931,9 @@ Stores failed outbox events that exhausted maximum retries.
 
 ---
 
-### 2.3 Outbox Pattern
+### 2.3 Event Publishing
 
-#### Design
-
-A shared, single-table outbox is used to queue all outbound domain events. To prevent write inconsistencies (the "dual-write" problem) where database updates succeed but the message broker dispatch fails (or vice versa), the service writes both the business data updates and the corresponding outbox notification events within the same SQL transaction block:
-
-```go
-tx, err := db.BeginTx(ctx, nil)
-if err != nil {
-    return err
-}
-defer tx.Rollback()
-
-// 1. Apply the business change (e.g. promoting draft to active version)
-_, err = tx.ExecContext(ctx, `
-    UPDATE workflow_version 
-    SET status = 'PUBLISHED', published_at = NOW(), version_number = $1
-    WHERE id = $2 AND tenant_id = $3
-`, versionNum, versionID, tenantID)
-if err != nil {
-    return err
-}
-
-// 2. Write the outbox event in the SAME transaction utilizing outbox.Enqueue
-// This inserts a row into the outbox_events table:
-// INSERT INTO outbox_events (id, event_type, payload, tenant_id, trace_id, attempts, created_at, scheduled_at)
-// VALUES ($1, $2, $3, $4, $5, 0, NOW(), NOW())
-err = outbox.Enqueue(ctx, tx, env)
-if err != nil {
-    return err
-}
-
-err = tx.Commit()
-if err != nil {
-    return err
-}
-```
-
-A background transactional outbox runner (`outbox.Runner`) polls the `outbox_events` table, publishes pending envelopes to SNS, and marks them `published_at = NOW()`. Because the broker dispatch occurs outside the database transaction, the relay worker is designed to be **idempotent**: if it crashes after dispatching to SNS but before updating the database row status, the event ID (UUID) is reused on retry to enable downstream deduplication.
-
-#### Benefits
-
-- **No schema changes**: JSONB payload storage allows introducing new events without requiring DDL modifications.
-- **Single polling worker**: OutboxRelay only monitors one database table, reducing connection overhead and locking contention.
-- **Uniform error handling**: Standardized retry counter and status flow for all outbound events.
-- **Reduced operational complexity**: Centralized auditing and cleanup mechanisms.
+The service has no outbox table: none of its state changes emits an event (§7.2). A future outbound event designs its own contract and consumer first, and brings its own outbox, relay and schema registry client in the same change.
 
 ---
 
@@ -1233,9 +968,6 @@ Reprocessing is not bit-for-bit inert. `SetVersionInvalid` writes `updated_at = 
 | `workflow_version` | `uq_workflow_version_published` | Unique version numbers per workflow template |
 | `workflow_node_assignee` | `idx_wnas_user_tenant` | Assignee invalidation query on membership revocation |
 | `workflow_node_assignee` | `idx_wnas_version` | Join index for loading node assignees of a version |
-| `outbox` | `idx_outbox_pending` | Relay worker polling (with `SKIP LOCKED`) |
-| `outbox` | `idx_outbox_tenant_pending` | Tenant-scoped partitioning / parallel relay |
-| `outbox` | `idx_outbox_processed_at` | TTL cleanup job (`processed_at < NOW() - INTERVAL '7 days'`) |
 
 ### 2.5 Triggers — `updated_at` and `record_version`
 
@@ -1274,8 +1006,7 @@ Cross-reference: Appendix A contains the full DDL. §10.11 documents how clients
 - **Tool**: `platform-pgcommon migrate.Runner` (golang-migrate, pgx/v5 driver). Runs programmatically at service startup. See §1.8.1 for the startup sequence.
 - **File format**: `db/migrations/NNNN_description.up.sql` + `NNNN_description.down.sql` pairs. No goose annotations. PL/pgSQL function bodies (`$$...$$`) work without special delimiters — the pgx/v5 driver executes each file as a single unit.
 - **`lock_timeout`**: auto-appended (`30s`) by `migrate.Runner` — no manual DSN parameter needed. This prevents a blocked migration from holding the advisory lock across rolling deploys.
-- **Tracking table**: `wf_definition_migrations` (service-specific, set via `MigrationsTable` field). Isolated from `outbox_migrations` and any `pgcommon_migrations` table — no version-number collisions.
-- **Outbox tables**: created by `outbox.ApplySchema` (tracked under `outbox_migrations`). The service migration `0005_outbox_rls.up.sql` then adds RLS policies to those tables. See §1.8.1 for the startup order.
+- **Tracking table**: `wf_definition_migrations` (service-specific, set via `MigrationsTable` field). Isolated from any `pgcommon_migrations` table — no version-number collisions.
 - **Forward-only additive**: new columns are added as `NOT NULL DEFAULT x`; column drops are split across two releases (deprecate → stop using → drop) to stay compatible with in-flight pods during rolling deploys.
 - **No `updated_at` or `record_version` in UPDATE queries**: both columns are trigger-managed (§2.5). Application SQL must not include `SET updated_at = NOW()` or `SET record_version = record_version + 1` — the trigger handles it unconditionally.
 - **Migrator role**: the DB role used at startup (`definition_svc_migrator`) must have `BYPASSRLS` to avoid being blocked by the service's own RLS policies during data migrations. The application role (`definition_svc_app`) must **not** have `BYPASSRLS`.
@@ -1628,7 +1359,7 @@ Below is a detailed walkthrough of the endpoints, checks, and flow execution tra
 
 18. **`INTERNAL_ERROR`** (HTTP 500)
     - **Endpoints**: All endpoints.
-    - **Trigger Scenario**: The PostgreSQL server crashes, a network partition isolates Redis, the SNS client times out, or the application code triggers a null pointer panic.
+    - **Trigger Scenario**: The PostgreSQL server crashes, a network partition isolates Redis, or the application code triggers a null pointer panic.
     - **Technical Cause**: Handlers catch database driver connection errors, service broker timeouts, or catch panics via recovery middleware.
     - **Step-by-Step Flow**:
       1. The client invokes an API endpoint.
@@ -2059,7 +1790,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 - **POST** `/workflows/:id/versions/:version_id/promote`
 - **Semantics**: Atomic pointer swap to select an older published version as the active pointer (`active_version_id`).
   - **Status Constraint**: Only `PUBLISHED` versions can be promoted. Attempting to promote a version in `DRAFT` or `ARCHIVED` status returns `409 Conflict` (`INVALID_VERSION_STATUS`).
-  - **Already Active Pointer (Early Exit / Silent No-Op)**: If the target version is already set as the `active_version_id` for the workflow, the API returns a silent `200 OK` early exit without creating a new audit record or writing to the transactional outbox.
+  - **Already Active Pointer (Early Exit / Silent No-Op)**: If the target version is already set as the `active_version_id` for the workflow, the API returns a silent `200 OK` early exit without creating a new audit record.
   - **Event Emission**: None. Promote's own state transition (the atomic `active_version_id` pointer swap) commits without enqueueing any outbound event (§7.2, §10.7).
 
 #### 3.3.12 Raw BPMN Validation
@@ -3493,7 +3224,7 @@ sequenceDiagram
     API-->>Admin: 200 OK (version_id, updated_at)
 ```
 
-> No compile, validate, or outbox write occurs during a draft save. Those are deferred to the explicit publish or validate actions — only well-formed XML is checked here.
+> No compile or validate occurs during a draft save. Those are deferred to the explicit publish or validate actions — only well-formed XML is checked here.
 
 #### 5.4.1 Concurrent Draft Initialization Race Condition
 
@@ -3663,7 +3394,6 @@ sequenceDiagram
     
     API->>DB: INSERT INTO workflow (id, tenant_id, business_key, name, created_by_user_id) VALUES (...)
     API->>DB: INSERT INTO workflow_version (id, workflow_id, status='DRAFT', bpmn_xml, created_by_user_id) VALUES (...)
-    API->>DB: INSERT INTO outbox_events (id, event_type, payload, tenant_id, trace_id, attempts) VALUES (...) <br/> (workflow.template.cloned event)
     API->>DB: COMMIT
     DB-->>API: Transaction Committed
     API-->>Admin: 201 Created (workflow_id, version_id)
@@ -3802,15 +3532,6 @@ groups:
           summary: "Slow publish execution"
           description: "95th percentile of PublishVersion (compile + DB tx combined) is exceeding 2.0 seconds. If wf_compile_duration_seconds is also elevated, the regression is in BPMN compilation rather than the DB transaction."
 
-      - alert: OutboxRelayDeliveryStalled
-        expr: rate(outbox_dead_letters_total[5m]) > 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Outbox relay delivery stalled"
-          description: "Outbox events have exhausted their maximum retries and been moved to the dead-letter table (platform-events outbox_dead_letters_total). Immediate operator intervention is required to inspect outbox_dead_letters."
-
       - alert: RLSMissingGUC
         expr: increase(rls_violations_total{type="missing_or_invalid_guc"}[5m]) > 0
         for: 1m
@@ -3833,7 +3554,7 @@ groups:
 
 ### 6.2 Distributed Tracing (OpenTelemetry)
 
-The service utilizes OpenTelemetry (OTel) to trace execution paths across decoupled services. The trace context is propagated inbound from Envoy API Gateway and outbound through SNS outbox payloads.
+The service utilizes OpenTelemetry (OTel) to trace execution paths across decoupled services. The trace context is propagated inbound from Envoy API Gateway and outbound over HTTP.
 
 **Base HTTP server spans** are created automatically by `gincommon.TracingMiddleware` (part of `ObservabilityMiddlewares`). Each incoming HTTP request produces a root span named after its route; the OTel trace ID is stored in the Gin context under the key `trace_id` and echoed on the response as `X-Trace-ID`. OTLP/gRPC export is initialized via `gincommon.InitTracingFromEnv()` in `main.go`.
 
@@ -3847,7 +3568,7 @@ The service adds the following **additional child spans** on top of the gincommo
 2. **`BPMN_Compilation` (Child Span)**:
    - Measures raw XML parsing, graph traversal, split-join pairing, and JSON DSL generation.
 3. **`DB_Publish_Transaction` (Child Span)**:
-   - Measures database row locking (`SELECT FOR UPDATE`), workflow/version schema writes, and transactional outbox event insertion.
+   - Measures database row locking (`SELECT FOR UPDATE`), and workflow/version schema writes.
 
 #### 6.2.2 Context Propagation
 
@@ -3855,7 +3576,6 @@ Distributed tracing context is propagated across network boundaries as follows:
 
 1. **Outbound HTTP Calls**: For outbound HTTP requests (such as calling the Org & Membership Service `POST /tenants/:t/users/:u/eligibility`), the client uses OpenTelemetry transport wrappers to inject the active span's W3C context into the `traceparent` header.
 2. **Inbound Internal Calls**: The internal routes (§3.4) run behind the same `gincommon.TracingMiddleware`, which extracts the W3C `traceparent` header, so a compiled-plan read joins the Execution Service's span for the call.
-3. **Outbox Message Injection**: For every outbox message written during publication, the current carrier state is serialized and injected into the outbox event payload metadata under the `traceparent` key. The Outbox Relay worker then publishes the message with the trace context preserved as an SNS message attribute.
 
 ### 6.3 Structured Logging and Auditing
 
@@ -3900,105 +3620,28 @@ This structured security logging ensures that compliance teams can trace exactly
 
 ---
 
-## 7. Eventing & Integration (Transactional Outbox)
+## 7. Eventing & Integration
 
-To maintain loose decoupling and eliminate database-to-broker write inconsistencies (the "dual-write" problem), the Definition Service delegates all cross-service event notifications to a **Transactional Outbox** model. The background worker asynchronously relays queued outbox events to Amazon SNS, ensuring at-least-once delivery guarantees.
+This service publishes no events. It has no transactional outbox, relay worker, SNS publisher or Glue schema registry client. Inbound events arrive over HTTP (§7.4).
 
-### 7.1 Outbox Relay Worker Mechanics
+### 7.1 No Outbox
 
-The background relay worker (`OutboxRelay`) runs as a horizontally scalable daemon within the application container.
-
-```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle --> FetchPending : Every 500ms
-    FetchPending --> ProcessEvent : Events Found
-    FetchPending --> Idle : Empty Queue
-    
-    state ProcessEvent {
-        [*] --> PublishToSNS
-        PublishToSNS --> MarkSent : SNS Success
-        PublishToSNS --> HandleFailure : SNS Error / Timeout
-        
-        state HandleFailure {
-            [*] --> CheckRetries
-            CheckRetries --> IncrementRetry : Retries < Max (5)
-            CheckRetries --> MarkFailed : Retries >= Max (5)
-        }
-    }
-    
-    MarkSent --> FetchPending
-    IncrementRetry --> FetchPending
-    MarkFailed --> FetchPending
-```
-
-#### 7.1.1 Fetching and Processing Cycle (platform-events outbox.Runner)
-
-1. **Polling**: The `outbox.Runner` polls the `outbox_events` table every configured interval (default: 5s, with exponential backoff on DB error up to 30s) using a single SELECT query optimized for highly concurrent, lock-free consumer workers:
-
-   ```sql
-   SELECT id, event_type, payload, tenant_id, trace_id, attempts, created_at, scheduled_at
-   FROM outbox_events
-   WHERE published_at IS NULL AND scheduled_at <= NOW()
-   ORDER BY created_at ASC
-   LIMIT :batch_size
-   FOR UPDATE SKIP LOCKED;
-   ```
-
-   *Note: Using `FOR UPDATE SKIP LOCKED` guarantees that multiple instances of the worker can scale horizontally without blocking each other or double-processing the same outbox events.*
-
-2. **Idempotency & Safety**:
-   The worker uses the primary key `id` (UUID v7) as the `MessageGroupId` and `MessageDeduplicationId` when dispatching to SNS/SQS. This ensures strict ordering and exact-once semantics even if the worker process crashes before marking the row as published.
-
-3. **Leasing**:
-   To prevent multiple runners from picking up the same batch while publish operations are in flight, the runner pushes `scheduled_at` forward by `ClaimLeaseDuration` (default 10 min).
-
-4. **Retry & Backoff**:
-   On delivery failure, the `attempts` count is incremented, `scheduled_at` is reset to `NOW()` (to allow immediate retry by another worker), and `last_error` is updated.
-
-5. **Max Retries & Dead Letter Table**:
-   If a record fails after `MaxAttempts` (default: 5), it is automatically moved to the `outbox_dead_letters` table. The runner fires Prometheus metrics/alerts (`outbox_dead_letters_total`) on dead letter occurrences.
-
-#### 7.1.2 Database Pruning and Cleanup (TTL)
-
-To prevent transaction logs from growing indefinitely, a background cron job runs daily (during off-peak hours):
-
-- **Outbox Cleanup**: Physically deletes `SENT` outbox records older than 7 days, and explicitly flags old `FAILED_EXHAUSTED` records for manual operator review or archival.
+Nothing in the service writes an event inside a transaction, so there is no outbox table, no relay and no dead-letter table. A future outbound event designs its contract and names a consumer first, and brings its own outbox, relay and schema registry client in the same change.
 
 ### 7.2 Event Payload Schemas
 
-The Definition Service emits **no outbound SNS event** today (§10.7). None of its state-changing operations require one:
+The Definition Service emits **no outbound event** today (§10.7). None of its state-changing operations require one:
 
 - **Archive** — the archive guard (the active-instances read, §3.4.2) ensures no instances are running before archive completes. No downstream consumer starts new instances on an archived key; if a stale client attempts it, the compiled-plan read returns `status=ARCHIVED` and the caller rejects. No proactive push is required.
 - **Eligibility invalidation** — handled by a direct internal HTTP call from Definition to Execution (pause-tasks, §3.4.2). Execution pauses task assignments by `user_id` from its own runtime data — no SNS fan-out or separate SQS subscription is needed on the Execution side. See §7.4.2 step 5.
 - **Clone** — a clone creates a DRAFT. No downstream service has anything to do with a DRAFT.
 - **Publish / Promote** — emit no event (§10.7).
 
-The transactional outbox mechanism itself (§7.1) remains in place, ready for whenever this service next needs to publish an outbound event.
-
-#### 7.2.1 AWS Glue Schema Registry
-
-**`api/asyncapi.yaml` is the design-time contract; AWS Glue Schema Registry (ap-south-1) is the runtime enforcement point** for whichever outbound event this service publishes.
-
-No outbound event is currently registered (§7.2, §10.7). The mechanism below stays in place for the next outbound event this service adds.
-
-##### Serialization & Encoding (Producer Side)
-
-Before enqueuing an event into the transactional outbox (`outbox_events`), the service encodes the JSON payload bytes against the registered schema version using the Glue Schema Registry SDK. The SDK prepends the schema version ID as a header prefix in the payload bytes, which are then saved in the outbox `payload` field.
-
-##### Decoding & Validation (Consumer Side)
-
-Downstream consumers decode the payload bytes using the Glue SDK, which strips the version prefix, fetches the schema definition (cached locally after the first fetch), and validates the payload against it.
-
-##### Schema Evolution Rules
-
-- **Additive changes** (new optional fields) → register a new schema version in Glue and increment `schema_version` in the envelope; update `api/asyncapi.yaml` in the same commit.
-- **Breaking changes** (remove/rename fields, change types) → create a new Glue schema name and bump the major version.
-- `api/asyncapi.yaml` must be updated in the same commit as any Glue registry version bump — the CI gate (`asyncapi validate`) enforces consistency.
+`api/asyncapi.yaml` documents the one inbound message.
 
 ### 7.3 Decoupled Service Integrations
 
-This service has no outbound SNS event and therefore no downstream consumers today (§7.2). Execution Service self-warms its compiled-plan cache and `workflow_key → version_id` mapping on ordinary cache-miss via write-through (`execution_service.md` §6.1/§6.2, Appendix A.5 decision 19); archive is guarded directly by the synchronous active-instances read (§3.3.8), and eligibility invalidation is delivered by a direct pause-tasks call (§7.4.2 step 5) — none of these depend on an outbound event from this service. Whether Audit & Compliance or Notification need a replacement signal for publish/promote is an open product question, not resolved here; structured logs (§8.5) are the audit trail for these operations regardless.
+This service has no outbound event and therefore no downstream consumers today (§7.2). Execution Service self-warms its compiled-plan cache and `workflow_key → version_id` mapping on ordinary cache-miss via write-through (`execution_service.md` §6.1/§6.2, Appendix A.5 decision 19); archive is guarded directly by the synchronous active-instances read (§3.3.8), and eligibility invalidation is delivered by a direct pause-tasks call (§7.4.2 step 5) — none of these depend on an outbound event from this service. Whether Audit & Compliance or Notification need a replacement signal for publish/promote is an open product question, not resolved here; structured logs (§8.5) are the audit trail for these operations regardless.
 
 ### 7.4 Inbound Event Ingest (`POST /internal/events`)
 
@@ -4088,7 +3731,7 @@ This is the standard path when an admin intentionally wants to change who gets a
 2. Admin updates the `candidateUsers` in `<zeebe:assignmentDefinition>` for the relevant node in the BPMN XML.
 3. Admin calls `POST /workflows/:id/versions/:versionId/publish`.
 4. The publish handler validates the new assignee's eligibility via `POST /tenants/:t/users/:u/eligibility?department=:dept&level=:level` on the Org & Membership Service.
-5. On success, the new `compiled_plan_json` is written and new rows are inserted into `workflow_node_assignee` in the same transaction. No event is written to the outbox (§7.2, §10.7).
+5. On success, the new `compiled_plan_json` is written and new rows are inserted into `workflow_node_assignee` in the same transaction. No event is emitted (§7.2, §10.7).
 
 **Scope**: affects only **new** workflow instances started from this point forward. All running instances retain the `assignee_user_id` that was resolved when they were started — they are never retroactively re-pointed.
 
@@ -4160,7 +3803,7 @@ This section consolidates all security controls enforced by the Definition Servi
 - **Tenant boundary**: Every database query sets the `app.tenant_id` GUC via `pgcommon.WithGUCSet` before any DB access. The `tenant_id` is always sourced from the validated `x-tenant-id` gateway header — never from the request body. This prevents callers from self-selecting a different tenant's data. Cross-tenant data access is impossible regardless of application-layer checks because RLS enforces it at the DB layer.
 - **Connection Role Restrictions**:
   - **The API, internal routes included,** connects to PostgreSQL using a dedicated application role (e.g. `definition_svc_app`) that has `BYPASSRLS=false` explicitly set. This role cannot bypass row-level security, ensuring that missing `app.tenant_id` configurations result in no rows returned rather than cross-tenant leaks.
-  - **Background Processes (Outbox Relay, Clean-up Crons)** connect using a separate dedicated database role (e.g. `definition_svc_relay`) that is either the table owner or has the `BYPASSRLS=true` permission. This allows the Outbox Relay to scan and process outbox rows across all tenants in a single unified query loop.
+  - **Global-catalog writes** (`scope=global`, §10.16) connect through `SYSTEM_DATABASE_URL`, a separate system role with `BYPASSRLS=true`; no other process bypasses RLS.
 
 #### Trust Boundary
 
@@ -4180,10 +3823,9 @@ All BPMN uploads pass through a hardening pipeline before any parsing occurs (cr
 
 ### 8.4 Data Security
 
-- **No plaintext secrets**: Database credentials, SNS ARNs, and AWS keys are injected via AWS Secrets Manager at pod startup. They are never in environment variables in plaintext.
+- **No plaintext secrets**: Database credentials and the internal API tokens are injected via AWS Secrets Manager at pod startup. They are never in environment variables in plaintext.
 - **BPMN XML at rest**: Stored in `workflow_version.bpmn_xml` (TEXT). No field-level encryption is applied; the column is protected by RLS and database-level encryption at rest (AWS RDS encryption).
 - **Compiled DSL**: Stored as JSONB in `workflow_version.compiled_plan_json`. Same protections as above.
-- **Outbox payloads**: `outbox.payload_json` does not contain PII. Tenant and workflow IDs are UUIDs. Purged via TTL after 7 days post-processing (§7.1.2).
 
 ### 8.5 Audit Trail
 
@@ -4205,7 +3847,7 @@ To ensure optimal connection management, the service connects to PostgreSQL thro
 - **Pool Size**: The connection pool is strictly capped at **10 connections** for the service instance, aligning with the target specified in HLD §7.1.
 - **Role Isolation & Configuration**:
   - **API Handler Role**: Connects using a role lacking the `BYPASSRLS` attribute. Session variables are set dynamically using `SET LOCAL app.tenant_id = :tenant_id` at transaction initialization.
-  - **Relay Role**: The background Outbox Relay connects using a database role with table ownership or `BYPASSRLS = true` permission, allowing it to scan and dispatch outbox items across all tenants in a single pass.
+  - **System Role**: The global-catalog pool (`SYSTEM_DATABASE_URL`, §10.16) connects using a database role with `BYPASSRLS = true`, for `scope=global` writes only.
 - **PgBouncer Pool Mapping**: PgBouncer is configured in Transaction Mode to allow sharing server connections, ensuring efficient scalability of connection slots.
 
 ---
@@ -4216,7 +3858,7 @@ To ensure optimal connection management, the service connects to PostgreSQL thro
 
 - **BPMN upload & parse**: p99 ≤ 300 ms for files up to 10 MB on a `t3.medium` equivalent instance.
 - **Draft save** (`PUT /draft`): p99 ≤ 50 ms — single UPDATE with no compilation.
-- **Publish** (full flow): p99 ≤ 800 ms — includes parse, validate, compile, hash, diff check, and the serializable transaction (no outbox write — publish emits no event, §7.2).
+- **Publish** (full flow): p99 ≤ 800 ms — includes parse, validate, compile, hash, diff check, and the serializable transaction (publish emits no event, §7.2).
 - **List workflows** (`GET /workflows`): p99 ≤ 100 ms — tenant-indexed paginated query.
 - **Validation-only** (`POST /validate`): p99 ≤ 200 ms — stateless, no DB writes.
 
@@ -4224,10 +3866,8 @@ To ensure optimal connection management, the service connects to PostgreSQL thro
 
 | Dependency | Failure mode | Service behaviour | Data loss risk |
 | --- | --- | --- | --- |
-| **PostgreSQL** | Down / unreachable | All DB-backed endpoints return `503`. `/readyz` fails → pod removed from load balancer rotation. Background workers (outbox relay, pruner) pause and retry on reconnect. | None — no write is acknowledged without a successful DB commit. |
+| **PostgreSQL** | Down / unreachable | All DB-backed endpoints return `503`. `/readyz` fails → pod removed from load balancer rotation. | None — no write is acknowledged without a successful DB commit. |
 | **Valkey (cache)** | Down / unreachable | Three effects: (1) compiled-plan cache miss falls through to Postgres transparently (no caller-visible impact); (2) idempotency middleware — cache miss → request passes through uncached (duplicate protection degraded, not lost); (3) draft-edit lock acquisition fails → handler returns `503`. `/readyz` returns `503 {"status":"unavailable","cache":"unreachable"}` — pod is removed from load balancer rotation. | None for business data. Duplicate-mutation window open for the outage duration. |
-| **SNS (outbox publisher)** | Down / throttled | Outbox rows accumulate with `published_at IS NULL`. The relay retries with exponential backoff. After `MaxAttempts` (default 5), rows move to `outbox_dead_letters` and alert fires. No HTTP request fails due to SNS unavailability — the write completes before the relay runs. | None — events are durable in `outbox_events` until delivered. Dead-lettered events require manual reprocessing via `ReprocessDeadLetters`. |
-| **Glue Schema Registry** | Down / unreachable | The AWS Glue SDK caches schema versions locally after the first fetch; a short-term outage is transparent. On a cold start (no cached version), encode fails → outbox publish is blocked → outbox rows accumulate; alert via `outbox_dead_letters_total`. Schema version cache TTL should be ≥ 5 min to ride out transient Glue unavailability. | None — events remain buffered in `outbox_events`. |
 | **Execution Service internal API** | Down / timeout | `ArchiveWorkflow` reads the workflow's active instances before archiving (§3.4.2). On timeout (default 5 s), the handler returns `503 UPSTREAM_UNAVAILABLE`. No archive proceeds. The workflow remains in its current state. | None. |
 | **Inbound event ingest** (`POST /internal/events`) | Definition pod down, or shared consumer down | The shared consumer holds `DepartmentMembershipRevoked` messages on `membership-workflow-q` (SQS retention: 14 days) and retries the HTTP POST until the Definition Service is healthy. On recovery, events are reprocessed; the handlers converge on the same state either way (§2.3.1). `is_valid` flags may be stale for the duration of the outage. | None — SQS retains the messages and the consumer retries. |
 | **Org & Membership eligibility endpoint** | Down at publish time | Publish calls the membership eligibility check for each assignee. On timeout/5xx, publish returns `503 UPSTREAM_UNAVAILABLE`. The draft is not promoted. | None. |
@@ -4244,7 +3884,7 @@ The following SLOs are the implementation targets for this service. They are ref
 | `GET /workflows/:id` (single + version list) | 20 ms | DB read; no compiled-plan fetch |
 | `GET /workflows/:id/draft`, `GET /versions/:id` | 20 ms | Valkey compiled-plan hit |
 | `GET /workflows/:id/draft`, `GET /versions/:id` | 50 ms | Cache miss → DB fallback + back-fill |
-| `PUT /draft`, `POST /discard`, `POST /promote`, `POST /clone` | 100 ms | Single `RunInTx` (no outbox enqueue — none of these emit an event, §7.2) |
+| `PUT /draft`, `POST /discard`, `POST /promote`, `POST /clone` | 100 ms | Single `RunInTx` (none of these emit an event, §7.2) |
 | `POST /versions/:id/publish` | 500 ms | BPMN compile + assignee eligibility check + SERIALIZABLE tx |
 | `POST /workflows/validate` | 300 ms | Stateless compile; no DB write |
 | Internal compiled-plan read | 10 ms | Valkey hit |
@@ -4269,11 +3909,9 @@ This section captures the key architectural and design decisions made for the Wo
 - **Decision**: Enforce a strict database and logic constraint that a workflow definition can have at most one active workspace in `DRAFT` status at any given time.
 - **Rationale**: Simplifies the state model and canvas editing interface. It forces a git-like branch-and-merge flow, preventing concurrent conflicts where multiple administrators override each other's work in separate draft branches for the same workflow.
 
-### 10.2 Transactional Outbox Pattern for Event Publishing
+### 10.2 ~~Transactional Outbox Pattern for Event Publishing~~ — Removed
 
-- **Decision**: Use the Transactional Outbox pattern with a local `outbox` table and an asynchronous background worker (`OutboxRelay`) instead of writing directly to SNS from API goroutines.
-
-- **Rationale**: Guarantees eventual consistency and at-least-once event delivery. By persisting events within the same SQL transaction as the state modification (e.g. publishing or archiving), it avoids the "dual-write" problem where DB commits succeed but network errors cause broker dispatch failures.
+- **Removed.** This decision adopted a transactional outbox with a background relay in place of direct SNS writes. The service publishes no events (§7.2, §10.7), so the outbox table, relay, SNS publisher and Glue codec are gone; an outbound event added later designs its own.
 
 ### 10.3 Row-Level Security (RLS) for Multi-Tenant Isolation
 
@@ -4292,11 +3930,11 @@ This section captures the key architectural and design decisions made for the Wo
   2. **Wrong GUC**: query with `app.tenant_id = <tenant_B_id>` → zero rows for tenant A data (no error).
   3. **Missing GUC** (`missing_ok=true`): query without setting `app.tenant_id` → zero rows for any data (no error, fails closed).
 
-### 10.4 Separation of Database Connection Roles (API vs. Relay)
+### 10.4 Separation of Database Connection Roles (API vs. System)
 
-- **Decision**: Force the API handlers to connect to PostgreSQL using a role configured with `BYPASSRLS=false`, while background processes (Outbox Relay, TTL clean-up crons) use a system role configured with `BYPASSRLS=true`.
+- **Decision**: Force the API handlers to connect to PostgreSQL using a role configured with `BYPASSRLS=false`, while `scope=global` catalog writes (§10.16) use a system role configured with `BYPASSRLS=true`.
 
-- **Rationale**: Adheres to the principle of least privilege. The API handler's database role is strictly isolated and can never bypass RLS, reducing the impact of potential API security vulnerabilities. Background system processes need to query and partition rows across all tenants, which requires bypassing RLS to perform efficient unified batching.
+- **Rationale**: Adheres to the principle of least privilege. The API handler's database role is strictly isolated and can never bypass RLS, reducing the impact of potential API security vulnerabilities. Only the global-catalog writes, which have no single tenant, need to bypass RLS.
 
 ### 10.5 Stateless Guarded-Loop and Topological Validation
 
@@ -4341,11 +3979,9 @@ This section captures the key architectural and design decisions made for the Wo
 
 - **Rationale**: The `If-Match` header is the RFC 7232 standard for conditional updates and is idiomatic REST — it keeps the concurrency token out of the business payload and is compatible with HTTP caches and standards-compliant clients. Supporting both the header and the body field matches the user_service pattern and avoids breaking existing clients that pass the token in the body. Handler extraction is a one-liner (`c.GetHeader("If-Match")`) before DTO binding; if non-empty and parseable as an integer, it overrides the body field value. Clients that omit both get last-writer-wins semantics (acceptable for single-admin tenants).
 
-### 10.12 AWS Glue Schema Registry for Event Contracts
+### 10.12 ~~AWS Glue Schema Registry for Event Contracts~~ — Removed
 
-- **Decision**: Adopt AWS Glue Schema Registry to validate and encode outbound event payloads as JSON at runtime, for whichever outbound event this service publishes (none, currently — §7.2).
-
-- **Rationale**: Guarantees schema consistency and runtime validation of asynchronous events against design-time AsyncAPI contracts. By leveraging the Glue registry's native JSON Schema support, we achieve robust schema validation without the initial complexity of Protobuf compilation and distribution.
+- **Removed.** This decision adopted the Glue Schema Registry to encode outbound event payloads. The service publishes no events (§7.2), so it has no registry client; an outbound event added later chooses its own contract mechanism.
 
 ### 10.13 Scoped Tier-3 Amendment: `connector:`-Prefixed Service Tasks
 
@@ -4368,10 +4004,10 @@ This section captures the key architectural and design decisions made for the Wo
 
 ### 10.16 Reusable Module & Starter-Workflow Library Absorbed Into This Service
 
-- **Decision**: The "custom BPMN module"/"reusable authoring component" library, and a new "starter/predesigned workflow" library, are both modeled into this service's own schema (`workflow_module`/`workflow_module_version`/`workflow_template`, §2.1, Appendix A) rather than a separate service's database. Both support a `scope` dimension — `global` (platform-authored, `tenant_id NULL`, visible to every tenant) and `tenant` (that tenant's own saved-for-reuse content, RLS-scoped) — per an explicit product requirement that tenants can maintain their own reusable modules/starters alongside platform-provided ones. Global-row writes are gated by the `platform_operator` role at the handler layer (mirroring Org & Membership's identical pattern for its own global department catalog, OP-1) and go through the same `BYPASSRLS` system-role connection the Outbox Relay already uses (§10.4) — the ordinary RLS-bound API role's `WITH CHECK` clause structurally cannot write a `scope='global'` row (§2.1's RLS DDL).
+- **Decision**: The "custom BPMN module"/"reusable authoring component" library, and a new "starter/predesigned workflow" library, are both modeled into this service's own schema (`workflow_module`/`workflow_module_version`/`workflow_template`, §2.1, Appendix A) rather than a separate service's database. Both support a `scope` dimension — `global` (platform-authored, `tenant_id NULL`, visible to every tenant) and `tenant` (that tenant's own saved-for-reuse content, RLS-scoped) — per an explicit product requirement that tenants can maintain their own reusable modules/starters alongside platform-provided ones. Global-row writes are gated by the `platform_operator` role at the handler layer (mirroring Org & Membership's identical pattern for its own global department catalog, OP-1) and go through the `BYPASSRLS` system-role connection (§10.4) — the ordinary RLS-bound API role's `WITH CHECK` clause structurally cannot write a `scope='global'` row (§2.1's RLS DDL).
 - **Rationale**: This service already owns the entire versioned-BPMN-content lifecycle a module/starter library needs — draft → publish → version → clone (§3.3.10), `record_version` optimistic locking, RLS — and is the *only* consumer of module content, through `<bpmn:callActivity>` (§3.3.18). Colocating storage with its only consumer lets a workflow's calls resolve against it directly, and reuses infrastructure (this service's Postgres instance, already shared with Execution Service via separate schemas per §4.1/§5.1's database-per-service exception) instead of standing up a new deployable, database, and RLS/migration/CI surface for what is structurally more of the same kind of content this service already stores. A starter is deliberately **not** given the same DRAFT/PUBLISHED/ARCHIVED version history a module gets (§2.1) — "using" a starter is nothing more than submitting its `bpmn_xml` to the ordinary `POST /workflows` a hand-authored upload would use (§3.3.19), so it needs no lifecycle machinery of its own beyond simple CRUD.
 - **Open item, not resolved by this decision:** if the intended UI for browsing this content turns out to be CMS-like (cross-tenant search, tagging, thumbnails, marketplace-style discovery) rather than "just another versioned BPMN entity," that product shape could still justify pulling this back into a dedicated service later. Not pre-built for here — see Appendix E.
-- **Implementation note**: `scope=global` writes go through a dedicated second database pool (`SYSTEM_DATABASE_URL`), distinct from the primary pool the API and Outbox Relay share (§1.7.1/§1.8.1), gated at the handler layer by the `platform_operator` role check. The RLS policies on `workflow_module`/`workflow_module_version`/`workflow_template` use the same inline-policy style as every other table in this service (Appendix A). The `platform_operator` role/claim itself is provisional — no code confirms how a cross-tenant claim would reach `x-tenant-roles`, which is otherwise populated per-tenant (tracked in Appendix E).
+- **Implementation note**: `scope=global` writes go through a dedicated second database pool (`SYSTEM_DATABASE_URL`), distinct from the primary pool the API uses (§1.7.1), gated at the handler layer by the `platform_operator` role check. The RLS policies on `workflow_module`/`workflow_module_version`/`workflow_template` use the same inline-policy style as every other table in this service (Appendix A). The `platform_operator` role/claim itself is provisional — no code confirms how a cross-tenant claim would reach `x-tenant-roles`, which is otherwise populated per-tenant (tracked in Appendix E).
 
 ### 10.17 BPMN Element Allowlist Sourced From `workflow-models`
 
@@ -4393,7 +4029,6 @@ This section captures the key architectural and design decisions made for the Wo
 - **Resource Limits**:
   - Request: CPU 250m, Memory 512Mi
   - Limit: CPU 500m, Memory 1024Mi
-- **AWS Glue Schema Registry Read IAM Permissions**: The service pod's IAM role requires `glue:GetRegistry`, `glue:GetSchema`, `glue:GetSchemaVersion`, and `glue:QuerySchemaVersionMetadata` on the `GLUE_REGISTRY_ARN` resource. Write permissions (registering schemas) are restricted to deployment pipeline roles.
 - **Deployment mechanism**: `deploy/helm/` (Helm chart) is the source of truth for the values above — do not let this section drift out of sync with the chart. Includes NetworkPolicy, ServiceMonitor, and PrometheusRule (domain alerts sourced from §6.1.2) alongside the Deployment/Service/HPA/PDB.
 - **Migrations**: there is no auto-migration at server boot (`cmd/server/main.go` special-cases a `migrate` subcommand). The chart runs `/server migrate` as a `pre-install,pre-upgrade` Helm hook Job before the main Deployment rolls out, so every `helm upgrade --install` applies pending migrations first.
 - **Release pipeline**: `release.yml`'s `deploy-gate` job runs `helm upgrade --install --wait --atomic`, verifies the deployed image digest against the signed/published digest, waits for rollout, and gates on a 2-minute Prometheus error-rate check (`http_requests_total` 5xx ratio > 1%) — auto-rolling back via `helm rollback` on failure. A GitHub Release is only published if this gate passes.
@@ -4403,7 +4038,6 @@ This section captures the key architectural and design decisions made for the Wo
 - **RTO (Recovery Time Objective)**: 15 minutes for Multi-AZ automatic failover; less than 1 hour for Cross-Region database recovery.
 - **RPO (Recovery Point Objective)**: Less than 5 minutes for database backup transactions.
 - **Database Backup & PITR**: RDS automated snapshots taken daily with a 30-day retention window, supporting Point-in-Time Recovery.
-- **Outbox Relay Restart Behavior**: Following a database failover, the Outbox Relay worker restarts stateless loops, fetching pending rows from the `outbox_events` table where `published_at IS NULL`. Idempotency keys (`MessageDeduplicationId`) mapped on SNS ensure duplicate dispatches are handled safely at the receiving end.
 
 #### Per-Component DR Posture
 
@@ -4417,13 +4051,9 @@ Valkey is a pure operational cache — it holds no primary data and contributes 
 
 ElastiCache Multi-AZ replication (with automatic failover) is the primary mitigation. RTO for the cache tier matches ElastiCache's automatic replica promotion, typically under 60 seconds.
 
-##### Outbox and Event Durability
-
-`outbox_events` rows are stored in Postgres and are included in the daily RDS snapshots and PITR window. Events in-flight at the moment of a failover are not lost: the `platform-events` outbox runner resumes from any undelivered rows (`published_at IS NULL`) on restart, providing at-least-once SNS delivery. The SNS FIFO `MessageDeduplicationId` (derived from `outbox_events.id`) ensures consumers receive each event exactly once even if the runner replays a batch.
-
 ##### No Stored Object URLs
 
-`workflow_version.compiled_plan_json` is stored as JSONB directly in Postgres — there are no S3 presigned URL references embedded in any column. A region migration or cross-region recovery requires no rewrite of stored data; only the service configuration (`DATABASE_URL`, `VALKEY_ADDR`, `SNS_TOPIC_ARN`) needs updating.
+`workflow_version.compiled_plan_json` is stored as JSONB directly in Postgres — there are no S3 presigned URL references embedded in any column. A region migration or cross-region recovery requires no rewrite of stored data; only the service configuration (`DATABASE_URL`, `VALKEY_ADDR`) needs updating.
 
 ---
 
@@ -4438,12 +4068,11 @@ All automated tests live under `test/` (black-box) or co-located `_test.go` file
 | Unit — HTTP handlers (`test/unit/handler`) | Hand-rolled fakes; `gincommon.ProtectedMiddlewares` for request context | Each handler maps domain errors to correct HTTP status + RFC-9457 code; missing `x-tenant-id` → 401; non-admin role → 403; idempotency header absent → passes through; `record_version` absent on PUT /draft → 400 |
 | Unit — inbound event handler (`test/unit/handler`) | Hand-rolled `fakeMembershipRevoker` + `fakeLogger` | `HandleDepartmentMembershipRevoked` marks affected versions `is_valid=false`; silently skips version on `GetByID` error; a redelivered envelope reprocesses to the same result |
 | Unit — outbound clients | `httptest.NewServer` | `ExecutionClient` reads active instances and pauses tasks, every request held to the copy of the Execution Service's spec (`test/contract`); `MembershipClient` returns eligibility; both return `ErrUpstreamUnavailable` on connection failure |
-| Integration — repository (`test/integration/postgres`) | testcontainers real Postgres; `outbox.ApplySchema` + `migrate.Runner` applied | RLS: cross-tenant read with foreign GUC returns zero rows; `WITH CHECK` rejects INSERT with foreign `tenant_id`; single-draft partial-unique index blocks second DRAFT row; `record_version` trigger increments on every UPDATE; `statusOrNotFound` returns correct sentinel (absent vs wrong-status) |
-| Integration — outbox atomicity | testcontainers Postgres | Business write + outbox row commit in same `RunInTx`; `Enqueue` called outside a transaction returns error |
+| Integration — repository (`test/integration/postgres`) | testcontainers real Postgres; `migrate.Runner` applied | RLS: cross-tenant read with foreign GUC returns zero rows; `WITH CHECK` rejects INSERT with foreign `tenant_id`; single-draft partial-unique index blocks second DRAFT row; `record_version` trigger increments on every UPDATE; `statusOrNotFound` returns correct sentinel (absent vs wrong-status) |
 | Integration — idempotency middleware | Real Valkey container | Cache hit replays stored response; body-hash mismatch → 409 `IDEMPOTENCY_KEY_REPLAY`; absent header passes through transparently; nil cache passes through transparently |
 | Integration — draft concurrency | testcontainers Postgres | Two concurrent PUT /draft with same `record_version` → one wins 200, one gets `DRAFT_CONCURRENCY` 409 |
 | Contract — internal API | The real router (`test/contract`) | Every response of the compiled-plan read is one `api/internal-openapi.yaml` declares; both documents are valid OpenAPI 3; `make contract-breaking` refuses a breaking change against `main` and `make contract-check` a stale copy |
-| Event correctness | Unit (`core/service`) | No outbox write on Publish, Promote, Clone, or Archive — this service currently enqueues no outbound event of any kind (§7.2); the pause-tasks call made with the correct `tenantID`/`userID` on membership revocation |
+| Event correctness | Unit (`core/service`) | No event is emitted by Publish, Promote, Clone, or Archive — this service has no outbound event of any kind (§7.2); the pause-tasks call made with the correct `tenantID`/`userID` on membership revocation |
 | Security | Integration | DB role has `BYPASSRLS=false`; BPMN with XXE → 422; BPMN token bomb → 422; missing `x-tenant-id` → 401; cross-tenant GUC → zero rows; `RLSCrossTenantAccess` alert rule fires when counter increments |
 | Smoke (post-deploy) | Scripted | `/healthz` 200; `/readyz` 200 with `db_utilization`; one `GET /workflows`; one internal compiled-plan read for a known PUBLISHED version |
 
@@ -4461,8 +4090,6 @@ All automated tests live under `test/` (black-box) or co-located `_test.go` file
 ## Appendix A: Database Migration Scripts
 
 The database schema and policies are defined in SQL migration files using golang-migrate format (e.g., `db/migrations/0001_create_schema.up.sql`). Below is the combined DDL for all tables, constraints, indexes, and RLS policies.
-
-> **Ownership split:** `outbox_events` and `outbox_dead_letters` are created by `platform-events outbox.ApplySchema` at startup (tracked under `outbox_migrations`). They are shown here for reference completeness. The service migration files (`db/migrations/`) only contain the RLS policies for those tables (`0005_outbox_rls.up.sql`) — not the table DDL itself.
 
 ```sql
 CREATE TYPE workflow_version_status AS ENUM ('DRAFT', 'PUBLISHED', 'ARCHIVED');
@@ -4612,34 +4239,6 @@ CREATE TABLE workflow_template (
     )
 );
 
--- outbox_events and outbox_dead_letters are created by platform-events outbox.ApplySchema.
--- The service migration only adds RLS policies to these tables (0005_outbox_rls.up.sql).
-CREATE TABLE outbox_events (
-    id           UUID        PRIMARY KEY,
-    event_type   TEXT        NOT NULL,
-    payload      JSONB       NOT NULL,
-    tenant_id    TEXT        NOT NULL DEFAULT '',
-    trace_id     TEXT        NOT NULL DEFAULT '',
-    attempts     INT         NOT NULL DEFAULT 0,
-    last_error   TEXT        NOT NULL DEFAULT '',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    scheduled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    published_at TIMESTAMPTZ
-);
-
--- Table storing outbox events that failed to publish after max attempts
-CREATE TABLE outbox_dead_letters (
-    id         UUID        PRIMARY KEY,
-    event_type TEXT        NOT NULL,
-    payload    JSONB       NOT NULL,
-    tenant_id  TEXT        NOT NULL DEFAULT '',
-    trace_id   TEXT        NOT NULL DEFAULT '',
-    attempts   INT         NOT NULL,
-    last_error TEXT        NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL,
-    failed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 -- BEFORE UPDATE Trigger: manages updated_at and increments record_version
 -- The WHEN guard skips no-op updates (no WAL write, no spurious record_version bump)
 CREATE OR REPLACE FUNCTION update_workflow_meta_column()
@@ -4743,7 +4342,7 @@ CREATE POLICY tenant_isolation_policy ON workflow_module
     WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
     -- WITH CHECK intentionally excludes scope='global': the RLS-bound API role can
     -- never write a global row through this policy. Global catalog writes go
-    -- through the same BYPASSRLS system role the Outbox Relay already uses
+    -- through the BYPASSRLS system role
     -- (§10.4), gated at the handler layer by the platform_operator role check
     -- (§10.16) — mirrors Org & Membership's identical global-department-catalog
     -- pattern (OP-1: "only platform_operator may create/modify global-catalog
@@ -4793,20 +4392,6 @@ CREATE POLICY tenant_isolation_policy ON workflow_template
 -- table doesn't have, so it would raise an undefined-column error the first
 -- time the 1%-sample branch fired, had it ever been wired in as shown here.
 
-REVOKE ALL ON outbox_events FROM PUBLIC;
-ALTER TABLE outbox_events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE outbox_events FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation_policy ON outbox_events
-    USING (tenant_id = current_setting('app.tenant_id', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
-
-REVOKE ALL ON outbox_dead_letters FROM PUBLIC;
-ALTER TABLE outbox_dead_letters ENABLE ROW LEVEL SECURITY;
-ALTER TABLE outbox_dead_letters FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation_policy ON outbox_dead_letters
-    USING (tenant_id = current_setting('app.tenant_id', true))
-    WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
-
 -- Schema Indexes (Created Concurrently)
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX idx_workflow_name_trgm ON workflow USING gin (name gin_trgm_ops);
@@ -4825,8 +4410,6 @@ CREATE INDEX idx_mv_module_id ON workflow_module_version(module_id);
 CREATE UNIQUE INDEX idx_mv_single_draft ON workflow_module_version(module_id) WHERE status = 'DRAFT';
 CREATE INDEX idx_starter_name_trgm ON workflow_template USING gin (name gin_trgm_ops);
 CREATE INDEX idx_starter_scope_tenant_category ON workflow_template(scope, tenant_id, category);
-CREATE INDEX idx_outbox_events_pending ON outbox_events (scheduled_at, id) WHERE published_at IS NULL;
-CREATE INDEX idx_outbox_dead_letters_failed_at ON outbox_dead_letters (failed_at DESC);
 
 -- RLS violation audit log
 -- Captures sampled cross-tenant or missing-GUC access attempts for security monitoring.
@@ -5145,7 +4728,7 @@ All commits must follow the **Conventional Commits** specification. The format i
 Branch names must align with the conventional commit type and follow a consistent structure:
 `<type>/<short-description-or-ticket>`
 
-- **Feature branches**: `feat/add-temporal-outbox` or `feat/WF-402-bpmn-validation`
+- **Feature branches**: `feat/add-bpmn-modules` or `feat/WF-402-bpmn-validation`
 - **Bug fixes**: `fix/db-rls-leak` or `fix/WF-409-visibility-timeout`
 - **Refactoring**: `refactor/simplify-tarjan-scc`
 - **Documentation**: `docs/update-security-standards`
@@ -5191,7 +4774,6 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 | Term | Category | Definition |
 | --- | --- | --- |
 | **Identity Agnostic** | Architecture | The principle where the Definition Service stores only UUID references to users and departments, without managing or validating user profiles. Identity validation is delegated to the Org & Membership Service. |
-| **Transactional Outbox Pattern** | Architecture | A reliability pattern that prevents dual-write inconsistencies by persisting domain events to the database in the same transaction as state changes. A background worker (`OutboxRelay`) asynchronously publishes events to SNS, guaranteeing at-least-once delivery. |
 | **Triple-Layer Isolation** | Architecture | Multi-tenancy enforcement across three layers: (1) Gateway headers (`x-tenant-id`), (2) Database RLS policies, and (3) Orchestrator task queues (tenant-isolated or shared). Provides defense-in-depth against cross-tenant data leaks. |
 | **Clean Architecture** | Architecture | Layered design where core business logic (`core/domain`, `core/port`, `core/service`) is decoupled from concrete adapters (`adapter/inbound/*`, `adapter/outbound/*`). Enforced by `go-arch-lint` import rules. |
 | **Structural Divergence** | Architecture | A breaking change in workflow topology (e.g., adding/removing gateways, changing sequence flows, introducing new departments) that could break active execution instances. Detected at publish time; requires admin override or new workflow key. |
@@ -5212,7 +4794,6 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 | Term | Category | Definition |
 | --- | --- | --- |
 | **Artifact Hash** | Database | A canonical SHA-256 hash of every process in the bundled BPMN. Computed at publish time and stored in `workflow_version.artifact_hash`. |
-| **Outbox Table** | Database | A transactional event queue (`outbox`) storing domain events awaiting delivery to SNS. Events are inserted in the same transaction as state changes, then asynchronously published by the `OutboxRelay` worker. |
 | **Workflow Node Assignee Table** | Database | A denormalized reverse index (`workflow_node_assignee`) mapping users to workflow versions. Enables fast lookup of affected templates when a user loses department membership. Populated atomically during publish; never updated independently. |
 | **sqlc** | Database | A Go code generator that produces type-safe database query functions from hand-written SQL. Eliminates runtime SQL errors and provides compile-time type checking. |
 | **migrate.Runner** | Database | `platform-pgcommon/pkg/migrate.Runner` — a golang-migrate wrapper that applies service schema migrations (`db/migrations/NNNN_name.up.sql` / `.down.sql`) at process startup, tracked under `wf_definition_migrations`. |
@@ -5236,8 +4817,6 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 | **`workflow.template.published` Event** *(retired)* | Eventing | The Definition Service's only outbound SNS event, back when it had one. Emitted when a draft was promoted to `PUBLISHED` status, as a cache-warm push hint telling the Execution Service to pre-fetch the compiled plan. Retired platform-wide — producer, consumer, schema, and both services' AsyncAPI/OpenAPI entries all removed (§7.2, §10.7; `execution_service.md` §6.1/§6.2, Appendix A.5 decision 19) — once Execution's own cache-aside read was fixed to write through on a miss, making the eager prewarm this event drove redundant. The Definition Service currently emits no outbound event. |
 | **DepartmentMembershipRevoked Event** | Eventing | An inbound event from the Org & Membership Service indicating a user has been removed from a department. Triggers template invalidation if the user is a default assignee. Consumed from SQS queue `membership-workflow-q` by the shared workflow-events consumer, which forwards it to the Definition Service via `POST /internal/events`. |
 | **Shared Workflow-Events Consumer** | Eventing | A separate engine-wide service that consumes the SQS queues (e.g. `membership-workflow-q`) and HTTP-routes each envelope to the respective workflow service (Definition or Execution). Keeps the Definition Service API-only on the inbound path. |
-| **Outbox Relay Worker** | Eventing | A background daemon that polls the `outbox` table every 500ms, publishes pending events to SNS, and marks them as `SENT`. Implements exponential backoff and max retry limits (5 retries). |
-| **SNS Topic** | Eventing | Amazon Simple Notification Service topic (`wf.template.events`) used for publishing workflow lifecycle events. Enables loose coupling between the Definition Service and downstream consumers. |
 | **SQS Queue** | Eventing | Amazon Simple Queue Service queue (`membership-workflow-q`) subscribed to the `iam.membership.events` SNS topic. Provides durable, ordered delivery of membership revocation events to the shared workflow-events consumer (which then forwards them to the Definition Service over HTTP). |
 
 ### Observability & Monitoring
@@ -5245,7 +4824,7 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 | Term | Category | Definition |
 | --- | --- | --- |
 | **Prometheus Metrics** | Observability | Time-series metrics (counters, histograms, gauges) exposed via `/metrics` endpoint. Labeled with `tenant_id` to prevent noisy neighbor issues and enable strict SLAs. |
-| **OpenTelemetry (OTel)** | Observability | Distributed tracing framework used to propagate execution context across service boundaries. Trace context is injected into HTTP headers (`traceparent`) and SNS message attributes. |
+| **OpenTelemetry (OTel)** | Observability | Distributed tracing framework used to propagate execution context across service boundaries. Trace context is injected into HTTP headers (`traceparent`). |
 | **Structured Logging (Zap)** | Observability | JSON-formatted logging using Go's `uber-go/zap` library. All logs include correlated context fields (`tenant_id`, `user_id`, `trace_id`, `workflow_id`) for easy filtering in Loki. |
 | **Correlation ID** | Observability | A unique identifier (UUID) assigned to each request and propagated across all downstream calls. Enables end-to-end tracing of a single user action through multiple services. |
 | **Audit Log** | Observability | Structured security logs capturing all denied operations, validation failures, and unauthorized access attempts. Includes full audit lineage (who, what, when, why) for compliance. |
@@ -5276,7 +4855,6 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 | Term | Category | Definition |
 | --- | --- | --- |
 | **Audit Trail** | Compliance | A complete, immutable record of all state-changing operations (create, publish, archive, clone, promote). Includes actor, timestamp, and action details. Enables regulatory compliance and forensic investigation. |
-| **Data Retention** | Compliance | Outbox events are retained for 7 days post-processing. Enables replay and debugging while preventing unbounded storage growth. |
 | **Encryption at Rest** | Compliance | BPMN XML and compiled DSL are encrypted at the AWS RDS layer. No field-level encryption is applied; RLS and database-level encryption provide sufficient protection. |
 | **Tenant Isolation** | Compliance | Strict enforcement of tenant boundaries at three layers (gateway, database, orchestrator). Prevents any cross-tenant data leaks or unauthorized access. |
 
@@ -5344,6 +4922,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 
 | 1.30 | 2026-10-02 | **One pool runs; outside parties' pools and lanes are skipped; modules always run** (§3.1.4 code 20 and new codes 38–39, §4.1.2, §4.2, §4.3). A collaboration had been compiled pool by pool: messages between pools were bridged by a synthetic node, which a call-pool step and an admin stub task completed, department IDs were prefixed by pool, and publish refused a collaboration outright. That machinery is deleted. The workflow is the one process that is executable, not called and not marked ignore; a pool marked ignore, or not executable and not called, is an outside party's and produces nothing. `/validate` judges a collaboration as publish does. A called process runs as a module whether or not it is executable, and a call to a pool marked ignore is refused. A lane marked ignore is an outside party inside the process that runs: its tasks compile to nothing, and the person on the next task waits for the outside party. A call, subprocess or connector task in such a lane, a boundary on one of its tasks and a loop whose way back holds only its tasks are the new `IGNORED_LANE_WORK`, and a call cannot bind a module lane to such a lane; no runnable process is the new `NO_RUNNABLE_PROCESS`. A receive task with no message of its own waits for the message flow into it, or for its own id. `textAnnotation`, `association`, `documentation`, `property` and the data-association children are diagram-only. An outside pool's drawn calls are never made, and only a message flow into a receive task or message boundary that runs needs a name. `CompiledCollaboration.messages`, `CompiledPlan.ignored`, `DepartmentDef.ignore` and `call_pool` steps are gone (workflow-models LLD rev 2.15). |
 | 1.31 | 2026-10-07 | **What an outside party can complete, and no authored credentials** (§3.1.4 new code 40, §3.3.12.2, §4.1.3.3). The published-version nodes read gains `waits`: the receive tasks and message boundaries that no send task of the plan feeds, each with the key the Execution Service takes an outside party's answer by. A message boundary keeps its BPMN id (`MessagePath.BoundaryID`, workflow-models LLD rev 2.16) so it can be addressed. A connector input whose target is a secret field of its connector type is refused (`CONNECTOR_SECRET_AUTHORED`): a connector always uses the tenant's stored credential, so a diagram never names a secret path. A connector input's `source` is `=name` for an instance variable or any other text for a literal. |
+| 1.32 | 2026-10-08 | **The service has no outbox, relay, SNS publisher or Glue codec** (§1.1, §1.2, §1.4, §1.5, §1.8, §2.2, §2.3, §6, §7, §8, §9, §10.2, §10.4, §10.12, §11, Appendix A). It publishes no event, and the apparatus had been kept against a future producer; it also made every cluster boot require SNS and Glue settings no deployment has. The outbox tables and their RLS migration, the relay worker and its alert, the `OutboxRepository` port, the `AWS_USE_STUB`, `SNS_TOPIC_ARN`, `GLUE_REGISTRY_NAME` and `OUTBOX_*` settings and the Glue codec are gone. The Execution Service and Org & Membership URLs and tokens are required whenever `APP_ENV` is not `dev`. A future outbound event designs its contract and consumer first, and brings its own outbox. |
 ---
 
 ## Appendix E: Open Items

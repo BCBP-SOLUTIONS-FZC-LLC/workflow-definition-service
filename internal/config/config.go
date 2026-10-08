@@ -42,16 +42,6 @@ type Config struct {
 	CacheCompiledPlanTTL time.Duration
 	IdempotencyTTL       time.Duration
 
-	AWSUseStub         bool
-	AWSRegion          string
-	SNSTopicARN        string
-	AWSEndpointURL     string
-	GlueRegistryName   string
-	GlueSchemaCacheTTL time.Duration
-
-	OutboxPollInterval time.Duration
-	OutboxBatchSize    int
-
 	InternalAPIToken string
 
 	OrgMembershipBaseURL    string
@@ -108,16 +98,6 @@ func Load() (*Config, error) {
 		CacheCompiledPlanTTL: getEnvDurationOrDefault("CACHE_COMPILED_PLAN_TTL", time.Hour),
 		IdempotencyTTL:       getEnvDurationOrDefault("IDEMPOTENCY_TTL", 24*time.Hour),
 
-		AWSUseStub:         getEnvBoolOrDefault("AWS_USE_STUB", true),
-		AWSRegion:          getEnvOrDefault("AWS_REGION", "us-east-1"),
-		SNSTopicARN:        getEnvOrDefault("SNS_TOPIC_ARN", ""),
-		AWSEndpointURL:     getEnvOrDefault("AWS_ENDPOINT_URL", ""),
-		GlueRegistryName:   getEnvOrDefault("GLUE_REGISTRY_NAME", ""),
-		GlueSchemaCacheTTL: getEnvDurationOrDefault("GLUE_SCHEMA_CACHE_TTL", 5*time.Minute),
-
-		OutboxPollInterval: getEnvDurationOrDefault("OUTBOX_POLL_INTERVAL", 500*time.Millisecond),
-		OutboxBatchSize:    getEnvIntOrDefault("OUTBOX_BATCH_SIZE", 50),
-
 		InternalAPIToken: getEnvOrDefault("INTERNAL_API_TOKEN", ""),
 
 		OrgMembershipBaseURL:    getEnvOrDefault("ORG_MEMBERSHIP_BASE_URL", ""),
@@ -163,12 +143,6 @@ func (c *Config) validate() error {
 	if c.OTELTracesSamplerRatio < 0.0 || c.OTELTracesSamplerRatio > 1.0 {
 		return fmt.Errorf("OTEL_TRACES_SAMPLER_RATIO must be in [0.0, 1.0]")
 	}
-	if c.OutboxBatchSize <= 0 {
-		return fmt.Errorf("OUTBOX_BATCH_SIZE must be > 0")
-	}
-	if c.OutboxPollInterval <= 0 {
-		return fmt.Errorf("OUTBOX_POLL_INTERVAL must be > 0")
-	}
 	if c.ExecutionClientTimeout <= 0 {
 		return fmt.Errorf("EXECUTION_CLIENT_TIMEOUT must be > 0")
 	}
@@ -184,23 +158,15 @@ func (c *Config) validate() error {
 	if c.AppEnv == "prod" && c.SystemDatabaseURL == "" {
 		return fmt.Errorf("SYSTEM_DATABASE_URL is required in prod environment")
 	}
-	if !c.AWSUseStub {
-		if c.SNSTopicARN == "" {
-			return fmt.Errorf("SNS_TOPIC_ARN is required when AWS_USE_STUB=false")
+	if c.AppEnv != "dev" {
+		if c.OrgMembershipBaseURL == "" {
+			return fmt.Errorf("ORG_MEMBERSHIP_BASE_URL is required in non-dev environments")
 		}
-		if c.GlueRegistryName == "" {
-			return fmt.Errorf("GLUE_REGISTRY_NAME is required when AWS_USE_STUB=false")
+		if c.ExecutionServiceURL == "" {
+			return fmt.Errorf("EXECUTION_SERVICE_URL is required in non-dev environments")
 		}
-		if c.AppEnv != "dev" {
-			if c.OrgMembershipBaseURL == "" {
-				return fmt.Errorf("ORG_MEMBERSHIP_BASE_URL is required in non-dev environments when AWS_USE_STUB=false")
-			}
-			if c.ExecutionServiceURL == "" {
-				return fmt.Errorf("EXECUTION_SERVICE_URL is required in non-dev environments when AWS_USE_STUB=false")
-			}
-			if c.ExecutionServiceToken == "" {
-				return fmt.Errorf("EXECUTION_SERVICE_TOKEN is required in non-dev environments when AWS_USE_STUB=false")
-			}
+		if c.ExecutionServiceToken == "" {
+			return fmt.Errorf("EXECUTION_SERVICE_TOKEN is required in non-dev environments")
 		}
 	}
 	return nil

@@ -11,8 +11,6 @@ The Definition Service exposes a REST API consumed by the **frontend workflow bu
 Frontend Builder ──REST──► Definition Service ◄──internal HTTP──► Execution Service
                                     │
                              PostgreSQL + Valkey
-                                    │
-                              AWS SNS (domain events)
 ```
 
 | Responsibility | Detail |
@@ -22,7 +20,7 @@ Frontend Builder ──REST──► Definition Service ◄──internal HTTP�
 | **Compilation** | Converts validated BPMN graphs into immutable JSON DSL execution plans |
 | **Versioning** | Manages DRAFT → PUBLISHED → ARCHIVED lifecycle with optimistic concurrency |
 | **Serving** | Serves compiled DSLs to the Execution Service on its internal HTTP API |
-| **Event publishing** | Transactional-outbox → AWS SNS pipeline is wired but currently has no outbound event types defined |
+| **Events** | Publishes none and keeps no outbox; the only event path is inbound |
 | **Membership sync** | Consumes `DepartmentMembershipRevoked` events (via `POST /internal/events`) to invalidate affected template assignees |
 
 > **Architecture** — [ARCHITECTURE.md](ARCHITECTURE.md): layer model, sequence diagrams, BPMN compiler reference, configuration reference, and error catalog. Diagram sources live in [docs/architecture/](docs/architecture/).
@@ -79,10 +77,10 @@ make setup
 # 4. Start local infra (PostgreSQL 18 + Valkey 8)
 make docker-up
 
-# 5. Apply schema migrations (outbox + domain) — the server does NOT migrate at boot
+# 5. Apply schema migrations — the server does NOT migrate at boot
 make migrate
 
-# 6. Start the server (AWS stubs active by default)
+# 6. Start the server
 go run ./cmd/server
 ```
 
@@ -90,7 +88,6 @@ The server is ready when you see:
 
 ```sh
 INFO  HTTP server starting         {"addr": ":8080"}
-INFO  outbox relay starting
 ```
 
 Verify:
@@ -105,16 +102,12 @@ curl http://localhost:8080/metrics   # Prometheus exposition
 
 ## Local Development
 
-### AWS stubs
+### Full stack (end-to-end)
 
-By default `AWS_USE_STUB=true` in `.env.example`. This activates a no-op stub SNS publisher so the service boots without any AWS credentials. (The service does not consume SQS in-process — inbound events arrive over HTTP at `POST /internal/events`.)
-
-### LocalStack + full stack (end-to-end)
-
-`make docker-up` includes a LocalStack container that emulates SNS locally. To run the service against real AWS clients and test the full event pipeline:
+To run the service against the local stubs and the smoke test:
 
 ```bash
-# 1. Start everything (Postgres + Valkey + LocalStack) and apply the schema
+# 1. Start everything (Postgres + Valkey + PgBouncer) and apply the schema
 make docker-up
 make migrate
 
@@ -122,9 +115,9 @@ make migrate
 go run ./cmd/stub/execution &    # :8083 (internal API + /control toggle)
 go run ./cmd/stub/membership &   # :8081 (HTTP + /control toggle)
 
-# 3. Run the server against LocalStack and stubs (AWS_USE_STUB=false)
+# 3. Run the server against the stubs
 ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_URL=http://localhost:8083 \
-  AWS_USE_STUB=false go run ./cmd/server &
+  go run ./cmd/server &
 
 # 4. Run the smoke test
 ./scripts/smoke-test.sh
@@ -172,7 +165,7 @@ make help
 | `make generate` | sqlc generate (queries) |
 | `make mock` | Regenerate GoMock stubs for `core/port` interfaces |
 | `make build` | Compile binary to `bin/server` |
-| `make migrate` | Apply schema migrations (outbox + domain) and exit — not run at server boot |
+| `make migrate` | Apply schema migrations and exit — not run at server boot |
 | `make test` | Unit tests with race detector and coverage (internal + test/unit) |
 | `make test-integration` | Integration tests (spins up Docker containers via testcontainers-go automatically; requires running Docker) |
 | `make cover` | Unit tests + coverage summary |
@@ -186,7 +179,7 @@ make help
 | `make schema-register` / `make schema-prune` | Register/retire event schemas in AWS Glue Schema Registry |
 | `make docker-build` / `make docker-lint` / `make docker-trivy` | Build the container image, lint the Dockerfile, scan for CVEs |
 | `make godoc` | Serve Go package documentation locally via pkgsite (`http://localhost:8080`) |
-| `make docker-up` | Start PostgreSQL + Valkey (+ LocalStack + PgBouncer) |
+| `make docker-up` | Start PostgreSQL + Valkey (+ PgBouncer) |
 | `make docker-down` | Stop infra |
 | `make clean` | Remove `bin/`, `gen/`, coverage, mock outputs |
 
@@ -402,7 +395,7 @@ helm upgrade workflow-definition-service ./deploy/helm --install --namespace <ns
 
 **Ports and probes.** The Service and Deployment both expose named `http` (8080) and `metrics` (9091) ports. `startupProbe`/`livenessProbe`/`readinessProbe` all target `http` — `/healthz` is a trivial liveness check, `/readyz` actually verifies the Postgres pool and Valkey are reachable (`cmd/server/handlers.go`), so a pod only receives traffic once its real dependencies are up.
 
-**Migrations run as a Helm hook, not at boot.** `cmd/server/main.go` never migrates on the normal server boot path — schema changes are applied by a dedicated `migrate` subcommand (`/server migrate`) that runs the outbox schema and this service's own domain migrations, then exits. Running that inline at boot would let two replicas race on `golang-migrate`'s advisory lock during a rolling deploy, stalling the loser and risking a readiness-probe timeout for no reason.
+**Migrations run as a Helm hook, not at boot.** `cmd/server/main.go` never migrates on the normal server boot path — schema changes are applied by a dedicated `migrate` subcommand (`/server migrate`) that runs this service's domain migrations, then exits. Running that inline at boot would let two replicas race on `golang-migrate`'s advisory lock during a rolling deploy, stalling the loser and risking a readiness-probe timeout for no reason.
 
 The chart wires this up as `templates/migrate-job.yaml`, a Kubernetes `Job` annotated `helm.sh/hook: pre-install,pre-upgrade`. Helm runs it — and waits for it to complete — before rolling out the Deployment, so every `helm upgrade --install` applies pending migrations first, sequentially, with no replica race. It's gated by `migrationJob.enabled` (default `true`) in case migrations are ever driven out-of-band instead.
 
@@ -412,14 +405,14 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 
 `podDisruptionBudget.minAvailable` is `1`: at a 2-replica floor, `minAvailable: 2` would block every voluntary disruption (node drains, cluster upgrades) — `1` allows exactly one pod to be evicted at a time while guaranteeing the service never drops to zero replicas from a voluntary action.
 
-`terminationGracePeriodSeconds` is `60`. `cmd/server/app.go`'s shutdown sequence on `SIGTERM`: an HTTP `Shutdown(ctx)` bounded by a single 30-second context, then the outbox relay's own `Stop()` (also uncancellable, ~30-second internal drain default), then a final pool drain bounded by whatever remains of the original 30-second deadline. In practice this finishes well under 30 seconds — but the grace period carries real headroom above the worst case rather than assuming 30 seconds caps the whole sequence.
+`terminationGracePeriodSeconds` is `60`. `cmd/server/app.go`'s shutdown sequence on `SIGTERM`: an HTTP and a metrics `Shutdown(ctx)` bounded by a single 30-second context, then a final pool drain bounded by whatever remains of that deadline. In practice this finishes well under 30 seconds; the grace period carries real headroom above it.
 
 **Secrets.** Two mutually exclusive modes, selected by whether `existingSecret` is set:
 
 - **`existingSecret: "<name>"`** (recommended beyond local testing) — points at a Secret already provisioned by External Secrets Operator, the AWS Secrets Manager CSI driver, or Sealed Secrets. The chart creates no Secret resource of its own. Bump `rotationEpoch` (`--set rotationEpoch=$(date +%s)`) to force a rollout after the external secret rotates.
-- **`secretValues.*`** (dev/CI only) — pass real values via `--set` or a Helm secrets plugin. `secret.yaml` hard-fails the render if any key required by `envFromSecret` (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `VALKEY_PASSWORD`, `SNS_TOPIC_ARN`, `INTERNAL_API_TOKEN`, `EXECUTION_SERVICE_TOKEN`) is empty. These land in the Helm release history unencrypted (base64) — never use this mode against a shared cluster.
+- **`secretValues.*`** (dev/CI only) — pass real values via `--set` or a Helm secrets plugin. `secret.yaml` hard-fails the render if any key required by `envFromSecret` (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `VALKEY_PASSWORD`, `INTERNAL_API_TOKEN`, `EXECUTION_SERVICE_TOKEN`) is empty. These land in the Helm release history unencrypted (base64) — never use this mode against a shared cluster.
 
-**Networking.** `networkPolicy.enabled: true` by default. The gateway/ingress-controller rule and the named callers (the Execution Service) both reach `8080`; the gateway routes only the public path prefixes (`ingress.hosts[].paths`), so `/api/v1/internal` is reachable only in-cluster, and every internal route also requires `x-internal-token`. A separate rule scopes `/metrics` scraping to the monitoring namespace only. Egress allows DNS, HTTPS (AWS APIs), Postgres/PgBouncer, Valkey, and OTel OTLP explicitly, plus same-namespace pod egress for `ORG_MEMBERSHIP_BASE_URL` and `EXECUTION_SERVICE_URL`.
+**Networking.** `networkPolicy.enabled: true` by default. The gateway/ingress-controller rule and the named callers (the Execution Service) both reach `8080`; the gateway routes only the public path prefixes (`ingress.hosts[].paths`), so `/api/v1/internal` is reachable only in-cluster, and every internal route also requires `x-internal-token`. A separate rule scopes `/metrics` scraping to the monitoring namespace only. Egress allows DNS, HTTPS, Postgres/PgBouncer, Valkey, and OTel OTLP explicitly, plus same-namespace pod egress for `ORG_MEMBERSHIP_BASE_URL` and `EXECUTION_SERVICE_URL`.
 
 `ingress.type` supports either `HTTPRoute` (Gateway API — default) or classic `Ingress`. CORS and gateway-level rate limiting attach via an Envoy Gateway `SecurityPolicy` (`ingress.securityPolicy`) when enabled.
 
@@ -430,7 +423,6 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 - **Compiled-plan read error rate/latency** — the internal route's own 5xx ratio and p99, since this is the one call the Execution Service depends on synchronously.
 - **BPMN validation failure rate** — sustained activity on `wf_validation_failures_total` (emitted only by the standalone `/validate` endpoint).
 - **Publish latency and retry exhaustion** — p95 of `wf_publish_latency_seconds` exceeding 2s, and any increase in `pgcommon_retry_exhausted_total`.
-- **Outbox health** — delivery stalls (`outbox_dead_letters_total`), backlog (`outbox_pending_total`), relay-internal errors.
 - **Internal event ingest failures** — sustained `bad_payload`/`error` results on `POST /internal/events`.
 - **Postgres query error rate** — `pgcommon_query_total{status="error"}`.
 - **Panics** — any increase in `http_panic_total`, paged immediately.
@@ -472,7 +464,7 @@ make schema-pull        # pull the platform-schemagov image
 make extract-schemas    # api/asyncapi.yaml → internal/eventschema/*.json
 make schema-validate    # 8-pass structural/lifecycle/drift validation, no AWS required
 make schema-diff CURRENT=<f> PROPOSED=<f> [SCHEMA_NAME=<name>]   # pure file-to-file diff
-make schema-register     # register into AWS Glue Schema Registry (needs AWS creds or LocalStack)
+make schema-register     # register into AWS Glue Schema Registry (needs AWS creds)
 make schema-prune        # report orphaned Glue schemas (EXECUTE=true to actually delete)
 ```
 
@@ -482,7 +474,7 @@ make schema-prune        # report orphaned Glue schemas (EXECUTE=true to actuall
 
 | Variable | Used by | Notes |
 | --- | --- | --- |
-| `GLUE_REGISTRY_NAME` | Running service (`internal/config`) **and** CI tooling | Required at runtime when `AWS_USE_STUB=false` — the service's Glue codec resolves schemas against this registry, encoding at SNS-publish time (via `events.WithCodec`) rather than at outbox-enqueue time. |
+| `GLUE_REGISTRY_NAME` | CI tooling only | **Not read by the running service** — it keeps no Glue client. Names the registry the `schema-register`/`schema-prune` steps work against. |
 | `GLUE_REGISTRY_ARN` | CI/schema-gov tooling only | **Not read by the running service** — no corresponding field on `internal/config.Config`. It scopes IAM policy for the `schema-register`/`schema-prune` pipeline steps, not application behavior. |
 | `SCHEMA_GOV_IMAGE` | `make schema-*` targets and CI | Pins the `platform-schemagov` image tag used by every schema command; not read by the server binary at all. |
 
@@ -525,7 +517,7 @@ See [ARCHITECTURE.md § BPMN Compiler](ARCHITECTURE.md#bpmn-compiler) for the fu
 | HTTP | Gin + `platform-gincommon` (OTel, Prometheus, Zap, auth) |
 | Database | PostgreSQL 18 · pgx/v5 · sqlc · golang-migrate · `platform-pgcommon` (pool & RLS) |
 | Cache / locks | Valkey 8 · go-redis/v9 |
-| Events | Outbound: AWS SNS via `platform-events` transactional outbox (stub available). Inbound: HTTP `POST /internal/events` from the shared workflow-events consumer |
+| Events | None published, no outbox. Inbound: HTTP `POST /internal/events` from the shared workflow-events consumer |
 | Contracts | OpenAPI 3 · kin-openapi (tests) · oasdiff (breaking-change gate) |
 | Observability | OTel traces · Prometheus metrics · Zap structured logs |
 | Testing | GoMock · race detector · `testcontainers-go` (integration) |
@@ -552,22 +544,6 @@ Coverage gate: **95%** on unit tests. The postgres repo adapter (`internal/adapt
 ---
 
 ## Common pitfalls
-
-**`OutboxRepository.Enqueue` outside a transaction**
-
-`Enqueue` checks that a `pgx.Tx` is present in the context and returns an error otherwise. Always call it inside `Transactor.RunInTx`:
-
-```go
-// Correct — business write and outbox commit atomically:
-s.transactor.RunInTx(ctx, func(ctx context.Context) error {
-    s.versionRepo.Publish(ctx, ...)
-    return s.outboxRepo.Enqueue(ctx, envelope) // same transaction
-})
-
-// Wrong — Enqueue will return an error:
-s.versionRepo.Publish(ctx, ...)
-s.outboxRepo.Enqueue(ctx, envelope) // no transaction in context
-```
 
 **Route added without `ProtectedMiddlewares`**
 
@@ -596,14 +572,12 @@ Database: PostgreSQL 18, schema `workflow_definition`. Multi-tenancy is enforced
 | `workflow` | Root template entity — business key, name, active version pointer |
 | `workflow_version` | Versioned snapshot — BPMN XML, compiled DSL, status lifecycle |
 | `workflow_node_assignee` | Denormalised reverse index: user → versions that reference them as default assignees |
-| `outbox_events` | Transactional event queue for SNS delivery (published_at = NULL → NOW()) |
-| `outbox_dead_letters` | Failed events that exhausted max attempts |
 
 See full DDL in [`db/migrations/`](db/migrations/).
 
 ### Query patterns
 
-Query definitions in `db/queries/` are compiled to type-safe Go by [sqlc](https://sqlc.dev). Generated output goes to `internal/adapter/outbound/postgres/db/`. Repository adapters hold a `*pgcommon.Pool` value and use transaction/connection helpers (`WithConn`, `RunInTx`) to run sqlc-generated queries. Outbox enqueuing writes `outbox_events` through the same transaction context via `outbox.Enqueue(ctx, tx, env)`; the background delivery relay is handled entirely by the `platform-events` outbox runner.
+Query definitions in `db/queries/` are compiled to type-safe Go by [sqlc](https://sqlc.dev). Generated output goes to `internal/adapter/outbound/postgres/db/`. Repository adapters hold a `*pgcommon.Pool` value and use transaction/connection helpers (`WithConn`, `RunInTx`) to run sqlc-generated queries.
 
 ```bash
 make generate          # runs sqlc generate (queries)

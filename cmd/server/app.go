@@ -9,7 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/outbox"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
@@ -24,7 +23,6 @@ type app struct {
 	cache         port.CacheStore
 	httpServer    *http.Server
 	metricsServer *http.Server
-	outboxRelay   *outbox.Runner
 	shutdown      func()
 	cacheClose    io.Closer
 }
@@ -61,18 +59,6 @@ func (a *app) startServers() {
 			os.Exit(1)
 		}
 	}()
-
-	go func() {
-		a.log.Info("outbox relay starting", map[string]any{
-			"poll_interval": a.cfg.OutboxPollInterval.String(),
-			"batch_size":    a.cfg.OutboxBatchSize,
-		})
-		// Uses a fresh background context, not the shutdown ctx, so an in-flight
-		// SNS publish isn't cancelled mid-flight; stopServers drives graceful stop instead.
-		if err := a.outboxRelay.Start(context.Background()); err != nil {
-			a.log.Error("outbox relay exited", map[string]any{"error": err.Error()})
-		}
-	}()
 }
 
 func (a *app) stopServers(ctx context.Context) {
@@ -81,10 +67,6 @@ func (a *app) stopServers(ctx context.Context) {
 	}
 	if err := a.metricsServer.Shutdown(ctx); err != nil {
 		a.log.Error("metrics server shutdown error", map[string]any{"error": err.Error()})
-	}
-
-	if err := a.outboxRelay.Stop(); err != nil {
-		a.log.Error("outbox relay stop error", map[string]any{"error": err.Error()})
 	}
 
 	if err := a.pool.DrainAndClose(ctx); err != nil {

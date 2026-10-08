@@ -5,7 +5,7 @@ set -euo pipefail
 
 PROFILE="${1:-.coverage/coverage.out}"
 MODULE="github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/"
-EXCLUDE="postgres/db/|/postgres/|/mocks/|/glue/|noop_logger\.go|asyncapi\.go|swagger"
+EXCLUDE="postgres/db/|/postgres/|/mocks/|noop_logger\.go|asyncapi\.go|swagger"
 
 [ -f "$PROFILE" ] || { echo "profile not found: $PROFILE  (run 'make test' first)" >&2; exit 1; }
 

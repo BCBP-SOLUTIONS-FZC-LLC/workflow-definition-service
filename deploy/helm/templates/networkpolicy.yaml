@@ -69,7 +69,7 @@ spec:
         - port: 53
           protocol: TCP
 
-    # Allow HTTPS to AWS endpoints (SNS, Glue, STS).
+    # Allow HTTPS egress.
     - ports:
         - port: 443
           protocol: TCP

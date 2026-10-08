@@ -2,9 +2,7 @@ package port
 
 import (
 	"context"
-	"encoding/json"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
 	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -54,15 +52,6 @@ type AssigneeRepository interface {
 	) error
 	ListByUser(ctx context.Context, tenantID, userID uuid.UUID) ([]*domain.NodeAssignee, error)
 	DeleteByVersion(ctx context.Context, tenantID, versionID uuid.UUID) error
-}
-
-// OutboxRepository enqueues events inside a business transaction.
-// The outbox relay (fetch → publish → mark-sent/failed) is handled entirely
-// by the platform-events outbox.Runner.
-// The envelope is stored as canonical JSON by platform-events so the runner can
-// deserialise and publish it without any service-side transformation.
-type OutboxRepository interface {
-	Enqueue(ctx context.Context, env events.Envelope[json.RawMessage]) error
 }
 
 type ConnectorAliasRepository interface {

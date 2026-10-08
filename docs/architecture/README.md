@@ -15,7 +15,5 @@ Render locally with the [Mermaid VS Code / IntelliJ plugin](https://marketplace.
 | `internal-compiled-plan-flow.mmd` | Key runtime flows → Internal compiled-plan read |
 | `membership-revoked-flow.mmd` | Key runtime flows → DepartmentMembershipRevoked |
 | `archive-workflow-flow.mmd` | Key runtime flows → Archive workflow |
-| `outbox-relay-flow.mmd` | Key runtime flows → Outbox relay (high-level) |
-| `outbox-poll-cycle.mmd` | Outbox pattern → Outbox poll cycle (detailed state machine) |
 | `pgcommon-withconn-flow.mmd` | platform-pgcommon → Connection lifecycle → `WithConn` |
 | `pgcommon-runintx-flow.mmd` | platform-pgcommon → Connection lifecycle → `RunInTx` |

@@ -24,7 +24,6 @@ type VersionDeps struct {
 	Workflows  port.WorkflowRepository
 	Versions   port.WorkflowVersionRepository
 	Assignees  port.AssigneeRepository
-	Outbox     port.OutboxRepository
 	Membership port.MembershipService
 	Execution  port.ExecutionService
 	Compiler   port.PlanCompiler
@@ -39,7 +38,6 @@ type VersionService struct {
 	workflows  port.WorkflowRepository
 	versions   port.WorkflowVersionRepository
 	assignees  port.AssigneeRepository
-	outbox     port.OutboxRepository
 	membership port.MembershipService
 	execution  port.ExecutionService
 	compiler   port.PlanCompiler
@@ -54,7 +52,6 @@ func NewVersionService(d VersionDeps) *VersionService {
 		workflows:  d.Workflows,
 		versions:   d.Versions,
 		assignees:  d.Assignees,
-		outbox:     d.Outbox,
 		membership: d.Membership,
 		execution:  d.Execution,
 		compiler:   d.Compiler,

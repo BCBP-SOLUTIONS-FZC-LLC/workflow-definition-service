@@ -5,12 +5,12 @@
 # /api/v1/internal/events (DepartmentMembershipRevoked).
 #
 # Prerequisites (all must be running before this script):
-#   make docker-up                             # postgres + valkey + localstack
+#   make docker-up                             # postgres + valkey + pgbouncer
 #   make migrate
 #   go run ./cmd/stub/execution &              # HTTP stub :8083 (internal API + /control)
 #   go run ./cmd/stub/membership &             # HTTP stub :8081
 #   ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_URL=http://localhost:8083 \
-#     AWS_USE_STUB=false go run ./cmd/server & # definition service :8080
+#     go run ./cmd/server &                    # definition service :8080
 #
 # PgBouncer note:
 #   If running with PgBouncer in front of Postgres, set DATABASE_URL to the
@@ -591,13 +591,6 @@ if [ "$HAS_PSQL" = true ]; then
   [ "$PUB_VALID" = "f" ] || [ "$PUB_VALID" = "false" ] \
     && pass "PUBLISHED version is_valid=false after revocation" \
     || fail "PUBLISHED version is_valid='${PUB_VALID}' (want false)"
-
-  # This service publishes no events, so the invalidation writes no outbox row.
-  PUB_OUTBOX=$(psql "$DB_URL" -tAc \
-    "SELECT COUNT(*) FROM outbox_events WHERE payload::text LIKE '%${V3_DRAFT_ID}%'" 2>/dev/null || echo "?")
-  [ "$PUB_OUTBOX" = "0" ] \
-    && pass "No outbox event for PUBLISHED invalidation" \
-    || fail "outbox_events count=${PUB_OUTBOX} for PUBLISHED version (want 0)"
 
   # Redelivery converges on the same state — the property that stands in for a
   # dedup registry (LLD §2.3.1). Re-send the same envelope and assert the

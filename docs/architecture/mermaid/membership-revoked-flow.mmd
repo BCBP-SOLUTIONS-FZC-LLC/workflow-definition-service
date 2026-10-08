@@ -4,7 +4,6 @@ sequenceDiagram
     participant Svc as VersionService.HandleDepartmentMembershipRevoked
     participant Tx as Transactor.RunInTx
     participant Repo as VersionRepo
-    participant Outbox as OutboxRepo.Enqueue
 
     Consumer ->>+ Handler: POST /internal/events (envelope)
     Handler ->> Handler: WithGUCSet(tenant_id) · dispatch by type
@@ -13,7 +12,6 @@ sequenceDiagram
         Svc ->>+ Tx: RunInTx(ctx, fn)
         Tx ->> Repo: VersionRepo.GetByID  →  check is_valid
         Tx ->> Repo: VersionRepo.SetInvalid(ctx, versionID, nodes)
-        Tx ->> Outbox: OutboxRepo.Enqueue(ctx, TemplateEligibilityInvalidated)
         Tx -->>- Svc: commit
     end
     Svc -->>- Handler: nil

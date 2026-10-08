@@ -64,7 +64,7 @@ groups:
           description: >-
             {{ $value | humanizePercentage }} of requests are returning 5xx errors
             over the last 5 minutes. Investigate recent deployments, dependency
-            health (Postgres, Valkey, SNS), and application logs.
+            health (Postgres, Valkey), and application logs.
 
       - alert: WorkflowDefinitionServiceCriticalErrorRate
         expr: |
@@ -216,64 +216,6 @@ groups:
             repeatedly and gave up without committing. Reason: {{ $labels.reason }}.
             The caller received an error; check for a burst of concurrent publishes
             against the same workflow.
-
-  - name: workflow_definition_service_outbox
-    rules:
-
-      - alert: WorkflowDefinitionServiceOutboxRelayDeliveryStalled
-        expr: |
-          rate(outbox_dead_letters_total{job="workflow-definition-service"}[5m]) > 0
-        for: 1m
-        labels:
-          severity: critical
-          team: platform
-        annotations:
-          summary: Outbox relay delivery stalled
-          description: >-
-            Outbox events have exhausted their maximum retries and been moved to
-            the dead-letter table (platform-events outbox_dead_letters_total).
-            Immediate operator intervention is required to inspect outbox_dead_letters.
-
-      - alert: WorkflowDefinitionServiceOutboxBacklogGrowing
-        expr: |
-          outbox_pending_total{job="workflow-definition-service"} > 100
-        for: 15m
-        labels:
-          severity: warning
-          team: platform
-        annotations:
-          summary: Outbox relay backlog is growing
-          description: >-
-            outbox_pending_total has stayed above 100 for 15 minutes — the relay may be
-            falling behind SNS or stalling before events reach the dead-letter threshold.
-            Current pending count: {{ $value }}.
-
-      - alert: WorkflowDefinitionServiceOutboxPollErrors
-        expr: |
-          increase(outbox_poll_errors_total{job="workflow-definition-service"}[5m]) > 0
-        for: 1m
-        labels:
-          severity: warning
-          team: platform
-        annotations:
-          summary: Outbox relay poll cycle is failing
-          description: >-
-            outbox_poll_errors_total increased — the relay's ClaimBatch DB query is
-            failing, not just individual publishes. Check Postgres connectivity.
-
-      - alert: WorkflowDefinitionServiceOutboxMarkPublishedErrors
-        expr: |
-          increase(outbox_mark_published_errors_total{job="workflow-definition-service"}[5m]) > 0
-        for: 1m
-        labels:
-          severity: warning
-          team: platform
-        annotations:
-          summary: Outbox relay failed to mark events published after SNS delivery
-          description: >-
-            outbox_mark_published_errors_total increased — SNS delivery succeeded but
-            the follow-up DB write failed, which risks duplicate delivery on the next
-            poll cycle. Check Postgres connectivity.
 
   - name: workflow_definition_service_internal_events
     rules:

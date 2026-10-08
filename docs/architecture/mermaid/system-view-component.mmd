@@ -14,7 +14,6 @@ graph TD
         Compiler[DSL Compiler]
         Validator[Validation Engine]
         InternalEvents[POST /internal/events]
-        OutboxRelay[Outbox Background Worker]
 
         API --> Validator
         API --> Parser
@@ -24,12 +23,10 @@ graph TD
 
     subgraph Persistence [RDS PostgreSQL]
         DB[(workflow_definition DB)]
-        OutboxTable[(outbox)]
     end
 
     subgraph External_Integrations [External Services]
         OrgMembership[Org & Membership Service]
-        SNS[SNS: wf.template.events]
         EventsConsumer[Shared Workflow-Events Consumer]
         SQS_Membership[SQS: membership-workflow-q]
     end
@@ -41,10 +38,7 @@ graph TD
 
     Compiler -->|3. Validate Assignee Eligibility| OrgMembership
     Compiler -->|4. Store Draft/Publish| DB
-    API -->|5. Insert Outbox Event| OutboxTable
-    SQS_Membership -.->|6. Consume Revocation Events| EventsConsumer
-    EventsConsumer -->|7. POST /internal/events| InternalEvents
+    SQS_Membership -.->|5. Consume Revocation Events| EventsConsumer
+    EventsConsumer -->|6. POST /internal/events| InternalEvents
     InternalEvents -->|Invalidate Affected Templates| DB
 
-    OutboxRelay -->|8. Read Pending Events| OutboxTable
-    OutboxRelay -->|9. Publish Event| SNS

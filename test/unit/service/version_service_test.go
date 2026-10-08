@@ -790,7 +790,7 @@ func TestVersionService_Promote_AlreadyActive(t *testing.T) {
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
-	// Target is already active → early exit: no transactor, no UpdateActiveVersion, no outbox.
+	// Target is already active → early exit: no transactor, no UpdateActiveVersion.
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
 		&domain.Workflow{ID: wfID, ActiveVersionID: &vID}, nil)
 

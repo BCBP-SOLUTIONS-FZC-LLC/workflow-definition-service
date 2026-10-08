@@ -81,7 +81,6 @@ func wireServices(t *testing.T, pool *pgcommon.Pool, cache port.CacheStore) serv
 	workflows := pgadapter.NewWorkflowRepo(pool)
 	versions := pgadapter.NewWorkflowVersionRepo(pool)
 	assignees := pgadapter.NewAssigneeRepo(pool)
-	outboxRepo := pgadapter.NewOutboxRepo(pool)
 	compiler := bpmn_compiler.New()
 
 	return services{
@@ -97,7 +96,6 @@ func wireServices(t *testing.T, pool *pgcommon.Pool, cache port.CacheStore) serv
 			Workflows:  workflows,
 			Versions:   versions,
 			Assignees:  assignees,
-			Outbox:     outboxRepo,
 			Compiler:   compiler,
 			Cache:      cache,
 		}),

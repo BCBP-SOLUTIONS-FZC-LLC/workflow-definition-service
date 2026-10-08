@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/outbox"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -30,7 +28,6 @@ func newApp(cfg *config.Config) (*app, error) {
 	}
 
 	tracingShutdown := gincommon.InitTracingFromEnv()
-	events.Init(cfg.OTELServiceName, cfg.BuildVersion)
 
 	pool, err := newDBPool(context.Background(), cfg, log)
 	if err != nil {
@@ -53,25 +50,6 @@ func newApp(cfg *config.Config) (*app, error) {
 		tracingShutdown()
 		return nil, err
 	}
-	closeCache := func() { _ = redisClient.Close() }
-
-	glueCodec, err := newGlueCodec(context.Background(), cfg)
-	if err != nil {
-		pool.Close()
-		systemPool.Close()
-		closeCache()
-		tracingShutdown()
-		return nil, err
-	}
-
-	publisher, err := newPublisher(cfg, log, glueCodec)
-	if err != nil {
-		pool.Close()
-		systemPool.Close()
-		closeCache()
-		tracingShutdown()
-		return nil, err
-	}
 
 	membershipSvc := newMembershipService(cfg)
 	executionSvc := newExecutionService(cfg)
@@ -81,27 +59,11 @@ func newApp(cfg *config.Config) (*app, error) {
 		secretsSvc = outboundhttp.NewSecretsClient(cfg.OpenBaoAddr, cfg.OpenBaoToken, cfg.OpenBaoMount, cfg.SecretsClientTimeout)
 	}
 
-	relay, err := outbox.NewRunner(outbox.Config{
-		Pool:         pool,
-		Publisher:    publisher,
-		Logger:       log,
-		PollInterval: cfg.OutboxPollInterval,
-		BatchSize:    cfg.OutboxBatchSize,
-	})
-	if err != nil {
-		pool.Close()
-		systemPool.Close()
-		closeCache()
-		tracingShutdown()
-		return nil, fmt.Errorf("outbox runner: %w", err)
-	}
-
 	transactor := pgadapter.NewTransactor(pool)
 	globalTransactor := pgadapter.NewTransactor(systemPool)
 	workflowRepo := pgadapter.NewWorkflowRepo(pool)
 	versionRepo := pgadapter.NewWorkflowVersionRepo(pool)
 	assigneeRepo := pgadapter.NewAssigneeRepo(pool)
-	outboxRepo := pgadapter.NewOutboxRepo(pool)
 	connectorAliasRepo := pgadapter.NewConnectorAliasRepo(pool)
 	moduleRepo := pgadapter.NewModuleRepo(pool)
 	moduleVersionRepo := pgadapter.NewModuleVersionRepo(pool)
@@ -136,7 +98,6 @@ func newApp(cfg *config.Config) (*app, error) {
 		Workflows:  workflowRepo,
 		Versions:   versionRepo,
 		Assignees:  assigneeRepo,
-		Outbox:     outboxRepo,
 		Membership: membershipSvc,
 		Execution:  executionSvc,
 		Compiler:   compiler,
@@ -234,7 +195,6 @@ func newApp(cfg *config.Config) (*app, error) {
 		cache:         cache,
 		httpServer:    srv,
 		metricsServer: metricsSrv,
-		outboxRelay:   relay,
 		shutdown:      tracingShutdown,
 		cacheClose:    redisClient,
 	}, nil

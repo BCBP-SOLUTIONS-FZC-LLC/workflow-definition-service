@@ -4,7 +4,6 @@ sequenceDiagram
     participant S as WorkflowService
     participant ES as Execution Service (internal HTTP)
     participant DB as PostgreSQL
-    participant SNS as SNS (via outbox.Runner)
 
     C->>H: POST /workflows/:id/archive
     H->>S: Archive(ctx, tenantID, userID, workflowID)
@@ -13,10 +12,6 @@ sequenceDiagram
     S->>DB: BEGIN TX
     S->>DB: UPDATE workflow_version SET status=ARCHIVED
     S->>DB: UPDATE workflow SET active_version_id=NULL
-    S->>DB: INSERT INTO outbox_events (TemplateArchived payload)
     S->>DB: COMMIT
     S-->>H: ok
     H-->>C: 200 OK
-
-    Note over DB,SNS: async
-    DB->>SNS: Publish TemplateArchived event
