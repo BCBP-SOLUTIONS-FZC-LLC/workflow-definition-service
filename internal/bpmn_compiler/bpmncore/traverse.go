@@ -63,7 +63,13 @@ func (s *CompileState) TraverseNode(nodeID string) error {
 	if s.StopAt != "" && nodeID == s.StopAt {
 		return nil
 	}
-	if s.visited[nodeID] || (s.stopAtCompiled && s.sd.visited[nodeID]) {
+	if s.stopAtCompiled && s.sd.visited[nodeID] {
+		if s.rejoined != nil && s.G.NodeType[nodeID] != NodeTypeEndEvent {
+			*s.rejoined = true
+		}
+		return nil
+	}
+	if s.visited[nodeID] {
 		return nil
 	}
 	s.sd.nodes++
@@ -185,6 +191,7 @@ func (s *CompileState) FillBoundaryTimerTarget(taskID string, stage *dsl.StageDe
 		return
 	}
 	if be := TimerBoundaryFor(taskID, s.Proc); be != nil {
+		stage.BoundaryTimer.BoundaryID = be.ID
 		stage.BoundaryTimer.TargetDept, stage.BoundaryTimer.Terminates = s.BoundaryTarget(be.ID)
 	}
 }
@@ -212,8 +219,7 @@ func (s *CompileState) BoundaryTarget(boundaryID string) (dept string, terminate
 
 // CompileBoundaryPaths compiles each boundary's path the main traversal did
 // not reach, each on a state of its own: its tasks take segments of their
-// own, and its steps are dropped, so they run only when the boundary moves
-// to their department.
+// own, and its steps are kept for the boundary, which runs them in order.
 func (s *CompileState) CompileBoundaryPaths() error {
 	for _, be := range s.Proc.BoundaryEvents {
 		node := s.taskAhead(OutgoingTargetOf(be.ID, s.Proc))
@@ -225,8 +231,16 @@ func (s *CompileState) CompileBoundaryPaths() error {
 		}
 		path := NewBranchState(s, "")
 		path.stopAtCompiled = true
+		path.rejoined = new(bool)
 		if err := path.TraverseNode(OutgoingTargetOf(be.ID, s.Proc)); err != nil {
 			return fmt.Errorf("boundary continuation from %q: %w", be.ID, err)
+		}
+		// A path that continues into the main flow keeps naming only its
+		// department: ending the plan level after its steps would cut off the
+		// flow it was meant to rejoin.
+		if !*path.rejoined {
+			path.FlushSeqBuf()
+			s.sd.boundarySteps[be.ID] = path.CollectedSteps()
 		}
 	}
 	return nil

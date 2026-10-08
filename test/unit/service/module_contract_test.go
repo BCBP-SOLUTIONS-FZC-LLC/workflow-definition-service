@@ -32,6 +32,9 @@ var contractSwapBPMN string
 //go:embed testdata/module-contract-pair.bpmn
 var contractPairBPMN string
 
+//go:embed testdata/module-contract-boundary-call.bpmn
+var contractBoundaryCallBPMN string
+
 // contractService reads module versions from the tenant pool, and resolves a
 // module's library calls from library on the pool its scope uses.
 func contractService(t *testing.T, scope domain.CatalogScope, v *domain.ModuleVersion, library map[libraryKey]*domain.ModuleVersion) (*service.ModuleService, uuid.UUID) {
@@ -215,5 +218,24 @@ func TestModuleContract_DeptsBindsCalledSlotsCrosswise(t *testing.T) {
 	want := map[string]string{"Swap_Task": "Second", "Swap_Call::Pair_Send": "Second", "Swap_Call::Pair_Receive": "First"}
 	if !reflect.DeepEqual(slotOf, want) {
 		t.Errorf("slots by task = %v, want %v", slotOf, want)
+	}
+}
+
+// A call on a boundary's path is a call of the module like any other: the
+// tasks of the module it calls are listed, so a caller can name users for them.
+func TestModuleContract_ACallOnABoundaryPathIsListed(t *testing.T) {
+	v := libraryVersion(uuid.New(), "Process_BoundaryCall", 1, contractBoundaryCallBPMN)
+	svc, tenantID := contractService(t, domain.ScopeTenant, v, checkLibrary)
+
+	got, err := svc.Contract(context.Background(), tenantID, v.ModuleID, v.ID)
+	if err != nil {
+		t.Fatalf("Contract: %v", err)
+	}
+	var keys []string
+	for _, task := range got.Tasks {
+		keys = append(keys, task.AssigneeKey)
+	}
+	if !strings.Contains(strings.Join(keys, " "), "BC_Check::") {
+		t.Errorf("tasks = %v, want the tasks of the module BC_Check calls, under the BC_Check:: scope", keys)
 	}
 }

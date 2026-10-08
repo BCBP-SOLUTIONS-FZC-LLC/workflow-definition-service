@@ -37,8 +37,11 @@ type sharedDeptsStore struct {
 	segments    map[string]int
 	nodeSegment map[string]string
 	visited     map[string]bool
-	stages      int
-	nodes       int
+	// boundarySteps holds, by boundary event ID, the steps of the path each
+	// boundary leads to; ResolveTargets puts them on the boundaries.
+	boundarySteps map[string][]dsl.ExecutionStep
+	stages        int
+	nodes         int
 }
 
 type CompileState struct {
@@ -79,6 +82,10 @@ type CompileState struct {
 	// state has compiled, so a path that rejoins the main flow does not
 	// compile the main flow's tasks again.
 	stopAtCompiled bool
+	// rejoined is set when the boundary path being compiled, branches of it
+	// included, meets a node the main flow compiled, so that the path
+	// continues into it.
+	rejoined *bool
 }
 
 func NewCompileState(
@@ -101,7 +108,7 @@ func NewCompileState(
 		Elements:      elements,
 		Defs:          defs,
 		Called:        NewCalledPlans(),
-		sd:            &sharedDeptsStore{deptIdx: map[string]int{}, segments: map[string]int{}, nodeSegment: map[string]string{}, visited: map[string]bool{}},
+		sd:            &sharedDeptsStore{deptIdx: map[string]int{}, segments: map[string]int{}, nodeSegment: map[string]string{}, visited: map[string]bool{}, boundarySteps: map[string][]dsl.ExecutionStep{}},
 		visited:       make(map[string]bool),
 		segmentStarts: map[string]bool{},
 		pathSegment:   map[string]string{},
@@ -129,6 +136,8 @@ func NewBranchState(parent *CompileState, stopAt string) *CompileState {
 		Elements:         parent.Elements,
 		Defs:             parent.Defs,
 		StopAt:           stopAt,
+		stopAtCompiled:   parent.stopAtCompiled,
+		rejoined:         parent.rejoined,
 		Called:           parent.Called,
 		sd:               parent.sd,
 		visited:          make(map[string]bool),
@@ -270,40 +279,52 @@ func (s *CompileState) ResolveTargets() {
 			st := &s.sd.depts[i].Stages[j]
 			if st.BoundaryTimer != nil {
 				resolve(&st.BoundaryTimer.TargetDept)
+				st.BoundaryTimer.Steps = s.pathSteps(st.BoundaryTimer.BoundaryID, resolve)
 			}
 			if st.BoundaryMessage != nil {
 				resolve(&st.BoundaryMessage.TargetDept)
+				st.BoundaryMessage.Steps = s.pathSteps(st.BoundaryMessage.BoundaryID, resolve)
 			}
 		}
 	}
-	resolveStepTargets(s.steps, resolve)
+	s.resolveStepTargets(s.steps, resolve)
 }
 
-func resolveStepTargets(steps []dsl.ExecutionStep, resolve func(*string)) {
+// pathSteps is the path boundaryID leads to, its pending references resolved.
+func (s *CompileState) pathSteps(boundaryID string, resolve func(*string)) []dsl.ExecutionStep {
+	steps := s.sd.boundarySteps[boundaryID]
+	s.resolveStepTargets(steps, resolve)
+	return steps
+}
+
+func (s *CompileState) resolveStepTargets(steps []dsl.ExecutionStep, resolve func(*string)) {
 	paths := func(errs []dsl.ErrorPath, timers []dsl.TimerPath, msgs []dsl.MessagePath) {
 		for i := range errs {
 			resolve(&errs[i].TargetDept)
+			errs[i].Steps = s.pathSteps(errs[i].BoundaryID, resolve)
 		}
 		for i := range timers {
 			resolve(&timers[i].TargetDept)
+			timers[i].Steps = s.pathSteps(timers[i].BoundaryID, resolve)
 		}
 		for i := range msgs {
 			resolve(&msgs[i].TargetDept)
+			msgs[i].Steps = s.pathSteps(msgs[i].BoundaryID, resolve)
 		}
 	}
 	for i := range steps {
 		st := &steps[i]
 		paths(nil, nil, st.MessagePaths)
 		for j := range st.Parallel {
-			resolveStepTargets(st.Parallel[j].Steps, resolve)
+			s.resolveStepTargets(st.Parallel[j].Steps, resolve)
 		}
 		for j := range st.Exclusive {
 			resolve(&st.Exclusive[j].RevertToDept)
-			resolveStepTargets(st.Exclusive[j].Steps, resolve)
+			s.resolveStepTargets(st.Exclusive[j].Steps, resolve)
 		}
 		if sw := st.SubWorkflow; sw != nil {
 			paths(sw.ErrorPaths, sw.TimerPaths, sw.MessagePaths)
-			resolveStepTargets(sw.Plan.Steps, resolve)
+			s.resolveStepTargets(sw.Plan.Steps, resolve)
 		}
 		if cp := st.CallPlan; cp != nil {
 			paths(cp.ErrorPaths, cp.TimerPaths, cp.MessagePaths)

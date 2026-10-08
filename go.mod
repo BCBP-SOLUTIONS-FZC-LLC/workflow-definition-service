@@ -70,7 +70,7 @@ require (
 require (
 	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon v1.2.1
 	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors v0.0.0-20260814044400-bb010072f28c
-	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.4.0-rc.3
+	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.4.0-rc.4
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/joho/godotenv v1.5.1

@@ -118,7 +118,7 @@ func (r contractReader) tasks(plan *dsl.CompiledPlan, prefix string, place func(
 			})
 		}
 	}
-	for _, cp := range callSteps(plan.Execution.Steps, nil) {
+	for _, cp := range planCalls(plan) {
 		called := r.plans[cp.Plan]
 		out = append(out, r.tasks(called, prefix+cp.NodeID+dsl.CallScopeSeparator, func(deptID string) (string, string) {
 			if bound, ok := cp.Departments[deptID]; ok {
@@ -128,6 +128,23 @@ func (r contractReader) tasks(plan *dsl.CompiledPlan, prefix string, place func(
 		})...)
 	}
 	return out
+}
+
+// planCalls lists the calls plan makes, in the order they run: those of its
+// steps, then those on the paths its tasks' boundaries lead to.
+func planCalls(plan *dsl.CompiledPlan) []*dsl.CallPlanStep {
+	calls := callSteps(plan.Execution.Steps, nil)
+	for _, d := range plan.Departments {
+		for i := range d.Stages {
+			if t := d.Stages[i].BoundaryTimer; t != nil {
+				calls = callSteps(t.Steps, calls)
+			}
+			if m := d.Stages[i].BoundaryMessage; m != nil {
+				calls = callSteps(m.Steps, calls)
+			}
+		}
+	}
+	return calls
 }
 
 func callSteps(steps []dsl.ExecutionStep, into []*dsl.CallPlanStep) []*dsl.CallPlanStep {
@@ -144,6 +161,9 @@ func callSteps(steps []dsl.ExecutionStep, into []*dsl.CallPlanStep) []*dsl.CallP
 		}
 		if st.CallPlan != nil {
 			into = append(into, st.CallPlan)
+		}
+		for _, path := range st.BoundarySteps() {
+			into = callSteps(path, into)
 		}
 	}
 	return into

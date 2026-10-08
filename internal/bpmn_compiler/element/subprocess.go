@@ -89,6 +89,7 @@ func boundaryPaths(nodeID string, cs *bpmncore.CompileState) ([]dsl.ErrorPath, [
 		targetDept, terminates := cs.BoundaryTarget(be.ID)
 		if be.Error != nil {
 			errorPaths = append(errorPaths, dsl.ErrorPath{
+				BoundaryID: be.ID,
 				ErrorCode:  cs.ResolveErrorCode(be.Error.ErrorRef),
 				TargetDept: targetDept,
 				Terminates: terminates,
@@ -96,6 +97,7 @@ func boundaryPaths(nodeID string, cs *bpmncore.CompileState) ([]dsl.ErrorPath, [
 		}
 		if be.Timer != nil {
 			timerPaths = append(timerPaths, dsl.TimerPath{
+				BoundaryID:   be.ID,
 				Duration:     be.Timer.Duration,
 				Interrupting: be.CancelActivity != "false",
 				TargetDept:   targetDept,
