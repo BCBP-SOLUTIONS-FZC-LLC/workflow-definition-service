@@ -40,6 +40,17 @@ Name lanes after real organisational departments. Do not rename a lane after a w
 
 ---
 
+## One pool runs: outside parties are drawn, not run
+
+A file may hold several pools, for example your organisation and a contractor. **Exactly one pool runs: the workflow.** It is the process that is `isExecutable="true"`, is not called by another process, and is not marked ignore. Every other pool stands for an outside party. It is drawn so the picture is complete, and it produces nothing: its tasks are not checked and never appear in anyone's queue.
+
+- Two pools that would both run are `MULTIPLE_PROCESSES`. Mark the outside party's pool ignore, or leave it non-executable. No pool that would run is `NO_RUNNABLE_PROCESS`.
+- To mark a pool, or one lane inside the workflow's pool, as an outside party, give it the property `ignore` = `true` (in Camunda Modeler: the pool's or lane's properties panel, a Zeebe property named `ignore`). Do not mark a process ignore if another process calls it: that is `UNRESOLVED_CALLED_ELEMENT`.
+- **An ignored lane** is an outside party inside the process that runs. Its user, send and receive tasks pass through: the flow continues past them without waiting. They cannot hold a call, a sub-process or a connector task, nor carry a boundary event, and a loop that only passes through them is not a loop the engine can run. Each of those is `IGNORED_LANE_WORK`.
+- When the workflow must wait for an outside party, put a receive task (or a message boundary event) in a lane that runs, and draw the party's message flow into it. The party's answer is delivered through the service that deals with it, for that step (see [Receive Task](#receive-task)).
+
+---
+
 ## Task types you can use
 
 ### User Task (most common)
@@ -106,9 +117,26 @@ Use when you want to reuse a process instead of drawing it again. The process yo
 
 **Other rules**
 
-- The called process must have `isExecutable="true"`.
+- The called process does not need `isExecutable="true"`; a called process always runs as a module. It must not be marked ignore (see [One pool runs](#one-pool-runs-outside-parties-are-drawn-not-run)).
 - You can attach timer, error and message boundary events to a callActivity, with the same meaning as on a sub-process. A boundary's path must start with a task or a sub-process, or go straight to an end event; to call a module or send a message from it, put a task first.
 - Each call runs as its own block of work. Calling the same module twice creates two separate sets of tasks, and each one can be assigned on its own.
+
+---
+
+## Boundary events: timers, messages and errors
+
+A boundary event sits on the edge of a user task, a sub-process or a called process. It watches for something while the host is busy.
+
+| Kind | Fires when | Notes |
+|---|---|---|
+| Timer | the duration has passed (ISO 8601, for example `PT48H`, `P5D`) | SLA escalation |
+| Message | the named message arrives | the message name is agreed with engineering |
+| Error | a stage inside the sub-process or called process fails | sub-process or called process only; always interrupting |
+
+- **Interrupting** (the default): the host stops, its open tasks are closed, and the boundary's path runs in its place. Nothing the host would have gone on to runs; when the path reaches an end event, that route of the process ends there. **Non-interrupting** (`cancelActivity="false"`): the path runs beside the host, which carries on.
+- **The path** may go through several tasks and gateways before it ends. It must start with a task or a sub-process, or go straight to an end event. To call a module or send a message from it, put a task first.
+- **Error boundaries** match by error code. A boundary with an error code catches that failure; one with none catches any failure that no other boundary of that host names. A failure nothing catches fails the instance.
+- A boundary on a task in an ignored lane is `IGNORED_LANE_WORK`.
 
 ---
 
@@ -204,6 +232,30 @@ These are checked on every upload. Breaking them causes rejection.
 | Sub-processes have their own start and end events | compile error |
 | Diagram block present (Camunda Modeler adds this) | `MISSING_DIAGRAM` |
 
+### Limits
+
+| Limit | Value |
+|---|---|
+| Tasks in a workflow, counted after every call is expanded (a call counts once for itself and once for every task it brings in) | 1000 |
+| Lanes in a process | 100 |
+| Trips around one revert loop | 50 |
+| Nested sub-processes | not supported (`NESTED_SUBPROCESS_NOT_SUPPORTED`) |
+| A module that calls itself, directly or through others | `CALLED_ELEMENT_CYCLE` |
+| Two processes with one `id` in a file | `DUPLICATE_PROCESS_ID` |
+
+### Errors that only appear at publish
+
+Saving a draft only checks the structural rules above. Publishing also expands every call and checks the result:
+
+| Error | Meaning |
+|---|---|
+| `CANDIDATE_USERS_EMPTY` | a task that people do has no default person, on the task or in the `Assignees` of the call that runs it. The message names the task. |
+| `MISSING_DEPT_ID` | a lane a call is mapped to has no `dept_id` |
+| `UNRESOLVED_CALLED_ELEMENT` | a call names a module that does not exist, is not published or was retired, or a `versionTag` that is not a whole number |
+| `INVALID_ZEEBE_PROPERTY` | a property value the system cannot read, such as a `Depts` entry naming an ignored lane |
+| `CONNECTOR_SECRET_AUTHORED` | a connector task names a credential |
+| `MULTIPLE_PROCESSES` / `NO_RUNNABLE_PROCESS` | more than one pool, or none, would run |
+
 ---
 
 ## Elements you cannot use
@@ -269,6 +321,27 @@ Start → [Sub-Process: Prepare Strategy] → End
 
 Attach a timer boundary event to the sub-process.
 
+### A worked example: Bid / No-Bid
+
+The Bid-No-Bid review draws three pools: the consultant who issues the request, the review itself, and a reusable document-preparation module.
+
+```
+Pool "Consultant" (outside party, ignore)    Pool "Bid-No-Bid Review" (runs)
+  Issue RFQ to Contractor                      lane Tender Business
+                                                 [Sub-Process: BNB Process]
+                                                    Prepare → Review → Approve
+                                                 XOR "Bid Decision?"
+                                                   ├─(decision = "bid")───→ Inform Depts
+                                                   │                        → [Call: Handle Docs Prep]
+                                                   └─(decision = "no-bid")→ Inform No Bid → End
+Pool "Docs Prep" (a module with two open lanes, Sender and Receiver)
+```
+
+- The review pool is the one that runs. The consultant's pool is marked ignore, so "Issue RFQ to Contractor" is not a task anyone gets.
+- "BNB Process" is a sub-process with its own start and end. Prepare, Review and Approve are user tasks stamped with the IAM template.
+- The decision gateway routes on `decision`, so both outgoing flows carry a condition.
+- "Handle Docs Prep" calls the module. The module has two open lanes, so the call maps them, for example `Depts` = `{"Sender":"Tender Business","Receiver":"Engineering"}`, and names a default person for each of the module's tasks in `Assignees`. A timer boundary on the call can escalate when the documents are late.
+
 ---
 
 ## Before you upload
@@ -282,3 +355,7 @@ Attach a timer boundary event to the sub-process.
 - [ ] No disallowed elements (script task, business rule task, etc.)
 - [ ] Every callActivity names a published library module, or a process in this file, pinned with `versionTag` where the workflow must not move with the module
 - [ ] Every task has a default person, in its own `candidateUsers` or in the `Assignees` of the call that runs it
+- [ ] Exactly one pool runs; outside parties' pools and lanes are marked `ignore`
+- [ ] Every boundary event's path starts with a task or goes straight to an end event, and an error boundary sits on a sub-process or a call
+- [ ] A connector task names no credential
+- [ ] The workflow has fewer than 1000 tasks once calls are expanded
