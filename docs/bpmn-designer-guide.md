@@ -118,7 +118,7 @@ Use when you want to reuse a process instead of drawing it again. The process yo
 **Other rules**
 
 - The called process does not need `isExecutable="true"`; a called process always runs as a module. It must not be marked ignore (see [One pool runs](#one-pool-runs-outside-parties-are-drawn-not-run)).
-- You can attach timer, error and message boundary events to a callActivity, with the same meaning as on a sub-process. A boundary's path must start with a task or a sub-process, or go straight to an end event; to call a module or send a message from it, put a task first.
+- You can attach timer, error and message boundary events to a callActivity, with the same meaning as on a sub-process. A boundary's path must start with a task, or go straight to an end event; to call a module or send a message from it, put a task first.
 - Each call runs as its own block of work. Calling the same module twice creates two separate sets of tasks, and each one can be assigned on its own.
 
 ---
@@ -134,7 +134,7 @@ A boundary event sits on the edge of a user task, a sub-process or a called proc
 | Error | a stage inside the sub-process or called process fails | sub-process or called process only; always interrupting |
 
 - **Interrupting** (the default): the host stops, its open tasks are closed, and the boundary's path runs in its place. Nothing the host would have gone on to runs; when the path reaches an end event, that route of the process ends there. **Non-interrupting** (`cancelActivity="false"`): the path runs beside the host, which carries on.
-- **The path** may go through several tasks and gateways before it ends. It must start with a task or a sub-process, or go straight to an end event. To call a module or send a message from it, put a task first.
+- **The path** may go through several tasks and gateways before it ends. It must start with a task or go straight to an end event; a sub-process may start it only when its own first step is a user task (`UNSUPPORTED_BOUNDARY_TARGET` otherwise). To call a module or send a message from it, put a task first.
 - **Error boundaries** match by error code. A boundary with an error code catches that failure; one with none catches any failure that no other boundary of that host names. A failure nothing catches fails the instance.
 - A boundary on a task in an ignored lane is `IGNORED_LANE_WORK`.
 
@@ -236,25 +236,21 @@ These are checked on every upload. Breaking them causes rejection.
 
 | Limit | Value |
 |---|---|
-| Tasks in a workflow, counted after every call is expanded (a call counts once for itself and once for every task it brings in) | 1000 |
+| Tasks in a workflow, counted after every call is expanded (a call counts once for itself and once for every task it brings in) | 1000 (`TASK_LIMIT_EXCEEDED`) |
 | Lanes in a process | 100 |
-| Trips around one revert loop | 50 |
+| Trips around one revert loop | 50, checked while the instance runs: past it the instance stops with an error |
 | Nested sub-processes | not supported (`NESTED_SUBPROCESS_NOT_SUPPORTED`) |
 | A module that calls itself, directly or through others | `CALLED_ELEMENT_CYCLE` |
 | Two processes with one `id` in a file | `DUPLICATE_PROCESS_ID` |
 
-### Errors that only appear at publish
+### Errors that appear when you publish
 
-Saving a draft only checks the structural rules above. Publishing also expands every call and checks the result:
+Saving a draft checks the structural rules above, and also the calls, the pools and the connector inputs (`MISSING_DEPT_ID`, `UNRESOLVED_CALLED_ELEMENT`, `INVALID_ZEEBE_PROPERTY`, `CONNECTOR_SECRET_AUTHORED`, `MULTIPLE_PROCESSES`, `NO_RUNNABLE_PROCESS`). Publishing also expands every call and checks the result:
 
 | Error | Meaning |
 |---|---|
-| `CANDIDATE_USERS_EMPTY` | a task that people do has no default person, on the task or in the `Assignees` of the call that runs it. The message names the task. |
-| `MISSING_DEPT_ID` | a lane a call is mapped to has no `dept_id` |
-| `UNRESOLVED_CALLED_ELEMENT` | a call names a module that does not exist, is not published or was retired, or a `versionTag` that is not a whole number |
-| `INVALID_ZEEBE_PROPERTY` | a property value the system cannot read, such as a `Depts` entry naming an ignored lane |
-| `CONNECTOR_SECRET_AUTHORED` | a connector task names a credential |
-| `MULTIPLE_PROCESSES` / `NO_RUNNABLE_PROCESS` | more than one pool, or none, would run |
+| `CANDIDATE_USERS_EMPTY` | a task that people do has no default person, on the task or in the `Assignees` of the call that runs it. A warning in a draft, an error at publish; the message names the task. |
+| `TASK_LIMIT_EXCEEDED` | the workflow has more than 1000 tasks once its calls are expanded |
 
 ---
 

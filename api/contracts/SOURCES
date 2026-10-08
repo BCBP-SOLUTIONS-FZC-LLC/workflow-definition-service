@@ -1,2 +1,2 @@
 # <copy> <owner/repo> <path in that repo> <branch> <commit the copy was taken at>
-execution-internal-openapi.yaml BCBP-SOLUTIONS-FZC-LLC/workflow-execution-service api/internal-openapi.yaml main 10b016676a43daa268939bac7336b4d83c93f0b1
+execution-internal-openapi.yaml BCBP-SOLUTIONS-FZC-LLC/workflow-execution-service api/internal-openapi.yaml main 8f4ba5ccc082013f086c8cd4a7a74665d29e2aae
