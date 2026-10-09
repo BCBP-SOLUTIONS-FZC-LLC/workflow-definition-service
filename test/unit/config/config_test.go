@@ -17,7 +17,7 @@ func TestLoad_Success(t *testing.T) {
 		"OTEL_TRACES_SAMPLER_RATIO", "PG_MAX_CONNS", "PG_MIN_CONNS",
 		"PG_SLOW_QUERY_THRESHOLD_MS", "VALKEY_ADDR", "VALKEY_PASSWORD",
 		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
-		"INTERNAL_API_TOKEN",
+		"INTERNAL_API_TOKEN", "OPENBAO_ADDR", "OPENBAO_TOKEN",
 	}
 	for _, k := range keysToBackup {
 		envBackup[k] = os.Getenv(k)
@@ -48,6 +48,8 @@ func TestLoad_Success(t *testing.T) {
 	_ = os.Setenv("ORG_MEMBERSHIP_BASE_URL", "http://org")
 	_ = os.Setenv("EXECUTION_SERVICE_URL", "http://execution:8080")
 	_ = os.Setenv("EXECUTION_SERVICE_TOKEN", "execution-token")
+	_ = os.Setenv("OPENBAO_ADDR", "http://openbao:8200")
+	_ = os.Setenv("OPENBAO_TOKEN", "bao-token")
 	_ = os.Setenv("INTERNAL_API_TOKEN", "definition-token")
 
 	cfg, err := config.Load()
@@ -106,9 +108,10 @@ func TestLoad_ValidationFailures(t *testing.T) {
 	keysToBackup := []string{
 		"DATABASE_URL", "APP_ENV",
 		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
-		"INTERNAL_API_TOKEN", "SYSTEM_DATABASE_URL",
+		"INTERNAL_API_TOKEN", "SYSTEM_DATABASE_URL", "OPENBAO_ADDR", "OPENBAO_TOKEN",
 		"HTTP_PORT", "PG_MIN_CONNS", "PG_MAX_CONNS",
 		"OTEL_TRACES_SAMPLER_RATIO", "EXECUTION_CLIENT_TIMEOUT",
+		"RLS_VIOLATION_EXPORT_INTERVAL", "RLS_VIOLATION_RETENTION",
 	}
 	envBackup := make(map[string]string)
 	for _, k := range keysToBackup {
@@ -139,6 +142,26 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			wantErrVar: "APP_ENV",
 		},
 		{
+			name: "missing openbao address outside dev",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost", "APP_ENV": "staging", "INTERNAL_API_TOKEN": "t",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
+				"OPENBAO_ADDR": "", "OPENBAO_TOKEN": "t",
+			},
+			wantErr:    true,
+			wantErrVar: "OPENBAO_ADDR",
+		},
+		{
+			name: "missing openbao token outside dev",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost", "APP_ENV": "staging", "INTERNAL_API_TOKEN": "t",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
+				"OPENBAO_ADDR": "http://openbao:8200", "OPENBAO_TOKEN": "",
+			},
+			wantErr:    true,
+			wantErrVar: "OPENBAO_TOKEN",
+		},
+		{
 			name:    "missing database url",
 			env:     map[string]string{"DATABASE_URL": ""},
 			wantErr: true,
@@ -149,6 +172,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 				"DATABASE_URL": "postgres://localhost", "APP_ENV": "staging",
 				"INTERNAL_API_TOKEN":      "t",
 				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
+				"OPENBAO_ADDR": "http://openbao:8200", "OPENBAO_TOKEN": "t",
 			},
 			wantErr: false,
 		},
@@ -215,6 +239,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 				"DATABASE_URL": "postgres://localhost", "APP_ENV": "prod",
 				"INTERNAL_API_TOKEN": "secret-token", "SYSTEM_DATABASE_URL": "postgres://system-host/db",
 				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
+				"OPENBAO_ADDR": "http://openbao:8200", "OPENBAO_TOKEN": "t",
 			},
 			wantErr: false,
 		},
@@ -260,6 +285,18 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			name:    "otel sampler ratio below 0",
 			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "OTEL_TRACES_SAMPLER_RATIO": "-0.1"},
 			wantErr: true,
+		},
+		{
+			name:       "rls violation export interval zero",
+			env:        map[string]string{"DATABASE_URL": "postgres://localhost", "RLS_VIOLATION_EXPORT_INTERVAL": "0s"},
+			wantErr:    true,
+			wantErrVar: "RLS_VIOLATION_EXPORT_INTERVAL",
+		},
+		{
+			name:       "rls violation retention zero",
+			env:        map[string]string{"DATABASE_URL": "postgres://localhost", "RLS_VIOLATION_RETENTION": "0s"},
+			wantErr:    true,
+			wantErrVar: "RLS_VIOLATION_RETENTION",
 		},
 		{
 			name:    "execution client timeout zero",

@@ -8,7 +8,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 Key responsibilities: BPMN ingestion, structural/semantic/topological validation, DSL compilation, DRAFT → PUBLISHED → ARCHIVED versioning, and serving compiled plans to the Execution Service over its internal HTTP API.
 
-**This service publishes no events and keeps no outbox.** `api/asyncapi.yaml` documents one inbound message and no outbound channel. A future outbound event designs its contract and names a consumer first, and brings its own outbox, relay and schema registry client in the same change.
+**This service publishes no events and keeps no outbox.** `api/asyncapi.yaml` documents the two inbound messages and no outbound channel. A future outbound event designs its contract and names a consumer first, and brings its own outbox, relay and schema registry client in the same change.
 
 ---
 
@@ -18,8 +18,8 @@ Four private Go modules hosted on GitHub, fetched at build time via `GOPRIVATE` 
 
 | Module | Purpose |
 | --- | --- |
-| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events` | Typed event envelope (the inbound handler decodes it); the SNS publisher and outbox runner are unused |
-| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon` | pgx pool, RLS GUC injection, transactor, `migrate.Runner` (golang-migrate) |
+| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2` | Typed event envelope (the inbound handler decodes it); the SNS publisher and outbox runner are unused |
+| `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2` | pgx pool, RLS GUC injection, transactor, `migrate.Runner` (golang-migrate) |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon` | Gin middleware, OTel tracing init, Zap logger |
 | `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models` | Shared compiled-plan DSL (`pkg/dsl`) + stage-type enum constants (`pkg/enums`) used by the BPMN compiler and shared with the Execution Service. `internal/core/domain/compiled_plan.go` was deleted — every compiler/service call site imports `pkg/dsl` directly instead. |
 
@@ -27,6 +27,7 @@ Current pinned versions, per-version quirks/gotchas, and the fetch/upgrade comma
 
 **Critical rules — never break these:**
 
+- **Logs, metrics and traces go through `platform-gincommon` only; every database connection, setting and operation through `platform-pgcommon` only; every event type, envelope and dedup through `platform-events` only.** Collectors are built in `internal/observability` with gincommon constructors; `make metrics-lint` enforces it.
 - **Never add a `replace` directive** pointing to `./platform-libs/` in `go.mod`. That directory is gitignored and does not exist in CI.
 - **Never import from `./platform-libs/`** in source code. The import path must always be the full `github.com/BCBP-SOLUTIONS-FZC-LLC/...` module path.
 - **`platform-libs/`** is a local read-only reference copy only. **`.design/`** is the same: design documents (HLD, LLD, DBML) for reference.
@@ -60,9 +61,10 @@ make cover-html             # open HTML coverage report
 
 # Code quality
 make arch-lint              # go-arch-lint: enforce import direction rules
+make metrics-lint           # observability standard: collector naming, metricslint, inventory drift (make metrics-inventory regenerates docs/observability/metric-registry.md)
 make lint                   # golangci-lint (read-only)
 make fix                    # gofmt + golangci-lint --fix (auto-fix formatting and lint)
-make check                  # gofmt check + lint + vet + arch-lint + test + coverage gate (full local CI, read-only)
+make check                  # gofmt check + lint + vet + arch-lint + metrics-lint + test + coverage gate (full local CI, read-only)
 
 # Container checks (run 'make tools' first to install hadolint + trivy)
 make docker-lint            # lint Dockerfile with Hadolint (native binary, no image needed)

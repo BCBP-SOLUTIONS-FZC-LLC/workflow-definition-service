@@ -44,7 +44,7 @@ This service centralises that: one validated, versioned, compiled plan per publi
 - [Quick start](#quick-start) and [Local Development](#local-development)
 - [Project layout](#project-layout) and [Architecture](#architecture)
 - [API Overview](#api-overview)
-- [Deployment](#deployment), [Schema Governance](#schema-governance), [Workflow Design Guide](#workflow-design-guide)
+- [Deployment](#deployment), [Observability](#observability), [Security](#security), [Workflow Design Guide](#workflow-design-guide)
 - [Tech stack](#tech-stack), [Testing](#testing), [CI](#ci), [Versioning and releases](#versioning-and-releases)
 - [Database](#database), [Database connection pooling](#database-connection-pooling)
 - [Out of scope](#out-of-scope) and [See also](#see-also)
@@ -199,10 +199,10 @@ make help
 | `make cover-check` | Fail if coverage < 95% (postgres adapter + generated pkgs excluded) |
 | `make fmt-check` / `make lint` / `make arch-lint` | Formatting, lint, and Clean Architecture import-direction checks (read-only) |
 | `make fix` | Auto-fix formatting and lint issues |
-| `make check` | Full local CI pass: fmt + lint + vet + arch-lint + tests + coverage gate |
+| `make check` | Full local CI pass: fmt + lint + vet + arch-lint + metrics-lint + tests + coverage gate |
 | `make vuln` | Run govulncheck for known dependency vulnerabilities |
-| `make schema-validate` | Validate `internal/eventschema/*.json` against `api/asyncapi.yaml` (no AWS required) — see [Schema Governance](#schema-governance) |
-| `make schema-register` / `make schema-prune` | Register/retire event schemas in AWS Glue Schema Registry |
+| `make metrics-lint` | Observability standard: collector naming, `metricslint` on a real scrape, alert and doc references, inventory drift |
+| `make metrics-inventory` | Regenerate `docs/observability/metric-registry.md` |
 | `make docker-build` / `make docker-lint` / `make docker-trivy` | Build the container image, lint the Dockerfile, scan for CVEs |
 | `make godoc` | Serve Go package documentation locally via pkgsite (`http://localhost:8080`) |
 | `make docker-up` | Start PostgreSQL + Valkey (+ PgBouncer) |
@@ -235,6 +235,7 @@ db/
 docs/
   architecture/          ← Mermaid diagram sources for ARCHITECTURE.md
   swagger/               ← OpenAPI spec served by the dev-mode Swagger UI
+  observability/         ← generated metric inventory (make metrics-inventory)
   lld/                   ← in-repo copy of the design repo's LLD, kept content-identical
   bpmn-designer-guide.md ← BPMN modelling guide for business analysts / process owners
   ui-enrichment-guide.md ← Compiled-plan enrichment guide for ops/engineering reviewers
@@ -475,14 +476,14 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 - **Availability** — no healthy scrape target for 2 minutes; replica count below the HA floor.
 - **HTTP errors/latency** — 5xx ratio and p99 latency (`platform_http_requests_total`/`platform_http_request_duration_seconds`).
 - **Compiled-plan read error rate/latency** — the internal route's own 5xx ratio and p99, since this is the one call the Execution Service depends on synchronously.
-- **BPMN validation failure rate** — sustained activity on `workflow_definition_svc_validation_failures_total` (emitted only by the standalone `/validate` endpoint).
-- **Publish latency and retry exhaustion** — p95 of `workflow_definition_svc_publish_latency_seconds` exceeding 2s, and any increase in `platform_db_transaction_retries_exhausted_total`.
+- **BPMN validation failure rate** — sustained activity on `workflow_definition_service_validation_failures_total` (emitted only by the standalone `/validate` endpoint).
+- **Publish latency and retry exhaustion** — p95 of `workflow_definition_service_publish_latency_seconds` exceeding 2s, and any increase in `platform_db_transaction_retries_exhausted_total`.
 - **Internal event ingest failures** — sustained `bad_payload`/`error` results on `POST /internal/events`.
 - **Postgres query error rate** — `platform_db_queries_total{outcome="error"}`.
-- **Panics** — any increase in `http_panic_total`, paged immediately.
-- **Compiled-plan cache hit ratio** (informational) — `workflow_definition_svc_cache_hits_total`/`workflow_definition_svc_cache_misses_total`, not an incident trigger.
+- **Panics** — any increase in `platform_http_panics_total`, paged immediately.
+- **Compiled-plan cache hit ratio** (informational) — `workflow_definition_service_cache_hits_total`/`workflow_definition_service_cache_misses_total`, not an incident trigger.
 
-**Row-level security violation alerting is intentionally not implemented.** There is no `rls_violations_total` metric anywhere in this service or `platform-pgcommon` — the `rls_violation_log` table is populated by DB triggers, not application code, and nothing currently exports it to Prometheus. Flagged here as a known gap rather than shipped as a dead alert.
+- **Row-level security violations** — any increase in `workflow_definition_service_rls_violations_total`, by `violation_type` (`missing_or_invalid_guc` is a warning, `cross_tenant_access` is critical). The count is a 1% sample of blocked rows.
 
 ### CI/CD deploy gate
 
@@ -497,58 +498,29 @@ The GitHub Release step only runs if `deploy-gate` succeeds. **Required reposito
 
 ---
 
-## Schema Governance
+## Observability
 
-This service currently defines no outbound domain events, but treats every event's wire contract as a versioned, governed artifact rather than an implicit side effect of whatever the Go struct happens to look like, from the moment one is added. `platform-schemagov` — a CLI distributed as a Docker image (`ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov`) — enforces this end to end: locally during development and again in CI on every push.
+Logs, metrics and traces go through `platform-gincommon` only. Every series carries `domain` (`workflow`), `service` (`workflow-definition-service`) and `environment` (`APP_ENV`).
 
-### Source of truth
-
-```text
-api/asyncapi.yaml   →  make extract-schemas  →  internal/eventschema/*.json
-```
-
-`api/asyncapi.yaml` is authored by hand and is the canonical description of every event this service emits, including `x-lifecycle` and `x-owner` governance annotations per message. `internal/eventschema/*.json` is a derived, *committed* artifact — one Draft-07 JSON Schema file per event — extracted from the AsyncAPI spec and checked into the repo so it can be diffed, validated, and registered independently of the Go source.
-
-Both are tracked in git (`internal/eventschema/` is deliberately not in `.gitignore`, unlike the other generated directories in this repo) precisely because schema evolution needs its own review and audit trail, separate from application code changes.
-
-### Local commands
-
-```bash
-make schema-pull        # pull the platform-schemagov image
-make extract-schemas    # api/asyncapi.yaml → internal/eventschema/*.json
-make schema-validate    # 8-pass structural/lifecycle/drift validation, no AWS required
-make schema-diff CURRENT=<f> PROPOSED=<f> [SCHEMA_NAME=<name>]   # pure file-to-file diff
-make schema-register     # register into AWS Glue Schema Registry (needs AWS creds)
-make schema-prune        # report orphaned Glue schemas (EXECUTE=true to actually delete)
-```
-
-`make schema-validate` runs entirely offline against the committed files — no AWS credentials needed — which is what makes it safe to run as a fast local check or a read-only CI gate before any registry call happens.
-
-### Schema governance environment variables
-
-| Variable | Used by | Notes |
+| Tier | Names | Source |
 | --- | --- | --- |
-| `GLUE_REGISTRY_NAME` | CI tooling only | **Not read by the running service** — it keeps no Glue client. Names the registry the `schema-register`/`schema-prune` steps work against. |
-| `GLUE_REGISTRY_ARN` | CI/schema-gov tooling only | **Not read by the running service** — no corresponding field on `internal/config.Config`. It scopes IAM policy for the `schema-register`/`schema-prune` pipeline steps, not application behavior. |
-| `SCHEMA_GOV_IMAGE` | `make schema-*` targets and CI | Pins the `platform-schemagov` image tag used by every schema command; not read by the server binary at all. |
+| Platform-shared | `platform_http_*`, `platform_db_*`, `platform_build_info`, `platform_library_info` | The platform libraries, in every service |
+| Workflow domain-shared | none defined yet | Registry |
+| Service-specific | `workflow_definition_service_*` | This service |
 
-### CI workflows
+[docs/observability/metric-registry.md](docs/observability/metric-registry.md) is generated from the platform registry and a real scrape; `make metrics-lint` fails when it is stale, when a collector is built outside `internal/observability`, or when an alert or doc names a retired metric. `/metrics` is served on its own port. Tracing exports over OTLP, and `OTEL_EXPORTER_OTLP_ENDPOINT=none` turns export off while trace and request IDs keep working. Outbound calls to the Execution Service and the Org & Membership Service carry the trace context.
 
-Four workflows implement the full lifecycle, each with a distinct, narrow responsibility:
+Sampled row-level-security violations written to `rls_violation_log` are exported by a background loop through the system pool (`RLS_VIOLATION_EXPORT_INTERVAL`), and rows past `RLS_VIOLATION_RETENTION` are deleted; the system role needs `SELECT` and `DELETE` on the log.
 
-**`schema-registry.yml` — validate, diff, register.** Triggers: PR into `main` touching schema files (`pr-check`, read-only), push to `main` (`staging`, full pipeline), a published release (`production`), or manual dispatch. The full (staging/production) pipeline: validate → check for an active schema freeze → assess event usage against CloudWatch/Prometheus (flagging events nobody has emitted, `NEVER_SEEN`, for deprecation) → diff against what's already registered (fails the run on a breaking change *before* anything is uploaded) → register (idempotent create-or-new-version) → append a dated changelog entry → emit metrics. The `pr-check` job runs only the read-only half (validate + diff against the staging registry).
+---
 
-**`schema-prune.yml` — retire orphaned schemas.** A schema becomes a prune candidate when it's registered in Glue but has no corresponding file in `internal/eventschema/`. Runs monthly as a dry-run report only; actually deleting requires an explicit manual dispatch with `dry_run=false` — production pruning is never scheduled automatically, since `glue:DeleteSchema` is irreversible for any consumer still pinned to a version UUID. Executed prunes archive every version definition to `docs/schema-archive/<schema-name>/` before deleting from Glue.
+## Security
 
-**`schema-health-quarterly.yml` — health review prompt.** A read-only quarterly report (version accumulation per schema, overdue deprecations, stale lifecycle annotations) surfaced as a GitHub Step Summary for a human to act on. Never mutates anything — follow-up goes through `schema-prune.yml` or a normal schema PR.
-
-**`freeze-watchdog.yml` — guard against a forgotten freeze.** `SCHEMA_FREEZE` blocks registration (used during incident response or planned migrations). This workflow polls its age every few hours and escalates from a warning to a hard failure if left on far longer than any real freeze window should last.
-
-### Governance guardrails
-
-- **CODEOWNERS**: changes to `api/asyncapi.yaml` and `internal/eventschema/` require review from the platform-engineers/platform-team owners.
-- **Drift gate**: `validate-test.yml` runs `extract-schemas --check` on every push — if the committed JSON Schema files don't match what `api/asyncapi.yaml` would currently produce, CI fails.
-- **Breaking-change gate**: the `diff` step in `schema-registry.yml` fails the pipeline before any registration if a proposed schema isn't backward-compatible with what's already live.
+- **Tenant isolation:** every tenant table has row-level security forced on, with a policy that checks the tenant GUC through a function that logs sampled violations. The system pool connects as a `BYPASSRLS` role and serves only the global catalog and the violation exporter.
+- **Internal API:** `/api/v1/internal` requires `x-internal-token`, compared in constant time; request bodies are capped at 10 MiB on the internal and public API groups.
+- **Connector credentials:** written to OpenBao under `connectors/<tenant>/<type>/<field>`, with `connector_type` checked against the registry and `field_name` against an allowlist; `OPENBAO_ADDR` and `OPENBAO_TOKEN` are required outside dev.
+- **Configuration:** `APP_ENV` is one of `local`, `dev`, `test`, `staging`, `prod`; outside `dev` the service refuses to start without the internal token, the Org & Membership and Execution URLs and token, and OpenBao; `prod` also requires `SYSTEM_DATABASE_URL`.
+- **Container:** distroless, non-root, read-only root filesystem, all capabilities dropped.
 
 ---
 
@@ -737,7 +709,7 @@ psql "postgresql://wfdef:wfdef@localhost:6432/pgbouncer" -c "SHOW POOLS;"
 
 ## CI
 
-Pull requests and pushes run `ci.yml`: a `ci-gate` job skips draft pull requests and those labelled `skip-ci`, then code generation, `validate-quality` (format, tidy, vet, lint, govulncheck, contract and Dockerfile pin checks), `validate-test` (unit and integration tests with a merged coverage gate), a container image build, a Trivy scan and a smoke test. Pull requests that change only Markdown or `docs/` skip CI. `changelog-check.yml` requires a CHANGELOG entry on every pull request that touches `internal/`, `api/` or `cmd/`, and `pr-summary` keeps one comment on the pull request current. The schema workflows are described under [Schema Governance](#schema-governance).
+Pull requests and pushes run `ci.yml`: a `ci-gate` job skips draft pull requests and those labelled `skip-ci`, then code generation, `validate-quality` (format, tidy, vet, lint, metrics-lint, govulncheck, contract and Dockerfile pin checks), `validate-test` (unit and integration tests with a merged coverage gate), a container image build, a Trivy scan and a smoke test. Pull requests that change only Markdown or `docs/` skip CI. `changelog-check.yml` requires a CHANGELOG entry on every pull request that touches `internal/`, `api/` or `cmd/`, and `pr-summary` keeps one comment on the pull request current.
 
 ## Versioning and releases
 

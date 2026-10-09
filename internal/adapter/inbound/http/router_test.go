@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -129,4 +130,26 @@ func TestRouter_Handler_ReturnsUnderlyingEngine(t *testing.T) {
 	})
 
 	require.NotNil(t, router.Handler())
+}
+
+func TestInternalRoutes_RejectBodiesOverTheLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := NewRouter(RouterConfig{
+		GinConfig:        testGinConfig,
+		AppEnv:           "test",
+		InternalAPIToken: "secret",
+		Handler:          handler.New(handler.Services{}),
+		DB:               fakeDBPinger{health: DBHealth{Healthy: true}},
+		Cache:            fakePinger{},
+	}).engine
+
+	padding := strings.Repeat("a", 11<<20)
+	body := `{"id":"x","type":"Unhandled","data":{"pad":"` + padding + `"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/events", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-internal-token", "secret")
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

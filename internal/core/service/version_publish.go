@@ -99,7 +99,9 @@ func (s *VersionService) compileForPublish(
 	bundledXML string,
 ) (*dsl.CompiledCollaboration, *dsl.CompiledPlan, error) {
 	compileStart := time.Now()
+	ctx, endSpan := observability.StartSpan(ctx, "BPMN_Compilation")
 	collab, err := s.compiler.CompileForPublish(ctx, bundledXML)
+	endSpan()
 	observability.ObserveHistogram(observability.WFCompileDurationSeconds, time.Since(compileStart).Seconds())
 	if err != nil {
 		return nil, nil, fmt.Errorf("compile bpmn: %w", err)

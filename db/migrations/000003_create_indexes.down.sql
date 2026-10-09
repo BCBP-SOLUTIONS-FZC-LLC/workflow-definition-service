@@ -1,3 +1,4 @@
+DROP INDEX IF EXISTS idx_rls_violation_log_time;
 DROP INDEX IF EXISTS idx_workflow_version_module_refs;
 DROP INDEX IF EXISTS uq_module_process_id_tenant;
 DROP INDEX IF EXISTS uq_module_process_id_global;

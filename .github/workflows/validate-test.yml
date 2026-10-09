@@ -18,7 +18,6 @@ name: Validate Test
 
 permissions:
   contents: read
-  packages: read   # pull ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -65,16 +64,6 @@ jobs:
 
       - name: Architecture lint (import direction)
         run: .github/scripts/arch-lint.sh
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Event schema sync check
-        run: .github/scripts/schema-extract-check.sh
 
       - name: Restore Docker image cache
         id: docker-cache

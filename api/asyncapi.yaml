@@ -1,6 +1,6 @@
 asyncapi: 3.0.0
 info:
-  title: workflow-definition-svc events
+  title: workflow-definition-service events
   version: 1.1.0
   description: >
     Inbound only. The shared Workflow-Events Consumer forwards two

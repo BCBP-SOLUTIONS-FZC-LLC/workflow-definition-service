@@ -1,6 +1,7 @@
 package observability_test
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
@@ -28,7 +30,7 @@ func initIdentity(t *testing.T) {
 	require.NoError(t, err)
 	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{
 		Logger:       log,
-		ServiceName:  "workflow-definition-svc",
+		ServiceName:  "workflow-definition-service",
 		BuildVersion: "test",
 		Domain:       observability.Domain,
 		Environment:  "test",
@@ -71,17 +73,17 @@ func TestRegister_EveryMetricIsScrapable(t *testing.T) {
 	body := scrape(t)
 
 	metricNames := []string{
-		"workflow_definition_svc_submissions_total",
-		"workflow_definition_svc_archive_total",
-		"workflow_definition_svc_publish_total",
-		"workflow_definition_svc_clone_total",
-		"workflow_definition_svc_promote_total",
-		"workflow_definition_svc_validation_failures_total",
-		"workflow_definition_svc_publish_latency_seconds",
-		"workflow_definition_svc_compile_duration_seconds",
-		"workflow_definition_svc_cache_hits_total",
-		"workflow_definition_svc_cache_misses_total",
-		"workflow_definition_svc_internal_events_ingest_total",
+		"workflow_definition_service_submissions_total",
+		"workflow_definition_service_archive_total",
+		"workflow_definition_service_publish_total",
+		"workflow_definition_service_clone_total",
+		"workflow_definition_service_promote_total",
+		"workflow_definition_service_validation_failures_total",
+		"workflow_definition_service_publish_latency_seconds",
+		"workflow_definition_service_compile_duration_seconds",
+		"workflow_definition_service_cache_hits_total",
+		"workflow_definition_service_cache_misses_total",
+		"workflow_definition_service_internal_events_ingest_total",
 	}
 
 	for _, name := range metricNames {
@@ -122,4 +124,34 @@ func TestNilSafeHelpers_Noop(t *testing.T) {
 		observability.IncCounterVec(nil, "a", "b")
 		observability.ObserveHistogram(nil, 1.23)
 	})
+}
+
+func TestStartSpan_ChildSpanSharesTheTrace(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "none")
+	shutdown, err := gincommon.InitTracingWithConfig(gincommon.TracingConfig{
+		ServiceName: "workflow-definition-service", BuildVersion: "test", Domain: observability.Domain, Environment: "test",
+	})
+	require.NoError(t, err)
+	t.Cleanup(shutdown)
+
+	parent, parentSpan := gincommon.NewTracer("test").Start(context.Background(), "parent")
+	defer parentSpan.End()
+
+	child, end := observability.StartSpan(parent, "BPMN_Compilation")
+	defer end()
+
+	require.NotEmpty(t, gincommon.SpanTraceID(child))
+	require.Equal(t, gincommon.SpanTraceID(parent), gincommon.SpanTraceID(child))
+	require.NotEqual(t, parent, child, "the child span must replace the span carried by the context")
+}
+
+func TestAddRLSViolations_RecordsByTypeAndIsNilSafe(t *testing.T) {
+	observability.AddRLSViolations("cross_tenant_access", 1)
+
+	initIdentity(t)
+	cross := observability.RLSViolationsTotal.WithLabelValues("cross_tenant_access")
+	before := testutil.ToFloat64(cross)
+	observability.AddRLSViolations("cross_tenant_access", 3)
+
+	require.InDelta(t, before+3, testutil.ToFloat64(cross), 0)
 }

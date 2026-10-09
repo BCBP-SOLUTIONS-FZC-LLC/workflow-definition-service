@@ -21,9 +21,8 @@ db/migrations/                            @BCBP-SOLUTIONS-FZC-LLC/platform-engin
 api/internal-openapi.yaml                 @BCBP-SOLUTIONS-FZC-LLC/platform-engineers
 api/contracts/                            @BCBP-SOLUTIONS-FZC-LLC/platform-engineers
 
-# Event contract — schema/lifecycle changes affect downstream consumers
+# Event contract
 api/asyncapi.yaml                         @BCBP-SOLUTIONS-FZC-LLC/platform-engineers @BCBP-SOLUTIONS-FZC-LLC/platform-team
-internal/eventschema/                     @BCBP-SOLUTIONS-FZC-LLC/platform-engineers @BCBP-SOLUTIONS-FZC-LLC/platform-team
 
 # Security-sensitive files
 .github/SECURITY.md                       @BCBP-SOLUTIONS-FZC-LLC/platform-sre

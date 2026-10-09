@@ -15,6 +15,15 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
 
+const (
+	eventDepartmentMembershipRevoked = "DepartmentMembershipRevoked"
+	eventMembershipRevoked           = "MembershipRevoked"
+)
+
+func HandledEventTypes() []string {
+	return []string{eventDepartmentMembershipRevoked, eventMembershipRevoked}
+}
+
 type membershipRevoker interface {
 	HandleDepartmentMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID, departmentID string) error
 	HandleTenantMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID) error
@@ -35,9 +44,9 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 	}
 
 	switch env.Type {
-	case "DepartmentMembershipRevoked":
+	case eventDepartmentMembershipRevoked:
 		h.handleDepartmentMembershipRevoked(c, env)
-	case "MembershipRevoked":
+	case eventMembershipRevoked:
 		h.handleTenantMembershipRevoked(c, env)
 	default:
 		h.acknowledgeUnknownEventType(c, env.Type)
@@ -102,7 +111,7 @@ func (h *Handler) finishRevocation(c *gin.Context, evtType, logMsg string, err e
 }
 
 func (h *Handler) handleDepartmentMembershipRevoked(c *gin.Context, env events.Envelope[json.RawMessage]) {
-	const evtType = "DepartmentMembershipRevoked"
+	const evtType = eventDepartmentMembershipRevoked
 	in, ok := h.parseRevocation(c, env, evtType)
 	if !ok {
 		return
@@ -112,7 +121,7 @@ func (h *Handler) handleDepartmentMembershipRevoked(c *gin.Context, env events.E
 }
 
 func (h *Handler) handleTenantMembershipRevoked(c *gin.Context, env events.Envelope[json.RawMessage]) {
-	const evtType = "MembershipRevoked"
+	const evtType = eventMembershipRevoked
 	in, ok := h.parseRevocation(c, env, evtType)
 	if !ok {
 		return

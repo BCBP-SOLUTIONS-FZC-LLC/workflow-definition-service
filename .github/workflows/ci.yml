@@ -221,6 +221,8 @@ jobs:
       ORG_MEMBERSHIP_BASE_URL: http://localhost:8081
       EXECUTION_SERVICE_URL: http://localhost:8083
       EXECUTION_SERVICE_TOKEN: smoke-execution-token
+      OPENBAO_ADDR: http://localhost:8200
+      OPENBAO_TOKEN: smoke-openbao-token
     services:
       postgres:
         image: postgres:18-alpine

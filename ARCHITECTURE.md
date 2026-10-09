@@ -273,7 +273,7 @@ Incoming request
   → ContextMiddleware      (gincommon) — builds RequestContext{TenantID, UserID, Roles, TraceID}
   → InjectGUCSet           (service)   — copies RequestContext into pgcommon GUC context key
                                           so pool.GUCProvider can set app.tenant_id on every DB conn
-  → LimitRequestBody       (service)   — wraps c.Request.Body with http.MaxBytesReader(10 MB)
+  → LimitRequestBody       (service)   — wraps c.Request.Body with http.MaxBytesReader(10 MB); also on the internal group
   → RequireJSONContentType (service)   — 415 if a request body's Content-Type is not application/json
 
   → GET endpoints          ← read-only, no further authz
@@ -475,6 +475,7 @@ The happy path is always a single query. The probe only fires on the exceptional
 | `is_valid` reflects assignee eligibility only | `workflow_version.is_valid=false` means an assignee left a required department role; it does not reflect BPMN structural validity |
 | Idempotency-Key scoped per tenant | Cache key format: `idem:<tenant_id>:<key>` — prevents cross-tenant replay; only 2xx responses are cached (24 h TTL) |
 | Internal routes require manual GUC injection | `WithGUCSet` must be called by each internal handler before any repo access; the public HTTP path injects via `InjectGUCSet` after `gincommon.ProtectedMiddlewares` |
+| Tenant policy logs violations | Every tenant table forces row-level security with `rls_check_tenant()` / `rls_check_tenant_or_global()`; a blocked row is written to `rls_violation_log` at a 1% sample and exported as `workflow_definition_service_rls_violations_total` |
 | `ProtectedMiddlewares` must wrap all protected routes | Missing middleware causes `RequestContext` lookup to fail → 500 (server misconfiguration, not 401) |
 
 ---
@@ -500,8 +501,8 @@ All configuration is read from environment variables via `internal/config.Config
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `OTEL_SERVICE_NAME` | No | `workflow-definition-svc` | OTel `service.name` attribute |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | `localhost:4317` | OTLP/gRPC collector address |
+| `OTEL_SERVICE_NAME` | No | `workflow-definition-service` | OTel `service.name` attribute |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | `localhost:4317` | OTLP/gRPC collector address; `none` turns export off |
 | `OTEL_EXPORTER_OTLP_INSECURE` | No | `true` | Set `false` in production (mutual TLS) |
 | `OTEL_TRACES_SAMPLER_RATIO` | No | `1.0` | Head sampling ratio (`0.1` recommended in production) |
 
@@ -544,6 +545,18 @@ All configuration is read from environment variables via `internal/config.Config
 | `EXECUTION_SERVICE_URL` | When `APP_ENV != dev` | *(empty)* | The Execution Service's internal HTTP base URL (archive guard, pause-tasks); empty builds no client |
 | `EXECUTION_SERVICE_TOKEN` | When `APP_ENV != dev` | *(empty)* | The Execution Service's `INTERNAL_API_TOKEN`, sent as `x-internal-token` |
 | `EXECUTION_CLIENT_TIMEOUT` | No | `5s` | Per-attempt timeout for the Execution Service client |
+| `OPENBAO_ADDR` | When `APP_ENV != dev` | *(empty)* | OpenBao address for tenant connector credentials; empty disables the credential endpoints in dev |
+| `OPENBAO_TOKEN` | When `APP_ENV != dev` | *(empty)* | OpenBao token |
+| `OPENBAO_MOUNT` | No | `secret` | OpenBao KV mount |
+| `SECRETS_CLIENT_TIMEOUT` | No | `5s` | OpenBao client timeout |
+| `CONNECTOR_ALIAS_ALLOWED_HOSTS` | No | *(empty)* | Hosts a connector REST alias may target: `.suffix` or exact host; empty rejects every alias write |
+
+### Row-level-security violation export
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `RLS_VIOLATION_EXPORT_INTERVAL` | No | `30s` | How often the system pool reads new `rls_violation_log` rows into `workflow_definition_service_rls_violations_total` |
+| `RLS_VIOLATION_RETENTION` | No | `168h` | Rows older than this are deleted by the same loop |
 
 ---
 
@@ -1171,9 +1184,7 @@ The three BCBP platform libraries are private Go modules — see the table and u
 
 ### platform-events (event envelope)
 
-The service uses only `Envelope[T]` from this library: the inbound handler (`internal/adapter/inbound/http/handler/internal_events.go`) decodes the envelope the shared workflow-events consumer forwards to `POST /internal/events` (see [API Overview](README.md#api-overview) in the README). The service publishes nothing, so it uses neither the SNS publisher nor the outbox runner, and it does not use `NewSQSConsumer`.
-
-> **v1.3 envelope key renames (breaking wire format, Go field names unchanged):** `payload → data`, `timestamp → time`, `schema_version → specversion`, `schema_id → dataschema`. Any local struct/raw map hardcoding these JSON tags must be updated.
+The service uses only `Envelope[T]` from this library: the inbound handler (`internal/adapter/inbound/http/handler/internal_events.go`) decodes the envelope the shared workflow-events consumer forwards to `POST /internal/events` (see [API Overview](README.md#api-overview) in the README). The service publishes nothing, so it uses neither the SNS publisher nor the outbox runner, and it does not use `NewSQSConsumer`. `cmd/server/telemetry.go` calls `events.InitMetrics` so `platform_library_info` identifies the library version in every scrape.
 
 ### platform-pgcommon (pool, RLS GUC injection, transactor, migrations)
 

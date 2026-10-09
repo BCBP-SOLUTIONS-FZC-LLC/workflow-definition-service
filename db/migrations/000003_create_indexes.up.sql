@@ -30,3 +30,4 @@ CREATE UNIQUE INDEX uq_module_version_published ON workflow_module_version(modul
 
 CREATE INDEX idx_template_name_trgm ON workflow_template USING gin (name gin_trgm_ops);
 CREATE INDEX idx_template_scope_tenant_category ON workflow_template(scope, tenant_id, category);
+CREATE INDEX idx_rls_violation_log_time ON rls_violation_log (occurred_at);

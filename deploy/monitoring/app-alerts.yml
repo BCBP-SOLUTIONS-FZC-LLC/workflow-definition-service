@@ -160,14 +160,14 @@ groups:
             The p99 compiled-plan read duration is {{ $value | humanizeDuration }}.
             This is a cache-backed lookup (CACHE_COMPILED_PLAN_TTL) — sustained high
             latency usually means a cold cache under load or a slow DB fallback path.
-            Check workflow_definition_svc_cache_hits_total vs workflow_definition_svc_cache_misses_total.
+            Check workflow_definition_service_cache_hits_total vs workflow_definition_service_cache_misses_total.
 
   - name: workflow_definition_service_validation
     rules:
 
       - alert: WorkflowDefinitionServiceHighValidationFailureRate
         expr: |
-          sum(rate(workflow_definition_svc_validation_failures_total{job="workflow-definition-service"}[10m])) > 0.5
+          sum(rate(workflow_definition_service_validation_failures_total{job="workflow-definition-service"}[10m])) > 0.5
         for: 10m
         labels:
           severity: warning
@@ -175,7 +175,7 @@ groups:
         annotations:
           summary: Elevated BPMN validation failure rate on /validate
           description: >-
-            workflow_definition_svc_validation_failures_total is only incremented by the standalone
+            workflow_definition_service_validation_failures_total is only incremented by the standalone
             POST /api/v1/workflows/validate endpoint (WorkflowService.Create validates
             inline and does not touch this counter, so this is not a "% of submissions"
             ratio). Sustained validation failures usually mean an upstream canvas-modeler
@@ -188,7 +188,7 @@ groups:
         expr: |
           histogram_quantile(0.95,
             sum by (le) (
-              rate(workflow_definition_svc_publish_latency_seconds_bucket{job="workflow-definition-service"}[5m])
+              rate(workflow_definition_service_publish_latency_seconds_bucket{job="workflow-definition-service"}[5m])
             )
           ) > 2.0
         for: 5m
@@ -222,7 +222,7 @@ groups:
 
       - alert: WorkflowDefinitionServiceInternalEventIngestFailures
         expr: |
-          sum(increase(workflow_definition_svc_internal_events_ingest_total{job="workflow-definition-service", result=~"bad_payload|error"}[15m])) > 5
+          sum(increase(workflow_definition_service_internal_events_ingest_total{job="workflow-definition-service", result=~"bad_payload|error"}[15m])) > 5
         for: 5m
         labels:
           severity: warning
@@ -258,7 +258,7 @@ groups:
 
       - alert: WorkflowDefinitionServiceHTTPPanic
         expr: |
-          increase(http_panic_total{job="workflow-definition-service"}[5m]) > 0
+          increase(platform_http_panics_total{job="workflow-definition-service"}[5m]) > 0
         for: 0m
         labels:
           severity: critical
@@ -266,7 +266,7 @@ groups:
         annotations:
           summary: An HTTP handler panicked
           description: >-
-            http_panic_total increased — a handler panic was recovered by
+            platform_http_panics_total increased — a handler panic was recovered by
             platform-gincommon's middleware. This should never happen; check logs
             for the stack trace immediately.
 
@@ -277,12 +277,12 @@ groups:
 
       - alert: WorkflowDefinitionServiceLowCacheHitRatio
         expr: |
-          sum(rate(workflow_definition_svc_cache_misses_total{job="workflow-definition-service"}[15m]))
+          sum(rate(workflow_definition_service_cache_misses_total{job="workflow-definition-service"}[15m]))
             /
           (
-            sum(rate(workflow_definition_svc_cache_hits_total{job="workflow-definition-service"}[15m]))
+            sum(rate(workflow_definition_service_cache_hits_total{job="workflow-definition-service"}[15m]))
               +
-            sum(rate(workflow_definition_svc_cache_misses_total{job="workflow-definition-service"}[15m]))
+            sum(rate(workflow_definition_service_cache_misses_total{job="workflow-definition-service"}[15m]))
           )
           > 0.5
         for: 30m
@@ -295,3 +295,33 @@ groups:
             The compiled-plan cache miss ratio is {{ $value | humanizePercentage }}
             over the last 15 minutes. Efficiency signal, not an incident — check
             CACHE_COMPILED_PLAN_TTL and Valkey availability if this persists.
+
+  - name: workflow_definition_service_rls
+    rules:
+
+      - alert: WorkflowDefinitionServiceRLSMissingGUC
+        expr: |
+          increase(workflow_definition_service_rls_violations_total{job="workflow-definition-service", violation_type="missing_or_invalid_guc"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: A pool connection reached a tenant table without a tenant GUC
+          description: >-
+            app.tenant_id was missing or malformed on a connection that queried a
+            tenant-scoped table. Likely a route registered without the GUC
+            middleware or a raw session. The count is a 1% sample of such rows.
+
+      - alert: WorkflowDefinitionServiceRLSCrossTenantAccess
+        expr: |
+          increase(workflow_definition_service_rls_violations_total{job="workflow-definition-service", violation_type="cross_tenant_access"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: Cross-tenant row access blocked by RLS
+          description: >-
+            An authenticated session touched another tenant's rows. Possible
+            service bug or active probing. The count is a 1% sample of blocked rows.

@@ -10,25 +10,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Security
 
-- Go 1.26.9 (the standard library fixes for `net/http`, `net/textproto`, `crypto/tls` and `html/template`), `golang.org/x/net` v0.60.0 and `github.com/moby/go-archive` v0.3.0. The pinned Dockerfile builder image is go1.26.9.
+- Go 1.26.9, `golang.org/x/net` v0.60.0 and `github.com/moby/go-archive` v0.3.0; the pinned Dockerfile builder image is go1.26.9.
+- Request bodies on the internal route group are capped at 10 MiB, as on the public group.
+- The metrics server sets read-header, read, write and idle timeouts.
+- Tenant tables force row-level security, and their policies log sampled violations.
 
 ### Added
 
 - The published-version nodes read lists `waits`: the receive tasks and message boundaries that no send task of the plan feeds, each with the key an outside party's answer addresses (`dsl.ExternalWaits`). A compiled message boundary keeps its BPMN id (`MessagePath.BoundaryID`).
 - `CONNECTOR_SECRET_AUTHORED`: a connector task input targeting a secret field of its connector type is refused; the tenant's stored credential is always used.
-- `.editorconfig` and `VERSIONING.md`.
-- The release workflow refuses a tag with no CHANGELOG entry before it builds anything.
-- `TestRegister_FollowsObservabilityRegistry` validates this service's collectors against the platform registry.
+- Row-level-security violation logging: `rls_check_tenant()` and `rls_check_tenant_or_global()` write a 1% sample of blocked rows to `rls_violation_log`; a background loop exports them as `workflow_definition_service_rls_violations_total{violation_type}` and deletes rows past `RLS_VIOLATION_RETENTION`; the Helm and standalone alert rules page on both violation types.
+- `make metrics-lint` and `make metrics-inventory`, the generated `docs/observability/metric-registry.md`, and a `validate-quality` step that runs the observability checks.
+- Tests that fail when the public OpenAPI, the internal OpenAPI or the AsyncAPI differ from the routes and the event types the handler accepts, a redelivery test for the membership revocation, a telemetry test that checks the scrape against the platform registry, and an integration test that checks the `platform_db_*` series appear with a real pool.
+- Outbound calls to the Execution Service and the Org & Membership Service carry the W3C trace context.
+- `.editorconfig`, `VERSIONING.md`, and a release job that refuses a tag with no CHANGELOG entry before anything is built.
 
 ### Changed
 
-- **Platform libraries moved to their latest majors:** `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.0, `platform-gincommon` v1.6.0. Logs, metrics and traces go through gincommon only; the database through pgcommon only; the envelope type through platform-events only. `workflow-models` v1.2.0 and `workflow-connectors` v1.0.0 replace the release-candidate and pseudo-version pins.
-- **Metric names follow the platform observability standard.** HTTP and database series are `platform_http_*` and `platform_db_*`; this service's collectors are `workflow_definition_svc_<metric>` (was `wf_<metric>` and `internal_events_ingest_total`). The metrics identity (`domain=workflow`, `service`, `environment`) is fixed before any collector or pool is created, `/metrics` is served by `gincommon.MetricsHandler()`, and pgcommon queries export `db.query` spans through `gincommon.NewSpanTracer`. Alert rules, the Helm `PrometheusRule`, the prometheus-adapter rule and the release smoke query use the new names.
-- `APP_ENV` must be one of `local`, `dev`, `test`, `staging`, `prod`; any other value, `production` included, fails startup. `prod` now also enforces `SYSTEM_DATABASE_URL`, which a `production` value had silently skipped. The CI smoke job runs with `APP_ENV=test`.
+- Platform libraries: `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.0, `platform-gincommon` v1.6.0, `workflow-models` v1.2.0, `workflow-connectors` v1.0.0.
+- The service is named `workflow-definition-service`. HTTP and database series are `platform_http_*` and `platform_db_*`; this service's collectors are `workflow_definition_service_<metric>`. The metrics identity (`domain=workflow`, `service`, `environment`) is fixed before any collector or pool is created, `/metrics` is served by `gincommon.MetricsHandler()`, and pgcommon queries export `db.query` spans through `gincommon.NewSpanTracer`. Alert rules, the Helm `PrometheusRule`, the prometheus-adapter rule and the release smoke query use these names.
+- `APP_ENV` is one of `local`, `dev`, `test`, `staging`, `prod`; any other value fails startup. `prod` enforces `SYSTEM_DATABASE_URL`. The CI smoke job runs with `APP_ENV=test`.
+- `OPENBAO_ADDR` and `OPENBAO_TOKEN` are required whenever `APP_ENV` is not `dev`; the Helm chart sets the OpenBao, secrets-client, connector-alias and RLS export values and takes `OPENBAO_TOKEN` from the Secret.
 - `api/asyncapi.yaml` documents both inbound events the handler accepts (`DepartmentMembershipRevoked` and `MembershipRevoked`) and the producer's envelope, with no outbound channel.
-- The Helm chart sets `OPENBAO_ADDR`, `OPENBAO_MOUNT`, `SECRETS_CLIENT_TIMEOUT` and `CONNECTOR_ALIAS_ALLOWED_HOSTS`.
 - The request timeout runs innermost through `gincommon.Config.RequestTimeout`, so metrics, logs and spans record the 503 the client receives. The vulnerability scan in CI is pinned to govulncheck v1.1.4.
-- The README follows the platform structure (mental model, architecture and dependency rules, CI, versioning, out of scope).
+- The README follows the platform structure (mental model, architecture and dependency rules, observability, security, CI, versioning, out of scope).
 - Non-test code carries no comments; only `//go:` and `//nolint` directives remain.
 - **A boundary carries the whole path it leads to.** A boundary on a task, a subProcess or a call carries its path as `Steps`, in the order the flows give, and the boundary event's ID as `BoundaryID`; it named only the department it moved to, so a path of several tasks, lanes or gateways ran its first department alone. A path that continues into a node the main flow compiled keeps naming only its department. workflow-models `v1.4.0-rc.4` (LLD rev 1.33).
 - **The service has no outbox, relay, SNS publisher or Glue codec.** It publishes no event, and the apparatus made every cluster boot require `SNS_TOPIC_ARN` and `GLUE_REGISTRY_NAME`. Removed: the outbox tables and their RLS migration (`000005`, edited in place: reset a local database), the relay and its alerts, the `OutboxRepository` port, `AWS_USE_STUB`, `AWS_REGION`, `AWS_ENDPOINT_URL`, `SNS_TOPIC_ARN`, `GLUE_REGISTRY_NAME`, `GLUE_SCHEMA_CACHE_TTL` and `OUTBOX_*` settings, the chart's `SNS_TOPIC_ARN` Secret key, and LocalStack from the local stack. `ORG_MEMBERSHIP_BASE_URL`, `EXECUTION_SERVICE_URL` and `EXECUTION_SERVICE_TOKEN` are required whenever `APP_ENV` is not `dev` (LLD rev 1.32).
@@ -81,6 +86,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - **In-process SQS consumer** — inbound events are now delivered over HTTP at `POST /internal/events` by a separate shared workflow-events consumer; the `SQS_QUEUE_URL` / `SQS_CONCURRENCY` config and the `sqs` adapter were removed.
 - **In-service `processed_event` pruner** — the `processedEventPruner` goroutine and its `PROCESSED_EVENTS_PRUNE_DAYS` / `PROCESSED_EVENTS_PRUNE_INTERVAL` config were removed. Cleanup of the operational tables (`processed_event`, `outbox_events`, `outbox_dead_letters`) is now owned by an external periodic job (lambda / cron) per LLD §7.1.2. See `.design/CODE_GAPS.md` GAP-11.
 - **`workflow.template.published` event** — removed entirely, including its `api/asyncapi.yaml` message/schemas, `internal/eventschema/workflow_template_published.json`, and the LocalStack SNS/Glue scaffolding that backed it. Its only remaining consumer behavior (Execution's eager cache-warm) was already dropped, leaving nothing but a payload validate-and-dedup step. `TemplatePublishedPayload`/`EventTypeTemplatePublished` stay defined in `workflow-models` for now; this service just stopped emitting the event. This service currently has no outbound events.
+- The Glue schema-governance tooling: the `schema-*` and freeze-watchdog workflows, `internal/eventschema/`, the `make schema-*` targets, the `extract-schemas` CI step, the schema alerts and their CODEOWNERS entry. The service publishes no events.
+- The unused `domain.EventSource` constant.
 
 ### Added
 

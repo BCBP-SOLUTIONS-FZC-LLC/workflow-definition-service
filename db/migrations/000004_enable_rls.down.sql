@@ -15,3 +15,6 @@ ALTER TABLE workflow_version DISABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS tenant_isolation_policy ON workflow;
 ALTER TABLE workflow DISABLE ROW LEVEL SECURITY;
+
+DROP FUNCTION IF EXISTS rls_check_tenant_or_global(uuid, catalog_scope, text);
+DROP FUNCTION IF EXISTS rls_check_tenant(uuid, text);

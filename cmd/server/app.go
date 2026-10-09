@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 )
 
 type app struct {
@@ -23,6 +25,8 @@ type app struct {
 	cache         port.CacheStore
 	httpServer    *http.Server
 	metricsServer *http.Server
+	rlsExporter   *service.RLSViolationExporter
+	cancelExport  context.CancelFunc
 	shutdown      func()
 	cacheClose    io.Closer
 }
@@ -44,6 +48,10 @@ func (a *app) run() {
 }
 
 func (a *app) startServers() {
+	exportCtx, cancel := context.WithCancel(context.Background())
+	a.cancelExport = cancel
+	go a.rlsExporter.Run(exportCtx)
+
 	go func() {
 		a.log.Info("HTTP server starting", map[string]any{"addr": a.httpServer.Addr})
 		if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -62,6 +70,7 @@ func (a *app) startServers() {
 }
 
 func (a *app) stopServers(ctx context.Context) {
+	a.cancelExport()
 	if err := a.httpServer.Shutdown(ctx); err != nil {
 		a.log.Error("HTTP server shutdown error", map[string]any{"error": err.Error()})
 	}
@@ -79,4 +88,15 @@ func (a *app) stopServers(ctx context.Context) {
 		a.log.Error("valkey close error", map[string]any{"error": err.Error()})
 	}
 	a.shutdown()
+}
+
+func newMetricsServer(port int, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 }

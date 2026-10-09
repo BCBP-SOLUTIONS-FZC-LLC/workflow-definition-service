@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
@@ -65,6 +67,7 @@ func (c *MembershipClient) tryCheckEligibility(ctx context.Context, rawURL strin
 	if err != nil {
 		return false, false, fmt.Errorf("build eligibility request: %w", err)
 	}
+	gincommon.InjectTraceContext(ctx, req.Header)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return false, true, fmt.Errorf("%w: membership eligibility check: %w", domain.ErrUpstreamUnavailable, err)

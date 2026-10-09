@@ -369,7 +369,9 @@ Keep docs in sync when making changes:
 | --- | --- |
 | New HTTP endpoint or field | `README.md` § API Overview |
 | New internal endpoint | `api/internal-openapi.yaml`, `README.md` § Internal API |
-| New config env var | `ARCHITECTURE.md` § Configuration reference |
+| New config env var | `ARCHITECTURE.md` § Configuration reference, `.env.example`, `deploy/helm/values.yaml` |
+| New or changed metric | `internal/observability`, then `make metrics-inventory`; alerts under `deploy/` use the new name |
+| New or changed route or event type | `docs/swagger/openapi.yaml`, `api/internal-openapi.yaml` or `api/asyncapi.yaml`; the parity tests fail when they differ |
 | New migration or schema change | `README.md` § Database, this file § Database Migrations |
 | Architecture / layer change | `ARCHITECTURE.md` + `docs/architecture/mermaid/*.mmd` |
 | Platform lib upgrade | `ARCHITECTURE.md` § Platform Libraries + `.claude/CLAUDE.md` version table + `.claude/operations.md` |

@@ -391,3 +391,25 @@ func TestHandleDepartmentMembershipRevoked_CacheDelError_LogsAndContinues(t *tes
 		t.Fatalf("cache Del error must not propagate: %v", err)
 	}
 }
+
+func TestHandleDepartmentMembershipRevoked_RedeliveryConverges(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	aRepo := mocks.NewMockAssigneeRepository(ctrl)
+	tx := mocks.NewMockTransactor(ctrl)
+	exec := mocks.NewMockExecutionService(ctrl)
+
+	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).
+		Return([]*domain.NodeAssignee{assignee(mVerID, "task-1", mDeptID)}, nil).Times(2)
+	vRepo.EXPECT().GetByID(gomock.Any(), mTenantID, mVerID).
+		Return(&domain.WorkflowVersion{ID: mVerID, WorkflowID: uuid.New(), Status: domain.VersionStatusPublished}, nil).Times(2)
+	vRepo.EXPECT().SetInvalid(gomock.Any(), mTenantID, mVerID, gomock.Any()).Return(nil).Times(2)
+	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil).Times(2)
+
+	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
+	for delivery := 1; delivery <= 2; delivery++ {
+		if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+			t.Fatalf("delivery %d: unexpected error: %v", delivery, err)
+		}
+	}
+}

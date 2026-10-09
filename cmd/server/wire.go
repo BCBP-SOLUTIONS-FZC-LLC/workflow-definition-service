@@ -8,7 +8,6 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgmetrics"
 
 	inboundhttp "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http"
 	httphandler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
@@ -27,33 +26,10 @@ func newApp(cfg *config.Config) (*app, error) {
 		return nil, fmt.Errorf("logger: %w", err)
 	}
 
-	ginCfg := gincommon.Config{
-		Logger:       log,
-		ServiceName:  cfg.OTELServiceName,
-		BuildVersion: version,
-		Domain:       observability.Domain,
-		Environment:  cfg.AppEnv,
-	}
-	tracingShutdown, err := gincommon.InitTracingWithConfig(gincommon.TracingConfig{
-		ServiceName:  ginCfg.ServiceName,
-		BuildVersion: ginCfg.BuildVersion,
-		Domain:       ginCfg.Domain,
-		Environment:  ginCfg.Environment,
-		Logger:       log,
-	})
+	ginCfg := ginConfig(cfg, log)
+	tracingShutdown, err := initTelemetry(ginCfg, log)
 	if err != nil {
-		return nil, fmt.Errorf("tracing: %w", err)
-	}
-
-	_ = gincommon.ObservabilityMiddlewares(ginCfg)
-	observability.Register()
-	pgWarnings, err := pgmetrics.InitWithIdentity(pgmetrics.IdentityFromLabels(gincommon.MetricsConstLabels()), gincommon.MetricsRegisterer())
-	if err != nil {
-		tracingShutdown()
-		return nil, fmt.Errorf("pgcommon metrics: %w", err)
-	}
-	for _, w := range pgWarnings {
-		log.Warn("platform-pgcommon metric not registered", map[string]any{"metric": w.Metric, "error": w.Error()})
+		return nil, err
 	}
 
 	pool, err := newDBPool(context.Background(), cfg, log)
@@ -68,6 +44,14 @@ func newApp(cfg *config.Config) (*app, error) {
 		tracingShutdown()
 		return nil, err
 	}
+
+	rlsExporter := service.NewRLSViolationExporter(service.RLSViolationExporterDeps{
+		Log:       pgadapter.NewRLSViolationRepo(systemPool),
+		Record:    observability.AddRLSViolations,
+		Interval:  cfg.RLSViolationExportInterval,
+		Retention: cfg.RLSViolationRetention,
+		Logger:    log,
+	})
 
 	cache, redisClient, err := newCacheStore(context.Background(), cfg)
 	if err != nil {
@@ -194,19 +178,17 @@ func newApp(cfg *config.Config) (*app, error) {
 	})
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:      router.Handler(),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler:           router.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", gincommon.MetricsHandler())
-	metricsSrv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.MetricsPort),
-		Handler: metricsMux,
-	}
+	metricsSrv := newMetricsServer(cfg.MetricsPort, metricsMux)
 
 	return &app{
 		cfg:           cfg,
@@ -216,6 +198,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		cache:         cache,
 		httpServer:    srv,
 		metricsServer: metricsSrv,
+		rlsExporter:   rlsExporter,
 		shutdown:      tracingShutdown,
 		cacheClose:    redisClient,
 	}, nil

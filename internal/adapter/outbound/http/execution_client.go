@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
@@ -93,6 +95,7 @@ func (c *ExecutionClient) try(ctx context.Context, method, rawURL string, body [
 	if c.token != "" {
 		req.Header.Set(internalTokenHeader, c.token)
 	}
+	gincommon.InjectTraceContext(ctx, req.Header)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return ctx.Err() == nil, fmt.Errorf("send request: %w", err)

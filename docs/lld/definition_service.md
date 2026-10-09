@@ -122,7 +122,7 @@ Below is a detailed breakdown of each internal module within the Workflow Defini
 
 The service follows clean architecture: nothing in `core/` imports from `adapter/`. The only place concrete adapters are wired to interfaces is `cmd/server/main.go`.
 
-- **`workflow-definition-svc/`** (Project Root)
+- **`workflow-definition-service/`** (Project Root)
   - **`cmd/server/`**
     - `main.go` — Application bootstrap (concurrently starts the Gin HTTP server and the metrics server) and dependency injection wire-up. Inbound membership events arrive via `POST /internal/events`, forwarded by the shared workflow-events consumer.
   - **`internal/`**
@@ -288,7 +288,7 @@ Incoming HTTP request
     class J handler;
 ```
 
-`gincommon.InitTracingWithConfig` is called once at startup before `gincommon.ObservabilityMiddlewares`, with the service name, `Domain` (`workflow`) and `Environment` (`APP_ENV`) that identify every metric and span; the returned shutdown function is deferred.
+Tracing starts once at startup, before the metrics identity is fixed and before any pool or collector exists. Every span and every metric carries the same service name, domain (`workflow`) and environment (`APP_ENV`). Trace export can be turned off with `OTEL_EXPORTER_OTLP_ENDPOINT=none`; trace and request IDs still work.
 
 **Graceful shutdown sequence** (LIFO):
 
@@ -301,7 +301,7 @@ Incoming HTTP request
 
 Step 3 must run before pool.Close() to ensure any in-flight DB-related spans are flushed before the pool drains.
 
-**`HTTP_REQUEST_TIMEOUT_SEC` env var** (default `30`): configures the `TimeoutMiddleware` deadline. A request exceeding this deadline is cancelled and returns 503; `http_request_timeout_total` is incremented to distinguish these from other 5xx errors.
+**Request deadline** (30 s): a request exceeding it is cancelled and returns 503, and `platform_http_request_timeouts_total` counts it separately from other 5xx errors. The deadline runs innermost in the middleware chain, so the metrics, the access log and the server span record the same 503 the client receives.
 
 #### 1.6.1.1 Logger Adapter (`portLogger`)
 
@@ -328,10 +328,12 @@ The adapter converts `map[string]interface{}` to `[]zap.Field` via `zap.Any`. Al
 | --- | --- | --- |
 | `APP_ENV` | `prod` | One of `local`, `dev`, `test`, `staging`, `prod`; any other value fails startup. Sets Gin release mode, Zap production format, OTLP TLS, and the metrics `environment` label |
 | `BUILD_VERSION` | Set via `-ldflags` at build | Prometheus `platform_build_info` gauge and OTel `service.version` |
-| `OTEL_SERVICE_NAME` | `workflow-definition-svc` | OTel `service.name` attribute on all spans |
+| `OTEL_SERVICE_NAME` | `workflow-definition-service` | OTel `service.name` attribute on all spans |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `otel-collector:4317` | OTLP/gRPC collector address (in-cluster) |
 | `OTEL_EXPORTER_OTLP_INSECURE` | `false` | TLS required in production (collector uses mutual TLS) |
 | `OTEL_TRACES_SAMPLER_RATIO` | `0.1` | 10 % head sampling; increase to `1.0` for full trace debugging |
+
+**Startup configuration.** `APP_ENV` is one of `local`, `dev`, `test`, `staging`, `prod`; any other value stops startup. Outside `dev` the service also refuses to start without `INTERNAL_API_TOKEN`, the Org & Membership base URL, the Execution Service URL and token, and the OpenBao address and token; `prod` additionally requires `SYSTEM_DATABASE_URL`. `RLS_VIOLATION_EXPORT_INTERVAL` and `RLS_VIOLATION_RETENTION` must be positive durations.
 
 #### 1.6.3 Response Headers (gincommon-injected)
 
@@ -442,11 +444,10 @@ func readyzHandler(pool *pgcommon.Pool, cache port.CacheStore) gin.HandlerFunc {
 | `PG_MIN_CONNS` | `2` | Minimum idle connections (set `0` when `PG_BOUNCER_MODE=true`) |
 | `PG_SLOW_QUERY_THRESHOLD_MS` | `200` | Slow-query log threshold in milliseconds |
 | `PG_BOUNCER_MODE` | `false` | Enable PgBouncer transaction-pooling mode; sets MinConns=0 automatically |
-| `HTTP_REQUEST_TIMEOUT_SEC` | `30` | Per-request deadline enforced by `TimeoutMiddleware` |
 
 #### 1.7.5 Prometheus Metrics
 
-`cmd/server` fixes the metrics identity (`gincommon.ObservabilityMiddlewares`) and calls `pgmetrics.InitWithIdentity` with it before `pgcommon.NewPool`; the pool then registers its collectors on `gincommon.MetricsRegisterer()`. `Config.Tracer` is `gincommon.NewSpanTracer`, so `db.query` spans export with the HTTP spans.
+The metrics identity is fixed before the pool is created, so the pool registers its collectors under the same `domain`, `service` and `environment` as every other series. Database queries export `db.query` spans through the same pipeline as HTTP spans.
 
 | Metric | Type | Description |
 | --- | --- | --- |
@@ -458,7 +459,7 @@ func readyzHandler(pool *pgcommon.Pool, cache port.CacheStore) gin.HandlerFunc {
 | `platform_db_transaction_retries_total` | Counter | Transaction retries |
 | `platform_db_transaction_retries_exhausted_total` | Counter | Retries that exhausted their budget without succeeding |
 
-All of the above, §6.1.1's pool gauges, and this service's own `workflow_definition_svc_*` metrics land on the same `gincommon.MetricsRegisterer()`, exposed together on the `/metrics` endpoint.
+All of the above, §6.1.1's pool gauges, and this service's own `workflow_definition_service_*` metrics land on the same `gincommon.MetricsRegisterer()`, exposed together on the `/metrics` endpoint.
 
 ### 1.8 Events and Startup Migration
 
@@ -493,7 +494,7 @@ Inbound domain events are consumed by the shared workflow-events consumer servic
 
 | Metric | Type | Description |
 | --- | --- | --- |
-| `workflow_definition_svc_internal_events_ingest_total` | Counter | Inbound envelopes received at `POST /internal/events` (labels: `type`, `result`) |
+| `workflow_definition_service_internal_events_ingest_total` | Counter | Inbound envelopes received at `POST /internal/events` (labels: `type`, `result`) |
 
 ---
 
@@ -3442,58 +3443,61 @@ To ensure high operational reliability, fast debugging, and multi-tenant perform
 
 All metrics are exposed via a standard HTTP `/metrics` endpoint scraped by Prometheus, unauthenticated (access control is enforced by network policy/ingress at the infra layer, not the app — same reasoning as `/internal/events`'s reliance on Kubernetes `NetworkPolicy`). None of the service-specific business metrics below carry a `tenant_id` label today — cross-tenant noisy-neighbor attribution for these particular counters/histograms is not currently possible; `wf_*` metrics are process-wide only.
 
-**Base HTTP transport metrics** are provided automatically by `gincommon.MetricsMiddleware` (wired via `ObservabilityMiddlewares`). These require no additional code:
+**Platform HTTP metrics** are emitted for every route without service code:
 
 | Metric | Type | Description |
 | --- | --- | --- |
 | `platform_http_requests_total` | Counter | Requests by `method`, `route`, `status_class` and `error_class` |
 | `platform_http_request_duration_seconds` | Histogram | Request latency |
-| `platform_http_panics_total` | Counter | Panics recovered by `PanicRecoveryMiddleware` |
+| `platform_http_panics_total` | Counter | Handler panics recovered by the middleware stack |
 | `platform_http_rate_limited_requests_total` | Counter | HTTP 429 responses |
-| `platform_http_request_timeouts_total` | Counter | Requests cancelled by the request timeout |
+| `platform_http_request_timeouts_total` | Counter | Requests cancelled by the request deadline |
 | `platform_build_info` | Gauge | `version` label from `BUILD_VERSION` |
 
-Every series carries the constant `domain`, `service` and `environment` labels. Service-specific metrics are created with `gincommon.NewCounterVec`, `NewCounter` and `NewHistogramVec` and are named `workflow_definition_svc_<metric>`; a unit test validates them against the platform observability registry.
+Every series carries the constant `domain`, `service` and `environment` labels. The platform registry has three tiers: platform-shared `platform_*` series emitted by the platform libraries in every service, workflow domain-shared `workflow_*` series (none defined yet), and service-specific `workflow_definition_service_<metric>` series. A test validates every series of the service against the registry, and `docs/observability/metric-registry.md` lists them all. `platform_library_info` identifies the platform library version in each scrape.
 
 
-The following **service-specific business metrics** supplement the base layer:
+The following **service-specific metrics** supplement the platform series:
 
 #### 6.1.1 Core Metrics Catalog
 
-- **`workflow_definition_svc_submissions_total`** (CounterVec)
+- **`workflow_definition_service_submissions_total`** (CounterVec)
   - **Description**: Total workflow creation attempts.
   - **Labels**: `status` (`ok`, `err` — via the `outcomeLabel(err)` helper)
-- **`workflow_definition_svc_archive_total`** (CounterVec)
+- **`workflow_definition_service_archive_total`** (CounterVec)
   - **Description**: Total workflow archive attempts.
   - **Labels**: `status` (`ok`, `err`)
-- **`workflow_definition_svc_publish_total`** (CounterVec)
+- **`workflow_definition_service_publish_total`** (CounterVec)
   - **Description**: Total version publish attempts.
   - **Labels**: `status` (`ok`, `err`)
-- **`workflow_definition_svc_publish_latency_seconds`** (Histogram)
+- **`workflow_definition_service_publish_latency_seconds`** (Histogram)
   - **Description**: End-to-end latency of `PublishVersion` (compile + DB tx combined). Serves as the primary SLI for publish performance.
   - **Labels**: none
-- **`workflow_definition_svc_clone_total`** (CounterVec)
+- **`workflow_definition_service_clone_total`** (CounterVec)
   - **Description**: Total version clone attempts.
   - **Labels**: `status` (`ok`, `err`)
-- **`workflow_definition_svc_promote_total`** (CounterVec)
+- **`workflow_definition_service_promote_total`** (CounterVec)
   - **Description**: Total version promote attempts.
   - **Labels**: `status` (`ok`, `err`)
-- **`workflow_definition_svc_compile_duration_seconds`** (Histogram)
+- **`workflow_definition_service_compile_duration_seconds`** (Histogram)
   - **Description**: Duration of `compiler.Compile` calls only (BPMN XML → JSON DSL), isolated from DB-transaction time. Observed at both real call sites: `VersionService.Publish` (via `publishPreFlight`) and the `Diff`/`Export` fallback-recompile path (`resolvePlan`, used when no cached `CompiledPlanJSON` exists). `Promote` never compiles (reactivates an already-published, already-compiled version); `ValidationService.Validate` calls the separate, cheaper `compiler.Validate` structural check, not `Compile`.
   - **Labels**: none
-- **`workflow_definition_svc_validation_failures_total`** (Counter)
+- **`workflow_definition_service_validation_failures_total`** (Counter)
   - **Description**: Total BPMN validation calls (`ValidationService.Validate`) that returned at least one blocking validation error.
   - **Labels**: none
-- **`workflow_definition_svc_internal_events_ingest_total`** (CounterVec)
+- **`workflow_definition_service_internal_events_ingest_total`** (CounterVec)
   - **Description**: Inbound events received at `POST /internal/events` from the shared consumer.
   - **Labels**: `event_type` (e.g. `DepartmentMembershipRevoked`), `result`
   - **Note**: `sqs_queue_depth` / `sqs_dlq_depth` for `membership-workflow-q` are emitted by the shared workflow-events consumer, not the Definition Service.
-- **`workflow_definition_svc_cache_hits_total`** (Counter)
+- **`workflow_definition_service_cache_hits_total`** (Counter)
   - **Description**: Total compiled-plan cache hits on the internal compiled-plan read (§3.4.1).
   - **Labels**: none
-- **`workflow_definition_svc_cache_misses_total`** (Counter)
+- **`workflow_definition_service_cache_misses_total`** (Counter)
   - **Description**: Total compiled-plan cache misses on the internal compiled-plan read (fetched from the DB instead).
   - **Labels**: none
+- **`workflow_definition_service_rls_violations_total`** (CounterVec)
+  - **Description**: Sampled row-level-security violations recorded in `rls_violation_log` (§10.6).
+  - **Labels**: `violation_type` (`missing_or_invalid_guc`, `cross_tenant_access`)
 
 **DB connection-pool gauges** (`platform-pgcommon/v2`, registered by `pgcommon.NewPool` once `pgmetrics.InitWithIdentity` has run):
 
@@ -3512,7 +3516,7 @@ groups:
   - name: definition_service_alerts
     rules:
       - alert: HighValidationFailureRate
-        expr: rate(workflow_definition_svc_validation_failures_total[5m]) / rate(workflow_definition_svc_submissions_total[5m]) > 0.3
+        expr: rate(workflow_definition_service_validation_failures_total[5m]) / rate(workflow_definition_service_submissions_total[5m]) > 0.3
         for: 10m
         labels:
           severity: warning
@@ -3521,16 +3525,16 @@ groups:
           description: "Over 30% of BPMN submissions are failing validation checks in the last 10 minutes. Process-wide only — neither metric carries a tenant_id label today, so per-tenant breakdown is not available from this alert alone."
 
       - alert: PublishTransactionLatencyDegraded
-        expr: histogram_quantile(0.95, rate(workflow_definition_svc_publish_latency_seconds_bucket[5m])) > 2.0
+        expr: histogram_quantile(0.95, rate(workflow_definition_service_publish_latency_seconds_bucket[5m])) > 2.0
         for: 5m
         labels:
           severity: critical
         annotations:
           summary: "Slow publish execution"
-          description: "95th percentile of PublishVersion (compile + DB tx combined) is exceeding 2.0 seconds. If workflow_definition_svc_compile_duration_seconds is also elevated, the regression is in BPMN compilation rather than the DB transaction."
+          description: "95th percentile of PublishVersion (compile + DB tx combined) is exceeding 2.0 seconds. If workflow_definition_service_compile_duration_seconds is also elevated, the regression is in BPMN compilation rather than the DB transaction."
 
       - alert: RLSMissingGUC
-        expr: increase(rls_violations_total{type="missing_or_invalid_guc"}[5m]) > 0
+        expr: increase(workflow_definition_service_rls_violations_total{violation_type="missing_or_invalid_guc"}[5m]) > 0
         for: 1m
         labels:
           severity: warning
@@ -3539,7 +3543,7 @@ groups:
           description: "app.tenant_id was missing or invalid — likely a pool misconfiguration or raw admin session without the GUC set. rls_violation_log captures 1% of violations; one alert event ≈ 100 actual attempts (see §10.6)."
 
       - alert: RLSCrossTenantAccess
-        expr: increase(rls_violations_total{type="cross_tenant_access"}[5m]) > 0
+        expr: increase(workflow_definition_service_rls_violations_total{violation_type="cross_tenant_access"}[5m]) > 0
         for: 0m
         labels:
           severity: critical
@@ -3892,7 +3896,7 @@ The following SLOs are the implementation targets for this service. They are ref
 
 | Target | Value | Alert threshold |
 | --- | --- | --- |
-| Compiled-plan cache hit ratio (steady state) | ≥ 90% | Alert `workflow_definition_svc_cache_misses_total / (workflow_definition_svc_cache_hits_total + workflow_definition_svc_cache_misses_total) > 0.1` sustained for 5 m |
+| Compiled-plan cache hit ratio (steady state) | ≥ 90% | Alert `workflow_definition_service_cache_misses_total / (workflow_definition_service_cache_hits_total + workflow_definition_service_cache_misses_total) > 0.1` sustained for 5 m |
 | Valkey client timeout | 50 ms | Timeout treated as cache miss; falls through to Postgres. Never blocks the SLO budget. |
 
 ---
@@ -3941,9 +3945,11 @@ This section captures the key architectural and design decisions made for the Wo
 
 ### 10.6 RLS Violation Logging via `rls_check_tenant()`
 
-- **Decision**: Replace the bare inline `USING (tenant_id = current_setting('app.tenant_id', true)::uuid)` RLS expression with a `SECURITY DEFINER` function `rls_check_tenant(row_tenant_id, table_name)` that samples violations at 1% and writes them to `rls_violation_log`.
+- **Decision**: Every tenant-scoped table forces row-level security with a policy that calls a `SECURITY DEFINER` function, `rls_check_tenant(row_tenant_id, table_name)`, or `rls_check_tenant_or_global(row_tenant_id, row_scope, table_name)` for the global-catalog tables. A row that fails the check is filtered, and a 1% sample of such rows is written to `rls_violation_log` with the violation type (`missing_or_invalid_guc` when the tenant GUC is absent or malformed, `cross_tenant_access` otherwise), the tenant GUC, the row's tenant, the table, the session role and the query.
 
-- **Rationale**: PostgreSQL RLS has no native violation callback — a row that fails the `USING` clause is silently filtered, indistinguishable from an empty result set. Without the log table, a misconfigured pool connection (GUC not set), a cross-tenant bug, or a deliberate probe produces zero observable signal. The 1% sampling rate prevents log flooding under high-volume scans while still making systematic issues visible. A Prometheus alert on `rls_violation_log` row count `> 0` fires on any violation that makes it into the sample. See Appendix A for the DDL.
+- **Rationale**: PostgreSQL RLS has no native violation callback — a row that fails the `USING` clause is silently filtered, indistinguishable from an empty result set. Without the log, a misconfigured pool connection (GUC not set), a cross-tenant bug, or a deliberate probe produces no observable signal. The 1% sampling rate prevents log flooding under high-volume scans while still making systematic issues visible.
+
+- **Export**: the service reads the log through the system pool every `RLS_VIOLATION_EXPORT_INTERVAL` and adds the new rows to `workflow_definition_service_rls_violations_total{violation_type}`; rows older than `RLS_VIOLATION_RETENTION` are deleted by the same loop. Rows present at startup are not counted. The system role holds `SELECT` and `DELETE` on the log. §6.1.2 lists the alerts. See Appendix A for the DDL.
 
 ### 10.7 ~~`workflow.template.published` Reference-Only Payload~~ — Removed
 
@@ -4361,34 +4367,6 @@ CREATE POLICY tenant_isolation_policy ON workflow_template
     USING      (rls_check_tenant_or_global(tenant_id, scope, 'workflow_template'))
     WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
 
--- Implementation note (module/module_version/template shipped rev, this session):
--- `rls_check_tenant`/`rls_check_tenant_or_global`, FORCE ROW LEVEL SECURITY,
--- REVOKE ALL FROM PUBLIC, and this rls_violation_log schema were never
--- implemented for ANY table in this service, not just these three — a
--- pre-existing, platform-wide gap between this Appendix's target-hardened
--- design and the actually-applied migrations (000004_enable_rls.up.sql uses
--- plain `USING (tenant_id = current_setting('app.tenant_id')::uuid)` policies
--- everywhere, no FORCE/REVOKE, and the real rls_violation_log has a different,
--- incompatible column set: id/tenant_id/user_id/table_name/operation/
--- client_ip/created_at). Retrofitting the fuller design below to the whole
--- schema is real, separate work — out of scope for the module/template
--- library — so the three new tables were shipped using the same simpler
--- inline-policy style already in production for every other table, not the
--- rls_check_tenant_or_global() function documented above:
---
---   ALTER TABLE workflow_module ENABLE ROW LEVEL SECURITY;
---   CREATE POLICY tenant_isolation_policy ON workflow_module
---       USING      (scope = 'global' OR tenant_id = current_setting('app.tenant_id', true)::uuid)
---       WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
---   -- (workflow_module_version, workflow_template: identical, table name swapped)
---
--- This achieves the same security property WITH CHECK above documents (the
--- ordinary role can never insert scope='global') without depending on
--- rls_check_tenant_or_global(), which is also broken as written: its sampled
--- violation-log INSERT (below) targets columns the real rls_violation_log
--- table doesn't have, so it would raise an undefined-column error the first
--- time the 1%-sample branch fired, had it ever been wired in as shown here.
-
 -- Schema Indexes (Created Concurrently)
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX idx_workflow_name_trgm ON workflow USING gin (name gin_trgm_ops);
@@ -4408,34 +4386,29 @@ CREATE UNIQUE INDEX idx_mv_single_draft ON workflow_module_version(module_id) WH
 CREATE INDEX idx_starter_name_trgm ON workflow_template USING gin (name gin_trgm_ops);
 CREATE INDEX idx_starter_scope_tenant_category ON workflow_template(scope, tenant_id, category);
 
--- RLS violation audit log
--- Captures sampled cross-tenant or missing-GUC access attempts for security monitoring.
--- RLS is permanently DISABLED on this table to prevent recursion: rls_check_tenant() is
--- SECURITY DEFINER and writes here; if this table had an RLS policy the INSERT would
--- re-invoke the policy, causing infinite recursion.
+-- Sampled RLS violations written by rls_check_tenant() and
+-- rls_check_tenant_or_global() (000004). RLS stays disabled on this table: the
+-- functions are SECURITY DEFINER and write here, so a policy would recurse.
 CREATE TABLE rls_violation_log (
     id               BIGSERIAL   PRIMARY KEY,
     occurred_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     session_role     TEXT        NOT NULL DEFAULT session_user,
-    violation_type   TEXT        NOT NULL,  -- 'missing_or_invalid_guc' | 'cross_tenant_access'
-    app_tenant_id    UUID,                  -- value of app.tenant_id GUC (NULL if not set or malformed)
-    row_tenant_id    UUID        NOT NULL,  -- tenant_id of the row that was blocked
+    violation_type   TEXT        NOT NULL CHECK (violation_type IN ('missing_or_invalid_guc', 'cross_tenant_access')),
+    app_tenant_id    UUID,
+    row_tenant_id    UUID        NOT NULL,
     table_name       TEXT        NOT NULL,
     client_addr      INET        DEFAULT inet_client_addr(),
     application_name TEXT        DEFAULT current_setting('application_name', true),
     query_text       TEXT
 );
 
-ALTER TABLE rls_violation_log DISABLE ROW LEVEL SECURITY;
-
 REVOKE ALL ON rls_violation_log FROM PUBLIC;
-GRANT INSERT ON rls_violation_log TO definition_svc_app;
-GRANT SELECT, INSERT, DELETE ON rls_violation_log TO definition_svc_migrator;
 
 CREATE INDEX idx_rls_violation_log_time ON rls_violation_log (occurred_at);
 
--- Replaces the inline USING expression on all tenant-scoped tables.
--- Samples violations at 1% to prevent log flooding; normal queries pay only the UUID comparison.
+-- Tenant checks with sampled violation logging. A row that fails a plain USING
+-- clause is silently filtered; these functions record 1% of such rows so a pool
+-- connection with no tenant GUC, a cross-tenant bug or a probe leaves a signal.
 CREATE OR REPLACE FUNCTION rls_check_tenant(row_tenant_id uuid, tbl text)
 RETURNS boolean
 LANGUAGE plpgsql
@@ -4447,18 +4420,14 @@ DECLARE
     app_tenant uuid;
 BEGIN
     BEGIN
-        IF row_tenant_id = current_setting('app.tenant_id', true)::uuid THEN
-            RETURN true;
-        END IF;
-    EXCEPTION WHEN others THEN
-        NULL;
-    END;
-
-    BEGIN
         app_tenant := current_setting('app.tenant_id', true)::uuid;
     EXCEPTION WHEN others THEN
         app_tenant := NULL;
     END;
+
+    IF row_tenant_id = app_tenant THEN
+        RETURN true;
+    END IF;
 
     IF random() < 0.01 THEN
         INSERT INTO rls_violation_log (violation_type, app_tenant_id, row_tenant_id, table_name, query_text)
@@ -4475,12 +4444,8 @@ BEGIN
 END;
 $$;
 
--- Global-catalog-aware variant for workflow_module / workflow_module_version /
--- workflow_template (§2.1, §10.16). Deliberately NOT STRICT: a
--- scope='global' row's row_tenant_id is NULL by construction (chk_*_scope_tenant),
--- and a STRICT function short-circuits to NULL — which a USING clause treats as
--- false — the instant any argument is NULL, silently hiding every global row
--- from every tenant. The scope check must run before any NULL-tenant comparison.
+-- Not STRICT: a scope='global' row has a NULL tenant_id, and a STRICT function
+-- would return NULL (false in a USING clause) for it, hiding every global row.
 CREATE OR REPLACE FUNCTION rls_check_tenant_or_global(row_tenant_id uuid, row_scope catalog_scope, tbl text)
 RETURNS boolean
 LANGUAGE plpgsql
@@ -4495,18 +4460,14 @@ BEGIN
     END IF;
 
     BEGIN
-        IF row_tenant_id = current_setting('app.tenant_id', true)::uuid THEN
-            RETURN true;
-        END IF;
-    EXCEPTION WHEN others THEN
-        NULL;
-    END;
-
-    BEGIN
         app_tenant := current_setting('app.tenant_id', true)::uuid;
     EXCEPTION WHEN others THEN
         app_tenant := NULL;
     END;
+
+    IF row_tenant_id = app_tenant THEN
+        RETURN true;
+    END IF;
 
     IF random() < 0.01 THEN
         INSERT INTO rls_violation_log (violation_type, app_tenant_id, row_tenant_id, table_name, query_text)
@@ -4522,7 +4483,6 @@ BEGIN
     RETURN false;
 END;
 $$;
-
 ```
 
 ---
@@ -4921,7 +4881,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.31 | 2026-10-07 | **What an outside party can complete, and no authored credentials** (§3.1.4 new code 40, §3.3.12.2, §4.1.3.3). The published-version nodes read gains `waits`: the receive tasks and message boundaries that no send task of the plan feeds, each with the key the Execution Service takes an outside party's answer by. A message boundary keeps its BPMN id (`MessagePath.BoundaryID`, workflow-models LLD rev 2.16) so it can be addressed. A connector input whose target is a secret field of its connector type is refused (`CONNECTOR_SECRET_AUTHORED`): a connector always uses the tenant's stored credential, so a diagram never names a secret path. A connector input's `source` is `=name` for an instance variable or any other text for a literal. |
 | 1.32 | 2026-10-08 | **The service has no outbox, relay, SNS publisher or Glue codec** (§1.1, §1.2, §1.4, §1.5, §1.8, §2.2, §2.3, §6, §7, §8, §9, §10.2, §10.4, §10.12, §11, Appendix A). It publishes no event, and the apparatus had been kept against a future producer; it also made every cluster boot require SNS and Glue settings no deployment has. The outbox tables and their RLS migration, the relay worker and its alert, the `OutboxRepository` port, the `AWS_USE_STUB`, `SNS_TOPIC_ARN`, `GLUE_REGISTRY_NAME` and `OUTBOX_*` settings and the Glue codec are gone. The Execution Service and Org & Membership URLs and tokens are required whenever `APP_ENV` is not `dev`. A future outbound event designs its contract and consumer first, and brings its own outbox. |
 | 1.33 | 2026-10-08 | **A boundary carries the whole path it leads to** (§4.1.3.2, §4.2, Appendix E). A boundary named only the department it moved to, so a path of several tasks, lanes or gateways ran its first department alone and the flow then went on as if the host had finished. Each boundary, on a task, a subProcess or a call, now carries its path as `Steps` and the boundary event's ID as `BoundaryID`, compiled after the main traversal on a state of its own; the Execution Service runs them and an interrupting boundary ends its path (workflow-models LLD rev 2.17, execution LLD rev 1.72). A path that continues into a node the main flow compiled keeps naming only its department. The outside waits read looks into the steps of boundary paths. |
-| 1.34 | 2026-10-09 | **Platform libraries at their latest majors and the standard metric names** (§1.1, §1.6, §1.7.5, §6.1, §6.2). `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.0 and `platform-gincommon` v1.6.0; `workflow-models` v1.2.0 and `workflow-connectors` v1.0.0. HTTP and database series are `platform_http_*` and `platform_db_*`, this service's are `workflow_definition_svc_<metric>`, and the metrics identity is fixed before any collector or pool is created. `APP_ENV` is one of `local`, `dev`, `test`, `staging`, `prod`. The request timeout runs innermost through `Config.RequestTimeout`. `api/asyncapi.yaml` documents both inbound events. |
+| 1.34 | 2026-10-09 | **Platform libraries at their latest majors, the platform metric standard, and RLS violation logging** (§1.1, §1.6, §1.7.5, §6.1, §6.2, §7.4.2, §10.6, Appendix A). `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.0, `platform-gincommon` v1.6.0; `workflow-models` v1.2.0, `workflow-connectors` v1.0.0. Metrics follow the platform tiers: `platform_*` from the libraries, `workflow_definition_service_<metric>` for the service. The request deadline runs innermost. `APP_ENV` is validated; OpenBao is required outside dev. Tenant tables force RLS through the sampled violation-logging functions, exported as `workflow_definition_service_rls_violations_total`. `api/asyncapi.yaml` documents both inbound events. The publish path emits the `BPMN_Compilation` and `DB_Publish_Transaction` spans. |
 ---
 
 ## Appendix E: Open Items

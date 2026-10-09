@@ -40,7 +40,7 @@ env:
   APP_ENV: "prod"                                 # enables INTERNAL_API_TOKEN + ORG_MEMBERSHIP_BASE_URL + EXECUTION_SERVICE_URL/TOKEN validation (internal/config/config.go validate())
   HTTP_PORT: "8080"
   METRICS_PORT: "9091"
-  OTEL_SERVICE_NAME: "workflow-definition-svc"     # exact value from internal/config/config.go default
+  OTEL_SERVICE_NAME: "workflow-definition-service"     # exact value from internal/config/config.go default
   OTEL_EXPORTER_OTLP_ENDPOINT: ""                  # e.g. otel-collector.observability:4317
   OTEL_EXPORTER_OTLP_INSECURE: "false"
   OTEL_TRACES_SAMPLER_RATIO: "1.0"                 # lower once trace volume in prod is known
@@ -58,10 +58,12 @@ env:
   MEMBERSHIP_CLIENT_TIMEOUT: "10s"
   EXECUTION_SERVICE_URL: "http://workflow-execution-service-api:8080"  # the Execution Service API's in-cluster HTTP Service — required when APP_ENV != dev
   EXECUTION_CLIENT_TIMEOUT: "5s"
-  OPENBAO_ADDR: ""                                 # in-cluster OpenBao address; empty disables the connector credential endpoints
+  OPENBAO_ADDR: ""                                 # in-cluster OpenBao address — required when APP_ENV != dev
   OPENBAO_MOUNT: "secret"
   SECRETS_CLIENT_TIMEOUT: "5s"
   CONNECTOR_ALIAS_ALLOWED_HOSTS: ".svc.cluster.local"
+  RLS_VIOLATION_EXPORT_INTERVAL: "30s"
+  RLS_VIOLATION_RETENTION: "168h"
 
 envFromSecret:
   - DATABASE_URL
@@ -70,6 +72,7 @@ envFromSecret:
   - VALKEY_PASSWORD
   - INTERNAL_API_TOKEN       # required when APP_ENV != dev — pod crash-loops without it (config.validate())
   - EXECUTION_SERVICE_TOKEN  # the Execution Service's INTERNAL_API_TOKEN, sent on its internal API
+  - OPENBAO_TOKEN            # token for the tenant connector credential store — required when APP_ENV != dev
 
 # existingSecret — preferred for production.
 # Set to the name of a pre-existing Kubernetes Secret whose keys match envFromSecret.
@@ -94,6 +97,7 @@ secretValues:
   VALKEY_PASSWORD: ""
   INTERNAL_API_TOKEN: ""
   EXECUTION_SERVICE_TOKEN: ""
+  OPENBAO_TOKEN: ""
 
 # migrationJob — runs `/server migrate` as a pre-install/pre-upgrade Helm hook before
 # the main Deployment rolls out. This service has NO auto-migration at server boot

@@ -53,6 +53,9 @@ type Config struct {
 	OpenBaoMount         string
 	SecretsClientTimeout time.Duration
 
+	RLSViolationExportInterval time.Duration
+	RLSViolationRetention      time.Duration
+
 	ConnectorAliasAllowedHosts []string
 }
 
@@ -66,7 +69,7 @@ func Load() (*Config, error) {
 		HTTPPort:    getEnvIntOrDefault("HTTP_PORT", 8080),
 		MetricsPort: getEnvIntOrDefault("METRICS_PORT", 9091),
 
-		OTELServiceName:        getEnvOrDefault("OTEL_SERVICE_NAME", "workflow-definition-svc"),
+		OTELServiceName:        getEnvOrDefault("OTEL_SERVICE_NAME", "workflow-definition-service"),
 		OTELExporterEndpoint:   getEnvOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
 		OTELExporterInsecure:   getEnvBoolOrDefault("OTEL_EXPORTER_OTLP_INSECURE", true),
 		OTELTracesSamplerRatio: getEnvFloat64OrDefault("OTEL_TRACES_SAMPLER_RATIO", 1.0),
@@ -100,6 +103,9 @@ func Load() (*Config, error) {
 		OpenBaoToken:         getEnvOrDefault("OPENBAO_TOKEN", ""),
 		OpenBaoMount:         getEnvOrDefault("OPENBAO_MOUNT", "secret"),
 		SecretsClientTimeout: getEnvDurationOrDefault("SECRETS_CLIENT_TIMEOUT", 5*time.Second),
+
+		RLSViolationExportInterval: getEnvDurationOrDefault("RLS_VIOLATION_EXPORT_INTERVAL", 30*time.Second),
+		RLSViolationRetention:      getEnvDurationOrDefault("RLS_VIOLATION_RETENTION", 7*24*time.Hour),
 
 		ConnectorAliasAllowedHosts: getEnvCSV("CONNECTOR_ALIAS_ALLOWED_HOSTS"),
 	}
@@ -144,8 +150,11 @@ func (c *Config) validate() error {
 	if c.SecretsClientTimeout <= 0 {
 		return fmt.Errorf("SECRETS_CLIENT_TIMEOUT must be > 0")
 	}
-	if c.AppEnv != "dev" && c.OpenBaoAddr != "" && c.OpenBaoToken == "" {
-		return fmt.Errorf("OPENBAO_TOKEN is required when OPENBAO_ADDR is set in non-dev environments")
+	if c.RLSViolationExportInterval <= 0 {
+		return fmt.Errorf("RLS_VIOLATION_EXPORT_INTERVAL must be > 0")
+	}
+	if c.RLSViolationRetention <= 0 {
+		return fmt.Errorf("RLS_VIOLATION_RETENTION must be > 0")
 	}
 	if c.AppEnv != "dev" && c.InternalAPIToken == "" {
 		return fmt.Errorf("INTERNAL_API_TOKEN is required in non-dev environments")
@@ -162,6 +171,12 @@ func (c *Config) validate() error {
 		}
 		if c.ExecutionServiceToken == "" {
 			return fmt.Errorf("EXECUTION_SERVICE_TOKEN is required in non-dev environments")
+		}
+		if c.OpenBaoAddr == "" {
+			return fmt.Errorf("OPENBAO_ADDR is required in non-dev environments")
+		}
+		if c.OpenBaoToken == "" {
+			return fmt.Errorf("OPENBAO_TOKEN is required in non-dev environments")
 		}
 	}
 	return nil

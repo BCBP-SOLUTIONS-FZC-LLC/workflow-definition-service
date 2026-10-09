@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Fails when api/internal-openapi.yaml makes a breaking change against its
-# version on CONTRACT_BASE_REF (default origin/main), the gate
-# platform-schemagov's diff runs for event schemas. A spec not on the base
+# version on CONTRACT_BASE_REF (default origin/main). A spec not on the base
 # ref yet passes as new; a base ref that does not exist fails. OASDIFF
 # overrides the oasdiff binary.
 set -euo pipefail

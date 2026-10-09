@@ -127,18 +127,23 @@ CREATE TABLE connector_rest_alias (
     timeout_ms    INTEGER NOT NULL DEFAULT 5000
 );
 
--- Operational audit log (same class as outbox_events); no
--- RLS. Populated by DB-level triggers on RLS violations, not application code.
--- Cleaned by the external periodic job per LLD §7.1.2 (GAP-11).
+-- Sampled RLS violations written by rls_check_tenant() and
+-- rls_check_tenant_or_global() (000004). RLS stays disabled on this table: the
+-- functions are SECURITY DEFINER and write here, so a policy would recurse.
 CREATE TABLE rls_violation_log (
-    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id  UUID,
-    user_id    UUID,
-    table_name TEXT        NOT NULL,
-    operation  TEXT        NOT NULL,
-    client_ip  INET,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    id               BIGSERIAL   PRIMARY KEY,
+    occurred_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    session_role     TEXT        NOT NULL DEFAULT session_user,
+    violation_type   TEXT        NOT NULL CHECK (violation_type IN ('missing_or_invalid_guc', 'cross_tenant_access')),
+    app_tenant_id    UUID,
+    row_tenant_id    UUID        NOT NULL,
+    table_name       TEXT        NOT NULL,
+    client_addr      INET        DEFAULT inet_client_addr(),
+    application_name TEXT        DEFAULT current_setting('application_name', true),
+    query_text       TEXT
 );
+
+REVOKE ALL ON rls_violation_log FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION update_meta_columns()
 RETURNS TRIGGER AS $$

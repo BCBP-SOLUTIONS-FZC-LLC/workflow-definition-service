@@ -1,31 +1,121 @@
+-- Tenant checks with sampled violation logging. A row that fails a plain USING
+-- clause is silently filtered; these functions record 1% of such rows so a pool
+-- connection with no tenant GUC, a cross-tenant bug or a probe leaves a signal.
+CREATE OR REPLACE FUNCTION rls_check_tenant(row_tenant_id uuid, tbl text)
+RETURNS boolean
+LANGUAGE plpgsql
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    app_tenant uuid;
+BEGIN
+    BEGIN
+        app_tenant := current_setting('app.tenant_id', true)::uuid;
+    EXCEPTION WHEN others THEN
+        app_tenant := NULL;
+    END;
+
+    IF row_tenant_id = app_tenant THEN
+        RETURN true;
+    END IF;
+
+    IF random() < 0.01 THEN
+        INSERT INTO rls_violation_log (violation_type, app_tenant_id, row_tenant_id, table_name, query_text)
+        VALUES (
+            CASE WHEN app_tenant IS NULL THEN 'missing_or_invalid_guc' ELSE 'cross_tenant_access' END,
+            app_tenant,
+            row_tenant_id,
+            tbl,
+            current_query()
+        );
+    END IF;
+
+    RETURN false;
+END;
+$$;
+
+-- Not STRICT: a scope='global' row has a NULL tenant_id, and a STRICT function
+-- would return NULL (false in a USING clause) for it, hiding every global row.
+CREATE OR REPLACE FUNCTION rls_check_tenant_or_global(row_tenant_id uuid, row_scope catalog_scope, tbl text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    app_tenant uuid;
+BEGIN
+    IF row_scope = 'global' THEN
+        RETURN true;
+    END IF;
+
+    BEGIN
+        app_tenant := current_setting('app.tenant_id', true)::uuid;
+    EXCEPTION WHEN others THEN
+        app_tenant := NULL;
+    END;
+
+    IF row_tenant_id = app_tenant THEN
+        RETURN true;
+    END IF;
+
+    IF random() < 0.01 THEN
+        INSERT INTO rls_violation_log (violation_type, app_tenant_id, row_tenant_id, table_name, query_text)
+        VALUES (
+            CASE WHEN app_tenant IS NULL THEN 'missing_or_invalid_guc' ELSE 'cross_tenant_access' END,
+            app_tenant,
+            row_tenant_id,
+            tbl,
+            current_query()
+        );
+    END IF;
+
+    RETURN false;
+END;
+$$;
+
+REVOKE ALL ON workflow FROM PUBLIC;
 ALTER TABLE workflow ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_policy ON workflow
-    USING (tenant_id = current_setting('app.tenant_id')::uuid);
+    USING (rls_check_tenant(tenant_id, 'workflow'));
 
+REVOKE ALL ON workflow_version FROM PUBLIC;
 ALTER TABLE workflow_version ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_version FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_policy ON workflow_version
-    USING (tenant_id = current_setting('app.tenant_id')::uuid);
+    USING (rls_check_tenant(tenant_id, 'workflow_version'));
 
+REVOKE ALL ON workflow_node_assignee FROM PUBLIC;
 ALTER TABLE workflow_node_assignee ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_node_assignee FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_policy ON workflow_node_assignee
-    USING (tenant_id = current_setting('app.tenant_id')::uuid);
+    USING (rls_check_tenant(tenant_id, 'workflow_node_assignee'));
 
 -- WITH CHECK only allows scope='tenant' rows through this policy, so the
 -- ordinary RLS-bound app role can never insert a scope='global' row no matter
 -- what the application code does — only a BYPASSRLS system-role connection can.
+REVOKE ALL ON workflow_module FROM PUBLIC;
 ALTER TABLE workflow_module ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_module FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_policy ON workflow_module
-    USING      (scope = 'global' OR tenant_id = current_setting('app.tenant_id', true)::uuid)
+    USING      (rls_check_tenant_or_global(tenant_id, scope, 'workflow_module'))
     WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
 
+REVOKE ALL ON workflow_module_version FROM PUBLIC;
 ALTER TABLE workflow_module_version ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_module_version FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_policy ON workflow_module_version
-    USING      (scope = 'global' OR tenant_id = current_setting('app.tenant_id', true)::uuid)
+    USING      (rls_check_tenant_or_global(tenant_id, scope, 'workflow_module_version'))
     WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
 
+REVOKE ALL ON workflow_template FROM PUBLIC;
 ALTER TABLE workflow_template ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_template FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_policy ON workflow_template
-    USING      (scope = 'global' OR tenant_id = current_setting('app.tenant_id', true)::uuid)
+    USING      (rls_check_tenant_or_global(tenant_id, scope, 'workflow_template'))
     WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
 
 -- connector_rest_alias is an org-owned internal service config table, not

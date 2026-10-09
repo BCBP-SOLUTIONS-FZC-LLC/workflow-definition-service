@@ -105,6 +105,9 @@ jobs:
           version: v2.12.2
           args: --timeout=5m
 
+      - name: Observability standard lint
+        run: make metrics-lint
+
       - name: Vulnerability check
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./internal/... ./cmd/...
 

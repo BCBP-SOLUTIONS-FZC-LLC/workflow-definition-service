@@ -90,6 +90,7 @@ func NewRouter(cfg RouterConfig) *Router {
 
 	internal := r.Group("/api/v1/internal")
 	internal.Use(httpmiddleware.RequireInternalToken(cfg.InternalAPIToken))
+	internal.Use(httpmiddleware.LimitRequestBody())
 	internal.POST("/events", h.HandleInternalEvent)
 	internal.GET("/workflow-versions/:version_id/compiled-plan", h.GetCompiledPlan)
 	internal.GET("/connector-aliases", h.ListConnectorAliases)

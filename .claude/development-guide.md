@@ -10,7 +10,7 @@ metadata:
 ## Extending the Service
 
 - **New HTTP endpoint**: add a Gin handler in `internal/adapter/inbound/http/handler/`, map through a DTO helper (handler layer, `#7`), wire the route + middleware chain in `router.go`, add a hand-rolled fake to `testhelper_test.go` (`#8`).
-- **New event type**: `internal/core/domain/eventpayloads.go` now only holds `EventSource` — a payload shared with the Execution Service is a change in the separate `workflow-models` repo/release (`pkg/events`/`pkg/enums`), not a local file edit; a Definition-only payload's struct still belongs here. Either way: add the message + `x-lifecycle`/`x-owner` block to `api/asyncapi.yaml`, run `make extract-schemas` to derive `internal/eventschema/<name>.json`, run `make schema-validate` before committing. This service has no outbox: the first outbound event brings its own, with a designed contract and a named consumer (`.claude/CLAUDE.md`).
+- **New event type**: a payload shared with the Execution Service is a change in the separate `workflow-models` repo/release (`pkg/events`/`pkg/enums`), not a local file edit; a Definition-only payload's struct still belongs here. Either way: add the message to `api/asyncapi.yaml` and to `handler.HandledEventTypes`; `TestAsyncAPIMessagesMatchHandledEvents` fails when they differ. This service has no outbox: the first outbound event brings its own, with a designed contract and a named consumer (`.claude/CLAUDE.md`).
 - **New DB migration**: add a `NNNNNN_name.up.sql` / `.down.sql` pair to `db/migrations/` (golang-migrate, no `+goose` annotations), re-run `make generate` if queries changed, verify via `make test-integration`.
 - **New `core/port` interface or method**: update the interface, run `make mock` to regenerate GoMock stubs — handler-layer tests use hand-rolled fakes instead (`#8`), so this only affects service-layer tests.
 - **New internal endpoint**: add it to `api/internal-openapi.yaml` first, route it on the `/api/v1/internal` group, test it in `test/contract/`, and run `make contract-breaking`; the caller then refreshes its copy in `api/contracts/`.
@@ -21,8 +21,6 @@ metadata:
 - **`make migrate` hangs or never returns against PgBouncer** — `DATABASE_URL` points at PgBouncer's transaction-pool port; golang-migrate needs a direct Postgres DSN for its session advisory lock. See `.claude/database.md`'s PgBouncer note; set `MIGRATION_DATABASE_URL` separately.
 - **`go-arch-lint` fails on a new import** — the change violates `domain ← port ← service ← adapter`; check `.go-arch-lint.yml` for the allowed edges before restructuring the import.
 - **Coverage gate fails just under 95%** — check `make cover-check-pkg` output for per-package floors (`COVER_PKG_FLOORS` in the Makefile) before assuming the global threshold is the problem; some packages (the AsyncAPI HTML renderer) have deliberately lower floors because they need a live connection/dev server to exercise fully.
-- **`extract --check` fails in CI** — `internal/eventschema/*.json` has drifted from `api/asyncapi.yaml`; run `make extract-schemas` locally and commit the regenerated file.
-- **`schema-register`/`schema-prune` fail with an AWS auth error** — expected until ops provisions `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` scoped to `GLUE_REGISTRY_ARN` for CI; see `.claude/api-and-events.md`'s AWS-now-vs-later split.
 
 ## Appendix — Error Codes
 

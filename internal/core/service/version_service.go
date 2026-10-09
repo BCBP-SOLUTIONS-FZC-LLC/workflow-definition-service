@@ -102,7 +102,9 @@ func (s *VersionService) Publish(
 	}
 
 	var versionNumber int32
-	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
+	txCtx, endTxSpan := observability.StartSpan(ctx, "DB_Publish_Transaction")
+	defer endTxSpan()
+	if err := s.transactor.RunInTxWithRetry(txCtx, func(ctx context.Context) error {
 		n, err := s.versions.NextVersionNumber(ctx, tenantID, workflowID)
 		if err != nil {
 			return fmt.Errorf("next version number: %w", err)

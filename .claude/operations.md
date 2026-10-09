@@ -12,7 +12,7 @@ metadata:
 | Module | Version | Notes |
 |---|---|---|
 | `platform-events/v2` | v2.1.0 | Only the envelope type is used (the inbound handler decodes it); the publisher, outbox runner and consumer are not. Events v2 requires pgcommon v2. |
-| `platform-gincommon` | v1.6.0 | Owns logs, metrics and traces. `Config.Domain` (`workflow`) and `Config.Environment` (`APP_ENV`: `local`, `dev`, `test`, `staging` or `prod`) are required. `InitTracingWithConfig` runs before `ObservabilityMiddlewares`, which fixes the metrics identity every other collector reads. Service metrics are built with `gincommon.NewCounterVec`, `NewCounter` and `NewHistogramVec` and are named `workflow_definition_svc_<metric>`. |
+| `platform-gincommon` | v1.6.0 | Owns logs, metrics and traces. `Config.Domain` (`workflow`) and `Config.Environment` (`APP_ENV`: `local`, `dev`, `test`, `staging` or `prod`) are required. `InitTracingWithConfig` runs before `ObservabilityMiddlewares`, which fixes the metrics identity every other collector reads. Service metrics are built with `gincommon.NewCounterVec`, `NewCounter` and `NewHistogramVec` and are named `workflow_definition_service_<metric>`. |
 | `platform-pgcommon/v2` | v2.0.0 | `port.Transactor` exposes `RunInTxWithRetry` (SERIALIZABLE + 40001/40P01 retry). `pgmetrics.InitWithIdentity` runs before `NewPool`, with the identity gincommon resolved; `Config.Tracer` is `gincommon.NewSpanTracer`. `Config.Logger` and `migrate.Runner.Logger` take the public `pkg/domain.Logger`, which `cmd/server/pglogger.go` adapts from `port.Logger`. |
 | `workflow-models` | v1.2.0 | `pkg/dsl` types are field-for-field identical to the deleted `internal/core/domain/compiled_plan.go`; `pkg/enums` holds the shared `StageType*` constants. `CompiledCollaboration.SchemaVersion` (since v1.1.0) feeds Execution's DSL-compatibility layer; `CompileForPublish` stamps it on every published plan. `CallPlanStep` and `ExpandCalls` (since v1.3.0-rc.1) carry and expand library calls; every boundary sets exactly one of `TargetDept` and `Terminates`, and `Assignees` keys may be call paths (rc.2). `dsl.NodeKey`, `StageDef.CreatesHumanTask` and `StageDef.Name` (rc.3) give node keys, the human-task rule and task names, shared with Execution. `ExclusiveBranch.Steps` (v1.4.0-rc.1) carries an exclusive branch's work. Since v1.4.0-rc.2 there is no `call_pool` step, `messages`, `ignored` or department `ignore`, and the allowed element list admits the diagram-only elements modelers draw. `pkg/dsl/dsltest` holds the goldens `TestGolden` writes, and a golden change means a new tag before this repo can build against it. |
 
@@ -30,13 +30,9 @@ Never add a `replace` directive pointing to `./platform-libs/` — that director
 | Workflow | Trigger | Jobs |
 |---|---|---|
 | `ci.yml` | push/PR to main | generate → (validate-quality, validate-test, lint-dockerfile → build-image-cache, trivy, smoke) parallel → GHCR push (`sha-<short>`/branch tags) + Cosign sign (push only) → PR summary comment (PR only) |
-| `validate-quality.yml` | reusable (called by `ci.yml` and `release.yml`) | downloads caller's `generate` artifact; fmt, tidy, vet, lint, govulncheck, Dockerfile pin check |
-| `validate-test.yml` | reusable (called by `ci.yml` and `release.yml`) | downloads caller's `generate` artifact; arch-lint, event-schema `extract --check`, unit + integration tests (testcontainers) with merged coverage (95% global + per-package floors) |
-| `release.yml` | push `v*` tags | generate → validate-quality + validate-test → build (binary) → docker (semver-tagged image + Cosign sign) → gh release |
-| `schema-registry.yml` | push to main / release / PR (paths: `api/asyncapi.yaml`, `internal/eventschema/*.json`) | validate → diff-vs-registry → register (staging on push, production on release; both AWS-gated) |
-| `schema-prune.yml` | monthly cron (staging dry-run) + manual dispatch | reports/archives orphaned Glue schema versions (AWS-gated) |
-| `schema-health-quarterly.yml` | quarterly cron | read-only lifecycle + version-accumulation report to Step Summary |
-| `freeze-watchdog.yml` | every 4h | alerts if `SCHEMA_FREEZE` environment variable is stale (no AWS needed) |
+| `validate-quality.yml` | reusable (called by `ci.yml` and `release.yml`) | downloads caller's `generate` artifact; fmt, tidy, vet, lint, metrics-lint, govulncheck, Dockerfile pin check |
+| `validate-test.yml` | reusable (called by `ci.yml` and `release.yml`) | downloads caller's `generate` artifact; arch-lint, unit + integration tests (testcontainers) with merged coverage (95% global + per-package floors) |
+| `release.yml` | push `v*` tags | changelog-gate (a CHANGELOG entry for the tag) → generate → validate-quality + validate-test → build (binary) → docker (semver-tagged image + Cosign sign) → gh release |
 | `changelog-check.yml` | PR touching `internal/`, `api/`, `cmd/` | fails unless `CHANGELOG.md` was also updated |
 
 Branch protection required checks come from **two active GitHub rulesets** that both apply to this repo:
@@ -66,21 +62,24 @@ Key metrics emitted by the service:
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `workflow_definition_svc_submissions_total` | CounterVec | `status` | Workflow create attempts |
-| `workflow_definition_svc_archive_total` | CounterVec | `status` | Archive attempts |
-| `workflow_definition_svc_publish_total` | CounterVec | `status` | Publish attempts |
-| `workflow_definition_svc_publish_latency_seconds` | Histogram | — | End-to-end publish latency (compile + DB tx) |
-| `workflow_definition_svc_clone_total` | CounterVec | `status` | Clone attempts |
-| `workflow_definition_svc_promote_total` | CounterVec | `status` | Promote attempts |
-| `workflow_definition_svc_compile_duration_seconds` | Histogram | — | Duration of `compiler.Compile` only, isolated from DB-tx time. Observed at `publishPreFlight` (Publish) and `resolvePlan` (Diff/Export fallback-recompile). `Promote` never compiles; `ValidationService.Validate` calls the separate `compiler.Validate`, not `Compile`. |
-| `workflow_definition_svc_validation_failures_total` | Counter | — | BPMN validate calls with at least one error |
-| `workflow_definition_svc_internal_events_ingest_total` | CounterVec | `event_type`, `result` | Internal event ingestion (ok/bad_payload/error) |
-| `workflow_definition_svc_cache_hits_total` | Counter | — | Compiled-plan cache hits (internal compiled-plan read) |
-| `workflow_definition_svc_cache_misses_total` | Counter | — | Compiled-plan cache misses (internal compiled-plan read) |
+| `workflow_definition_service_submissions_total` | CounterVec | `status` | Workflow create attempts |
+| `workflow_definition_service_archive_total` | CounterVec | `status` | Archive attempts |
+| `workflow_definition_service_publish_total` | CounterVec | `status` | Publish attempts |
+| `workflow_definition_service_publish_latency_seconds` | Histogram | — | End-to-end publish latency (compile + DB tx) |
+| `workflow_definition_service_clone_total` | CounterVec | `status` | Clone attempts |
+| `workflow_definition_service_promote_total` | CounterVec | `status` | Promote attempts |
+| `workflow_definition_service_compile_duration_seconds` | Histogram | — | Duration of `compiler.Compile` only, isolated from DB-tx time. Observed at `publishPreFlight` (Publish) and `resolvePlan` (Diff/Export fallback-recompile). `Promote` never compiles; `ValidationService.Validate` calls the separate `compiler.Validate`, not `Compile`. |
+| `workflow_definition_service_validation_failures_total` | Counter | — | BPMN validate calls with at least one error |
+| `workflow_definition_service_internal_events_ingest_total` | CounterVec | `event_type`, `result` | Internal event ingestion (ok/bad_payload/error) |
+| `workflow_definition_service_cache_hits_total` | Counter | — | Compiled-plan cache hits (internal compiled-plan read) |
+| `workflow_definition_service_cache_misses_total` | Counter | — | Compiled-plan cache misses (internal compiled-plan read) |
+| `workflow_definition_service_rls_violations_total` | CounterVec | `violation_type` | Sampled RLS violations read from `rls_violation_log` by the exporter loop |
 
 Outcome labels use `observability.OutcomeLabel(err)`: `"ok"` when err is nil, `"err"` otherwise.
 
-`cmd/server/wire.go` fixes the metrics identity (`gincommon.ObservabilityMiddlewares`) before `observability.Register()` and `pgmetrics.InitWithIdentity`, so every collector carries the `domain`, `service` and `environment` const labels. HTTP and database metrics come from the platform libraries under their standard names: `platform_http_requests_total`, `platform_http_request_duration_seconds`, `platform_db_queries_total`, `platform_db_transaction_retries_exhausted_total` and the `platform_db_pool_*` gauges. `TestRegister_FollowsObservabilityRegistry` validates this service's collectors against the platform registry.
+`cmd/server/telemetry.go` fixes the metrics identity (`gincommon.ObservabilityMiddlewares`) before `observability.Register()`, `events.InitMetrics` and `pgmetrics.InitWithIdentity`, so every collector carries the `domain`, `service` and `environment` const labels. HTTP and database metrics come from the platform libraries under their standard names: `platform_http_requests_total`, `platform_http_request_duration_seconds`, `platform_db_queries_total`, `platform_db_transaction_retries_exhausted_total` and the `platform_db_pool_*` gauges. 
+
+`make metrics-lint` (CI: `validate-quality`) runs `.github/scripts/check-metric-naming.sh` (collectors only from `internal/observability`, built with gincommon constructors, `workflow_definition_service_` prefix) and `metricslint` on the scrape from `TestStandard_LibrariesShareRegistryCollectors`, checks `deploy/` and `docs/` for retired names, and fails when `docs/observability/metric-registry.md` differs from `make metrics-inventory`. `test/integration/telemetry` asserts the `platform_db_*` series appear with a real pool.
 
 Metrics are served at `GET /metrics` (Prometheus scrape endpoint, no auth — access control is enforced by network policy/ingress at deploy time, not the app).
 
