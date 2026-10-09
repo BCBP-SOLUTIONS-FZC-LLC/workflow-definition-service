@@ -1,11 +1,15 @@
-# Workflow Definition Service
+# workflow-definition-service
 
-The **BCBP Workflow Engine** is a BPMN-driven automation platform for the BCBP services ecosystem. It has two halves:
+The design-time control plane of the BCBP Workflow Engine: it parses, validates, versions and serves BPMN workflow templates.
 
-- **Definition Service** (this repo) — the design-time control plane. It parses BPMN 2.0 XML, validates it structurally and semantically, compiles it to an internal DSL plan, and manages the full `DRAFT → PUBLISHED → ARCHIVED` version lifecycle.
-- **Execution Service** — the runtime half. It reads compiled workflow plans from this service's internal HTTP API and drives live workflow instances.
+**Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service`  
+**Module:** Go 1.26.9 · private module · a containerised microservice not yet deployed to any live environment
 
-The Definition Service exposes a REST API consumed by the **frontend workflow builder** and an internal HTTP API consumed by the **Execution Service**.
+---
+
+## Mental model
+
+The engine has two halves. This service is the design half: it owns every workflow template and the compiled plan that results from it. The Execution Service is the runtime half: it reads compiled plans from here and drives live instances.
 
 ```text
 Frontend Builder ──REST──► Definition Service ◄──internal HTTP──► Execution Service
@@ -13,15 +17,37 @@ Frontend Builder ──REST──► Definition Service ◄──internal HTTP�
                              PostgreSQL + Valkey
 ```
 
-| Responsibility | Detail |
-| --- | --- |
-| **BPMN ingestion** | Accepts BPMN 2.0 XML uploads from the frontend canvas modeler |
-| **Validation** | Runs structural, semantic, and topological (DAG/cycle) checks |
-| **Compilation** | Converts validated BPMN graphs into immutable JSON DSL execution plans |
-| **Versioning** | Manages DRAFT → PUBLISHED → ARCHIVED lifecycle with optimistic concurrency |
-| **Serving** | Serves compiled DSLs to the Execution Service on its internal HTTP API |
-| **Events** | Publishes none and keeps no outbox; the only event path is inbound |
-| **Membership sync** | Consumes `DepartmentMembershipRevoked` events (via `POST /internal/events`) to invalidate affected template assignees |
+| Layer | What it owns | What it does NOT own |
+| --- | --- | --- |
+| **BPMN ingestion** | Accepting BPMN 2.0 XML from the canvas modeler | Drawing the diagram: the frontend builder owns the modeler |
+| **Validation** | Structural, semantic and topological (DAG, cycle) checks | Runtime data validation: the Execution Service checks the variables of a live instance |
+| **Compilation** | Turning a validated graph into an immutable JSON DSL plan (`workflow-models` `pkg/dsl`) | The DSL types themselves: `workflow-models` owns them |
+| **Versioning** | The `DRAFT → PUBLISHED → ARCHIVED` lifecycle with optimistic concurrency, modules and starters | Running instances of a version: the Execution Service owns them |
+| **Serving** | The compiled plan and the published-version nodes read, on the internal HTTP API | Task assignment and completion at runtime |
+| **Connectors** | The connector registry read and the tenant's stored credentials (written to OpenBao) | Running a connector: the Execution Service's connector worker does |
+| **Membership sync** | Invalidating versions whose default assignee had a membership revoked | The membership itself: Org & Membership owns it |
+
+**Source of truth for two contracts:** the compiled plan (`GET /api/v1/internal/workflow-versions/{version_id}/compiled-plan`) and the published-version nodes read, which lists the nodes callers bind work to.
+
+---
+
+## Why this service exists
+
+A workflow is authored once and run many times, often long after the author is done. Separating design from execution gives a published version that never changes under a running instance, a validation gate that runs before any instance can start, and a runtime that never parses BPMN. Without a single owner of templates, every consumer would parse and interpret the diagram on its own and drift from the others.
+
+This service centralises that: one validated, versioned, compiled plan per published version, served read-only to the runtime. It publishes no events and keeps no outbox; its only event path is the inbound membership revocation.
+
+---
+
+## Contents
+
+- [Quick start](#quick-start) and [Local Development](#local-development)
+- [Project layout](#project-layout) and [Architecture](#architecture)
+- [API Overview](#api-overview)
+- [Deployment](#deployment), [Schema Governance](#schema-governance), [Workflow Design Guide](#workflow-design-guide)
+- [Tech stack](#tech-stack), [Testing](#testing), [CI](#ci), [Versioning and releases](#versioning-and-releases)
+- [Database](#database), [Database connection pooling](#database-connection-pooling)
+- [Out of scope](#out-of-scope) and [See also](#see-also)
 
 > **Architecture** — [ARCHITECTURE.md](ARCHITECTURE.md): layer model, sequence diagrams, BPMN compiler reference, configuration reference, and error catalog. Diagram sources live in [docs/architecture/](docs/architecture/).
 >
@@ -213,6 +239,34 @@ docs/
   bpmn-designer-guide.md ← BPMN modelling guide for business analysts / process owners
   ui-enrichment-guide.md ← Compiled-plan enrichment guide for ops/engineering reviewers
 ```
+
+---
+
+## Architecture
+
+Clean Architecture: `domain ← port ← service ← adapter`. Handlers map every response through local DTO structs and never serialise a domain struct directly.
+
+### Dependency rules (enforced by `go-arch-lint` in CI)
+
+| Package | May import |
+| --- | --- |
+| `core/domain` | the standard library only |
+| `core/port` | `domain` |
+| `core/service` | `domain`, `port` |
+| `adapter/*` | `port`, `domain` |
+| `cmd/server` | everything; it holds the composition root and no business logic |
+
+Nothing under `core/` imports from `adapter/`.
+
+### Shared library dependencies
+
+| Library | Used for |
+| --- | --- |
+| `platform-gincommon` | All logs, metrics and traces: Zap logger, OTel tracing, the `platform_http_*` series, the `/metrics` handler, authorization middleware |
+| `platform-pgcommon/v2` | The pgx pool, RLS GUC injection, the transactor and `migrate.Runner`; the `platform_db_*` series |
+| `platform-events/v2` | The inbound event envelope type only; the publisher, outbox and consumer are not used |
+| `workflow-models` | The compiled-plan DSL and stage-type constants shared with the Execution Service |
+| `workflow-connectors` | The connector registry read and the validator's connector-task checks |
 
 ---
 
@@ -678,3 +732,34 @@ psql "postgresql://wfdef:wfdef@localhost:6432/pgbouncer" -c "SHOW POOLS;"
 - **TLS** — PgBouncer must connect to RDS with `server_tls_sslmode=require`; `sslmode=disable` is only safe inside the cluster VPC with mesh mTLS.
 - **HA** — PgBouncer is stateless; run ≥2 replicas behind a k8s Service. `DATABASE_FALLBACK_URL` covers startup races only — it does not provide runtime failover.
 - **Shared PgBouncer** — one PgBouncer deployment serves all microservices. Scale `MAX_CLIENT_CONN` as you add services or pods.
+
+---
+
+## CI
+
+Pull requests and pushes run `ci.yml`: a `ci-gate` job skips draft pull requests and those labelled `skip-ci`, then code generation, `validate-quality` (format, tidy, vet, lint, govulncheck, contract and Dockerfile pin checks), `validate-test` (unit and integration tests with a merged coverage gate), a container image build, a Trivy scan and a smoke test. Pull requests that change only Markdown or `docs/` skip CI. `changelog-check.yml` requires a CHANGELOG entry on every pull request that touches `internal/`, `api/` or `cmd/`, and `pr-summary` keeps one comment on the pull request current. The schema workflows are described under [Schema Governance](#schema-governance).
+
+## Versioning and releases
+
+Releases are Git tags `vMAJOR.MINOR.PATCH`, cut on the merged commit after the CHANGELOG `[Unreleased]` section moves to a versioned heading. The `Release` workflow refuses a tag with no CHANGELOG entry, builds and scans the image, and creates the GitHub Release. See [VERSIONING.md](VERSIONING.md) and [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## Out of scope
+
+| Concern | Owner |
+| --- | --- |
+| Running workflow instances, tasks and connectors | Execution Service |
+| Drawing and editing the diagram | The frontend workflow builder |
+| Department membership and eligibility | Org & Membership Service |
+| Identity, tokens and tenant resolution | IAM |
+| Compiled-plan DSL types | `workflow-models` |
+| Connector implementations | `workflow-connectors` |
+
+This repository carries no `LICENSE` file: it is private and proprietary to BCBP Solutions.
+
+## See also
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) · [VERSIONING.md](VERSIONING.md) · [CHANGELOG.md](CHANGELOG.md)
+- [docs/bpmn-designer-guide.md](docs/bpmn-designer-guide.md) · [docs/ui-enrichment-guide.md](docs/ui-enrichment-guide.md)
+- The definition-service LLD in [docs/lld/](docs/lld/), content-identical to the design repository copy

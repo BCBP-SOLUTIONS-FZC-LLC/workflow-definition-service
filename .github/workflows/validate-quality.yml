@@ -106,7 +106,7 @@ jobs:
           args: --timeout=5m
 
       - name: Vulnerability check
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./internal/... ./cmd/...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./internal/... ./cmd/...
 
       - name: Dockerfile base-image pin check
         run: .github/scripts/dockerfile-pin-check.sh

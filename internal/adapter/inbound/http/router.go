@@ -44,6 +44,8 @@ type RouterConfig struct {
 	Cache Pinger
 }
 
+const requestTimeout = 30 * time.Second
+
 type Router struct {
 	engine *gin.Engine
 }
@@ -61,7 +63,7 @@ func NewRouter(cfg RouterConfig) *Router {
 	r := gin.New()
 	r.MaxMultipartMemory = 10 << 20
 
-	r.Use(gincommon.TimeoutMiddleware(30 * time.Second))
+	cfg.GinConfig.RequestTimeout = requestTimeout
 	for _, mw := range gincommon.ObservabilityMiddlewares(cfg.GinConfig) {
 		r.Use(mw)
 	}

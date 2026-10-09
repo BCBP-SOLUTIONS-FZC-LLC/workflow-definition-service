@@ -10,10 +10,10 @@ The **Workflow Definition Service** acts as the design-time control plane for th
 
 - **Language**: Go 1.26
 - **HTTP Framework**: Gin (REST APIs)
-- **Shared Middleware Library**: `platform-gincommon v1.3.0` — provides correlation IDs, OTel HTTP/gRPC spans, Prometheus metrics, structured Zap logging, panic recovery, gateway header authentication, tenant context propagation, per-route RBAC, per-request timeout middleware, and graceful telemetry shutdown. See §1.6 for the full middleware integration.
+- **Shared Middleware Library**: `platform-gincommon v1.6.0` — the only path for logs, metrics and traces: correlation IDs, OTel HTTP/gRPC spans, the `platform_http_*` Prometheus series, structured Zap logging, panic recovery, gateway header authentication, tenant context propagation, per-route RBAC, per-request timeout middleware, and graceful telemetry shutdown. See §1.6 for the full middleware integration.
 - **Database**: PostgreSQL (schema: `workflow_definition`)
-- **Database Driver**: `platform-pgcommon v1.2.1` — wraps `github.com/jackc/pgx/v5` with RLS GUC injection (`app.tenant_id`, `app.user_id`, `app.tenant_roles`), slow-query logging, OTel tracing, Prometheus pool metrics, transaction helpers, pool health check, and a golang-migrate-based `migrate.Runner`. See §1.7 for the full integration.
-- **Database Tooling**: `sqlc` for type-safe query generation, `platform-pgcommon migrate.Runner` for schema migrations.
+- **Database Driver**: `platform-pgcommon/v2 v2.0.0` — wraps `github.com/jackc/pgx/v5` with RLS GUC injection (`app.tenant_id`, `app.user_id`, `app.tenant_roles`), slow-query logging, OTel tracing, Prometheus pool metrics, transaction helpers, pool health check, and a golang-migrate-based `migrate.Runner`. See §1.7 for the full integration.
+- **Database Tooling**: `sqlc` for type-safe query generation, `platform-pgcommon/v2 migrate.Runner` for schema migrations.
 - **Distributed Cache / Store**: Valkey 8.0 (Redis-compatible), via `github.com/redis/go-redis/v9`. Used for: compiled-plan caching, idempotency key deduplication (`Idempotency-Key` header), and distributed draft-edit locking (prevents concurrent draft overwrites between sessions).
 - **Events**: this service publishes none and keeps no outbox. `platform-events v1.2.0` supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /internal/events`. See §1.8 for the full integration.
 - **Structured Logging**: `go.uber.org/zap` via `platform-gincommon/pkg/logger` — used by middleware chain and all application code. See `coding_style_rules.md §5.1`.
@@ -213,14 +213,14 @@ The Definition Service wires `platform-gincommon` in two tiers: observability mi
 Incoming HTTP request
   → r.MaxMultipartMemory = 10 MB (Gin router setting) — caps multipart form in-memory buffer; pairs with
                                                          LimitRequestBody for large-body protection
-  → TimeoutMiddleware(30s)      (gincommon) — sets per-request deadline; returns 503 + increments
-                                              http_request_timeout_total{method,route} on expiry
-  → PanicRecoveryMiddleware     (gincommon) — catches panics, emits JSON 500 + http_panic_total metric
+  → PanicRecoveryMiddleware     (gincommon) — catches panics, emits JSON 500 + platform_http_panics_total metric
   → RequestIDMiddleware         (gincommon) — reads x-request-id or generates UUID; echoes on response
   → TracingMiddleware           (gincommon) — starts OTel HTTP server span; stores trace_id in Gin context
   → CorrelationHeadersMiddleware(gincommon) — writes X-Trace-ID and X-Request-ID onto the response
-  → MetricsMiddleware           (gincommon) — records http_requests_total, http_request_duration_seconds
+  → MetricsMiddleware           (gincommon) — records platform_http_requests_total, platform_http_request_duration_seconds
   → LoggingMiddleware           (gincommon) — emits structured http_request log via Zap on completion
+  → TimeoutMiddleware(30s)      (gincommon, innermost via Config.RequestTimeout) — sets the per-request deadline;
+                                              returns 503 and counts platform_http_request_timeouts_total{method,route}
   → [/healthz, /readyz, /metrics — public; no further middleware]
   → RequireAuth                 (gincommon) — validates x-user-id and x-tenant-id (non-empty, ≤ 256 chars,
                                               no control chars); returns 401 if missing or malformed
@@ -288,7 +288,7 @@ Incoming HTTP request
     class J handler;
 ```
 
-`gincommon.InitTracingFromEnv()` is called once at startup in `main.go` before traffic is accepted; the returned shutdown function is deferred.
+`gincommon.InitTracingWithConfig` is called once at startup before `gincommon.ObservabilityMiddlewares`, with the service name, `Domain` (`workflow`) and `Environment` (`APP_ENV`) that identify every metric and span; the returned shutdown function is deferred.
 
 **Graceful shutdown sequence** (LIFO):
 
@@ -326,8 +326,8 @@ The adapter converts `map[string]interface{}` to `[]zap.Field` via `zap.Any`. Al
 
 | Variable | Value (production) | Purpose |
 | --- | --- | --- |
-| `APP_ENV` | `prod` | Sets Gin release mode; Zap production format; OTLP TLS enabled |
-| `BUILD_VERSION` | Set via `-ldflags` at build | Prometheus `build_info` gauge and OTel `service.version` |
+| `APP_ENV` | `prod` | One of `local`, `dev`, `test`, `staging`, `prod`; any other value fails startup. Sets Gin release mode, Zap production format, OTLP TLS, and the metrics `environment` label |
+| `BUILD_VERSION` | Set via `-ldflags` at build | Prometheus `platform_build_info` gauge and OTel `service.version` |
 | `OTEL_SERVICE_NAME` | `workflow-definition-svc` | OTel `service.name` attribute on all spans |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `otel-collector:4317` | OTLP/gRPC collector address (in-cluster) |
 | `OTEL_EXPORTER_OTLP_INSECURE` | `false` | TLS required in production (collector uses mutual TLS) |
@@ -446,19 +446,19 @@ func readyzHandler(pool *pgcommon.Pool, cache port.CacheStore) gin.HandlerFunc {
 
 #### 1.7.5 Prometheus Metrics
 
-`internal/observability.Register(serviceName, buildVersion, pool)` calls `pgmetrics.InitWithRegisterer(serviceName, buildVersion, gincommon.MetricsRegisterer())` and registers `pgmetrics.NewPoolStatsCollector(pool, serviceName)` (§6.1.1's DB connection-pool gauges table) against the same registerer. This also activates `platform-pgcommon`'s own query/retry collectors:
+`cmd/server` fixes the metrics identity (`gincommon.ObservabilityMiddlewares`) and calls `pgmetrics.InitWithIdentity` with it before `pgcommon.NewPool`; the pool then registers its collectors on `gincommon.MetricsRegisterer()`. `Config.Tracer` is `gincommon.NewSpanTracer`, so `db.query` spans export with the HTTP spans.
 
 | Metric | Type | Description |
 | --- | --- | --- |
-| `pgcommon_query_total` | Counter | Total queries executed |
-| `pgcommon_query_duration_seconds` | Histogram | Query latency |
-| `pgcommon_pool_acquire_total` | Counter | Successful / failed connection acquires |
-| `pgcommon_pool_acquire_duration_seconds` | Histogram | Time waiting for a connection from the pool |
-| `pgcommon_slow_query_total` | Counter | Queries exceeding `SlowQueryThreshold` |
-| `pgcommon_retry_total` | Counter | Transaction retries |
-| `pgcommon_retry_exhausted_total` | Counter | Retries that exhausted their budget without succeeding |
+| `platform_db_queries_total` | Counter | Queries executed, by `pool`, `operation` and `outcome` |
+| `platform_db_query_duration_seconds` | Histogram | Query latency |
+| `platform_db_pool_acquires_total` | Counter | Connection acquires, by `outcome` |
+| `platform_db_pool_acquire_duration_seconds` | Histogram | Time waiting for a connection from the pool |
+| `platform_db_slow_queries_total` | Counter | Queries exceeding `SlowQueryThreshold` |
+| `platform_db_transaction_retries_total` | Counter | Transaction retries |
+| `platform_db_transaction_retries_exhausted_total` | Counter | Retries that exhausted their budget without succeeding |
 
-All of the above, §6.1.1's pool gauges, and this service's own `wf_*`/`internal_events_ingest_total` metrics land on the same `gincommon.MetricsRegisterer()`, exposed together on the `/metrics` endpoint.
+All of the above, §6.1.1's pool gauges, and this service's own `workflow_definition_svc_*` metrics land on the same `gincommon.MetricsRegisterer()`, exposed together on the `/metrics` endpoint.
 
 ### 1.8 Events and Startup Migration
 
@@ -493,7 +493,7 @@ Inbound domain events are consumed by the shared workflow-events consumer servic
 
 | Metric | Type | Description |
 | --- | --- | --- |
-| `internal_events_ingest_total` | Counter | Inbound envelopes received at `POST /internal/events` (labels: `type`, `result`) |
+| `workflow_definition_svc_internal_events_ingest_total` | Counter | Inbound envelopes received at `POST /internal/events` (labels: `type`, `result`) |
 
 ---
 
@@ -3446,67 +3446,64 @@ All metrics are exposed via a standard HTTP `/metrics` endpoint scraped by Prome
 
 | Metric | Type | Description |
 | --- | --- | --- |
-| `http_requests_total` | Counter | Requests by method, path, status code |
-| `http_request_duration_seconds` | Histogram | Request latency (IAM-tuned buckets) |
-| `http_panic_total` | Counter | Panics recovered by `PanicRecoveryMiddleware` |
-| `rate_limited_requests_total` | Counter | HTTP 429 responses |
-| `build_info` | Gauge | `service`, `version` labels from `BUILD_VERSION` env |
+| `platform_http_requests_total` | Counter | Requests by `method`, `route`, `status_class` and `error_class` |
+| `platform_http_request_duration_seconds` | Histogram | Request latency |
+| `platform_http_panics_total` | Counter | Panics recovered by `PanicRecoveryMiddleware` |
+| `platform_http_rate_limited_requests_total` | Counter | HTTP 429 responses |
+| `platform_http_request_timeouts_total` | Counter | Requests cancelled by the request timeout |
+| `platform_build_info` | Gauge | `version` label from `BUILD_VERSION` |
+
+Every series carries the constant `domain`, `service` and `environment` labels. Service-specific metrics are created with `gincommon.NewCounterVec`, `NewCounter` and `NewHistogramVec` and are named `workflow_definition_svc_<metric>`; a unit test validates them against the platform observability registry.
 
 
 The following **service-specific business metrics** supplement the base layer:
 
 #### 6.1.1 Core Metrics Catalog
 
-- **`wf_submissions_total`** (CounterVec)
+- **`workflow_definition_svc_submissions_total`** (CounterVec)
   - **Description**: Total workflow creation attempts.
   - **Labels**: `status` (`ok`, `err` — via the `outcomeLabel(err)` helper)
-- **`wf_archive_total`** (CounterVec)
+- **`workflow_definition_svc_archive_total`** (CounterVec)
   - **Description**: Total workflow archive attempts.
   - **Labels**: `status` (`ok`, `err`)
-- **`wf_publish_total`** (CounterVec)
+- **`workflow_definition_svc_publish_total`** (CounterVec)
   - **Description**: Total version publish attempts.
   - **Labels**: `status` (`ok`, `err`)
-- **`wf_publish_latency_seconds`** (Histogram)
+- **`workflow_definition_svc_publish_latency_seconds`** (Histogram)
   - **Description**: End-to-end latency of `PublishVersion` (compile + DB tx combined). Serves as the primary SLI for publish performance.
   - **Labels**: none
-- **`wf_clone_total`** (CounterVec)
+- **`workflow_definition_svc_clone_total`** (CounterVec)
   - **Description**: Total version clone attempts.
   - **Labels**: `status` (`ok`, `err`)
-- **`wf_promote_total`** (CounterVec)
+- **`workflow_definition_svc_promote_total`** (CounterVec)
   - **Description**: Total version promote attempts.
   - **Labels**: `status` (`ok`, `err`)
-- **`wf_compile_duration_seconds`** (Histogram)
+- **`workflow_definition_svc_compile_duration_seconds`** (Histogram)
   - **Description**: Duration of `compiler.Compile` calls only (BPMN XML → JSON DSL), isolated from DB-transaction time. Observed at both real call sites: `VersionService.Publish` (via `publishPreFlight`) and the `Diff`/`Export` fallback-recompile path (`resolvePlan`, used when no cached `CompiledPlanJSON` exists). `Promote` never compiles (reactivates an already-published, already-compiled version); `ValidationService.Validate` calls the separate, cheaper `compiler.Validate` structural check, not `Compile`.
   - **Labels**: none
-- **`wf_validation_failures_total`** (Counter)
+- **`workflow_definition_svc_validation_failures_total`** (Counter)
   - **Description**: Total BPMN validation calls (`ValidationService.Validate`) that returned at least one blocking validation error.
   - **Labels**: none
-- **`internal_events_ingest_total`** (CounterVec)
+- **`workflow_definition_svc_internal_events_ingest_total`** (CounterVec)
   - **Description**: Inbound events received at `POST /internal/events` from the shared consumer.
   - **Labels**: `event_type` (e.g. `DepartmentMembershipRevoked`), `result`
   - **Note**: `sqs_queue_depth` / `sqs_dlq_depth` for `membership-workflow-q` are emitted by the shared workflow-events consumer, not the Definition Service.
-- **`wf_cache_hits_total`** (Counter)
+- **`workflow_definition_svc_cache_hits_total`** (Counter)
   - **Description**: Total compiled-plan cache hits on the internal compiled-plan read (§3.4.1).
   - **Labels**: none
-- **`wf_cache_misses_total`** (Counter)
+- **`workflow_definition_svc_cache_misses_total`** (Counter)
   - **Description**: Total compiled-plan cache misses on the internal compiled-plan read (fetched from the DB instead).
   - **Labels**: none
-- **`http_request_timeout_total`** (Counter) _(gincommon v1.2.0)
-  - **Description**: Requests cancelled by `TimeoutMiddleware` before the handler responded.
-  - **Labels**: `method`, `route`
 
-**DB connection-pool gauges** (`platform-pgcommon` `pgmetrics.PoolStatsCollector`, registered once at startup against the live pool):
+**DB connection-pool gauges** (`platform-pgcommon/v2`, registered by `pgcommon.NewPool` once `pgmetrics.InitWithIdentity` has run):
 
 | Metric | Type | Description |
 | --- | --- | --- |
-| `pgcommon_pool_total_conns` | Gauge | Current total connections (idle + acquired + constructing) |
-| `pgcommon_pool_idle_conns` | Gauge | Current idle connections available |
-| `pgcommon_pool_acquired_conns` | Gauge | Current connections checked out by callers |
-| `pgcommon_pool_max_conns` | Gauge | Configured connection limit |
-| `pgcommon_pool_constructing_conns` | Gauge | Connections currently being established |
-| `pgcommon_pool_empty_acquire_total` | Counter | Cumulative acquires that waited because the pool was exhausted — a rising value indicates the pool is undersized |
+| `platform_db_pool_connections` | Gauge | Connections by `pool` and `state` (`total`, `idle`, `acquired`, `constructing`) |
+| `platform_db_pool_max_connections` | Gauge | Configured connection limit |
+| `platform_db_pool_empty_acquires_total` | Counter | Cumulative acquires that waited because the pool was exhausted — a rising value indicates the pool is undersized |
 
-All six carry a constant `service` label (the `OTEL_SERVICE_NAME` value).
+All carry the constant `domain`, `service` and `environment` labels.
 
 #### 6.1.2 Recommended Prometheus Alerting Rules
 
@@ -3515,7 +3512,7 @@ groups:
   - name: definition_service_alerts
     rules:
       - alert: HighValidationFailureRate
-        expr: rate(wf_validation_failures_total[5m]) / rate(wf_submissions_total[5m]) > 0.3
+        expr: rate(workflow_definition_svc_validation_failures_total[5m]) / rate(workflow_definition_svc_submissions_total[5m]) > 0.3
         for: 10m
         labels:
           severity: warning
@@ -3524,13 +3521,13 @@ groups:
           description: "Over 30% of BPMN submissions are failing validation checks in the last 10 minutes. Process-wide only — neither metric carries a tenant_id label today, so per-tenant breakdown is not available from this alert alone."
 
       - alert: PublishTransactionLatencyDegraded
-        expr: histogram_quantile(0.95, rate(wf_publish_latency_seconds_bucket[5m])) > 2.0
+        expr: histogram_quantile(0.95, rate(workflow_definition_svc_publish_latency_seconds_bucket[5m])) > 2.0
         for: 5m
         labels:
           severity: critical
         annotations:
           summary: "Slow publish execution"
-          description: "95th percentile of PublishVersion (compile + DB tx combined) is exceeding 2.0 seconds. If wf_compile_duration_seconds is also elevated, the regression is in BPMN compilation rather than the DB transaction."
+          description: "95th percentile of PublishVersion (compile + DB tx combined) is exceeding 2.0 seconds. If workflow_definition_svc_compile_duration_seconds is also elevated, the regression is in BPMN compilation rather than the DB transaction."
 
       - alert: RLSMissingGUC
         expr: increase(rls_violations_total{type="missing_or_invalid_guc"}[5m]) > 0
@@ -3678,7 +3675,7 @@ The queue topology (`membership-workflow-q`, its `membership-workflow-q-dlq` DLQ
 
   > **`department_id` format**: The exact format of `department_id` in this event payload is owned by the Org & Membership service and will be defined in its LLD. The Definition Service stores the lane `name` attribute from the BPMN (owned by the Profile Service) in `workflow_node_assignee.department_id`. Both formats must align for the invalidation query (`WHERE department_id = :revoked_department_id`) to match. **Revisit when the Org & Membership service LLD is complete.**
 
-- **AsyncAPI documentation**: also documented as a `receive` operation in `api/asyncapi.yaml` (message `DepartmentMembershipRevoked`, schema `DepartmentMembershipRevokedInbound`) — non-`Payload`-suffixed so `schema-gov`'s extractor skips it, since this event is owned/registered by the Org & Membership service, not Definition. Mirrors `execution_service`'s own convention for its inbound events.
+- **AsyncAPI documentation**: also documented as a `receive` operation in `api/asyncapi.yaml` (messages `DepartmentMembershipRevoked` and `MembershipRevoked`, schemas `DepartmentMembershipRevokedInbound` and `MembershipRevokedInbound`) — non-`Payload`-suffixed so `schema-gov`'s extractor skips it, since this event is owned/registered by the Org & Membership service, not Definition. Mirrors `execution_service`'s own convention for its inbound events.
 
 - **What and How Happens** (executed by the `POST /internal/events` handler after dispatching on `env.Type`):
 
@@ -3895,7 +3892,7 @@ The following SLOs are the implementation targets for this service. They are ref
 
 | Target | Value | Alert threshold |
 | --- | --- | --- |
-| Compiled-plan cache hit ratio (steady state) | ≥ 90% | Alert `wf_cache_misses_total / (wf_cache_hits_total + wf_cache_misses_total) > 0.1` sustained for 5 m |
+| Compiled-plan cache hit ratio (steady state) | ≥ 90% | Alert `workflow_definition_svc_cache_misses_total / (workflow_definition_svc_cache_hits_total + workflow_definition_svc_cache_misses_total) > 0.1` sustained for 5 m |
 | Valkey client timeout | 50 ms | Timeout treated as cache miss; falls through to Postgres. Never blocks the SLO budget. |
 
 ---
@@ -4031,7 +4028,7 @@ This section captures the key architectural and design decisions made for the Wo
   - Limit: CPU 500m, Memory 1024Mi
 - **Deployment mechanism**: `deploy/helm/` (Helm chart) is the source of truth for the values above — do not let this section drift out of sync with the chart. Includes NetworkPolicy, ServiceMonitor, and PrometheusRule (domain alerts sourced from §6.1.2) alongside the Deployment/Service/HPA/PDB.
 - **Migrations**: there is no auto-migration at server boot (`cmd/server/main.go` special-cases a `migrate` subcommand). The chart runs `/server migrate` as a `pre-install,pre-upgrade` Helm hook Job before the main Deployment rolls out, so every `helm upgrade --install` applies pending migrations first.
-- **Release pipeline**: `release.yml`'s `deploy-gate` job runs `helm upgrade --install --wait --atomic`, verifies the deployed image digest against the signed/published digest, waits for rollout, and gates on a 2-minute Prometheus error-rate check (`http_requests_total` 5xx ratio > 1%) — auto-rolling back via `helm rollback` on failure. A GitHub Release is only published if this gate passes.
+- **Release pipeline**: `release.yml`'s `deploy-gate` job runs `helm upgrade --install --wait --atomic`, verifies the deployed image digest against the signed/published digest, waits for rollout, and gates on a 2-minute Prometheus error-rate check (`platform_http_requests_total` 5xx ratio > 1%) — auto-rolling back via `helm rollback` on failure. A GitHub Release is only published if this gate passes.
 
 ### 11.2 Disaster Recovery Specifications
 
@@ -4796,7 +4793,7 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 | **Artifact Hash** | Database | A canonical SHA-256 hash of every process in the bundled BPMN. Computed at publish time and stored in `workflow_version.artifact_hash`. |
 | **Workflow Node Assignee Table** | Database | A denormalized reverse index (`workflow_node_assignee`) mapping users to workflow versions. Enables fast lookup of affected templates when a user loses department membership. Populated atomically during publish; never updated independently. |
 | **sqlc** | Database | A Go code generator that produces type-safe database query functions from hand-written SQL. Eliminates runtime SQL errors and provides compile-time type checking. |
-| **migrate.Runner** | Database | `platform-pgcommon/pkg/migrate.Runner` — a golang-migrate wrapper that applies service schema migrations (`db/migrations/NNNN_name.up.sql` / `.down.sql`) at process startup, tracked under `wf_definition_migrations`. |
+| **migrate.Runner** | Database | `platform-pgcommon/v2/pkg/migrate.Runner` — a golang-migrate wrapper that applies service schema migrations (`db/migrations/NNNN_name.up.sql` / `.down.sql`) at process startup, tracked under `wf_definition_migrations`. |
 
 ### Validation & Compilation
 
@@ -4924,6 +4921,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.31 | 2026-10-07 | **What an outside party can complete, and no authored credentials** (§3.1.4 new code 40, §3.3.12.2, §4.1.3.3). The published-version nodes read gains `waits`: the receive tasks and message boundaries that no send task of the plan feeds, each with the key the Execution Service takes an outside party's answer by. A message boundary keeps its BPMN id (`MessagePath.BoundaryID`, workflow-models LLD rev 2.16) so it can be addressed. A connector input whose target is a secret field of its connector type is refused (`CONNECTOR_SECRET_AUTHORED`): a connector always uses the tenant's stored credential, so a diagram never names a secret path. A connector input's `source` is `=name` for an instance variable or any other text for a literal. |
 | 1.32 | 2026-10-08 | **The service has no outbox, relay, SNS publisher or Glue codec** (§1.1, §1.2, §1.4, §1.5, §1.8, §2.2, §2.3, §6, §7, §8, §9, §10.2, §10.4, §10.12, §11, Appendix A). It publishes no event, and the apparatus had been kept against a future producer; it also made every cluster boot require SNS and Glue settings no deployment has. The outbox tables and their RLS migration, the relay worker and its alert, the `OutboxRepository` port, the `AWS_USE_STUB`, `SNS_TOPIC_ARN`, `GLUE_REGISTRY_NAME` and `OUTBOX_*` settings and the Glue codec are gone. The Execution Service and Org & Membership URLs and tokens are required whenever `APP_ENV` is not `dev`. A future outbound event designs its contract and consumer first, and brings its own outbox. |
 | 1.33 | 2026-10-08 | **A boundary carries the whole path it leads to** (§4.1.3.2, §4.2, Appendix E). A boundary named only the department it moved to, so a path of several tasks, lanes or gateways ran its first department alone and the flow then went on as if the host had finished. Each boundary, on a task, a subProcess or a call, now carries its path as `Steps` and the boundary event's ID as `BoundaryID`, compiled after the main traversal on a state of its own; the Execution Service runs them and an interrupting boundary ends its path (workflow-models LLD rev 2.17, execution LLD rev 1.72). A path that continues into a node the main flow compiled keeps naming only its department. The outside waits read looks into the steps of boundary paths. |
+| 1.34 | 2026-10-09 | **Platform libraries at their latest majors and the standard metric names** (§1.1, §1.6, §1.7.5, §6.1, §6.2). `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.0 and `platform-gincommon` v1.6.0; `workflow-models` v1.2.0 and `workflow-connectors` v1.0.0. HTTP and database series are `platform_http_*` and `platform_db_*`, this service's are `workflow_definition_svc_<metric>`, and the metrics identity is fixed before any collector or pool is created. `APP_ENV` is one of `local`, `dev`, `test`, `staging`, `prod`. The request timeout runs innermost through `Config.RequestTimeout`. `api/asyncapi.yaml` documents both inbound events. |
 ---
 
 ## Appendix E: Open Items
