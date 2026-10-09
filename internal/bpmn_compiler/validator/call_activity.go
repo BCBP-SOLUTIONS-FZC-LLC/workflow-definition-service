@@ -12,10 +12,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// ValidateCallActivity checks one call site in caller: that it names a
-// process it can run, and that it binds that process's departments and
-// assignees to things that exist (definition LLD §4.1.2). Every error is on
-// the callActivity and names it as the author sees it.
 func ValidateCallActivity(ca bpmncore.BPMNCallActivity, caller *bpmncore.BPMNProcess, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	ext := ca.ExtensionElements.ZeebeCalledElement
 	if ext == nil || ext.ProcessID == "" {
@@ -124,9 +120,6 @@ func (c callSite) departments() []domain.BPMNValidationError {
 	return errs
 }
 
-// boundLanesHaveDepartments refuses a binding to a workflow lane with no
-// dept_id, which would leave the module's work in no IAM department until the
-// instance started. A module's own open lane is left to its caller to bind.
 func (c callSite) boundLanesHaveDepartments() []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	mapped := map[string]bool{}
@@ -148,8 +141,6 @@ func (c callSite) boundLanesHaveDepartments() []domain.BPMNValidationError {
 	return errs
 }
 
-// hasTask reports whether proc runs a task with the id, at the top level or
-// in a subProcess body, one level being all a subProcess may nest.
 func hasTask(proc *bpmncore.BPMNProcess, id string) bool {
 	if bpmncore.FindTask(proc, id) != nil {
 		return true
@@ -186,10 +177,6 @@ func (c callSite) assignees() []domain.BPMNValidationError {
 	return errs
 }
 
-// unassignable says why an Assignees key names no task under this call, or
-// returns "" when it does. A key is a task ID of the called module, or the
-// IDs of the module's calls leading to a task further down, then that task's
-// ID, joined by dsl.CallScopeSeparator.
 func (c callSite) unassignable(key string) string {
 	proc := c.called
 	for {

@@ -48,9 +48,6 @@ func ValidateCounts(proc *bpmncore.BPMNProcess, implicitStart string) []domain.B
 	return errs
 }
 
-// ValidateLaneNames refuses a lane name holding a character a department
-// key gives meaning to: "/" ends the department in a node key, "::" separates
-// calls, and "~" numbers a lane's later segments.
 func ValidateLaneNames(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, lane := range proc.LaneSet.Lanes {
@@ -88,9 +85,6 @@ func ValidateSeqFlowRefs(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain
 	return errs
 }
 
-// ValidateDanglingNodes checks that all flow nodes are properly connected.
-// implicitStart is exempted from the "no incoming sequence flow" check because
-// it is intentionally triggered by a message flow rather than a sequence flow.
 func ValidateDanglingNodes(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, implicitStart string) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 

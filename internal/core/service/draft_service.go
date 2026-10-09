@@ -47,7 +47,7 @@ type UpdateDraftReq struct {
 	Name          *string
 	Description   *string
 	BPMNXML       *string
-	RecordVersion int64 // optimistic-lock token (0 = unchecked)
+	RecordVersion int64
 }
 
 const errGetDraft = "get draft: %w"
@@ -166,8 +166,6 @@ func (s *DraftService) runUpdateTx(
 	return doUpdate(ctx)
 }
 
-// acquireDraftLock returns a no-op release when Cache isn't configured
-// (dev/test), so draft locking is best-effort rather than a hard dependency.
 func (s *DraftService) acquireDraftLock(ctx context.Context, tenantID, workflowID uuid.UUID) (release func(), err error) {
 	if s.cache == nil {
 		return func() {}, nil
@@ -183,10 +181,6 @@ func (s *DraftService) acquireDraftLock(ctx context.Context, tenantID, workflowI
 	return func() { _ = s.cache.Del(ctx, lockKey) }, nil
 }
 
-// failFastOnStaleRecordVersion rejects an obvious mismatch before any write.
-// The authoritative guard is still the SQL record_version predicate in the
-// repo, which also catches a write that slips in between this check and the
-// update — this is a fast-fail complement to it, not a replacement.
 func failFastOnStaleRecordVersion(draft *domain.WorkflowVersion, recordVersion int64) error {
 	if recordVersion == 0 {
 		return nil

@@ -8,12 +8,6 @@ import (
 	"time"
 )
 
-// ConnectorRestAlias mirrors
-// workflow-connectors/pkg/connectors/aliasconfig's Endpoint shape —
-// duplicated here, not imported, because this repo's vendored
-// workflow-connectors version predates that package's exported Validate.
-// Switch to importing aliasconfig directly once workflow-connectors is
-// published and this repo's go.mod is bumped.
 type ConnectorRestAlias struct {
 	Alias        string
 	Method       string
@@ -38,18 +32,6 @@ func (a ConnectorRestAlias) Validate() error {
 	return nil
 }
 
-// ValidateBaseURLHost rejects a rest-call alias whose BaseURL does not
-// resolve to an allow-listed internal host.
-//
-// This is a credential-exfiltration control, not hygiene: restcall.Execute
-// attaches the real x-internal-token and x-departments headers to every
-// call it makes, so an alias pointing at an attacker-controlled host would
-// hand that host a valid internal service credential. Nothing else in the
-// path checks this — the alias registry is org-wide (no RLS) and writable
-// through an internal endpoint.
-//
-// Fail-closed on an empty allowlist: an unconfigured deployment must not
-// silently accept any host at all.
 func ValidateBaseURLHost(baseURL string, allowedHosts []string) error {
 	if len(allowedHosts) == 0 {
 		return fmt.Errorf("%w: no allowed connector alias hosts are configured; set CONNECTOR_ALIAS_ALLOWED_HOSTS before writing rest-call aliases", ErrInvalidConnectorAliasInput)
@@ -73,9 +55,6 @@ func ValidateBaseURLHost(baseURL string, allowedHosts []string) error {
 		if allowed == "" {
 			continue
 		}
-		// A leading dot is a suffix rule (".svc.cluster.local" matches any
-		// host under it); anything else must match exactly, so "evil.com"
-		// can never satisfy an allowlist entry of "api.internal".
 		if strings.HasPrefix(allowed, ".") {
 			if strings.HasSuffix(host, allowed) {
 				return nil

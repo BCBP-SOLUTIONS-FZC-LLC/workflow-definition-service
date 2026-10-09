@@ -51,9 +51,9 @@ groups:
 
       - alert: WorkflowDefinitionServiceHighErrorRate
         expr: |
-          sum(rate(http_requests_total{job="workflow-definition-service", status_class="5xx"}[5m]))
+          sum(rate(platform_http_requests_total{job="workflow-definition-service", status_class="5xx"}[5m]))
             /
-          sum(rate(http_requests_total{job="workflow-definition-service"}[5m]))
+          sum(rate(platform_http_requests_total{job="workflow-definition-service"}[5m]))
           > 0.05
         for: 5m
         labels:
@@ -68,9 +68,9 @@ groups:
 
       - alert: WorkflowDefinitionServiceCriticalErrorRate
         expr: |
-          sum(rate(http_requests_total{job="workflow-definition-service", status_class="5xx"}[5m]))
+          sum(rate(platform_http_requests_total{job="workflow-definition-service", status_class="5xx"}[5m]))
             /
-          sum(rate(http_requests_total{job="workflow-definition-service"}[5m]))
+          sum(rate(platform_http_requests_total{job="workflow-definition-service"}[5m]))
           > 0.20
         for: 2m
         labels:
@@ -90,7 +90,7 @@ groups:
         expr: |
           histogram_quantile(0.99,
             sum by (le) (
-              rate(http_request_duration_seconds_bucket{job="workflow-definition-service"}[5m])
+              rate(platform_http_request_duration_seconds_bucket{job="workflow-definition-service"}[5m])
             )
           ) > 2.0
         for: 10m
@@ -108,7 +108,7 @@ groups:
         expr: |
           histogram_quantile(0.99,
             sum by (le) (
-              rate(http_request_duration_seconds_bucket{job="workflow-definition-service"}[5m])
+              rate(platform_http_request_duration_seconds_bucket{job="workflow-definition-service"}[5m])
             )
           ) > 25.0
         for: 5m
@@ -128,9 +128,9 @@ groups:
 
       - alert: WorkflowDefinitionServiceCompiledPlanHighErrorRate
         expr: |
-          sum(rate(http_requests_total{job="workflow-definition-service", route="/api/v1/internal/workflow-versions/:version_id/compiled-plan", status_class="5xx"}[5m]))
+          sum(rate(platform_http_requests_total{job="workflow-definition-service", route="/api/v1/internal/workflow-versions/:version_id/compiled-plan", status_class="5xx"}[5m]))
             /
-          sum(rate(http_requests_total{job="workflow-definition-service", route="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m]))
+          sum(rate(platform_http_requests_total{job="workflow-definition-service", route="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m]))
           > 0.05
         for: 5m
         labels:
@@ -147,7 +147,7 @@ groups:
         expr: |
           histogram_quantile(0.99,
             sum by (le) (
-              rate(http_request_duration_seconds_bucket{job="workflow-definition-service", route="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m])
+              rate(platform_http_request_duration_seconds_bucket{job="workflow-definition-service", route="/api/v1/internal/workflow-versions/:version_id/compiled-plan"}[5m])
             )
           ) > 1.0
         for: 10m
@@ -160,14 +160,14 @@ groups:
             The p99 compiled-plan read duration is {{ $value | humanizeDuration }}.
             This is a cache-backed lookup (CACHE_COMPILED_PLAN_TTL) — sustained high
             latency usually means a cold cache under load or a slow DB fallback path.
-            Check wf_cache_hits_total vs wf_cache_misses_total.
+            Check workflow_definition_svc_cache_hits_total vs workflow_definition_svc_cache_misses_total.
 
   - name: workflow_definition_service_validation
     rules:
 
       - alert: WorkflowDefinitionServiceHighValidationFailureRate
         expr: |
-          sum(rate(wf_validation_failures_total{job="workflow-definition-service"}[10m])) > 0.5
+          sum(rate(workflow_definition_svc_validation_failures_total{job="workflow-definition-service"}[10m])) > 0.5
         for: 10m
         labels:
           severity: warning
@@ -175,7 +175,7 @@ groups:
         annotations:
           summary: Elevated BPMN validation failure rate on /validate
           description: >-
-            wf_validation_failures_total is only incremented by the standalone
+            workflow_definition_svc_validation_failures_total is only incremented by the standalone
             POST /api/v1/workflows/validate endpoint (WorkflowService.Create validates
             inline and does not touch this counter, so this is not a "% of submissions"
             ratio). Sustained validation failures usually mean an upstream canvas-modeler
@@ -188,7 +188,7 @@ groups:
         expr: |
           histogram_quantile(0.95,
             sum by (le) (
-              rate(wf_publish_latency_seconds_bucket{job="workflow-definition-service"}[5m])
+              rate(workflow_definition_svc_publish_latency_seconds_bucket{job="workflow-definition-service"}[5m])
             )
           ) > 2.0
         for: 5m
@@ -203,7 +203,7 @@ groups:
 
       - alert: WorkflowDefinitionServicePublishRetryExhausted
         expr: |
-          increase(pgcommon_retry_exhausted_total{job="workflow-definition-service"}[5m]) > 0
+          increase(platform_db_transaction_retries_exhausted_total{job="workflow-definition-service"}[5m]) > 0
         for: 1m
         labels:
           severity: critical
@@ -211,7 +211,7 @@ groups:
         annotations:
           summary: A database transaction exhausted its retry budget
           description: >-
-            pgcommon_retry_exhausted_total increased — a transaction (e.g. the
+            platform_db_transaction_retries_exhausted_total increased — a transaction (e.g. the
             SERIALIZABLE publish transaction) hit deadlock/serialization contention
             repeatedly and gave up without committing. Reason: {{ $labels.reason }}.
             The caller received an error; check for a burst of concurrent publishes
@@ -222,7 +222,7 @@ groups:
 
       - alert: WorkflowDefinitionServiceInternalEventIngestFailures
         expr: |
-          sum(increase(internal_events_ingest_total{job="workflow-definition-service", result=~"bad_payload|error"}[15m])) > 5
+          sum(increase(workflow_definition_svc_internal_events_ingest_total{job="workflow-definition-service", result=~"bad_payload|error"}[15m])) > 5
         for: 5m
         labels:
           severity: warning
@@ -239,9 +239,9 @@ groups:
 
       - alert: WorkflowDefinitionServiceDBErrorRate
         expr: |
-          sum(rate(pgcommon_query_total{job="workflow-definition-service", status="error"}[5m]))
+          sum(rate(platform_db_queries_total{job="workflow-definition-service", outcome="error"}[5m]))
             /
-          sum(rate(pgcommon_query_total{job="workflow-definition-service"}[5m]))
+          sum(rate(platform_db_queries_total{job="workflow-definition-service"}[5m]))
           > 0.05
         for: 5m
         labels:
@@ -251,7 +251,7 @@ groups:
           summary: Elevated Postgres query error rate
           description: >-
             {{ $value | humanizePercentage }} of queries are erroring over the
-            last 5 minutes (pgcommon_query_total). Check Postgres/PgBouncer health.
+            last 5 minutes (platform_db_queries_total). Check Postgres/PgBouncer health.
 
   - name: workflow_definition_service_panics
     rules:
@@ -277,12 +277,12 @@ groups:
 
       - alert: WorkflowDefinitionServiceLowCacheHitRatio
         expr: |
-          sum(rate(wf_cache_misses_total{job="workflow-definition-service"}[15m]))
+          sum(rate(workflow_definition_svc_cache_misses_total{job="workflow-definition-service"}[15m]))
             /
           (
-            sum(rate(wf_cache_hits_total{job="workflow-definition-service"}[15m]))
+            sum(rate(workflow_definition_svc_cache_hits_total{job="workflow-definition-service"}[15m]))
               +
-            sum(rate(wf_cache_misses_total{job="workflow-definition-service"}[15m]))
+            sum(rate(workflow_definition_svc_cache_misses_total{job="workflow-definition-service"}[15m]))
           )
           > 0.5
         for: 30m

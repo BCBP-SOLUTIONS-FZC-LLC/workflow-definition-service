@@ -8,17 +8,15 @@ import (
 type FlowNodeType string
 
 const (
-	NodeTypeStartEvent       FlowNodeType = "startEvent"
-	NodeTypeEndEvent         FlowNodeType = "endEvent"
-	NodeTypeUserTask         FlowNodeType = "userTask"
-	NodeTypeSendTask         FlowNodeType = "sendTask"
-	NodeTypeReceiveTask      FlowNodeType = "receiveTask"
-	NodeTypeParallelGateway  FlowNodeType = "parallelGateway"
-	NodeTypeExclusiveGateway FlowNodeType = "exclusiveGateway"
-	NodeTypeInclusiveGateway FlowNodeType = "inclusiveGateway"
-	NodeTypeSubProcess       FlowNodeType = "subProcess"
-	// NodeTypeBoundaryEvent is the fallback type for unrecognised boundary events.
-	// Timer, error, and message boundary events use the specific subtypes below.
+	NodeTypeStartEvent           FlowNodeType = "startEvent"
+	NodeTypeEndEvent             FlowNodeType = "endEvent"
+	NodeTypeUserTask             FlowNodeType = "userTask"
+	NodeTypeSendTask             FlowNodeType = "sendTask"
+	NodeTypeReceiveTask          FlowNodeType = "receiveTask"
+	NodeTypeParallelGateway      FlowNodeType = "parallelGateway"
+	NodeTypeExclusiveGateway     FlowNodeType = "exclusiveGateway"
+	NodeTypeInclusiveGateway     FlowNodeType = "inclusiveGateway"
+	NodeTypeSubProcess           FlowNodeType = "subProcess"
 	NodeTypeBoundaryEvent        FlowNodeType = "boundaryEvent"
 	NodeTypeTimerBoundaryEvent   FlowNodeType = "timerBoundaryEvent"
 	NodeTypeErrorBoundaryEvent   FlowNodeType = "errorBoundaryEvent"
@@ -34,9 +32,6 @@ type BPMNDefinitions struct {
 	Errors        []BPMNError        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL error"`
 	Diagrams      []BPMNDiagram      `xml:"http://www.omg.org/spec/BPMN/20100524/DI BPMNDiagram"`
 
-	// ModuleProcesses holds the IDs of processes compiled as modules, the ones
-	// a callActivity names. Their lanes may omit dept_id, since a call binds
-	// those departments.
 	ModuleProcesses map[string]bool `xml:"-"`
 }
 
@@ -243,11 +238,8 @@ type ZeebeIOVar struct {
 type ZeebeCalledElement struct {
 	ProcessID                  string `xml:"processId,attr"`
 	PropagateAllChildVariables bool   `xml:"propagateAllChildVariables,attr"`
-	// BindingType and VersionTag pick a library module version: "versionTag"
-	// pins VersionTag, "latest" or none takes the active version, and
-	// "deployment" means the process in the same file.
-	BindingType string `xml:"bindingType,attr,omitempty"`
-	VersionTag  string `xml:"versionTag,attr,omitempty"`
+	BindingType                string `xml:"bindingType,attr,omitempty"`
+	VersionTag                 string `xml:"versionTag,attr,omitempty"`
 }
 
 type ZeebeTaskDefinition struct {
@@ -274,12 +266,6 @@ func IsBoundaryEventType(t FlowNodeType) bool {
 
 const ConnectorTaskDefPrefix = "connector:"
 
-// ConnectorType returns the connector type name and true when ext's
-// taskDefinition is connector:-prefixed with a non-empty name
-// (design/LLD/workflow_connectors.md §4.1). An empty name after the prefix
-// (type="connector:") is not "recognized as connector, unknown type" — it
-// can never be registered, so it falls through as a rejected element rather
-// than reaching the lenient unknown-type warning path.
 func ConnectorType(ext BPMNExtensionElements) (string, bool) {
 	if ext.TaskDefinition == nil {
 		return "", false

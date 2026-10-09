@@ -264,7 +264,7 @@ Incoming request
   → RequestID              (gincommon) — reads/generates x-request-id
   → Tracing                (gincommon) — OTel span from traceparent
   → CorrelationHeaders     (gincommon) — writes X-Trace-ID, X-Request-ID
-  → Metrics                (gincommon) — Prometheus http_requests_total etc.
+  → Metrics                (gincommon) — Prometheus platform_http_requests_total etc.
   → Logging                (gincommon) — structured http_request log on close
 
   → /healthz, /readyz, /metrics        ← stop here (public)
@@ -487,8 +487,8 @@ All configuration is read from environment variables via `internal/config.Config
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `APP_ENV` | No | `dev` | `dev` enables Gin debug mode and human-readable Zap logs; any other value activates release mode + JSON logs |
-| `BUILD_VERSION` | No | `dev` | Injected via `-ldflags` at build time; labels Prometheus `build_info` and OTel `service.version` |
+| `APP_ENV` | No | `dev` | One of `local`, `dev`, `test`, `staging`, `prod`; any other value fails startup. `dev` enables Gin debug mode and human-readable Zap logs; any other value activates release mode + JSON logs. It is the metrics `environment` label |
+| `BUILD_VERSION` | No | `dev` | Injected via `-ldflags` at build time; labels `platform_build_info` and OTel `service.version` |
 
 ### Server
 
@@ -1179,9 +1179,9 @@ The service uses only `Envelope[T]` from this library: the inbound handler (`int
 
 `pgcommon.NewPool` takes a `GUCProvider` (set to `pgcommon.GUCSetFromContext`), which reads the `GUCSet` stored by `WithGUCSet(ctx, gs)` on every acquired connection — the `InjectGUCSet` middleware does this for every authenticated HTTP request; each internal handler calls it manually (see [HTTP middleware chain](#http-middleware-chain) and [flow 2](#2-internal-compiled-plan-read) above).
 
-`Config.Logger` is wired via `cmd/server/pglogger.go`'s `pgCommonLogger` — a small composition-root-only adapter from this service's own `port.Logger` (map[string]any fields) to `platform-pgcommon/pkg/domain.Logger` (variadic `domain.Field`), the public interface the library exposed starting v1.2.0. Before that, `Config.Logger` was typed against an internal, unexported interface and could not be implemented from outside the module at all. `Config.Tracer` is still **not wired** — no equivalent public adapter target exists yet.
+`Config.Logger` is wired via `cmd/server/pglogger.go`'s `pgCommonLogger` — a small composition-root-only adapter from this service's own `port.Logger` (map[string]any fields) to `platform-pgcommon/v2/pkg/domain.Logger` (variadic `domain.Field`), the library's public logger interface. `Config.Tracer` is `gincommon.NewSpanTracer(serviceName)`, so `db.query` spans export through the same pipeline as HTTP spans.
 
-`internal/observability.Register()` calls `pgmetrics.InitWithRegisterer(serviceName, buildVersion, reg)` (against `gincommon.MetricsRegisterer()`, not the default registry) to register `pgcommon_*` Prometheus counters (`pgcommon_query_total`, `pgcommon_pool_acquire_total`, `pgcommon_retry_total`, `pgcommon_slow_query_total`, pool gauges) — idempotent, safe to call more than once (e.g. in tests).
+`cmd/server/wire.go` calls `pgmetrics.InitWithIdentity` before `pgcommon.NewPool`, with the identity gincommon resolved from `ObservabilityMiddlewares`. The pool then registers the `platform_db_*` collectors (`platform_db_queries_total`, `platform_db_pool_acquires_total`, `platform_db_transaction_retries_total`, `platform_db_slow_queries_total`, the pool gauges) against `gincommon.MetricsRegisterer()`.
 
 Retry on deadlock/serialization failure (SQLSTATE `40P01`/`40001`):
 
@@ -1270,9 +1270,9 @@ sequenceDiagram
 
 ### platform-gincommon (Gin middleware, logging, tracing)
 
-`pkg/logger.NewLogger(appEnv)` returns a value that directly satisfies `port.Logger` — pass the same instance to `gincommon.Config{Logger: log}` as-is. `pgcommon.Config{Logger: ...}` takes a different shape (`platform-pgcommon/pkg/domain.Logger`, variadic `domain.Field` instead of `map[string]any`), so `cmd/server/pglogger.go` wraps the same `log` instance in a small `pgCommonLogger` adapter first — see [platform-pgcommon](#platform-pgcommon-pool-rls-guc-injection-transactor-migrations) below. `APP_ENV=dev` → human-readable Zap output; anything else → JSON.
+`pkg/logger.NewLogger(appEnv)` returns a value that directly satisfies `port.Logger` — pass the same instance to `gincommon.Config{Logger: log}` as-is. `pgcommon.Config{Logger: ...}` takes a different shape (`platform-pgcommon/v2/pkg/domain.Logger`, variadic `domain.Field` instead of `map[string]any`), so `cmd/server/pglogger.go` wraps the same `log` instance in a small `pgCommonLogger` adapter first — see [platform-pgcommon](#platform-pgcommon-pool-rls-guc-injection-transactor-migrations) below. `APP_ENV=dev` → human-readable Zap output; anything else → JSON.
 
-`gincommon.InitTracingFromEnv()` must be called once at startup before the router handles traffic — reads `OTEL_SERVICE_NAME`/`OTEL_EXPORTER_OTLP_ENDPOINT`/`OTEL_EXPORTER_OTLP_INSECURE`. If not called, `platform-pgcommon` produces no-op OTel spans rather than erroring.
+`gincommon.InitTracingWithConfig` runs once at startup, before `gincommon.ObservabilityMiddlewares` and the router, with the same `ServiceName`, `Domain` and `Environment` as the metrics identity. It reads `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_INSECURE`; an endpoint of `none` turns export off while trace and request IDs keep working.
 
 Per-route authorization:
 

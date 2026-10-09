@@ -45,9 +45,6 @@ func (s *CompileState) AddToSeqBuf(deptID string) {
 	}
 }
 
-// FlushSeqBuf ends the open segment and emits the buffered departments as a
-// Sequential step. Every other kind of step is emitted after it, so a task
-// after a gateway, a subprocess or a call starts a segment of its own.
 func (s *CompileState) FlushSeqBuf() {
 	s.openLane, s.openSegment = "", ""
 	if len(s.seqBuf) == 0 {
@@ -88,9 +85,6 @@ func (s *CompileState) TraverseNode(nodeID string) error {
 	return s.traverseForwardNexts(nodeID)
 }
 
-// traverseForwardNexts continues traversal into nodeID's forward successors
-// without emitting a stage for nodeID itself, for a skipped task or a node
-// with no registered element handler (e.g. inclusiveGateway).
 func (s *CompileState) traverseForwardNexts(nodeID string) error {
 	for _, next := range s.ForwardNexts(nodeID) {
 		if err := s.TraverseNode(next); err != nil {
@@ -129,10 +123,6 @@ func (s *CompileState) handleSingleForwardWithReverts(
 ) error {
 	step := dsl.ExecutionStep{}
 	if len(fwd) == 1 {
-		// The forward path is emitted as its own subsequent steps by the
-		// TraverseNode(fwd[0]) call below, so this branch carries neither
-		// Steps nor a Target: it exists only to let the gateway tell "go
-		// forward" apart from "send back".
 		step.Exclusive = append(step.Exclusive, dsl.ExclusiveBranch{
 			ConditionExpression: s.condExprs[[2]string{nodeID, fwd[0]}],
 			Terminates:          s.G.NodeType[fwd[0]] == NodeTypeEndEvent,
@@ -146,8 +136,6 @@ func (s *CompileState) handleSingleForwardWithReverts(
 	return nil
 }
 
-// handleSplitNoJoin compiles an exclusive split whose branches each run to an
-// end event: each branch's work is its Steps, after which its path ends.
 func (s *CompileState) handleSplitNoJoin(
 	nodeID string, fwd, backTargets []string, kind GatewayKind,
 ) error {
@@ -205,10 +193,6 @@ func (s *CompileState) FillBoundaryMessageTarget(taskID string, stage *dsl.Stage
 	}
 }
 
-// BoundaryTarget is where boundary event boundaryID leads: the segment of the
-// first task or subProcess on its path, or, when the path meets no such node,
-// nowhere, and the boundary terminates. The segment is pending until
-// ResolveTargets, since the path may not be compiled yet.
 func (s *CompileState) BoundaryTarget(boundaryID string) (dept string, terminates bool) {
 	node := s.taskAhead(OutgoingTargetOf(boundaryID, s.Proc))
 	if node == "" {
@@ -217,9 +201,6 @@ func (s *CompileState) BoundaryTarget(boundaryID string) (dept string, terminate
 	return segmentOfPending(node), false
 }
 
-// CompileBoundaryPaths compiles each boundary's path the main traversal did
-// not reach, each on a state of its own: its tasks take segments of their
-// own, and its steps are kept for the boundary, which runs them in order.
 func (s *CompileState) CompileBoundaryPaths() error {
 	for _, be := range s.Proc.BoundaryEvents {
 		node := s.taskAhead(OutgoingTargetOf(be.ID, s.Proc))
@@ -235,9 +216,6 @@ func (s *CompileState) CompileBoundaryPaths() error {
 		if err := path.TraverseNode(OutgoingTargetOf(be.ID, s.Proc)); err != nil {
 			return fmt.Errorf("boundary continuation from %q: %w", be.ID, err)
 		}
-		// A path that continues into the main flow keeps naming only its
-		// department: ending the plan level after its steps would cut off the
-		// flow it was meant to rejoin.
 		if !*path.rejoined {
 			path.FlushSeqBuf()
 			s.sd.boundarySteps[be.ID] = path.CollectedSteps()
@@ -290,8 +268,6 @@ func (s *CompileState) revertBranches(
 	return branches
 }
 
-// taskAhead follows node's first forward flows to the first userTask or
-// subProcess that runs, or returns "" when an end or a dead end comes first.
 func (s *CompileState) taskAhead(node string) string {
 	visited := make(map[string]bool)
 	for curr := node; curr != "" && !visited[curr]; {
@@ -362,8 +338,6 @@ func (s *CompileState) firstTaskNodeAhead(node string) (id, name string) {
 	}
 }
 
-// stageTypeOf is the stage type nodeID compiles to, for display beside the
-// node it names.
 func (s *CompileState) stageTypeOf(nodeID string) string {
 	switch s.G.NodeType[nodeID] {
 	case NodeTypeUserTask:
@@ -384,8 +358,6 @@ func (s *CompileState) stageTypeOf(nodeID string) string {
 	return ""
 }
 
-// traverseBranches compiles each forward branch of a parallel split, up to
-// joinID, into its own steps.
 func (s *CompileState) traverseBranches(splitID, joinID string) ([]dsl.ParallelBranch, error) {
 	var branches []dsl.ParallelBranch
 	for _, branchStart := range s.ForwardNexts(splitID) {
@@ -410,9 +382,6 @@ func (s *CompileState) traverseExclusiveBranches(splitID, joinID string) ([]dsl.
 	return branches, nil
 }
 
-// exclusiveBranch compiles the forward branch of splitID that starts at
-// branchStart, up to stopAt, into its Steps. Target and the fields beside it
-// name the branch's first department and node, for display.
 func (s *CompileState) exclusiveBranch(splitID, branchStart, stopAt string) (dsl.ExclusiveBranch, error) {
 	b := dsl.ExclusiveBranch{ConditionExpression: s.condExprs[[2]string{splitID, branchStart}]}
 	steps, err := s.branchSteps(branchStart, stopAt)
@@ -429,8 +398,6 @@ func (s *CompileState) exclusiveBranch(splitID, branchStart, stopAt string) (dsl
 	return b, nil
 }
 
-// branchSteps compiles the path from branchStart up to stopAt on a state of
-// its own.
 func (s *CompileState) branchSteps(branchStart, stopAt string) ([]dsl.ExecutionStep, error) {
 	bs := NewBranchState(s, stopAt)
 	if err := bs.TraverseNode(branchStart); err != nil {

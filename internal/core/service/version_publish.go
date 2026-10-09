@@ -26,7 +26,6 @@ type publishTxInput struct {
 	moduleRefs    []domain.ModuleRef
 }
 
-// publishPrep is what publish computes before its transaction.
 type publishPrep struct {
 	compiledJSON string
 	artifactHash string
@@ -120,7 +119,7 @@ func (s *VersionService) checkStructuralDivergence(
 	forcePublishStructural bool,
 ) error {
 	if wf.ActiveVersionID == nil {
-		return nil // first publish. no divergence possible
+		return nil
 	}
 
 	active, err := s.versions.GetByID(ctx, tenantID, *wf.ActiveVersionID)
@@ -132,9 +131,6 @@ func (s *VersionService) checkStructuralDivergence(
 	var invalid *domain.ValidationFailedError
 	switch {
 	case errors.As(err, &invalid) || errors.Is(err, domain.ErrMalformedBPMN):
-		// The active version no longer compiles under today's rules, so
-		// nothing proves the draft keeps its structure: divergent, which a
-		// forced publish accepts.
 		if forcePublishStructural {
 			return nil
 		}
@@ -238,8 +234,6 @@ func extractAssignees(
 	return assignees
 }
 
-// expandedMainPlan is the main plan with its calls expanded, as the Execution
-// Service runs it: every task has its call-scoped node key and department.
 func expandedMainPlan(collab *dsl.CompiledCollaboration) (*dsl.CompiledPlan, error) {
 	expanded, err := dsl.ExpandCalls(collab, 0)
 	if err != nil {
@@ -253,8 +247,6 @@ func expandedMainPlan(collab *dsl.CompiledCollaboration) (*dsl.CompiledPlan, err
 	return nil, fmt.Errorf("main plan %q not among the compiled plans", collab.MainPlan)
 }
 
-// storedMainPlan reads compiled_plan_json as publish stores it, expanded. ok
-// is false when the blob does not decode or does not expand.
 func storedMainPlan(compiledPlanJSON string) (*dsl.CompiledPlan, bool) {
 	var collab dsl.CompiledCollaboration
 	if err := json.Unmarshal([]byte(compiledPlanJSON), &collab); err != nil {

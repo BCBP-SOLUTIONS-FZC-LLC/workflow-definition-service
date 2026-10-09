@@ -5,9 +5,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// StageTypeHandler is re-exported from bpmncore for callers that import bpmn_compiler.
-// The three built-in types correspond to IAM's fixed three-rung role-level
-// hierarchy. Stage types are a platform constant; departments are dynamic.
 type StageTypeHandler = bpmncore.StageTypeHandler
 
 type prepStage struct{}

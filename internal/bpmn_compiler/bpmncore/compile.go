@@ -7,7 +7,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 )
 
-// Compile returns the process's plan and the plans of the processes it calls.
 func Compile(proc *BPMNProcess, g *Graph, stageTypes map[string]StageTypeHandler, elements map[FlowNodeType]ElementHandler, defs *BPMNDefinitions) (*dsl.CompiledPlan, []*dsl.CompiledPlan, error) {
 	implicit := ""
 	if len(proc.StartEvents) == 0 {
@@ -32,8 +31,6 @@ func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string,
 	backEdges := ProcessBackEdges(proc, g, startID)
 
 	state := NewCompileState(proc, g, laneLabels, condExprs, backEdges, stageTypes, elements, defs)
-	// An implicit-start node (e.g. a receiveTask) is itself the first real
-	// task, unlike an explicit <bpmn:startEvent> whose successor is.
 	if len(proc.StartEvents) > 0 {
 		nexts := state.ForwardNexts(startID)
 		if len(nexts) > 0 {
@@ -150,9 +147,6 @@ func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, p
 	return stage, nil
 }
 
-// buildConnectorStageDef builds a connector-typed StageDef (design/LLD/workflow_connectors.md
-// §3/§5.1) — no assignee/role fields (connector tasks are fully automation-only)
-// and IOMapping copied unfiltered from the parsed zeebe:ioMapping.
 func buildConnectorStageDef(task *BPMNUserTask, connectorType string, proc *BPMNProcess, defs *BPMNDefinitions) dsl.StageDef {
 	ext := task.ExtensionElements
 
@@ -205,9 +199,6 @@ func buildConnectorStageDef(task *BPMNUserTask, connectorType string, proc *BPMN
 	return stage
 }
 
-// toConnectorIOMapping copies every input/output unfiltered, unlike
-// element/call_activity.go's toIOMapping which strips dept_id/Depts targets —
-// those are callActivity-only compiler-internal conventions that don't apply here.
 func toConnectorIOMapping(m *ZeebeIOMapping) *dsl.IOMapping {
 	if m == nil {
 		return nil
@@ -291,11 +282,6 @@ func nodeMessageRef(nodeID string, defs *BPMNDefinitions) string {
 	return ""
 }
 
-// ResolveMessageFlowName resolves the display name for a message flow,
-// trying (in order) the flow's own name/messageRef, then the messageRef
-// carried by the flow's target node, then its source node. Real-world BPMN
-// diagrams rarely annotate the messageFlow element itself — the messageRef
-// almost always lives on the connected send/receive task or boundary event.
 func ResolveMessageFlowName(mf *BPMNMessageFlow, defs *BPMNDefinitions) string {
 	if mf.Name != "" {
 		return mf.Name
@@ -309,9 +295,6 @@ func ResolveMessageFlowName(mf *BPMNMessageFlow, defs *BPMNDefinitions) string {
 	return ResolveMessageName(nodeMessageRef(mf.SourceRef, defs), defs)
 }
 
-// ResolveMessageFlowTarget resolves a message name for a node (typically a
-// boundary event) by scanning collaboration message flows whose target is
-// that node ID and applying ResolveMessageFlowName.
 func ResolveMessageFlowTarget(nodeID string, defs *BPMNDefinitions) string {
 	if defs == nil || defs.Collaboration == nil {
 		return ""

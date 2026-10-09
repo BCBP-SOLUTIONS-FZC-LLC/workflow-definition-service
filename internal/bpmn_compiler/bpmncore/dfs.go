@@ -1,13 +1,9 @@
 package bpmncore
 
-// optional callbacks
 type DFSVisitor struct {
-	// Return false to prune this node's children and suppress OnExit.
 	OnEnter func(nodeID string) bool
-	// Return false to skip this edge; return true to push if not already scheduled.
-	OnEdge func(from, to string, alreadyScheduled bool) bool
-	// Not called when OnEnter returned false for this node.
-	OnExit func(nodeID string)
+	OnEdge  func(from, to string, alreadyScheduled bool) bool
+	OnExit  func(nodeID string)
 }
 
 func IterativeDFS(g *Graph, start string, v DFSVisitor) {

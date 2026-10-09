@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
@@ -12,8 +12,6 @@ import (
 
 var _ port.Transactor = (*Transactor)(nil)
 
-// serializableRetry backs RunInTxWithRetry: SERIALIZABLE isolation with bounded
-// exponential backoff on 40001/40P01 (handled inside pgcommon.RunInTxWithRetryOpts).
 var serializableRetry = pgcommon.RetryOptions{
 	MaxAttempts:    5,
 	InitialWait:    10 * time.Millisecond,

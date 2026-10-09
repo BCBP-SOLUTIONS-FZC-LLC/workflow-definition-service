@@ -9,11 +9,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// restAliasResp/ListConnectorAliases' response shape matches
-// workflow-connectors/pkg/connectors/aliasconfig's Config/Endpoint
-// JSON encoding field-for-field (Timeout as raw nanoseconds, no tag) so
-// execution_service's cmd/connector-worker can json.Unmarshal this response
-// directly into aliasconfig.Config with no conversion glue.
 type restAliasResp struct {
 	Alias        string        `json:"alias"`
 	Method       string        `json:"method"`

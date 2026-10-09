@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -10,9 +11,6 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Config's fields are documented by env var in .env.example, not per-field
-// here — that file is the single source of truth for defaults/fallback
-// semantics, kept in sync with the getEnvOrDefault calls in Load() below.
 type Config struct {
 	AppEnv       string
 	BuildVersion string
@@ -46,23 +44,15 @@ type Config struct {
 
 	OrgMembershipBaseURL    string
 	MembershipClientTimeout time.Duration
-	// ExecutionServiceURL is the Execution Service's internal HTTP base URL;
-	// ExecutionServiceToken is that service's INTERNAL_API_TOKEN (LLD §3.4).
-	ExecutionServiceURL    string
-	ExecutionServiceToken  string
-	ExecutionClientTimeout time.Duration
+	ExecutionServiceURL     string
+	ExecutionServiceToken   string
+	ExecutionClientTimeout  time.Duration
 
 	OpenBaoAddr          string
 	OpenBaoToken         string
 	OpenBaoMount         string
 	SecretsClientTimeout time.Duration
 
-	// ConnectorAliasAllowedHosts bounds which hosts a rest-call alias's
-	// BaseURL may point at. restcall.Execute attaches the real internal
-	// service token to every call, so an alias aimed at an external host
-	// would leak that credential. An entry beginning with "." is a suffix
-	// rule (".svc.cluster.local"); anything else must match the host
-	// exactly. Empty means no alias may be written at all — fail closed.
 	ConnectorAliasAllowedHosts []string
 }
 
@@ -121,7 +111,12 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+var appEnvs = []string{"local", "dev", "test", "staging", "prod"}
+
 func (c *Config) validate() error {
+	if !slices.Contains(appEnvs, c.AppEnv) {
+		return fmt.Errorf("APP_ENV must be one of %s", strings.Join(appEnvs, ", "))
+	}
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
 	}
@@ -172,9 +167,6 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// MigrationDSN returns the DSN to use for schema migrations. It prefers
-// MIGRATION_DATABASE_URL so migrations can bypass PgBouncer (advisory locks
-// require a direct Postgres connection), falling back to DATABASE_URL.
 func (c *Config) MigrationDSN() string {
 	if c.MigrationDatabaseURL != "" {
 		return c.MigrationDatabaseURL
@@ -182,8 +174,6 @@ func (c *Config) MigrationDSN() string {
 	return c.DatabaseURL
 }
 
-// SystemDSN returns the DSN to use for scope=global catalog writes, falling
-// back to DatabaseURL when SYSTEM_DATABASE_URL is unset.
 func (c *Config) SystemDSN() string {
 	if c.SystemDatabaseURL != "" {
 		return c.SystemDatabaseURL
@@ -198,9 +188,6 @@ func getEnvOrDefault(key, fallback string) string {
 	return fallback
 }
 
-// getEnvCSV reads a comma-separated list, dropping empty entries so a
-// trailing comma or a blank value yields an empty slice rather than a list
-// containing "".
 func getEnvCSV(key string) []string {
 	raw := os.Getenv(key)
 	if raw == "" {

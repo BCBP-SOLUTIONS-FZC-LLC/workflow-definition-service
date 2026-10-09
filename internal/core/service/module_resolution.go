@@ -13,19 +13,13 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-// moduleResolver resolves a document's library calls to module versions and
-// bundles them into it (definition LLD §3.3.18).
 type moduleResolver struct {
 	compiler port.PlanCompiler
 	versions port.ModuleVersionRepository
 }
 
-// moduleLookup finds the module version a call names: version, or the
-// module's latest when zero. A call that names nothing is domain.ErrNotFound.
 type moduleLookup func(ctx context.Context, processID string, version int32) (*domain.ModuleVersion, error)
 
-// live looks calls up in the library as it is now. The caller's tenant sees
-// its own modules and the global ones; uuid.Nil sees global modules only.
 func (r moduleResolver) live(tenantID uuid.UUID) moduleLookup {
 	return func(ctx context.Context, processID string, version int32) (*domain.ModuleVersion, error) {
 		v, err := r.versions.Resolve(ctx, tenantID, processID, version)
@@ -36,9 +30,6 @@ func (r moduleResolver) live(tenantID uuid.UUID) moduleLookup {
 	}
 }
 
-// snapshot looks calls up among the module versions a published workflow
-// version recorded. Its latest was the newest version of each module it
-// resolved, since no pin can name a version newer than the active one.
 func (r moduleResolver) snapshot(tenantID uuid.UUID, refs []domain.ModuleRef) moduleLookup {
 	return func(ctx context.Context, processID string, version int32) (*domain.ModuleVersion, error) {
 		var pick *domain.ModuleRef
@@ -62,8 +53,6 @@ func (r moduleResolver) snapshot(tenantID uuid.UUID, refs []domain.ModuleRef) mo
 	}
 }
 
-// resolution is a bundled document and the module versions it holds, or the
-// calls that did not resolve.
 type resolution struct {
 	bundled string
 	refs    []domain.ModuleRef
@@ -75,9 +64,6 @@ type moduleKey struct {
 	version   int32
 }
 
-// pendingDoc is a document still to walk. A module's document carries the
-// call in the root document that first reached it, and the modules between,
-// so its issues point at something the author can see.
 type pendingDoc struct {
 	xml      string
 	rootCall string
@@ -93,10 +79,6 @@ func (d pendingDoc) attribute(e domain.BPMNValidationError) domain.BPMNValidatio
 	return e
 }
 
-// resolve walks the document's library calls, then each resolved module's own,
-// looking every (process id, version) up once. self, when set, is the module
-// being authored: a call back to it at its latest version would, once
-// published, be a call to itself.
 func (r moduleResolver) resolve(ctx context.Context, lookup moduleLookup, mainXML, self string) (*resolution, error) {
 	w := &moduleWalk{
 		lookup: lookup, self: self,
@@ -147,8 +129,6 @@ type moduleWalk struct {
 	queue    []pendingDoc
 }
 
-// visit resolves one call found in doc, queueing the module version it names
-// the first time that version is reached.
 func (w *moduleWalk) visit(ctx context.Context, doc pendingDoc, call domain.ModuleCall) error {
 	if w.self != "" && call.ProcessID == w.self && call.VersionNumber == 0 {
 		w.issues = append(w.issues, doc.attribute(selfCall(call, w.self)))
@@ -194,14 +174,10 @@ func (d pendingDoc) child(call domain.ModuleCall, processID string, number int32
 	return pendingDoc{xml: xml, rootCall: d.rootCall, path: d.path + " → " + label}
 }
 
-// validate resolves bpmnXML's library calls and validates the bundle. Every
-// issue is returned; hasBlockingError says whether any refuses the document.
 func (r moduleResolver) validate(ctx context.Context, lookup moduleLookup, bpmnXML string) ([]domain.BPMNValidationError, error) {
 	return r.validateWith(ctx, lookup, bpmnXML, r.compiler.Validate)
 }
 
-// validateForPublish is validate judged as publish judges: with the rules
-// only the bundle's expanded plan shows.
 func (r moduleResolver) validateForPublish(ctx context.Context, lookup moduleLookup, bpmnXML string) ([]domain.BPMNValidationError, error) {
 	return r.validateWith(ctx, lookup, bpmnXML, r.compiler.ValidateForPublish)
 }

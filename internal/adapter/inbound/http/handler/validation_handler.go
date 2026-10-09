@@ -57,11 +57,6 @@ func toBPMNIssueResps(errs []domain.BPMNValidationError) []bpmnIssueResp {
 	return issues
 }
 
-// GetVersionValidation re-runs the structural validator against a stored
-// version's own BPMN, in any status, and writes nothing. A validator rule added
-// after a version was published does not retroactively invalidate it, so this is
-// how an operator finds a template that still holds a defect rather than
-// discovering it when the Execution Service refuses to instantiate (§3.3.12.1).
 func (h *Handler) GetVersionValidation(c *gin.Context) {
 	tenantID, _, ok := mustCtx(c)
 	if !ok {

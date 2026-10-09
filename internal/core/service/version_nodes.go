@@ -11,8 +11,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// PlanNode is one human task of a published version's expanded main plan
-// (definition LLD §3.3.12.2).
 type PlanNode struct {
 	Key             string
 	NodeID          string
@@ -25,8 +23,6 @@ type PlanNode struct {
 	DefaultUserIDs  []string
 }
 
-// WaitKind says what an outside wait is: a receive task, or a message
-// boundary attached to a task, subprocess or call.
 type WaitKind string
 
 const (
@@ -34,24 +30,18 @@ const (
 	WaitMessageBoundary WaitKind = "message_boundary"
 )
 
-// PlanWait is a receive task or message boundary that only an outside party's
-// answer completes (definition LLD §3.3.12.2). Key is what the Execution
-// Service takes that answer by.
 type PlanWait struct {
 	Key     string
 	Kind    WaitKind
 	Message string
 }
 
-// VersionNodes is a version, its nodes and its outside waits, in plan order.
 type VersionNodes struct {
 	Version *domain.WorkflowVersion
 	Nodes   []PlanNode
 	Waits   []PlanWait
 }
 
-// Nodes lists the human tasks of a published or archived version's stored
-// plan, its calls expanded, keyed as the Execution Service keys them.
 func (s *VersionService) Nodes(ctx context.Context, tenantID, workflowID, versionID uuid.UUID) (*VersionNodes, error) {
 	v, err := s.Get(ctx, tenantID, workflowID, versionID)
 	if err != nil {

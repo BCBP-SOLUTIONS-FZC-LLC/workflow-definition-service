@@ -188,8 +188,6 @@ func mustCtx(c *gin.Context) (tenantID, userID uuid.UUID, ok bool) {
 	return tenantID, userID, true
 }
 
-// mustAdminCtx is mustCtx plus the Admin-only gate (§3.2) combined, for the
-// handlers that need both checks in sequence.
 func mustAdminCtx(c *gin.Context) (tenantID, userID uuid.UUID, ok bool) {
 	tenantID, userID, ok = mustCtx(c)
 	if !ok || !requireAdmin(c) {
@@ -198,7 +196,6 @@ func mustAdminCtx(c *gin.Context) (tenantID, userID uuid.UUID, ok bool) {
 	return tenantID, userID, true
 }
 
-// detection is never disclosed to the caller; this is telemetry only.
 func (h *Handler) logForbiddenXML(c *gin.Context, err error) {
 	if h.log == nil || !errors.Is(err, domain.ErrForbiddenXML) {
 		return

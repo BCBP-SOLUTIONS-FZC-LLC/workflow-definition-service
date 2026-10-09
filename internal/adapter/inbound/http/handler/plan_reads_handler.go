@@ -55,8 +55,6 @@ func toVersionNodesResp(n *service.VersionNodes) versionNodesResp {
 	return versionNodesResp{WorkflowID: n.Version.WorkflowID, VersionID: n.Version.ID, VersionNumber: n.Version.VersionNumber, Nodes: nodes, Waits: waits}
 }
 
-// GetVersionNodes lists a published version's human tasks, module tasks
-// included, keyed as the Execution Service keys them (definition LLD §3.3.12.2).
 func (h *Handler) GetVersionNodes(c *gin.Context) {
 	tenantID, _, ok := mustCtx(c)
 	if !ok {
@@ -126,8 +124,6 @@ func toModuleContractResp(m *service.ModuleContract) moduleContractResp {
 	}
 }
 
-// GetModuleContract returns what a call of a module version binds and names
-// (definition LLD §3.3.18).
 func (h *Handler) GetModuleContract(c *gin.Context) {
 	tenantID, _, ok := mustCtx(c)
 	if !ok {

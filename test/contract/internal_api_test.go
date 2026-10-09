@@ -51,7 +51,7 @@ func internalRouter(t *testing.T, versions ...*domain.WorkflowVersion) http.Hand
 	}
 	plans := service.NewCompiledPlanService(service.CompiledPlanDeps{Versions: repo})
 	return httpadapter.NewRouter(httpadapter.RouterConfig{
-		GinConfig: gincommon.Config{ServiceName: "definition-contract-test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
+		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
 		Handler: handler.New(handler.Services{CompiledPlans: plans}),
 		DB:      upDB{}, Cache: upPinger{},
 	}).Handler()

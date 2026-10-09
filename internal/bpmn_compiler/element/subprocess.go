@@ -76,8 +76,6 @@ func (SubProcessHandler) Compile(nodeID string, cs *bpmncore.CompileState) error
 	return nil
 }
 
-// boundaryPaths compiles the boundary events attached to nodeID, a subProcess
-// or a callActivity.
 func boundaryPaths(nodeID string, cs *bpmncore.CompileState) ([]dsl.ErrorPath, []dsl.TimerPath, []dsl.MessagePath) {
 	var errorPaths []dsl.ErrorPath
 	var timerPaths []dsl.TimerPath

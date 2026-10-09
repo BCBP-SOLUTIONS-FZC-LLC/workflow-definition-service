@@ -12,19 +12,12 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-// validConnectorSegment bounds connectorType/fieldName before either is
-// interpolated into an OpenBao path (secrets_client.go) — a raw, unvalidated
-// segment there is a path-traversal write into another tenant's secret path
-// (a "/"- or ".."-bearing value climbs out of tenantID's own subtree, since
-// only path's own leading slash gets trimmed downstream).
 var validConnectorSegment = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 type ConnectorDeps struct {
-	Secrets port.SecretsClient
-	Aliases port.ConnectorAliasRepository
-	Log     port.Logger
-	// AliasAllowedHosts bounds a rest-call alias's BaseURL. Empty rejects
-	// every alias write — see domain.ValidateBaseURLHost.
+	Secrets           port.SecretsClient
+	Aliases           port.ConnectorAliasRepository
+	Log               port.Logger
 	AliasAllowedHosts []string
 }
 
@@ -48,9 +41,6 @@ func (s *ConnectorService) Registry(_ context.Context) map[string]registry.Defin
 	return registry.All()
 }
 
-// WriteCredential writes a connector's raw provider credential to OpenBao at
-// author time and returns only the resulting secret path — the raw value
-// never leaves this call (design/LLD/workflow_connectors.md §6.2).
 func (s *ConnectorService) WriteCredential(
 	ctx context.Context,
 	tenantID uuid.UUID,
@@ -72,11 +62,6 @@ func (s *ConnectorService) WriteCredential(
 	return secretPath, nil
 }
 
-// RevokeCredential permanently destroys a connector credential from OpenBao
-// (design/LLD/workflow_connectors.md §9's credential-rotation/cleanup gap) —
-// rotation is just re-calling WriteCredential on the same path (OpenBao
-// KV-v2 versions on overwrite), so this only needed to close the missing
-// revoke/delete half.
 func (s *ConnectorService) RevokeCredential(ctx context.Context, tenantID uuid.UUID, connectorType, fieldName string) error {
 	if _, ok := registry.All()[connectorType]; !ok {
 		return fmt.Errorf("%w: unrecognized connector_type %q", domain.ErrInvalidConnectorCredentialInput, connectorType)
@@ -102,8 +87,6 @@ func (s *ConnectorService) WriteRestAlias(ctx context.Context, a domain.Connecto
 	if err := a.Validate(); err != nil {
 		return err
 	}
-	// Checked here rather than in Validate: the allowlist is deployment
-	// configuration, and domain types take no config.
 	if err := domain.ValidateBaseURLHost(a.BaseURL, s.aliasAllowedHosts); err != nil {
 		return err
 	}

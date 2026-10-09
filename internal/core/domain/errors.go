@@ -3,44 +3,30 @@ package domain
 import "errors"
 
 var (
-	ErrNotFound                = errors.New("resource not found")
-	ErrForbidden               = errors.New("forbidden")
-	ErrUnauthorized            = errors.New("unauthorized")
-	ErrDraftAlreadyExists      = errors.New("draft already exists")
-	ErrNoDraftExists           = errors.New("no active draft exists")
-	ErrNoActiveVersion         = errors.New("no active version")
-	ErrDuplicateBusinessKey    = errors.New("workflow business key already exists")
-	ErrDraftConcurrency        = errors.New("draft concurrency violation")
-	ErrInvalidVersionStatus    = errors.New("invalid version status for this operation")
-	ErrVersionNotDraft         = errors.New("workflow version is not in DRAFT status")
-	ErrVersionNotPublished     = errors.New("workflow version is not in PUBLISHED status")
-	ErrVersionAlreadyPublished = errors.New("workflow version has already been published")
-	ErrActiveInstancesExist    = errors.New("active workflow instances exist")
-	ErrStructuralDivergence    = errors.New("structural divergence detected")
-	ErrPlanQuotaExceeded       = errors.New("plan quota exceeded")
-	ErrAssigneeIneligible      = errors.New("assignee ineligible")
-	ErrUpstreamUnavailable     = errors.New("upstream service unavailable")
-	ErrIdempotencyKeyReplay    = errors.New("idempotency key replay with different payload")
-	// ErrMalformedBPMN marks a BPMN document that cannot be parsed at all (bad XML,
-	// forbidden DOCTYPE/entity, token-limit). It maps to HTTP 400 INVALID_BPMN_XML —
-	// distinct from a parseable-but-invalid document, which yields
-	// ValidationFailedError → 422.
-	ErrMalformedBPMN = errors.New("malformed BPMN document")
-	// ErrForbiddenXML additionally marks the subset of malformed documents that
-	// tripped a security guard (forbidden DOCTYPE/entity or the XML-bomb token cap).
-	// The client response is identical (400 INVALID_BPMN_XML — detection is not
-	// disclosed); the handler emits an internal security-alert log on this sentinel.
-	ErrForbiddenXML = errors.New("forbidden XML construct")
-	// ErrInvalidConnectorCredentialInput marks a connector_type/field_name that
-	// fails WriteCredential's charset allowlist or isn't a registered connector
-	// type — rejected before either value is interpolated into an OpenBao path.
+	ErrNotFound                        = errors.New("resource not found")
+	ErrForbidden                       = errors.New("forbidden")
+	ErrUnauthorized                    = errors.New("unauthorized")
+	ErrDraftAlreadyExists              = errors.New("draft already exists")
+	ErrNoDraftExists                   = errors.New("no active draft exists")
+	ErrNoActiveVersion                 = errors.New("no active version")
+	ErrDuplicateBusinessKey            = errors.New("workflow business key already exists")
+	ErrDraftConcurrency                = errors.New("draft concurrency violation")
+	ErrInvalidVersionStatus            = errors.New("invalid version status for this operation")
+	ErrVersionNotDraft                 = errors.New("workflow version is not in DRAFT status")
+	ErrVersionNotPublished             = errors.New("workflow version is not in PUBLISHED status")
+	ErrVersionAlreadyPublished         = errors.New("workflow version has already been published")
+	ErrActiveInstancesExist            = errors.New("active workflow instances exist")
+	ErrStructuralDivergence            = errors.New("structural divergence detected")
+	ErrPlanQuotaExceeded               = errors.New("plan quota exceeded")
+	ErrAssigneeIneligible              = errors.New("assignee ineligible")
+	ErrUpstreamUnavailable             = errors.New("upstream service unavailable")
+	ErrIdempotencyKeyReplay            = errors.New("idempotency key replay with different payload")
+	ErrMalformedBPMN                   = errors.New("malformed BPMN document")
+	ErrForbiddenXML                    = errors.New("forbidden XML construct")
 	ErrInvalidConnectorCredentialInput = errors.New("invalid connector credential input")
 	ErrInvalidConnectorAliasInput      = errors.New("invalid connector alias input")
-	// ErrModuleProcessIDTaken marks a new module whose process id another
-	// module the tenant can call already has; ErrModuleProcessIDChanged marks a
-	// new version whose process id differs from its module's.
-	ErrModuleProcessIDTaken   = errors.New("module process id is already in use")
-	ErrModuleProcessIDChanged = errors.New("module version must keep its module's process id")
+	ErrModuleProcessIDTaken            = errors.New("module process id is already in use")
+	ErrModuleProcessIDChanged          = errors.New("module version must keep its module's process id")
 )
 
 type BPMNErrorCode string

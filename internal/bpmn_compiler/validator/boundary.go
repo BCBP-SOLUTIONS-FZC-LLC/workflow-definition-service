@@ -11,9 +11,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// ValidateMessageBoundaryNames warns when a message boundary event's name cannot
-// be resolved from either defs.Messages or collaboration message flows.
-// An unresolvable name produces an empty correlation key at runtime.
 func ValidateMessageBoundaryNames(proc *bpmncore.BPMNProcess, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, be := range proc.BoundaryEvents {
@@ -57,11 +54,6 @@ func ValidateBoundaryEvents(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backE
 	return errs
 }
 
-// validateBoundaryTarget refuses a boundary whose path, followed along its
-// forward flows as the compiler follows it, past the tasks of ignored lanes,
-// reaches a call or a message task before any userTask, subProcess or end, or reaches a subProcess whose body
-// does not start with a userTask: the compiled plan can only move a boundary
-// to one department, from its first task, or end its path.
 func validateBoundaryTarget(be bpmncore.BPMNBoundaryEvent, proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
 	targets := []bpmncore.FlowNodeType{bpmncore.NodeTypeUserTask, bpmncore.NodeTypeSubProcess, bpmncore.NodeTypeEndEvent}
 	untargetable := []bpmncore.FlowNodeType{bpmncore.NodeTypeCallActivity, bpmncore.NodeTypeSendTask, bpmncore.NodeTypeReceiveTask}
@@ -145,10 +137,8 @@ func validateErrorBoundary(be bpmncore.BPMNBoundaryEvent, g *bpmncore.Graph) []d
 	return nil
 }
 
-// iso8601DurationRe matches ISO 8601 periods: week-only form (PnW) or day/time form.
 var iso8601DurationRe = regexp.MustCompile(`^P(\d+W|(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?)$`)
 
-// IsValidDuration accepts Go duration syntax or ISO 8601 period with day/time components.
 func IsValidDuration(s string) bool {
 	if s == "" {
 		return false
@@ -159,9 +149,6 @@ func IsValidDuration(s string) bool {
 	return iso8601DurationRe.MatchString(s) && strings.ContainsAny(s, "0123456789")
 }
 
-// bodyStartsWithTask reports whether subprocess spID's body leads from its
-// start event straight to a userTask. A body with no start event is reported
-// by its own checks.
 func bodyStartsWithTask(proc *bpmncore.BPMNProcess, spID string) bool {
 	sp := bpmncore.FindSubProcess(proc, spID)
 	if sp == nil || len(sp.StartEvents) == 0 {

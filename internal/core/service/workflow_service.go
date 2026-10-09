@@ -12,13 +12,12 @@ import (
 )
 
 type WorkflowDeps struct {
-	Transactor port.Transactor
-	Workflows  port.WorkflowRepository
-	Versions   port.WorkflowVersionRepository
-	Cache      port.CacheStore
-	Execution  port.ExecutionService
-	Compiler   port.PlanCompiler
-	// ModuleVersions resolves the library modules a new workflow calls.
+	Transactor     port.Transactor
+	Workflows      port.WorkflowRepository
+	Versions       port.WorkflowVersionRepository
+	Cache          port.CacheStore
+	Execution      port.ExecutionService
+	Compiler       port.PlanCompiler
 	ModuleVersions port.ModuleVersionRepository
 	Log            port.Logger
 }
@@ -100,8 +99,6 @@ func (s *WorkflowService) Create(
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
-	// The plan-quota COUNT and the inserts run in one SERIALIZABLE transaction so
-	// two concurrent creates cannot both pass the quota check (LLD §5.6.2).
 	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
 		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, planTier); err != nil {
 			return err

@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	pgdomain "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/domain"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	pgdomain "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 )
 
 func NewRestrictedRolePool(t *testing.T, superDSN string, bypassRLS bool, tenantID, userID *uuid.UUID) *pgcommon.Pool {

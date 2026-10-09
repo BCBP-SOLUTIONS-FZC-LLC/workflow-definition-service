@@ -23,17 +23,12 @@ const (
 
 var _ port.ExecutionService = (*ExecutionClient)(nil)
 
-// ExecutionClient calls the Execution Service's internal API, specified in
-// api/contracts/execution-internal-openapi.yaml (definition LLD §3.4.2).
-// Every failure is domain.ErrUpstreamUnavailable.
 type ExecutionClient struct {
 	baseURL string
 	token   string
 	client  *http.Client
 }
 
-// NewExecutionClient bounds each attempt by timeout; token is the Execution
-// Service's INTERNAL_API_TOKEN.
 func NewExecutionClient(baseURL, token string, timeout time.Duration) *ExecutionClient {
 	return &ExecutionClient{baseURL: baseURL, token: token, client: &http.Client{Timeout: timeout}}
 }
@@ -63,8 +58,6 @@ func (c *ExecutionClient) PauseUserTasks(ctx context.Context, tenantID, userID u
 	return c.call(ctx, "pause user tasks", http.MethodPost, rawURL, body, http.StatusNoContent, nil)
 }
 
-// call makes up to maxExecutionAttempts attempts, retrying a transport error
-// or a 5xx, and decodes a want-status body into out when out is non-nil.
 func (c *ExecutionClient) call(ctx context.Context, op, method, rawURL string, body []byte, want int, out any) error {
 	var lastErr error
 	for attempt := 1; attempt <= maxExecutionAttempts; attempt++ {

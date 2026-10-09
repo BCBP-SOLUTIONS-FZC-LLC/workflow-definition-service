@@ -47,7 +47,6 @@ type invalidParam struct {
 	Code   ErrCode `json:"code,omitempty"`
 }
 
-// problemDetails is the RFC-9457 error envelope returned on all non-2xx responses.
 type problemDetails struct {
 	Type          string         `json:"type"`
 	Title         string         `json:"title"`
@@ -116,9 +115,6 @@ func writeProblem(c *gin.Context, status int, code ErrCode, detail string, param
 	})
 }
 
-// bindErrResponse handles errors returned by c.ShouldBindJSON. It returns 413
-// when err is *http.MaxBytesError (body exceeded the LimitRequestBody cap), and
-// 400 BAD_REQUEST for all other bind failures.
 func bindErrResponse(c *gin.Context, err error) {
 	var maxBytesErr *http.MaxBytesError
 	if errors.As(err, &maxBytesErr) {
@@ -129,11 +125,6 @@ func bindErrResponse(c *gin.Context, err error) {
 	writeProblem(c, http.StatusBadRequest, CodeBadRequest, err.Error(), nil)
 }
 
-// errResponse maps a domain or infrastructure error to an RFC-9457 HTTP response
-// and logs 5xx outcomes with structured context (tenant, user, trace ID).
-// Bind errors (including *http.MaxBytesError from oversized bodies) must be routed
-// through bindErrResponse, not here — this function handles service/domain errors only.
-// Pass log=nil to suppress 5xx logging (e.g. from middleware without handler context).
 func errResponse(c *gin.Context, log port.Logger, err error) {
 	status, code, detail, params := mapErr(err)
 	if log != nil && status >= 500 {
@@ -155,9 +146,6 @@ func errResponse(c *gin.Context, log port.Logger, err error) {
 	writeProblem(c, status, code, detail, params)
 }
 
-// mapErr converts a domain/infrastructure error into its HTTP status, error code,
-// detail message, and optional invalid-params list. Extracted so the mapping can be
-// tested independently of the Gin context.
 func mapErr(err error) (status int, code ErrCode, detail string, params []invalidParam) {
 	var valErr *domain.ValidationFailedError
 	switch {
@@ -206,16 +194,8 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 		return http.StatusUnprocessableEntity, CodeBPMNValidation,
 			"BPMN semantic or structural validation failed.", p
 	case errors.Is(err, domain.ErrUpstreamUnavailable):
-		// A generic detail, not err.Error(): the wrapped error can carry an
-		// upstream's raw response body or network error text (e.g. OpenBao's
-		// secrets_client.go) — same non-disclosure rationale as
-		// ErrMalformedBPMN below, just for a different upstream. The raw
-		// error is still logged server-side by errResponse for any 5xx.
 		return http.StatusServiceUnavailable, CodeUpstream, "an upstream dependency is temporarily unavailable", nil
 	case errors.Is(err, domain.ErrMalformedBPMN):
-		// Covers forbidden-construct (ErrForbiddenXML) failures too — the client
-		// response is identical so a probe is not confirmed; the security log is
-		// emitted by the handler that accepted the BPMN.
 		return http.StatusBadRequest, CodeInvalidBPMNXML, "the BPMN document could not be parsed", nil
 	default:
 		return http.StatusInternalServerError, CodeInternal, "an unexpected error occurred", nil

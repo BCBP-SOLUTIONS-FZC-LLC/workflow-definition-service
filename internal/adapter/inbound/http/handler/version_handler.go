@@ -162,7 +162,7 @@ func (h *Handler) PublishVersion(c *gin.Context) {
 	}
 
 	var req publishVersionReq
-	_ = c.ShouldBindJSON(&req) // body is optional; default forcePublishStructural=false
+	_ = c.ShouldBindJSON(&req)
 
 	v, err := h.versions.Publish(c.Request.Context(), tenantID, userID, workflowID, versionID, req.ForcePublishStructural)
 	if err != nil {

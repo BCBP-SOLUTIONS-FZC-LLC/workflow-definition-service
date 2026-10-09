@@ -17,8 +17,6 @@ type invalidationError struct {
 
 const invalidationMsg = "Default assignee is no longer eligible: Department membership revoked"
 
-// HandleDepartmentMembershipRevoked handles DepartmentMembershipRevoked: the user lost
-// one department, so only that department's assignee rows are invalidated.
 func (s *VersionService) HandleDepartmentMembershipRevoked(
 	ctx context.Context,
 	eventID, tenantID, userID uuid.UUID,
@@ -37,15 +35,6 @@ func (s *VersionService) HandleDepartmentMembershipRevoked(
 	return s.invalidateAssigneeVersions(ctx, eventID, tenantID, userID, assignees, &deptUUID, departmentID)
 }
 
-// HandleTenantMembershipRevoked handles MembershipRevoked — IAM's
-// tenant-level removal, emitted unconditionally whenever a user is removed
-// from a tenant, and a different event from the per-department one above.
-//
-// The user is gone from the tenant entirely, so there is no department to
-// filter on: every version they are a default assignee on is invalidated,
-// whichever department the assignment sits in. Filtering by department here
-// (the shape the department-level handler needs) would silently invalidate
-// nothing.
 func (s *VersionService) HandleTenantMembershipRevoked(
 	ctx context.Context,
 	eventID, tenantID, userID uuid.UUID,
@@ -57,12 +46,6 @@ func (s *VersionService) HandleTenantMembershipRevoked(
 	return s.invalidateAssigneeVersions(ctx, eventID, tenantID, userID, assignees, nil, "")
 }
 
-// invalidateAssigneeVersions is both handlers' shared body. A nil
-// departmentID means tenant-wide (no filter).
-//
-// PauseUserTasks is called either way and regardless of how many versions
-// matched: Execution may hold active tasks for this user even when no
-// template names them as a default assignee.
 func (s *VersionService) invalidateAssigneeVersions(
 	ctx context.Context,
 	eventID, tenantID, userID uuid.UUID,
@@ -130,9 +113,6 @@ func (s *VersionService) invalidateVersion(
 	return nil
 }
 
-// skipDeletedVersion lets HandleDepartmentMembershipRevoked move on to the next
-// assignee's version instead of failing the whole delivery when GetByID
-// can't find a version that was legitimately deleted since the event fired.
 func (s *VersionService) skipDeletedVersion(versionID uuid.UUID, err error) error {
 	s.log.Error("membership revoked: get version", map[string]any{
 		"version_id": versionID.String(),

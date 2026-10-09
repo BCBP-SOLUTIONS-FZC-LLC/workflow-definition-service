@@ -19,7 +19,29 @@ env:
   IMAGE_NAME: ghcr.io/bcbp-solutions-fzc-llc/workflow-definition-service
 
 jobs:
+  changelog-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Require a CHANGELOG entry for the tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${REF_NAME#v}"
+          if ! grep -qF "## [${version}]" CHANGELOG.md; then
+            echo "No CHANGELOG entry for ${version}. Update CHANGELOG.md before tagging." >&2
+            exit 1
+          fi
+
   generate:
+    needs: [changelog-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -277,7 +299,7 @@ jobs:
             exit 0
           fi
           # status_class="5xx" matches the label emitted by platform-gincommon.
-          QUERY='sum(rate(http_requests_total{job=~".*workflow-definition-service.*",status_class="5xx"}[2m]))/sum(rate(http_requests_total{job=~".*workflow-definition-service.*"}[2m]))'
+          QUERY='sum(rate(platform_http_requests_total{job=~".*workflow-definition-service.*",status_class="5xx"}[2m]))/sum(rate(platform_http_requests_total{job=~".*workflow-definition-service.*"}[2m]))'
           # Sleep AFTER confirming Prometheus is configured so the 2-minute window
           # only runs when there is actually something to measure.
           sleep 120

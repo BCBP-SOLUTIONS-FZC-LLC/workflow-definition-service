@@ -67,10 +67,6 @@ func (c *SecretsClient) Write(ctx context.Context, path string, data map[string]
 	}
 }
 
-// Delete calls OpenBao KV-v2's metadata endpoint, which destroys every
-// version of the secret and its metadata outright — unlike the data endpoint
-// (DELETE /v1/{mount}/data/{path}), which only soft-deletes the latest
-// version and leaves it recoverable via undelete.
 func (c *SecretsClient) Delete(ctx context.Context, path string) error {
 	url := fmt.Sprintf("%s/v1/%s/metadata/%s", strings.TrimRight(c.addr, "/"), c.mount, strings.TrimLeft(path, "/"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
@@ -87,8 +83,6 @@ func (c *SecretsClient) Delete(ctx context.Context, path string) error {
 
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusNoContent, http.StatusNotFound:
-		// A 404 means the secret is already gone — deleting an
-		// already-deleted credential is not an error.
 		return nil
 	case http.StatusForbidden:
 		return fmt.Errorf("%w: openbao delete %q", domain.ErrUnauthorized, path)

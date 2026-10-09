@@ -17,7 +17,6 @@ type ModuleDeps struct {
 	GlobalModules    port.ModuleRepository
 	Versions         port.ModuleVersionRepository
 	GlobalVersions   port.ModuleVersionRepository
-	// WorkflowVersions lists the workflow versions that use a module.
 	WorkflowVersions port.WorkflowVersionRepository
 	Compiler         port.PlanCompiler
 	Log              port.Logger
@@ -49,10 +48,6 @@ func NewModuleService(d ModuleDeps) *ModuleService {
 	}
 }
 
-// transactorFor/modulesFor/versionsFor must always be called together with the
-// same scope — a transaction and the repos used inside it have to share one
-// pool (RunInTx stashes its tx in ctx; a repo backed by a different pool
-// would silently ignore it and open its own connection instead).
 func (s *ModuleService) transactorFor(scope domain.CatalogScope) port.Transactor {
 	if scope == domain.ScopeGlobal {
 		return s.globalTransactor
@@ -272,8 +267,6 @@ func (s *ModuleService) AddVersion(
 	return v, nil
 }
 
-// validateContent resolves a module's own library calls and validates it with
-// its process as the root (definition LLD §3.3.18). Only errors block.
 func (s *ModuleService) validateContent(ctx context.Context, callerTenantID uuid.UUID, scope domain.CatalogScope, bpmnXML, processID string) error {
 	bundled, err := s.bundle(ctx, callerTenantID, scope, bpmnXML, processID)
 	if err != nil {
@@ -289,9 +282,6 @@ func (s *ModuleService) validateContent(ctx context.Context, callerTenantID uuid
 	return nil
 }
 
-// bundle resolves a module's own library calls against the library as it is
-// now and bundles them into it. A global module sees only global modules,
-// since it has no tenant.
 func (s *ModuleService) bundle(ctx context.Context, callerTenantID uuid.UUID, scope domain.CatalogScope, bpmnXML, processID string) (string, error) {
 	resolveAs := callerTenantID
 	if scope == domain.ScopeGlobal {
@@ -308,8 +298,6 @@ func (s *ModuleService) bundle(ctx context.Context, callerTenantID uuid.UUID, sc
 	return res.bundled, nil
 }
 
-// Usages lists the caller's workflow versions that hold a snapshot of the
-// module, marking those behind its active version.
 func (s *ModuleService) Usages(ctx context.Context, callerTenantID, moduleID uuid.UUID) ([]*domain.ModuleUsage, error) {
 	m, err := s.modules.GetByID(ctx, callerTenantID, moduleID)
 	if err != nil {

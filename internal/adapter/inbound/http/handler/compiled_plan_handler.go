@@ -7,8 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	pgdomain "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/domain"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	pgdomain "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 )
@@ -33,9 +33,6 @@ func toCompiledPlanResp(p *service.CompiledPlan) compiledPlanResp {
 	return r
 }
 
-// GetCompiledPlan serves a workflow version and its stored plan to the
-// Execution Service (definition LLD §3.4). The caller is a service, so the
-// tenant comes from the query, not from gateway headers.
 func (h *Handler) GetCompiledPlan(c *gin.Context) {
 	versionID, ok := parseUUIDParam(c, "version_id")
 	if !ok {

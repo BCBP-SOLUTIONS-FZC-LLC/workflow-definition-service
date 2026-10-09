@@ -28,7 +28,6 @@ func NewMembershipClient(baseURL string, timeout time.Duration) *MembershipClien
 	}
 }
 
-// maxEligibilityAttempts bounds retries on transient failures (see tryCheckEligibility): 1 initial call plus up to 2 retries.
 const maxEligibilityAttempts = 3
 
 const notEligibleStatusCode = http.StatusConflict

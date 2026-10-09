@@ -20,8 +20,6 @@ func (UserTaskHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *bp
 
 	var errs []domain.BPMNValidationError
 	if connectorType, ok := bpmncore.ConnectorType(task.ExtensionElements); ok {
-		// Connector tasks are fully automation-only — no assignmentDefinition
-		// required or expected (design/LLD/workflow_connectors.md §5.3).
 		errs = append(errs, validator.ValidateConnectorTaskDef(task.ID, connectorType)...)
 		errs = append(errs, validator.ValidateConnectorTaskNoAssignment(task.ID, task.ExtensionElements)...)
 		errs = append(errs, validator.ValidateConnectorNoAuthoredSecret(task.ID, connectorType, task.ExtensionElements.IOMapping)...)

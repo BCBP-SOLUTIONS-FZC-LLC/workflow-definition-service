@@ -1,19 +1,3 @@
-// Stub of the Execution Service's internal API (api/contracts/execution-internal-openapi.yaml),
-// for running the definition service locally without a real Execution Service.
-//
-// Env vars:
-//
-//	STUB_ADDR   — listen address (default: :8083)
-//	HAS_ACTIVE  — "true" to start with active instances; omit or "false" for none
-//
-// Runtime control (no restart needed):
-//
-//	POST /control  {"has_active": true|false}   toggle the active-instances answer
-//
-// Example:
-//
-//	go run ./cmd/stub/execution
-//	curl -s -X POST localhost:8083/control -d '{"has_active":true}'
 package main
 
 import (

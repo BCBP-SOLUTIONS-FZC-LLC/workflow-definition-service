@@ -93,8 +93,6 @@ func fromJSONB(b json.RawMessage) *string {
 	return &s
 }
 
-// mustUUID converts a NOT-NULL pgtype.UUID to uuid.UUID. Panics if the
-// column is NULL, which indicates a schema violation or migration bug.
 func mustUUID(p pgtype.UUID) uuid.UUID {
 	if !p.Valid {
 		panic("postgres: mustUUID called on NULL pgtype.UUID — schema constraint violated")
@@ -219,8 +217,6 @@ func assigneeFromDB(row db.WorkflowNodeAssignee) *domain.NodeAssignee {
 	}
 }
 
-// moduleRefsFromDB decodes workflow_version.module_refs, which the schema keeps
-// a JSON array; anything else decodes to no refs.
 func moduleRefsFromDB(raw []byte) []domain.ModuleRef {
 	var refs []domain.ModuleRef
 	if err := json.Unmarshal(raw, &refs); err != nil {

@@ -9,12 +9,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// bundleModules adds each resolved library module version to mainXML as a
-// process named by its plan name, and points every library call at the plan
-// it resolved to. Whether a call is a library call is decided in the document
-// it was written in, so a module's call never takes over a local process of the
-// same id. Module diagrams are dropped. Each module XML goes through the same
-// security checks as the main BPMN.
 func bundleModules(mainXML string, modules []domain.ResolvedModule) (string, error) {
 	if len(modules) == 0 {
 		return mainXML, nil
@@ -57,10 +51,6 @@ func bundleModules(mainXML string, modules []domain.ResolvedModule) (string, err
 	return xml.Header + string(out), nil
 }
 
-// bundleDefinitions adds the module document's messages and errors to defs
-// under IDs prefixed with the module's plan name, and points proc's
-// references at them, so they resolve as the module declared them and cannot
-// collide with the workflow's or another module's.
 func bundleDefinitions(defs, modDefs *bpmncore.BPMNDefinitions, proc *bpmncore.BPMNProcess, planName string) {
 	own := func(id string) string {
 		if id == "" {
@@ -99,8 +89,6 @@ func renameRefs(sends []bpmncore.BPMNSendTask, receives []bpmncore.BPMNReceiveTa
 	}
 }
 
-// pointLibraryCalls points proc's library calls, as judged within its own
-// document home, at their plans.
 func pointLibraryCalls(proc *bpmncore.BPMNProcess, home *bpmncore.BPMNDefinitions, planFor map[moduleKey]string) {
 	for j := range proc.CallActivities {
 		call, _, ok := moduleCall(proc.CallActivities[j], proc.ID, home)
@@ -114,15 +102,11 @@ func pointLibraryCalls(proc *bpmncore.BPMNProcess, home *bpmncore.BPMNDefinition
 	}
 }
 
-// moduleKey is a call target: a module's process id and the version pinned,
-// or zero for its active version.
 type moduleKey struct {
 	processID string
 	version   int32
 }
 
-// pointSelfCalls renames a module's calls to its own process along with it, so
-// a module that calls itself is reported as the cycle it is.
 func pointSelfCalls(proc *bpmncore.BPMNProcess, planName string) {
 	for j := range proc.CallActivities {
 		if ext := proc.CallActivities[j].ExtensionElements.ZeebeCalledElement; ext != nil && ext.ProcessID == proc.ID {

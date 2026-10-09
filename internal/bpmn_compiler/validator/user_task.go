@@ -12,7 +12,6 @@ import (
 
 const maxRoleLen = 256
 
-// exported for white-box tests.
 const MaxRoleLen = maxRoleLen
 
 func ValidateTaskExtensions(proc *bpmncore.BPMNProcess, stageTypes map[string]bpmncore.StageTypeHandler) []domain.BPMNValidationError {
@@ -33,16 +32,12 @@ func ValidateTaskDef(taskID string, ext bpmncore.BPMNExtensionElements, stageTyp
 			"task is missing a <zeebe:taskDefinition> extension element")
 	}
 	if _, ok := stageTypes[ext.TaskDefinition.Type]; !ok {
-		// Unknown stage types are not rejected: IAM owns role/department definitions
-		// and may introduce types unknown to this service. Emit a warning and continue.
 		return AppendWarn(nil, domain.BPMNWarnUnknownStageType, taskID,
 			fmt.Sprintf("taskDefinition type %q is not a defined stage class in the workflow engine", ext.TaskDefinition.Type))
 	}
 	return nil
 }
 
-// ValidateOptionalAssignment validates candidateGroups/candidateUsers only when
-// zeebe:assignmentDefinition is present. For sendTask/receiveTask assignment is optional.
 func ValidateOptionalAssignment(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
 	if ext.AssignmentDefinition == nil {
 		return nil
@@ -50,15 +45,9 @@ func ValidateOptionalAssignment(taskID string, ext bpmncore.BPMNExtensionElement
 	return ValidateAssignmentDef(taskID, ext)
 }
 
-// ValidateDefaultAssignee warns about a userTask that names a role but nobody.
-// A module may leave the user to the workflow that calls it, so on the
-// document alone this is a warning; publish refuses a workflow whose expanded
-// plan still names no one for it (definition LLD §3.1.4 code 8). Kept out of
-// ValidateAssignmentDef because sendTask/receiveTask share that one and
-// create no task.
 func ValidateDefaultAssignee(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
 	if ext.AssignmentDefinition == nil {
-		return nil // ValidateAssignmentDef already reports the missing element
+		return nil
 	}
 	if strings.TrimSpace(ext.AssignmentDefinition.CandidateUsers) != "" {
 		return nil
@@ -93,23 +82,19 @@ func validateCandidateUser(taskID, candidateUsers string) []domain.BPMNValidatio
 	return nil
 }
 
-// IsUserID reports whether s can be an IAM user id, which is a UUID v7.
 func IsUserID(s string) bool {
 	id, err := uuid.Parse(s)
 	return err == nil && id.Version() == 7
 }
 
-// ValidateDeptID rejects a lane with no valid dept_id zeebe property — the
-// real IAM department UUID eligibility checks and workflow_node_assignee
-// need, distinct from the lane's name (used elsewhere as the visual/grouping id).
 func ValidateDeptID(taskID string, proc *bpmncore.BPMNProcess, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	lane := bpmncore.LaneFor(taskID, proc)
 	if lane == nil {
-		return nil // no lane at all is ValidateLaneMembership's TASK_NOT_IN_LANE, not this one's
+		return nil
 	}
 	deptID := bpmncore.DeptIDFor(taskID, proc)
 	if deptID == "" && defs != nil && defs.ModuleProcesses[proc.ID] {
-		return nil // an open lane of a module: its call binds the department
+		return nil
 	}
 	if deptID == "" {
 		return AppendErr(nil, domain.BPMNErrMissingDeptID, taskID,

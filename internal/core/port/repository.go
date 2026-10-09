@@ -35,8 +35,6 @@ type WorkflowVersionRepository interface {
 		compiledPlanJSON, artifactHash string,
 		moduleRefs []domain.ModuleRef,
 	) error
-	// ListModuleUsages lists the tenant's workflow versions that hold a
-	// snapshot of moduleID.
 	ListModuleUsages(ctx context.Context, tenantID, moduleID uuid.UUID) ([]*domain.ModuleUsage, error)
 	Archive(ctx context.Context, tenantID, versionID uuid.UUID) error
 	DeleteDraft(ctx context.Context, tenantID, versionID uuid.UUID) error
@@ -72,9 +70,6 @@ type ModuleRepository interface {
 	GetByID(ctx context.Context, callerTenantID, id uuid.UUID) (*domain.Module, error)
 	List(ctx context.Context, callerTenantID uuid.UUID, filter ModuleFilter) ([]*domain.Module, int64, error)
 	UpdateActiveVersion(ctx context.Context, moduleID uuid.UUID, versionID *uuid.UUID) error
-	// ProcessIDInUse reports whether a module the caller can call already has
-	// processID: the tenant's own or a global one, or, with a nil tenant on the
-	// system pool, any module at all.
 	ProcessIDInUse(ctx context.Context, callerTenantID *uuid.UUID, processID string) (bool, error)
 }
 
@@ -89,9 +84,6 @@ type ModuleVersionRepository interface {
 	Publish(ctx context.Context, versionID uuid.UUID, versionNumber int32) error
 	Archive(ctx context.Context, versionID uuid.UUID) error
 	NextVersionNumber(ctx context.Context, moduleID uuid.UUID) (int32, error)
-	// Resolve finds the module version a call names: versionNumber, or the
-	// module's active version when zero. The module must not be archived and a
-	// pinned version must have been published; otherwise domain.ErrNotFound.
 	Resolve(ctx context.Context, callerTenantID uuid.UUID, processID string, versionNumber int32) (*domain.ModuleVersion, error)
 }
 

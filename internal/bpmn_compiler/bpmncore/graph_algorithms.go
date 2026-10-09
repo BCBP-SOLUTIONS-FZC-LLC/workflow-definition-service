@@ -1,9 +1,5 @@
 package bpmncore
 
-// ClassifyBackEdges returns the set of back-edges (revert/loop flows) reachable
-// from roots, searched in order. An edge (u → v) is a back-edge when v is an
-// ancestor of u on the active DFS stack. Removing back-edges yields the
-// forward DAG used by reachability, loop, gateway-matching, and compilation.
 func ClassifyBackEdges(g *Graph, roots ...string) map[[2]string]bool {
 	backEdges := make(map[[2]string]bool)
 	onStack := make(map[string]bool)
@@ -30,8 +26,6 @@ func ClassifyBackEdges(g *Graph, roots ...string) map[[2]string]bool {
 	return backEdges
 }
 
-// ProcessBackEdges classifies proc's back-edges from start and then from each
-// boundary event, so a loop reached only through a boundary is found too.
 func ProcessBackEdges(proc *BPMNProcess, g *Graph, start string) map[[2]string]bool {
 	roots := []string{start}
 	for _, be := range proc.BoundaryEvents {
@@ -100,8 +94,6 @@ func (r *tarjanRunner) strongconnect(g *Graph, v string) {
 	}
 }
 
-// TarjanSCC computes strongly connected components of g using Tarjan's algorithm.
-// TODO: convert strongconnect to iterative DFS to eliminate call-stack overflow risk on large graphs.
 func TarjanSCC(g *Graph) [][]string {
 	r := &tarjanRunner{nodeStates: make(map[string]*sccState, len(g.NodeIDs))}
 	for id := range g.NodeIDs {

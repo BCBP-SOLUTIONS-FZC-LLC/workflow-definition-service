@@ -8,9 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
-	pgdomain "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/domain"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2/pkg/events"
+	pgdomain "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
@@ -21,15 +21,11 @@ type membershipRevoker interface {
 }
 
 type membershipRevokedPayload struct {
-	UserID string `json:"user_id"`
-	// DepartmentID is parsed as a UUID by HandleDepartmentMembershipRevoked today, but
-	// its format is owned by the Org & Membership Service and not formally
-	// confirmed on our side — see definition_service.md §7.4.2.
+	UserID       string `json:"user_id"`
 	DepartmentID string `json:"department_id"`
 	Role         string `json:"role"`
 }
 
-// Consumer retry contract: 2xx = handled, 400 = malformed (non-retryable), 500 = transient (retry).
 func (h *Handler) HandleInternalEvent(c *gin.Context) {
 	var env events.Envelope[json.RawMessage]
 	if err := c.ShouldBindJSON(&env); err != nil {
@@ -56,8 +52,6 @@ func (h *Handler) acknowledgeUnknownEventType(c *gin.Context, eventType string) 
 	c.Status(http.StatusOK)
 }
 
-// revocationIdentity is the (event, tenant, user) triple both revocation
-// events carry. ok=false means a 4xx has already been written.
 type revocationIdentity struct {
 	eventID, tenantID, userID uuid.UUID
 	departmentID              string
@@ -90,8 +84,6 @@ func (h *Handler) parseRevocation(c *gin.Context, env events.Envelope[json.RawMe
 
 	return revocationIdentity{
 		eventID: eventID, tenantID: tenantID, userID: userID, departmentID: p.DepartmentID,
-		// Service-to-service call: no gateway identity headers, so inject the RLS GUC
-		// from the envelope tenant_id directly, as every internal route does (§3.4).
 		ctx: pgcommon.WithGUCSet(c.Request.Context(), pgdomain.GUCSet{TenantID: env.TenantID}),
 	}, true
 }
@@ -119,9 +111,6 @@ func (h *Handler) handleDepartmentMembershipRevoked(c *gin.Context, env events.E
 	h.finishRevocation(c, evtType, "internal events: HandleDepartmentMembershipRevoked failed", err)
 }
 
-// handleTenantMembershipRevoked handles IAM's tenant-level MembershipRevoked.
-// It carries no department_id — the user left the tenant outright — so it
-// deliberately does not reuse the department-scoped handler above.
 func (h *Handler) handleTenantMembershipRevoked(c *gin.Context, env events.Envelope[json.RawMessage]) {
 	const evtType = "MembershipRevoked"
 	in, ok := h.parseRevocation(c, env, evtType)

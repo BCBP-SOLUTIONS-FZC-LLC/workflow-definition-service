@@ -19,22 +19,11 @@ const (
 	nsBPMNDI = "http://www.omg.org/spec/BPMN/20100524/DI"
 )
 
-// 1M tokens comfortably covers the largest BPMN diagrams this service accepts
-// (the 10 MB request-body cap enforced upstream), while still bounding a
-// pathological document that omits an explicit DOCTYPE/ENTITY declaration.
 const maxTokens = 1_000_000
 
 var errMissingNamespace = errors.New("missing required BPMN or Zeebe namespace")
 var errForbiddenXML = errors.New("forbidden XML construct")
 
-// Every BPMN element this compiler can see falls into exactly one tier, each
-// producing a different outcome for the caller:
-//   - tier1Elems: recognized BPMN vocabulary (workflow-models' AllowedBPMNElements).
-//   - tier2Elems: tier1, but with no compile handler yet — UNSUPPORTED_ELEMENT,
-//     i.e. "on the roadmap."
-//   - tier3Elems: will never be supported — REJECTED_ELEMENT.
-//   - anything in none of the three: not recognized at all — also REJECTED_ELEMENT,
-//     the backstop for a typo or genuinely unknown tag.
 var tier3Elems map[string]struct{}
 var tier2Elems map[string]struct{}
 var tier1Elems map[string]struct{}
@@ -248,8 +237,6 @@ func unmarshal(xmlData string) (*bpmncore.BPMNDefinitions, error) {
 	return &defs, nil
 }
 
-// markCalledProcesses records every process a callActivity names as a module,
-// whose open lanes its calls bind.
 func markCalledProcesses(defs *bpmncore.BPMNDefinitions) {
 	defs.ModuleProcesses = map[string]bool{}
 	for i := range defs.Processes {
@@ -270,8 +257,6 @@ func promoteTasks(userTasks, genericTasks, serviceTasks *[]bpmncore.BPMNUserTask
 	*serviceTasks = nil
 }
 
-// connectorServiceTasks is a defensive filter: only serviceTasks already
-// classified as connectors by scanRejected may reach the compiled pipeline.
 func connectorServiceTasks(tasks []bpmncore.BPMNUserTask) []bpmncore.BPMNUserTask {
 	var out []bpmncore.BPMNUserTask
 	for _, t := range tasks {

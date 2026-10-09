@@ -11,15 +11,15 @@ metadata:
 
 | Module | Version | Notes |
 |---|---|---|
-| `platform-events` | v1.4.0 | Only the envelope type is used (the inbound handler decodes it); the SNS publisher and the outbox runner are not. Envelope carries `actor`/`subject` fields. |
-| `platform-gincommon` | v1.3.0 | `gincommon.MetricsRegisterer()`/`MetricsConstLabels()` expose the registerer/const-labels gincommon's own HTTP metrics use, so `internal/observability.Register()` registers this service's custom collectors against the same registerer instead of guessing `prometheus.DefaultRegisterer`. |
-| `platform-pgcommon` | v1.2.1 | `port.Transactor` exposes `RunInTxWithRetry` (SERIALIZABLE + 40001/40P01 retry). `Config.Logger` / `migrate.Runner.Logger` are now typed against the public `pkg/domain.Logger` (since v1.2.0) — `cmd/server/pglogger.go`'s `pgCommonLogger` adapts this service's `port.Logger` to it. |
-| `workflow-models` | v1.4.0-rc.4 | `pkg/dsl` types are field-for-field identical to the deleted `internal/core/domain/compiled_plan.go`; `pkg/enums` holds the shared `StageType*` constants. `CompiledCollaboration.SchemaVersion` (since v1.1.0) feeds Execution's DSL-compatibility layer; `CompileForPublish` stamps it on every published plan. `CallPlanStep` and `ExpandCalls` (since v1.3.0-rc.1) carry and expand library calls; every boundary sets exactly one of `TargetDept` and `Terminates`, and `Assignees` keys may be call paths (rc.2). `dsl.NodeKey`, `StageDef.CreatesHumanTask` and `StageDef.Name` (rc.3) give node keys, the human-task rule and task names, shared with Execution. `ExclusiveBranch.Steps` (v1.4.0-rc.1) carries an exclusive branch's work. Since v1.4.0-rc.2 there is no `call_pool` step, `messages`, `ignored` or department `ignore`, and the allowed element list admits the diagram-only elements modelers draw. `pkg/dsl/dsltest` holds the goldens `TestGolden` writes, and a golden change means a new tag before this repo can build against it. |
+| `platform-events/v2` | v2.1.0 | Only the envelope type is used (the inbound handler decodes it); the publisher, outbox runner and consumer are not. Events v2 requires pgcommon v2. |
+| `platform-gincommon` | v1.6.0 | Owns logs, metrics and traces. `Config.Domain` (`workflow`) and `Config.Environment` (`APP_ENV`: `local`, `dev`, `test`, `staging` or `prod`) are required. `InitTracingWithConfig` runs before `ObservabilityMiddlewares`, which fixes the metrics identity every other collector reads. Service metrics are built with `gincommon.NewCounterVec`, `NewCounter` and `NewHistogramVec` and are named `workflow_definition_svc_<metric>`. |
+| `platform-pgcommon/v2` | v2.0.0 | `port.Transactor` exposes `RunInTxWithRetry` (SERIALIZABLE + 40001/40P01 retry). `pgmetrics.InitWithIdentity` runs before `NewPool`, with the identity gincommon resolved; `Config.Tracer` is `gincommon.NewSpanTracer`. `Config.Logger` and `migrate.Runner.Logger` take the public `pkg/domain.Logger`, which `cmd/server/pglogger.go` adapts from `port.Logger`. |
+| `workflow-models` | v1.2.0 | `pkg/dsl` types are field-for-field identical to the deleted `internal/core/domain/compiled_plan.go`; `pkg/enums` holds the shared `StageType*` constants. `CompiledCollaboration.SchemaVersion` (since v1.1.0) feeds Execution's DSL-compatibility layer; `CompileForPublish` stamps it on every published plan. `CallPlanStep` and `ExpandCalls` (since v1.3.0-rc.1) carry and expand library calls; every boundary sets exactly one of `TargetDept` and `Terminates`, and `Assignees` keys may be call paths (rc.2). `dsl.NodeKey`, `StageDef.CreatesHumanTask` and `StageDef.Name` (rc.3) give node keys, the human-task rule and task names, shared with Execution. `ExclusiveBranch.Steps` (v1.4.0-rc.1) carries an exclusive branch's work. Since v1.4.0-rc.2 there is no `call_pool` step, `messages`, `ignored` or department `ignore`, and the allowed element list admits the diagram-only elements modelers draw. `pkg/dsl/dsltest` holds the goldens `TestGolden` writes, and a golden change means a new tag before this repo can build against it. |
 
 Fetch / upgrade:
 ```bash
 export GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*
-go get github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon@v1.x.x
+go get github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2@v2.x.x
 go mod tidy && go mod vendor
 ```
 
@@ -66,27 +66,27 @@ Key metrics emitted by the service:
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `wf_submissions_total` | CounterVec | `status` | Workflow create attempts |
-| `wf_archive_total` | CounterVec | `status` | Archive attempts |
-| `wf_publish_total` | CounterVec | `status` | Publish attempts |
-| `wf_publish_latency_seconds` | Histogram | — | End-to-end publish latency (compile + DB tx) |
-| `wf_clone_total` | CounterVec | `status` | Clone attempts |
-| `wf_promote_total` | CounterVec | `status` | Promote attempts |
-| `wf_compile_duration_seconds` | Histogram | — | Duration of `compiler.Compile` only, isolated from DB-tx time. Observed at `publishPreFlight` (Publish) and `resolvePlan` (Diff/Export fallback-recompile). `Promote` never compiles; `ValidationService.Validate` calls the separate `compiler.Validate`, not `Compile`. |
-| `wf_validation_failures_total` | Counter | — | BPMN validate calls with at least one error |
-| `internal_events_ingest_total` | CounterVec | `event_type`, `result` | Internal event ingestion (ok/bad_payload/error) |
-| `wf_cache_hits_total` | Counter | — | Compiled-plan cache hits (internal compiled-plan read) |
-| `wf_cache_misses_total` | Counter | — | Compiled-plan cache misses (internal compiled-plan read) |
+| `workflow_definition_svc_submissions_total` | CounterVec | `status` | Workflow create attempts |
+| `workflow_definition_svc_archive_total` | CounterVec | `status` | Archive attempts |
+| `workflow_definition_svc_publish_total` | CounterVec | `status` | Publish attempts |
+| `workflow_definition_svc_publish_latency_seconds` | Histogram | — | End-to-end publish latency (compile + DB tx) |
+| `workflow_definition_svc_clone_total` | CounterVec | `status` | Clone attempts |
+| `workflow_definition_svc_promote_total` | CounterVec | `status` | Promote attempts |
+| `workflow_definition_svc_compile_duration_seconds` | Histogram | — | Duration of `compiler.Compile` only, isolated from DB-tx time. Observed at `publishPreFlight` (Publish) and `resolvePlan` (Diff/Export fallback-recompile). `Promote` never compiles; `ValidationService.Validate` calls the separate `compiler.Validate`, not `Compile`. |
+| `workflow_definition_svc_validation_failures_total` | Counter | — | BPMN validate calls with at least one error |
+| `workflow_definition_svc_internal_events_ingest_total` | CounterVec | `event_type`, `result` | Internal event ingestion (ok/bad_payload/error) |
+| `workflow_definition_svc_cache_hits_total` | Counter | — | Compiled-plan cache hits (internal compiled-plan read) |
+| `workflow_definition_svc_cache_misses_total` | Counter | — | Compiled-plan cache misses (internal compiled-plan read) |
 
 Outcome labels use `observability.OutcomeLabel(err)`: `"ok"` when err is nil, `"err"` otherwise.
 
-`internal/observability.Register` also folds in what used to be two standalone calls in `cmd/server/wire.go`: `pgmetrics.InitWithRegisterer(serviceName, buildVersion, reg)` and `reg.MustRegister(pgmetrics.NewPoolStatsCollector(pool, serviceName))`, both against `gincommon.MetricsRegisterer()` (`reg`) rather than the default registry directly. This registers the DB connection-pool gauges: `pgcommon_pool_total_conns`, `pgcommon_pool_idle_conns`, `pgcommon_pool_acquired_conns`, `pgcommon_pool_max_conns`, `pgcommon_pool_constructing_conns`, `pgcommon_pool_empty_acquire_total` — all labelled with a constant `service` label.
+`cmd/server/wire.go` fixes the metrics identity (`gincommon.ObservabilityMiddlewares`) before `observability.Register()` and `pgmetrics.InitWithIdentity`, so every collector carries the `domain`, `service` and `environment` const labels. HTTP and database metrics come from the platform libraries under their standard names: `platform_http_requests_total`, `platform_http_request_duration_seconds`, `platform_db_queries_total`, `platform_db_transaction_retries_exhausted_total` and the `platform_db_pool_*` gauges. `TestRegister_FollowsObservabilityRegistry` validates this service's collectors against the platform registry.
 
 Metrics are served at `GET /metrics` (Prometheus scrape endpoint, no auth — access control is enforced by network policy/ingress at deploy time, not the app).
 
 ## OTel Tracing
 
-Configured via `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_TRACES_SAMPLER_RATIO`. Tracing is initialised by `platform-gincommon.InitTracingFromEnv()` in `cmd/server/app.go`. `buildEnvelope` stamps trace IDs only on traced requests (`trace.SpanFromContext(ctx).SpanContext().IsValid()`).
+Configured via `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_TRACES_SAMPLER_RATIO`. Tracing is initialised by `gincommon.InitTracingWithConfig` in `cmd/server/wire.go`, with the same identity as metrics. `OTEL_EXPORTER_OTLP_ENDPOINT=none` turns export off. `buildEnvelope` stamps trace IDs only on traced requests (`trace.SpanFromContext(ctx).SpanContext().IsValid()`).
 
 ## Documentation
 

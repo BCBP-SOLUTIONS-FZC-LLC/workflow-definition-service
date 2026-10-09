@@ -2,8 +2,6 @@ package element
 
 import "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 
-// compileCalledState compiles a called process into a plan of its own, its
-// departments and pending targets complete.
 func compileCalledState(called *bpmncore.BPMNProcess, cs *bpmncore.CompileState) (*bpmncore.CompileState, error) {
 	state := newInnerState(called, cs)
 	state.Called = cs.Called
@@ -14,8 +12,6 @@ func compileCalledState(called *bpmncore.BPMNProcess, cs *bpmncore.CompileState)
 	return state, nil
 }
 
-// compileSubProcessBody compiles subprocess subProcessID's body into the
-// departments of cs, whose own ResolveTargets completes its targets.
 func compileSubProcessBody(body *bpmncore.BPMNProcess, subProcessID string, cs *bpmncore.CompileState) (*bpmncore.CompileState, error) {
 	state := newInnerState(body, cs)
 	state.ShareSegmentsWith(cs, subProcessID)

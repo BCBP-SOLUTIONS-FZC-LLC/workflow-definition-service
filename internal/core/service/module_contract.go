@@ -11,8 +11,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// ModuleSlot is one of a module's own lanes that holds work: open for a call
-// to bind, or fixed to its IAM department.
 type ModuleSlot struct {
 	ID              string
 	Label           string
@@ -20,10 +18,6 @@ type ModuleSlot struct {
 	IAMDepartmentID string
 }
 
-// ModuleTask is one human task a module runs, its called modules' included.
-// AssigneeKey is the key a call's Assignees takes. Slot is the module's own
-// slot it runs in; a task in a called module's fixed lane has none and
-// carries that lane's IAMDepartmentID instead.
 type ModuleTask struct {
 	AssigneeKey     string
 	NodeID          string
@@ -35,8 +29,6 @@ type ModuleTask struct {
 	DefaultUserIDs  []string
 }
 
-// ModuleContract is what a call of a module version binds and names
-// (definition LLD §3.3.18).
 type ModuleContract struct {
 	Version    *domain.ModuleVersion
 	Slots      []ModuleSlot
@@ -46,8 +38,6 @@ type ModuleContract struct {
 	NamesUsers bool
 }
 
-// Contract compiles a module version with its library calls resolved against
-// the library as it is now, and reads its contract from the plan.
 func (s *ModuleService) Contract(ctx context.Context, callerTenantID, moduleID, versionID uuid.UUID) (*ModuleContract, error) {
 	v, err := s.GetVersion(ctx, callerTenantID, moduleID, versionID)
 	if err != nil {
@@ -91,18 +81,11 @@ func (s *ModuleService) Contract(ctx context.Context, callerTenantID, moduleID, 
 	return c, nil
 }
 
-// contractReader walks a module's unexpanded plans, tracing each called
-// department back to the root slot it is bound to, and takes each task's
-// default users from the expanded plan, where call-site Assignees apply.
 type contractReader struct {
 	plans    map[string]*dsl.CompiledPlan
 	defaults map[string][]string
 }
 
-// tasks lists plan's human tasks, then its calls' in the order they run.
-// prefix scopes plan's departments and task keys as ExpandCalls does, and
-// place names the root slot, or the fixed IAM department, a department of
-// plan runs in.
 func (r contractReader) tasks(plan *dsl.CompiledPlan, prefix string, place func(deptID string) (slot, iam string)) []ModuleTask {
 	var out []ModuleTask
 	for _, d := range plan.Departments {
@@ -130,8 +113,6 @@ func (r contractReader) tasks(plan *dsl.CompiledPlan, prefix string, place func(
 	return out
 }
 
-// planCalls lists the calls plan makes, in the order they run: those of its
-// steps, then those on the paths its tasks' boundaries lead to.
 func planCalls(plan *dsl.CompiledPlan) []*dsl.CallPlanStep {
 	calls := callSteps(plan.Execution.Steps, nil)
 	for _, d := range plan.Departments {

@@ -20,14 +20,13 @@ const (
 )
 
 type VersionDeps struct {
-	Transactor port.Transactor
-	Workflows  port.WorkflowRepository
-	Versions   port.WorkflowVersionRepository
-	Assignees  port.AssigneeRepository
-	Membership port.MembershipService
-	Execution  port.ExecutionService
-	Compiler   port.PlanCompiler
-	// ModuleVersions resolves the draft's library calls at publish and diff.
+	Transactor     port.Transactor
+	Workflows      port.WorkflowRepository
+	Versions       port.WorkflowVersionRepository
+	Assignees      port.AssigneeRepository
+	Membership     port.MembershipService
+	Execution      port.ExecutionService
+	Compiler       port.PlanCompiler
 	ModuleVersions port.ModuleVersionRepository
 	Cache          port.CacheStore
 	Log            port.Logger
@@ -181,8 +180,6 @@ func (s *VersionService) Clone(
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
-	// Quota COUNT + inserts in one SERIALIZABLE tx so concurrent clones can't both
-	// pass the quota check (LLD §5.6.2).
 	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
 		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, planTier); err != nil {
 			return err

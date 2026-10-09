@@ -11,34 +11,22 @@ import (
 
 const defaultTaskQueue = "wf-queue-default"
 
-// SegmentSeparator numbers a lane's later segments: <lane>~2, <lane>~3.
 const SegmentSeparator = "~"
 
-// StageBudget is the task limit (definition LLD §3.1.4 code 9). A compile
-// that has made more stages than this stops, since a document whose
-// branches merge only in part can compile its merged tail once per branch.
 const StageBudget = 1000
 
-// nodeBudget bounds the nodes one compile visits, for the same reason: a
-// region compiled once per branch need hold no task to grow.
 const nodeBudget = 10 * StageBudget
 
-// ErrStageBudget is the error a compile over StageBudget or nodeBudget
-// returns.
 var ErrStageBudget = errors.New("bpmncore: the compiled plan exceeds the stage budget")
 
-// pendingTarget marks a department reference to the segment of a node that
-// may not be compiled yet; ResolveTargets replaces it once every node is.
 const pendingTarget = "\x00"
 
 type sharedDeptsStore struct {
-	depts       []dsl.DepartmentDef
-	deptIdx     map[string]int
-	segments    map[string]int
-	nodeSegment map[string]string
-	visited     map[string]bool
-	// boundarySteps holds, by boundary event ID, the steps of the path each
-	// boundary leads to; ResolveTargets puts them on the boundaries.
+	depts         []dsl.DepartmentDef
+	deptIdx       map[string]int
+	segments      map[string]int
+	nodeSegment   map[string]string
+	visited       map[string]bool
 	boundarySteps map[string][]dsl.ExecutionStep
 	stages        int
 	nodes         int
@@ -53,39 +41,21 @@ type CompileState struct {
 	StageTypes map[string]StageTypeHandler
 	Elements   map[FlowNodeType]ElementHandler
 	Defs       *BPMNDefinitions
-	// skipped holds the tasks of ignored lanes, which compile to nothing.
-	skipped map[string]bool
-	// StopAt, when non-empty, causes TraverseNode to return immediately without
-	// processing the node. Used by branch states to stop at the gateway's join.
-	StopAt string
-	// Called collects the plans of called processes, shared by every state of
-	// one compile.
-	Called *CalledPlans
+	skipped    map[string]bool
+	StopAt     string
+	Called     *CalledPlans
 
 	sd      *sharedDeptsStore
 	steps   []dsl.ExecutionStep
 	seqBuf  []string
 	visited map[string]bool
 
-	// defaultLane and defaultIAMDeptID place a node that is in no lane: a
-	// laneless process's nodes, or a subprocess body's.
 	defaultLane, defaultIAMDeptID string
 	openLane, openSegment         string
-	// segmentStarts are the nodes a boundary moves to. Each starts a segment,
-	// since a boundary runs its target's department from the top.
-	segmentStarts map[string]bool
-	// pathSegment is the segment each node compiled on this state's path, its
-	// branch states' parents included, went into: a revert's target is such
-	// a node, compiled in this branch's own copy.
-	pathSegment map[string]string
-	// stopAtCompiled makes a boundary path end where it meets a node another
-	// state has compiled, so a path that rejoins the main flow does not
-	// compile the main flow's tasks again.
-	stopAtCompiled bool
-	// rejoined is set when the boundary path being compiled, branches of it
-	// included, meets a node the main flow compiled, so that the path
-	// continues into it.
-	rejoined *bool
+	segmentStarts                 map[string]bool
+	pathSegment                   map[string]string
+	stopAtCompiled                bool
+	rejoined                      *bool
 }
 
 func NewCompileState(
@@ -149,10 +119,6 @@ func NewBranchState(parent *CompileState, stopAt string) *CompileState {
 	}
 }
 
-// ShareSegmentsWith makes s, a subprocess body's state, fill the departments
-// of parent, the state compiling the subprocess, so the body's tasks take
-// their own segments of the parent's lanes. A body node in no lane is in the
-// subprocess's own lane.
 func (s *CompileState) ShareSegmentsWith(parent *CompileState, subProcessID string) {
 	s.sd = parent.sd
 	s.Called = parent.Called
@@ -198,10 +164,6 @@ func (s *CompileState) laneOf(nodeID string) (name, iamDeptID string) {
 	return s.defaultLane, s.defaultIAMDeptID
 }
 
-// SegmentOf returns the department nodeID's stage goes into: the segment
-// open on this state's path when nodeID is in its lane, otherwise a segment
-// of nodeID's lane that it opens. That is the lane's latest segment while it
-// holds no stage, made only for a call to bind, or else the lane's next.
 func (s *CompileState) SegmentOf(nodeID string) string {
 	lane, iamDeptID := s.laneOf(nodeID)
 	if s.openSegment == "" || s.openLane != lane || s.segmentStarts[nodeID] {
@@ -220,14 +182,11 @@ func (s *CompileState) SegmentOf(nodeID string) string {
 	return s.openSegment
 }
 
-// LaneDepartment returns a department of nodeID's lane for a call to bind,
-// without opening it: the lane's first segment, made if the lane has none.
 func (s *CompileState) LaneDepartment(nodeID string) string {
 	lane, iamDeptID := s.laneOf(nodeID)
 	return s.NamedLaneDepartment(lane, iamDeptID)
 }
 
-// NamedLaneDepartment is LaneDepartment for the lane called lane.
 func (s *CompileState) NamedLaneDepartment(lane, iamDeptID string) string {
 	if s.sd.segments[lane] == 0 {
 		s.sd.segments[lane] = 1
@@ -236,8 +195,6 @@ func (s *CompileState) NamedLaneDepartment(lane, iamDeptID string) string {
 	return lane
 }
 
-// MarkNodeSegment records the department a node that holds no stage of its
-// own, a subprocess, starts in, so a boundary or revert to it can name it.
 func (s *CompileState) MarkNodeSegment(nodeID, deptID string) {
 	if deptID == "" {
 		return
@@ -255,13 +212,8 @@ func segmentID(lane string, n int) string {
 	return fmt.Sprintf("%s%s%d", lane, SegmentSeparator, n)
 }
 
-// segmentOfPending is a reference to nodeID's segment, resolved by
-// ResolveTargets.
 func segmentOfPending(nodeID string) string { return pendingTarget + nodeID }
 
-// ResolveTargets replaces every pending reference in the departments and the
-// steps with the segment of the node it names, or with the node's lane when
-// the node holds no stage.
 func (s *CompileState) ResolveTargets() {
 	resolve := func(ref *string) {
 		node, pending := strings.CutPrefix(*ref, pendingTarget)
@@ -290,7 +242,6 @@ func (s *CompileState) ResolveTargets() {
 	s.resolveStepTargets(s.steps, resolve)
 }
 
-// pathSteps is the path boundaryID leads to, its pending references resolved.
 func (s *CompileState) pathSteps(boundaryID string, resolve func(*string)) []dsl.ExecutionStep {
 	steps := s.sd.boundarySteps[boundaryID]
 	s.resolveStepTargets(steps, resolve)
@@ -332,9 +283,6 @@ func (s *CompileState) resolveStepTargets(steps []dsl.ExecutionStep, resolve fun
 	}
 }
 
-// FirstDepartment is the first department steps run, looking into a leading
-// gateway's first branch that runs one and a leading subprocess's body, or
-// empty when they start with a call.
 func FirstDepartment(steps []dsl.ExecutionStep) string {
 	if len(steps) == 0 {
 		return ""

@@ -13,8 +13,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
 
-// CompiledPlan is a workflow version and its stored compiled plan, in any
-// status (definition LLD §3.4). PlanJSON is nil for a version with none.
 type CompiledPlan struct {
 	WorkflowID    uuid.UUID            `json:"workflow_id"`
 	VersionID     uuid.UUID            `json:"version_id"`
@@ -26,14 +24,11 @@ type CompiledPlan struct {
 
 type CompiledPlanDeps struct {
 	Versions port.WorkflowVersionRepository
-	// Cache is optional; nil disables the compiled-plan cache.
 	Cache    port.CacheStore
 	CacheTTL time.Duration
 	Log      port.Logger
 }
 
-// CompiledPlanService serves the Execution Service's plan read from a
-// fail-open cache in front of Postgres.
 type CompiledPlanService struct {
 	versions port.WorkflowVersionRepository
 	cache    port.CacheStore
@@ -45,8 +40,6 @@ func NewCompiledPlanService(d CompiledPlanDeps) *CompiledPlanService {
 	return &CompiledPlanService{versions: d.Versions, cache: d.Cache, cacheTTL: d.CacheTTL, log: logOrNoop(d.Log)}
 }
 
-// Get reads the version under the caller's RLS scope, which the caller sets
-// from tenantID before calling.
 func (s *CompiledPlanService) Get(ctx context.Context, tenantID, versionID uuid.UUID) (*CompiledPlan, error) {
 	key := domain.CompiledPlanCacheKey(tenantID, versionID)
 	if p, ok := s.readCache(ctx, key); ok {

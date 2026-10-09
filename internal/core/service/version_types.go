@@ -13,8 +13,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-// workflowQuotaLimit hardcodes plan-tier quotas pending a billing-service
-// integration; replace this switch with a call to it once that lands.
 func workflowQuotaLimit(planTier string) int64 {
 	switch strings.ToLower(planTier) {
 	case "starter":
@@ -28,9 +26,6 @@ func workflowQuotaLimit(planTier string) int64 {
 	}
 }
 
-// enforceWorkflowQuota is shared by WorkflowService.Create and
-// VersionService.Clone, both of which run it inside the same
-// SERIALIZABLE-retry transaction as their insert (LLD §5.6.2).
 func enforceWorkflowQuota(ctx context.Context, workflows port.WorkflowRepository, tenantID uuid.UUID, planTier string) error {
 	limit := workflowQuotaLimit(planTier)
 	if limit <= 0 {
@@ -46,8 +41,6 @@ func enforceWorkflowQuota(ctx context.Context, workflows port.WorkflowRepository
 	return nil
 }
 
-// invalidateCompiledPlanCache deletes domain.CompiledPlanCacheKey's entry,
-// logging (not returning) a failure since the cache is best-effort.
 func invalidateCompiledPlanCache(ctx context.Context, cache port.CacheStore, log port.Logger, tenantID, versionID uuid.UUID) {
 	if cache == nil {
 		return

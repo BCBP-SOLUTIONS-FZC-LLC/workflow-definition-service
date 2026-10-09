@@ -218,7 +218,6 @@ func (h *Handler) ArchiveWorkflow(c *gin.Context) {
 	})
 }
 
-// TODO: return 400 for unknown plan once membership service can validate plan tier.
 func normalizePlanTier(plan string) string {
 	switch plan {
 	case "starter", "pro", "enterprise":

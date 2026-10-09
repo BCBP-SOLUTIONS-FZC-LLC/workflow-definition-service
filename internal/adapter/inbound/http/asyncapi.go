@@ -60,7 +60,7 @@ type asyncSchema struct {
 }
 
 func (s *asyncSchema) UnmarshalYAML(value *yaml.Node) error {
-	type rawSchema asyncSchema // breaks the method set so Decode doesn't recurse here
+	type rawSchema asyncSchema
 	if err := value.Decode((*rawSchema)(s)); err != nil {
 		return fmt.Errorf("decode asyncapi schema node: %w", err)
 	}
@@ -89,11 +89,6 @@ type asyncProp struct {
 	Items   *asyncProp `yaml:"items"`
 }
 
-// UnmarshalYAML lets Type accept either a scalar ("string") or the
-// JSON-Schema nullable-field idiom (["string", "null"]), joining a sequence
-// with "|" and dropping "null" — plain yaml.Unmarshal into a string field
-// errors on the sequence form, which this spec's own promoted_from_version_id
-// property already uses.
 func (p *asyncProp) UnmarshalYAML(value *yaml.Node) error {
 	type rawProp struct {
 		Type    yaml.Node  `yaml:"type"`
@@ -525,11 +520,6 @@ func renderServers(w *bytes.Buffer, node *yaml.Node) {
 	w.WriteString(`</div></div>`)
 }
 
-// isInboundMessage reports whether a components.messages key documents a
-// consumed (receive) event rather than one this service publishes. Inbound
-// entries deliberately carry an "Inbound" key suffix — see api/asyncapi.yaml
-// — since their payload schema is owned/registered by the producing service,
-// not this one (mirrors execution_service's own asyncapi.yaml convention).
 func isInboundMessage(name string) bool {
 	return strings.HasSuffix(name, "Inbound")
 }

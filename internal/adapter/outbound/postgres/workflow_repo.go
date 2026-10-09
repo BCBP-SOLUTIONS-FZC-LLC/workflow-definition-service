@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
@@ -141,10 +141,6 @@ func (r *WorkflowRepo) CountByTenant(ctx context.Context, tenantID uuid.UUID) (i
 	return count, err
 }
 
-// List executes a dynamic query supporting optional filter fields.
-// A LEFT JOIN on the active version is added when the IsValid filter is set.
-// A LEFT JOIN on draft versions is added when the HasDraft filter is set.
-// Two queries run: COUNT(*) for pagination, then the data page.
 func (r *WorkflowRepo) List(
 	ctx context.Context,
 	tenantID uuid.UUID,

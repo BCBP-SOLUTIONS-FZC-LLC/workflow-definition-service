@@ -215,7 +215,7 @@ jobs:
       GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
       DATABASE_URL: postgres://wfdef:wfdef@localhost:5432/wfdef?sslmode=disable
       DB_URL: postgres://wfdef:wfdef@localhost:5432/wfdef?sslmode=disable
-      APP_ENV: ci
+      APP_ENV: test
       INTERNAL_API_TOKEN: smoke-internal-token
       INTERNAL_TOKEN: smoke-internal-token
       ORG_MEMBERSHIP_BASE_URL: http://localhost:8081

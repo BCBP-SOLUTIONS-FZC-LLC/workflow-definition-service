@@ -7,11 +7,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// ValidateIgnoredLanes refuses what an ignored lane cannot skip: a call, a
-// subProcess or a connector task, which run work of the workflow's own; a
-// boundary on a skipped task, which would wait on a task that never runs; and
-// a loop whose way back holds only skipped tasks, which would run nothing
-// again.
 func ValidateIgnoredLanes(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
 	ignored := map[string]bool{}
 	for i := range proc.LaneSet.Lanes {
@@ -56,8 +51,6 @@ func ValidateIgnoredLanes(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdg
 	return errs
 }
 
-// loopRunsWork reports whether the forward flows from target back to the
-// loop's gateway pass a task, subProcess or callActivity that runs.
 func loopRunsWork(target, gateway string, g *bpmncore.Graph, backEdges map[[2]string]bool, skipped map[string]bool) bool {
 	seen := map[string]bool{gateway: true}
 	for queue := []string{target}; len(queue) > 0; queue = queue[1:] {

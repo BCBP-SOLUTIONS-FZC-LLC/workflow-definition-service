@@ -19,8 +19,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// `migrate` is a dedicated subcommand (K8s init container / pre-boot job),
-	// never run from the service binary's own startup — platform-pgcommon README §Migrations.
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		log, err := logger.NewLogger(cfg.AppEnv)
 		if err != nil {

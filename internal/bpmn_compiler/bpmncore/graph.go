@@ -5,7 +5,6 @@ import (
 	"slices"
 )
 
-// Graph is the directed graph representation of a BPMN process.
 type Graph struct {
 	Outgoing map[string][]string
 	Incoming map[string][]string
@@ -13,7 +12,6 @@ type Graph struct {
 	NodeIDs  map[string]struct{}
 }
 
-// BuildGraph constructs a Graph from a BPMNProcess.
 func BuildGraph(proc *BPMNProcess) *Graph {
 	g := &Graph{
 		Outgoing: make(map[string][]string),
@@ -74,8 +72,6 @@ func BuildGraph(proc *BPMNProcess) *Graph {
 	return g
 }
 
-// BuildLaneLabels maps lane name to itself (identity); the lane name is the
-// authoritative department identifier used as both ID and display label.
 func BuildLaneLabels(proc *BPMNProcess) map[string]string {
 	labels := make(map[string]string, len(proc.LaneSet.Lanes))
 	for _, lane := range proc.LaneSet.Lanes {
@@ -84,8 +80,6 @@ func BuildLaneLabels(proc *BPMNProcess) map[string]string {
 	return labels
 }
 
-// BuildCondExprs maps (sourceRef, targetRef) to conditionExpression for flows
-// that carry a <bpmn:conditionExpression> child element.
 func BuildCondExprs(proc *BPMNProcess) map[[2]string]string {
 	exprs := make(map[[2]string]string)
 	for _, sf := range proc.SequenceFlows {
@@ -96,10 +90,6 @@ func BuildCondExprs(proc *BPMNProcess) map[[2]string]string {
 	return exprs
 }
 
-// FindJoin returns the join of a split: its immediate post-dominator in the
-// forward graph, the nearest node every forward path from the split passes
-// through. Paths that end at different end events share none, and a node
-// with fewer than two forward flows is no split, so neither has a join.
 func FindJoin(splitID string, g *Graph, backEdges map[[2]string]bool) (string, bool) {
 	forward := func(n string) []string {
 		return slices.DeleteFunc(slices.Clone(g.Outgoing[n]), func(next string) bool { return backEdges[[2]string{n, next}] })
@@ -140,7 +130,6 @@ func FindJoin(splitID string, g *Graph, backEdges map[[2]string]bool) (string, b
 	return "", false
 }
 
-// FirstForward returns the first outgoing non-back-edge neighbour of node.
 func FirstForward(node string, g *Graph, backEdges map[[2]string]bool) (string, bool) {
 	for _, n := range g.Outgoing[node] {
 		if !backEdges[[2]string{node, n}] {
@@ -275,7 +264,6 @@ func FindImplicitStart(proc *BPMNProcess, g *Graph) string {
 	return ""
 }
 
-// OutgoingTargetOf returns the first sequence flow target from nodeID, or "".
 func OutgoingTargetOf(nodeID string, proc *BPMNProcess) string {
 	for _, sf := range proc.SequenceFlows {
 		if sf.SourceRef == nodeID {

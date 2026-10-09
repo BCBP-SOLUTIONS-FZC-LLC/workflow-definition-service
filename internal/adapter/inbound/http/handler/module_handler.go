@@ -95,11 +95,6 @@ func parseModuleScope(c *gin.Context, raw string) (domain.CatalogScope, bool) {
 	}
 }
 
-// parseScopeFilter validates an optional "scope" list-query parameter,
-// distinct from parseModuleScope's create-time default-to-tenant behavior:
-// here an empty value means "no filter" (both scopes), not "tenant". Rejecting
-// anything else up front keeps a typo'd value from reaching the catalog_scope
-// Postgres enum comparison, which would otherwise surface as a raw 500.
 func parseScopeFilter(c *gin.Context, raw string) (*domain.CatalogScope, bool) {
 	switch raw {
 	case "":
@@ -114,10 +109,6 @@ func parseScopeFilter(c *gin.Context, raw string) (*domain.CatalogScope, bool) {
 	}
 }
 
-// requireModuleScopeAccess loads the module and, for a global-scope module,
-// gates further mutation on the caller holding platform_operator. It writes
-// the error/forbidden response itself and reports false when the caller
-// should stop handling the request.
 func (h *Handler) requireModuleScopeAccess(c *gin.Context, tenantID, moduleID uuid.UUID) bool {
 	m, _, err := h.modules.Get(c.Request.Context(), tenantID, moduleID)
 	if err != nil {
@@ -340,7 +331,7 @@ func (h *Handler) AddModuleVersion(c *gin.Context) {
 	}
 
 	var req addModuleVersionReq
-	_ = c.ShouldBindJSON(&req) // body is optional; nil bpmn_xml copies forward the active version
+	_ = c.ShouldBindJSON(&req)
 
 	v, err := h.modules.AddVersion(c.Request.Context(), tenantID, userID, moduleID, service.AddModuleVersionReq{
 		BPMNXML: req.BPMNXML,

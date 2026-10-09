@@ -8,13 +8,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+### Security
+
+- Go 1.26.9 (the standard library fixes for `net/http`, `net/textproto`, `crypto/tls` and `html/template`), `golang.org/x/net` v0.60.0 and `github.com/moby/go-archive` v0.3.0. The pinned Dockerfile builder image is go1.26.9.
+
 ### Added
 
 - The published-version nodes read lists `waits`: the receive tasks and message boundaries that no send task of the plan feeds, each with the key an outside party's answer addresses (`dsl.ExternalWaits`). A compiled message boundary keeps its BPMN id (`MessagePath.BoundaryID`).
 - `CONNECTOR_SECRET_AUTHORED`: a connector task input targeting a secret field of its connector type is refused; the tenant's stored credential is always used.
+- `.editorconfig` and `VERSIONING.md`.
+- The release workflow refuses a tag with no CHANGELOG entry before it builds anything.
+- `TestRegister_FollowsObservabilityRegistry` validates this service's collectors against the platform registry.
 
 ### Changed
 
+- **Platform libraries moved to their latest majors:** `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.0, `platform-gincommon` v1.6.0. Logs, metrics and traces go through gincommon only; the database through pgcommon only; the envelope type through platform-events only. `workflow-models` v1.2.0 and `workflow-connectors` v1.0.0 replace the release-candidate and pseudo-version pins.
+- **Metric names follow the platform observability standard.** HTTP and database series are `platform_http_*` and `platform_db_*`; this service's collectors are `workflow_definition_svc_<metric>` (was `wf_<metric>` and `internal_events_ingest_total`). The metrics identity (`domain=workflow`, `service`, `environment`) is fixed before any collector or pool is created, `/metrics` is served by `gincommon.MetricsHandler()`, and pgcommon queries export `db.query` spans through `gincommon.NewSpanTracer`. Alert rules, the Helm `PrometheusRule`, the prometheus-adapter rule and the release smoke query use the new names.
+- `APP_ENV` must be one of `local`, `dev`, `test`, `staging`, `prod`; any other value, `production` included, fails startup. `prod` now also enforces `SYSTEM_DATABASE_URL`, which a `production` value had silently skipped. The CI smoke job runs with `APP_ENV=test`.
+- `api/asyncapi.yaml` documents both inbound events the handler accepts (`DepartmentMembershipRevoked` and `MembershipRevoked`) and the producer's envelope, with no outbound channel.
+- The Helm chart sets `OPENBAO_ADDR`, `OPENBAO_MOUNT`, `SECRETS_CLIENT_TIMEOUT` and `CONNECTOR_ALIAS_ALLOWED_HOSTS`.
+- Non-test code carries no comments; only `//go:` and `//nolint` directives remain.
 - **A boundary carries the whole path it leads to.** A boundary on a task, a subProcess or a call carries its path as `Steps`, in the order the flows give, and the boundary event's ID as `BoundaryID`; it named only the department it moved to, so a path of several tasks, lanes or gateways ran its first department alone. A path that continues into a node the main flow compiled keeps naming only its department. workflow-models `v1.4.0-rc.4` (LLD rev 1.33).
 - **The service has no outbox, relay, SNS publisher or Glue codec.** It publishes no event, and the apparatus made every cluster boot require `SNS_TOPIC_ARN` and `GLUE_REGISTRY_NAME`. Removed: the outbox tables and their RLS migration (`000005`, edited in place: reset a local database), the relay and its alerts, the `OutboxRepository` port, `AWS_USE_STUB`, `AWS_REGION`, `AWS_ENDPOINT_URL`, `SNS_TOPIC_ARN`, `GLUE_REGISTRY_NAME`, `GLUE_SCHEMA_CACHE_TTL` and `OUTBOX_*` settings, the chart's `SNS_TOPIC_ARN` Secret key, and LocalStack from the local stack. `ORG_MEMBERSHIP_BASE_URL`, `EXECUTION_SERVICE_URL` and `EXECUTION_SERVICE_TOKEN` are required whenever `APP_ENV` is not `dev` (LLD rev 1.32).
 - A connector input's `source` is `=name` for an instance variable or any other text for a literal (workflow-models `IOVar.InputValue`).

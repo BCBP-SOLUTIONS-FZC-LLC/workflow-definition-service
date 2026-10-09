@@ -15,8 +15,6 @@ func (TimerBoundaryHandler) Validate(_ string, _ *bpmncore.BPMNProcess, _ *bpmnc
 	return nil
 }
 
-// Compile traverses the continuation path that follows this timer boundary event.
-// Called from CompileBoundaryPaths once per unvisited timer boundary.
 func (TimerBoundaryHandler) Compile(nodeID string, cs *bpmncore.CompileState) error {
 	targetID := bpmncore.OutgoingTargetOf(nodeID, cs.Proc)
 	if targetID == "" {
@@ -35,10 +33,6 @@ func (MessageBoundaryHandler) Validate(_ string, _ *bpmncore.BPMNProcess, _ *bpm
 	return nil
 }
 
-// Compile traverses the continuation path that follows this message boundary
-// event. Called from CompileBoundaryPaths once per unvisited message boundary.
-// A message boundary event with no outgoing flow is a valid terminal
-// interrupt notification — targetID is empty and this is a no-op.
 func (MessageBoundaryHandler) Compile(nodeID string, cs *bpmncore.CompileState) error {
 	targetID := bpmncore.OutgoingTargetOf(nodeID, cs.Proc)
 	if targetID == "" {

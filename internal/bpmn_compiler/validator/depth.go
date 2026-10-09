@@ -7,7 +7,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// exported for white-box tests.
 const MaxPathDepth = 2000
 
 const maxPathDepth = MaxPathDepth

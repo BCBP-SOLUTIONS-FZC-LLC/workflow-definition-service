@@ -24,8 +24,6 @@ func (CallActivityHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _
 	return validator.ValidateCallActivity(*ca, proc, defs)
 }
 
-// Compile emits one CallPlan step naming the called process's plan, which is
-// compiled once per compile however many calls name it (definition LLD §4.1.2).
 func (CallActivityHandler) Compile(nodeID string, cs *bpmncore.CompileState) error {
 	ca := bpmncore.FindCallActivity(cs.Proc, nodeID)
 	if ca == nil {
@@ -86,15 +84,10 @@ func compileCalledPlan(calledProc *bpmncore.BPMNProcess, cs *bpmncore.CompileSta
 	return nil
 }
 
-// ShapeCalledPlan gives a called process's compiled departments the shape a
-// call binds: a department for every open slot.
 func ShapeCalledPlan(depts []dsl.DepartmentDef, calledProc *bpmncore.BPMNProcess) []dsl.DepartmentDef {
 	return withOpenSlots(depts, calledProc)
 }
 
-// withOpenSlots adds a department for every open slot the compile left
-// without one — a lane holding only a call that binds nothing in it — so a
-// call can always bind every open slot.
 func withOpenSlots(depts []dsl.DepartmentDef, calledProc *bpmncore.BPMNProcess) []dsl.DepartmentDef {
 	for _, slot := range bpmncore.OpenSlots(calledProc) {
 		if !slices.ContainsFunc(depts, func(d dsl.DepartmentDef) bool { return d.ID == slot }) {
@@ -104,10 +97,6 @@ func withOpenSlots(depts []dsl.DepartmentDef, calledProc *bpmncore.BPMNProcess) 
 	return depts
 }
 
-// bindDepartments maps each department of an open lane of the called
-// process, every segment of it, to a department of the caller: as Depts
-// names it, or, for the only open lane, the lane the call sits in. It makes
-// sure every bound caller department exists in the caller's plan.
 func bindDepartments(ca *bpmncore.BPMNCallActivity, cs *bpmncore.CompileState, calledProc *bpmncore.BPMNProcess, called *dsl.CompiledPlan, depts map[string]string) map[string]string {
 	callerFor := map[string]string{}
 	for _, key := range slices.Sorted(maps.Keys(depts)) {
@@ -134,8 +123,6 @@ func bindDepartments(ca *bpmncore.BPMNCallActivity, cs *bpmncore.CompileState, c
 	return bound
 }
 
-// laneSegments lists the departments of plan that are segments of lane, or
-// lane alone while plan is still compiling.
 func laneSegments(plan *dsl.CompiledPlan, lane string) []string {
 	if plan == nil {
 		return []string{lane}

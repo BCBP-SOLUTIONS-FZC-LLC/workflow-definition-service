@@ -58,6 +58,10 @@ env:
   MEMBERSHIP_CLIENT_TIMEOUT: "10s"
   EXECUTION_SERVICE_URL: "http://workflow-execution-service-api:8080"  # the Execution Service API's in-cluster HTTP Service — required when APP_ENV != dev
   EXECUTION_CLIENT_TIMEOUT: "5s"
+  OPENBAO_ADDR: ""                                 # in-cluster OpenBao address; empty disables the connector credential endpoints
+  OPENBAO_MOUNT: "secret"
+  SECRETS_CLIENT_TIMEOUT: "5s"
+  CONNECTOR_ALIAS_ALLOWED_HOSTS: ".svc.cluster.local"
 
 envFromSecret:
   - DATABASE_URL

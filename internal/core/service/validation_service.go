@@ -28,8 +28,6 @@ func NewValidationService(d ValidationDeps) *ValidationService {
 	}
 }
 
-// Validate resolves bpmnXML's library calls for tenantID and validates the
-// result. It performs no DB writes — safe to call without a transaction.
 func (s *ValidationService) Validate(
 	ctx context.Context,
 	tenantID uuid.UUID,
@@ -38,9 +36,6 @@ func (s *ValidationService) Validate(
 	return s.validate(ctx, s.modules.live(tenantID), bpmnXML)
 }
 
-// ValidateVersion validates a stored version: a draft against the library as
-// it is now, any other version against the module versions it was published
-// with.
 func (s *ValidationService) ValidateVersion(
 	ctx context.Context,
 	tenantID uuid.UUID,

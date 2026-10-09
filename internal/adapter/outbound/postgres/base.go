@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,8 +13,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// exec runs fn with either the transaction stored in ctx (when inside a
-// Transactor.RunInTx callback) or a fresh connection from pool.
 func exec(ctx context.Context, pool *pgcommon.Pool, fn func(db.DBTX) error) error {
 	if tx, ok := txFromContext(ctx); ok {
 		return fn(tx)
@@ -24,8 +22,6 @@ func exec(ctx context.Context, pool *pgcommon.Pool, fn func(db.DBTX) error) erro
 	})
 }
 
-// statusOrNotFound distinguishes "version missing" (ErrNotFound) from "version
-// exists but in the wrong status" (wrongStatusErr), without an extra happy-path query.
 func statusOrNotFound(
 	ctx context.Context,
 	dbtx db.DBTX,

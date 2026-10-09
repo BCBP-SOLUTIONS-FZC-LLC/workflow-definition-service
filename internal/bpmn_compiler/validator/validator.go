@@ -10,22 +10,15 @@ const (
 	maxLanes     = 100
 	maxCondExpr  = 4096
 
-	// exported for white-box tests.
 	MaxUserTasks = maxUserTasks
 	MaxLanes     = maxLanes
 	MaxCondExpr  = maxCondExpr
 )
 
-// Validate runs all structural and semantic checks on a process.
-// An explicit start event is required; use ValidateWithImplicitStart for
-// collaboration processes where the entry point is derived from message flows.
 func Validate(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, stageTypes map[string]bpmncore.StageTypeHandler, elements map[bpmncore.FlowNodeType]bpmncore.ElementHandler, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	return ValidateWithImplicitStart(proc, g, "", stageTypes, elements, defs)
 }
 
-// ValidateWithImplicitStart is like Validate but accepts a caller-supplied
-// implicit start node ID. Use this when the caller has already determined the
-// entry point: a pool entered by a message, with no start event.
 func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, implicitStart string, stageTypes map[string]bpmncore.StageTypeHandler, elements map[bpmncore.FlowNodeType]bpmncore.ElementHandler, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	var backEdges map[[2]string]bool
 	switch {
@@ -104,9 +97,6 @@ func validatePerElement(
 	return errs
 }
 
-// validateOptionalTaskMembership runs the checks shared by sendTask/receiveTask
-// nodes, whose zeebe:assignmentDefinition is optional (unlike userTask's, which
-// is required).
 func validateOptionalTaskMembership(taskID string, ext bpmncore.BPMNExtensionElements, proc *bpmncore.BPMNProcess, laneRefs map[string]struct{}, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	errs = append(errs, ValidateLaneMembership(taskID, laneRefs)...)

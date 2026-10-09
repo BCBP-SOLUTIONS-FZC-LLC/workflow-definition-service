@@ -37,31 +37,10 @@ func hashBody(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// Idempotent wraps fn with idempotency-key support using this Handler's own
-// cache, logger, and TTL. Route registration outside this package (router.go)
-// calls this instead of WithIdempotency directly, since cache/log/idempotencyTTL
-// are unexported Handler fields.
 func (h *Handler) Idempotent(fn gin.HandlerFunc) gin.HandlerFunc {
 	return WithIdempotency(h.cache, h.log, h.idempotencyTTL, fn)
 }
 
-// WithIdempotency wraps a Gin handler with idempotency-key support.
-//
-// On the first call with a given Idempotency-Key the handler runs normally and
-// the response (status + body) plus a SHA-256 hash of the request body are
-// stored in Valkey under a tenant- and route-scoped key with a 24-hour TTL.
-//
-// On subsequent requests with the same key:
-//   - If the request body hash matches the stored hash, the cached response is
-//     returned without re-executing the handler (standard idempotent replay).
-//   - If the hash differs, the request is rejected with IDEMPOTENCY_KEY_REPLAY
-//     (409) so callers know they reused a key with a different payload.
-//
-// Only 2xx responses are cached; error responses are never replayed so callers
-// can retry after fixing the request.
-//
-// If the cache is nil (dev/test) or the header is absent, the handler runs
-// as-is with no idempotency enforcement.
 func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, h gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := c.GetHeader("Idempotency-Key")
@@ -100,8 +79,6 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, 
 	}
 }
 
-// idempotencyCacheKey scopes replay by tenant, method, and the concrete
-// request path, so a shared Idempotency-Key header can't collide across routes.
 func idempotencyCacheKey(tenantID, method, path, key string) string {
 	return "idem:" + tenantID + ":" + method + ":" + path + ":" + key
 }
@@ -137,7 +114,7 @@ func storeIfSuccess(c *gin.Context, cache port.CacheStore, log port.Logger, cach
 		return
 	}
 	entry := cachedResp{Status: status, Body: rec.buf.Bytes(), BodyHash: incomingHash}
-	b, _ := json.Marshal(entry) // cachedResp contains only JSON-safe types; Marshal never errors
+	b, _ := json.Marshal(entry)
 	if err := cache.Set(c.Request.Context(), cacheKey, string(b), ttl); err != nil {
 		if log != nil {
 			log.Warn("idempotency: failed to cache response", map[string]any{

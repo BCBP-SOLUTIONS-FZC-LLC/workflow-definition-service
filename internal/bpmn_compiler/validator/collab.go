@@ -7,10 +7,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-// ValidateCollaboration checks a collaboration's message flows: each names a
-// declared message and known nodes, and each flow into a receive task or
-// message boundary that runs, in root or a process it calls, has a name it
-// can wait for. A flow into anything else needs none: nothing waits for it.
 func ValidateCollaboration(collab *bpmncore.BPMNCollaboration, defs *bpmncore.BPMNDefinitions, root *bpmncore.BPMNProcess) []domain.BPMNValidationError {
 	if collab == nil {
 		return nil

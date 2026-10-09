@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -140,7 +140,7 @@ func (r *WorkflowVersionRepo) UpdateDraft(ctx context.Context, v *domain.Workflo
 		if tag.RowsAffected() == 0 {
 			return statusOrNotFoundOrConcurrency(ctx, dbtx, v.TenantID, v.ID)
 		}
-		v.RecordVersion++ // mirror the DB trigger bump so the caller holds the current token without a re-fetch
+		v.RecordVersion++
 		return nil
 	})
 }

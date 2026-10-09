@@ -1,19 +1,3 @@
-// Stub HTTP server for the Org & Membership Service.
-// Used for local manual testing of the definition service without a real IAM service.
-//
-// Env vars:
-//
-//	STUB_ADDR  — listen address (default: :8081)
-//	ELIGIBLE   — "false" to start ineligible; omit or "true" for eligible
-//
-// Runtime control (no restart needed):
-//
-//	POST /control  {"eligible": true|false}   toggle eligibility response
-//
-// Example:
-//
-//	go run ./cmd/stub/membership
-//	curl -s -X POST localhost:8081/control -d '{"eligible":false}'
 package main
 
 import (

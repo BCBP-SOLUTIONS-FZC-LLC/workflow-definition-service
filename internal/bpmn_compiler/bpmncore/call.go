@@ -10,16 +10,12 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
 )
 
-// Call-site inputs the compiler consumes instead of passing to the called
-// process: Depts binds the called process's open lanes, Assignees gives its
-// tasks default users for this call, and dept_id is a retired form of Depts.
 const (
 	CallInputDepts     = "Depts"
 	CallInputAssignees = "Assignees"
 	CallInputDeptID    = "dept_id"
 )
 
-// CallInputs are a callActivity's compiler-consumed inputs, parsed.
 type CallInputs struct {
 	Depts        map[string]string
 	DeptsErr     error
@@ -51,8 +47,6 @@ func IsCallInput(target string) bool {
 	return target == CallInputDepts || target == CallInputAssignees || target == CallInputDeptID
 }
 
-// parseStringObject reads a JSON object of strings, written plain or, as the
-// Camunda properties panel writes an expression, with a leading "=".
 func parseStringObject(source string) (map[string]string, error) {
 	src := strings.TrimPrefix(strings.TrimSpace(source), "=")
 	var out map[string]string
@@ -62,7 +56,6 @@ func parseStringObject(source string) (map[string]string, error) {
 	return out, nil
 }
 
-// LaneNamed finds a lane of proc by name, ignoring case.
 func LaneNamed(proc *BPMNProcess, name string) *BPMNLane {
 	for i := range proc.LaneSet.Lanes {
 		if strings.EqualFold(proc.LaneSet.Lanes[i].Name, name) {
@@ -81,8 +74,6 @@ func LaneDeptID(lane *BPMNLane) string {
 	return ""
 }
 
-// WorkLanes returns the lanes of proc that hold work: a task, a callActivity
-// or a subProcess. Only these become departments of its plan.
 func WorkLanes(proc *BPMNProcess) []*BPMNLane {
 	work := map[string]bool{}
 	for _, t := range proc.UserTasks {
@@ -110,9 +101,6 @@ func WorkLanes(proc *BPMNProcess) []*BPMNLane {
 	return lanes
 }
 
-// OpenSlots names the departments of a called process that its caller binds:
-// every work lane with no dept_id of its own, or, for a laneless process, its
-// single implicit department, named by the process ID.
 func OpenSlots(proc *BPMNProcess) []string {
 	if len(proc.LaneSet.Lanes) == 0 {
 		return []string{ImplicitSlot(proc)}
@@ -126,8 +114,6 @@ func OpenSlots(proc *BPMNProcess) []string {
 	return open
 }
 
-// IsIgnored reports whether proc is an external pool: drawn for context, with
-// the zeebe property ignore=true, and never run.
 func IsIgnored(proc *BPMNProcess) bool {
 	for _, p := range proc.ExtensionElements.ZeebeProps.Items {
 		if p.Name == "ignore" && p.Value == "true" {
@@ -137,14 +123,10 @@ func IsIgnored(proc *BPMNProcess) bool {
 	return false
 }
 
-// IsIgnoredLane reports whether lane stands for an outside party, with the
-// zeebe property ignore=true: as with an ignored pool, its tasks never run.
 func IsIgnoredLane(lane *BPMNLane) bool {
 	return PropsMap(lane.ExtensionElements)["ignore"] == "true"
 }
 
-// SkippedTasks is the set of tasks in proc's ignored lanes: user, send and
-// receive tasks an outside party does, which compile to nothing.
 func SkippedTasks(proc *BPMNProcess, g *Graph) map[string]bool {
 	skipped := map[string]bool{}
 	for i := range proc.LaneSet.Lanes {
@@ -160,8 +142,6 @@ func SkippedTasks(proc *BPMNProcess, g *Graph) map[string]bool {
 	return skipped
 }
 
-// RunningProcesses is root and every process of defs it calls, directly or
-// through another call: the processes whose tasks run.
 func RunningProcesses(defs *BPMNDefinitions, root *BPMNProcess) []*BPMNProcess {
 	byID := map[string]*BPMNProcess{}
 	for i := range defs.Processes {
@@ -180,17 +160,11 @@ func RunningProcesses(defs *BPMNDefinitions, root *BPMNProcess) []*BPMNProcess {
 	return running
 }
 
-// ImplicitSlot names the one department of a process without lanes: its
-// process ID, without the "@v<n>" a bundled library module's plan name adds
-// ("@" cannot occur in an XML ID), so its tasks' node keys stay the same
-// across module versions.
 func ImplicitSlot(proc *BPMNProcess) string {
 	id, _, _ := strings.Cut(proc.ID, "@")
 	return id
 }
 
-// CalledPlans collects the plans of called processes during one compile, so
-// each is compiled once however many calls name it.
 type CalledPlans struct {
 	plans map[string]*dsl.CompiledPlan
 }
@@ -199,8 +173,6 @@ func NewCalledPlans() *CalledPlans {
 	return &CalledPlans{plans: map[string]*dsl.CompiledPlan{}}
 }
 
-// Claim reports whether id still needs compiling, and marks it claimed so a
-// call reached again while it compiles does not compile it twice.
 func (c *CalledPlans) Claim(id string) bool {
 	if _, ok := c.plans[id]; ok {
 		return false
@@ -211,10 +183,8 @@ func (c *CalledPlans) Claim(id string) bool {
 
 func (c *CalledPlans) Put(plan *dsl.CompiledPlan) { c.plans[plan.Name] = plan }
 
-// Get returns the compiled plan of id, or nil while it is still compiling.
 func (c *CalledPlans) Get(id string) *dsl.CompiledPlan { return c.plans[id] }
 
-// All returns the compiled plans ordered by name.
 func (c *CalledPlans) All() []*dsl.CompiledPlan {
 	var out []*dsl.CompiledPlan
 	for _, name := range slices.Sorted(maps.Keys(c.plans)) {

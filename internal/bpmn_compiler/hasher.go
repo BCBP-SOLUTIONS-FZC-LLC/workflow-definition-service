@@ -31,7 +31,6 @@ func canonicalHash(proc *bpmncore.BPMNProcess) (string, error) {
 	clone.BoundaryEvents = copySlice(proc.BoundaryEvents)
 	clone.CallActivities = copySlice(proc.CallActivities)
 	clone.DataStoreRefs = copySlice(proc.DataStoreRefs)
-	// Shallow copy is sufficient: canonicalHash never mutates sub-process internals.
 	clone.SubProcesses = copySlice(proc.SubProcesses)
 
 	for i := range clone.UserTasks {
@@ -53,9 +52,6 @@ func canonicalHash(proc *bpmncore.BPMNProcess) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// canonicalBundleHash keeps a single process's hash identical to canonicalHash
-// and orders several by (process id, process hash), so element order in the
-// XML is irrelevant even when two processes share an id.
 func canonicalBundleHash(procs []bpmncore.BPMNProcess) (string, error) {
 	if len(procs) == 1 {
 		return canonicalHash(&procs[0])

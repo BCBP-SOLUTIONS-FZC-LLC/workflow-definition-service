@@ -1,7 +1,6 @@
 package observability_test
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -9,9 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/obsregistry"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
@@ -21,21 +22,25 @@ import (
 // pool's internal puddle.Pool; connections are acquired lazily, so Stat()
 // works (reporting all-zero counts) without ever reaching Postgres. A
 // zero-value &pgxpool.Stat{} instead panics: its embedded *puddle.Stat is nil.
-func testPool(t *testing.T) *pgxpool.Pool {
+func initIdentity(t *testing.T) {
 	t.Helper()
-	pool, err := pgxpool.New(context.Background(), "postgres://user:pass@localhost:1/db")
+	log, err := logger.NewLogger("dev")
 	require.NoError(t, err)
-	t.Cleanup(pool.Close)
-	return pool
+	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{
+		Logger:       log,
+		ServiceName:  "workflow-definition-svc",
+		BuildVersion: "test",
+		Domain:       observability.Domain,
+		Environment:  "test",
+	})
+	observability.Register()
 }
 
-// scrape registers metrics and returns the default registry's /metrics body.
 func scrape(t *testing.T) string {
 	t.Helper()
+	initIdentity(t)
 
-	observability.Register("workflow-definition-service", "test", testPool(t))
-
-	srv := httptest.NewServer(promhttp.Handler())
+	srv := httptest.NewServer(gincommon.MetricsHandler())
 	t.Cleanup(srv.Close)
 
 	resp, err := http.Get(srv.URL) //nolint:noctx,gosec // test-only, fixed httptest URL
@@ -48,20 +53,9 @@ func scrape(t *testing.T) string {
 	return string(body)
 }
 
-// TestRegister_EveryMetricIsScrapable records one representative sample on
-// every metric, then confirms each appears in a scrape. A *Vec collector
-// with an open-ended label and zero recorded observations emits nothing at
-// all (not even HELP/TYPE) until something calls WithLabelValues — that's
-// normal client_golang behavior, not something Register should work around
-// — so this test proves scrapability the same way real call sites will
-// eventually trigger it, rather than asserting on incidental zero-value
-// output.
 func TestRegister_EveryMetricIsScrapable(t *testing.T) {
-	observability.Register("workflow-definition-service", "test", testPool(t))
+	initIdentity(t)
 
-	// Exercised through the same nil-safe helpers real call sites use, not
-	// the raw vars, so this also covers IncCounter/IncCounterVec/
-	// ObserveHistogram's non-nil branch.
 	observability.IncCounterVec(observability.WFSubmissionsTotal, "ok")
 	observability.IncCounterVec(observability.WFArchiveTotal, "ok")
 	observability.IncCounterVec(observability.WFPublishTotal, "ok")
@@ -77,22 +71,17 @@ func TestRegister_EveryMetricIsScrapable(t *testing.T) {
 	body := scrape(t)
 
 	metricNames := []string{
-		"wf_submissions_total",
-		"wf_archive_total",
-		"wf_publish_total",
-		"wf_clone_total",
-		"wf_promote_total",
-		"wf_validation_failures_total",
-		"wf_publish_latency_seconds",
-		"wf_compile_duration_seconds",
-		"wf_cache_hits_total",
-		"wf_cache_misses_total",
-		"internal_events_ingest_total",
-		// platform-pgcommon's own pool-stats collector, folded into Register.
-		// pgcommon_query_total et al. are CounterVecs with open-ended labels
-		// (operation, status) — like our own *Vec metrics, they emit nothing
-		// until something calls WithLabelValues, which no code path does here.
-		"pgcommon_pool_total_conns",
+		"workflow_definition_svc_submissions_total",
+		"workflow_definition_svc_archive_total",
+		"workflow_definition_svc_publish_total",
+		"workflow_definition_svc_clone_total",
+		"workflow_definition_svc_promote_total",
+		"workflow_definition_svc_validation_failures_total",
+		"workflow_definition_svc_publish_latency_seconds",
+		"workflow_definition_svc_compile_duration_seconds",
+		"workflow_definition_svc_cache_hits_total",
+		"workflow_definition_svc_cache_misses_total",
+		"workflow_definition_svc_internal_events_ingest_total",
 	}
 
 	for _, name := range metricNames {
@@ -100,11 +89,20 @@ func TestRegister_EveryMetricIsScrapable(t *testing.T) {
 	}
 }
 
+func TestRegister_FollowsObservabilityRegistry(t *testing.T) {
+	initIdentity(t)
+	observability.IncCounterVec(observability.WFPublishTotal, "ok")
+
+	rep, err := obsregistry.Validate(gincommon.MetricsGatherer(), obsregistry.Options{})
+	require.NoError(t, err)
+	require.Truef(t, rep.OK(), "registry findings: %+v", rep.Findings)
+}
+
 func TestRegister_IsIdempotent(t *testing.T) {
-	pool := testPool(t)
+	initIdentity(t)
 	require.NotPanics(t, func() {
-		observability.Register("workflow-definition-service", "test", pool)
-		observability.Register("workflow-definition-service", "test", pool)
+		observability.Register()
+		observability.Register()
 	})
 }
 

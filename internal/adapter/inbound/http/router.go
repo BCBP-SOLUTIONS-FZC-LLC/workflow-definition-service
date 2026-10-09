@@ -1,8 +1,3 @@
-// Package http's router.go is the single source of truth for this
-// service's HTTP surface: every path, method, middleware, and route group.
-// It mirrors execution_service's own router.go — cmd/server's job is to
-// construct dependencies and call NewRouter, not to encode routing
-// decisions itself.
 package http
 
 import (
@@ -22,15 +17,10 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-// Pinger is satisfied by any /readyz dependency that only needs a
-// healthy/unhealthy verdict. The composition root (cmd/server) supplies one
-// per dependency, so this package never imports platform-pgcommon directly.
 type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-// DBHealth is a decoupled copy of pgcommon.HealthStatus's fields /readyz
-// actually reports.
 type DBHealth struct {
 	Healthy       bool
 	Utilization   float64
@@ -38,9 +28,6 @@ type DBHealth struct {
 	MaxConns      int32
 }
 
-// DBPinger is Pinger's richer counterpart for the one /readyz dependency
-// (Postgres) whose response carries diagnostic numbers beyond a bare
-// healthy/unhealthy bit.
 type DBPinger interface {
 	Health(ctx context.Context) DBHealth
 }
@@ -63,9 +50,6 @@ type Router struct {
 
 func (r *Router) Handler() http.Handler { return r.engine }
 
-// NewRouter builds and wires every route this service exposes: the dev-only
-// swagger/AsyncAPI doc routes, the unauthenticated infra probes, and the
-// protected /internal + /api/v1 route groups.
 func NewRouter(cfg RouterConfig) *Router {
 	if cfg.AppEnv != "dev" {
 		gin.SetMode(gin.ReleaseMode)
@@ -75,7 +59,7 @@ func NewRouter(cfg RouterConfig) *Router {
 	idem := h.Idempotent
 
 	r := gin.New()
-	r.MaxMultipartMemory = 10 << 20 // 10 MB, matches LimitRequestBody middleware cap
+	r.MaxMultipartMemory = 10 << 20
 
 	r.Use(gincommon.TimeoutMiddleware(30 * time.Second))
 	for _, mw := range gincommon.ObservabilityMiddlewares(cfg.GinConfig) {
@@ -102,12 +86,6 @@ func NewRouter(cfg RouterConfig) *Router {
 		r.GET("/asyncapi", AsyncAPIHandler)
 	}
 
-	// Internal service-to-service routes, not exposed on the public gateway
-	// (api/internal-openapi.yaml). Each handler sets the RLS GUC from the
-	// tenant its request carries.
-	// Versioned under /api/v1/internal to match execution_service's own
-	// convention — event_consumer's forwarder targets one shared path shape
-	// across every service it forwards to.
 	internal := r.Group("/api/v1/internal")
 	internal.Use(httpmiddleware.RequireInternalToken(cfg.InternalAPIToken))
 	internal.POST("/events", h.HandleInternalEvent)

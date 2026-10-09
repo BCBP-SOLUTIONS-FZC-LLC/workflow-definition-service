@@ -30,9 +30,6 @@ func parseVersionTag(tag string) (int32, bool) {
 	return int32(n), true
 }
 
-// ModuleCalls lists the calls in bpmnXML that name a library module, in
-// document order, and reports calls that cannot (definition LLD §3.3.18). A
-// document that does not parse lists nothing; Validate or compile reports it.
 func (c *Compiler) ModuleCalls(ctx context.Context, bpmnXML string) ([]domain.ModuleCall, []domain.BPMNValidationError, error) {
 	defs, err := parse(ctx, bpmnXML)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -57,12 +54,10 @@ func (c *Compiler) ModuleCalls(ctx context.Context, bpmnXML string) ([]domain.Mo
 	return calls, issues, nil
 }
 
-// moduleCall judges ca, a call made by process callerID. A call pinning a
-// version of callerID itself names an earlier version of the same module.
 func moduleCall(ca bpmncore.BPMNCallActivity, callerID string, defs *bpmncore.BPMNDefinitions) (domain.ModuleCall, *domain.BPMNValidationError, bool) {
 	ext := ca.ExtensionElements.ZeebeCalledElement
 	if ext == nil || ext.ProcessID == "" {
-		return domain.ModuleCall{}, nil, false // ValidateCallActivity reports the missing calledElement
+		return domain.ModuleCall{}, nil, false
 	}
 	name := ca.Name
 	if name == "" {
@@ -102,10 +97,6 @@ func moduleCall(ca bpmncore.BPMNCallActivity, callerID string, defs *bpmncore.BP
 	}
 }
 
-// ValidateModule validates a bundled module document with the module's own
-// process as the root. Its open lanes are allowed and the diagram rules are
-// skipped, since a module runs only inside a workflow; a global module may
-// not name a user, because user ids belong to one tenant.
 func (c *Compiler) ValidateModule(ctx context.Context, bpmnXML, moduleProcessID string, global bool) ([]domain.BPMNValidationError, error) {
 	defs, err := parse(ctx, bpmnXML)
 	if errors.Is(err, errMissingNamespace) {
@@ -128,10 +119,6 @@ func (c *Compiler) ValidateModule(ctx context.Context, bpmnXML, moduleProcessID 
 	return errs, nil
 }
 
-// CompileModule compiles a bundled module document with the module's own
-// process as the root, judged as ValidateModule judges it and shaped as a call
-// compiles it, and returns the message names and error codes the bundle
-// declares.
 func (c *Compiler) CompileModule(ctx context.Context, bpmnXML, moduleProcessID string) (*dsl.CompiledCollaboration, domain.ModuleDeclarations, error) {
 	var none domain.ModuleDeclarations
 	errs, err := c.ValidateModule(ctx, bpmnXML, moduleProcessID, false)

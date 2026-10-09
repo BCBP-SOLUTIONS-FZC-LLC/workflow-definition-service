@@ -43,10 +43,8 @@ type WorkflowVersion struct {
 	ValidationErrorsJSON *string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
-	// RecordVersion is the optimistic-lock token bumped by the DB trigger on
-	// every real update; supplied by clients on draft update.
-	RecordVersion int64
-	ModuleRefs    []ModuleRef // the library module versions a published version resolved
+	RecordVersion        int64
+	ModuleRefs           []ModuleRef
 }
 
 type NodeAssignee struct {

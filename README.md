@@ -419,14 +419,14 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 **Observability.** `serviceMonitor.enabled: true` scrapes `/metrics` every 30s. Every alert in the `PrometheusRule` template (and its static twin at `deploy/monitoring/app-alerts.yml`) is verified against a metric actually emitted by this service or one of its vendored platform libraries:
 
 - **Availability** — no healthy scrape target for 2 minutes; replica count below the HA floor.
-- **HTTP errors/latency** — 5xx ratio and p99 latency (`http_requests_total`/`http_request_duration_seconds`).
+- **HTTP errors/latency** — 5xx ratio and p99 latency (`platform_http_requests_total`/`platform_http_request_duration_seconds`).
 - **Compiled-plan read error rate/latency** — the internal route's own 5xx ratio and p99, since this is the one call the Execution Service depends on synchronously.
-- **BPMN validation failure rate** — sustained activity on `wf_validation_failures_total` (emitted only by the standalone `/validate` endpoint).
-- **Publish latency and retry exhaustion** — p95 of `wf_publish_latency_seconds` exceeding 2s, and any increase in `pgcommon_retry_exhausted_total`.
+- **BPMN validation failure rate** — sustained activity on `workflow_definition_svc_validation_failures_total` (emitted only by the standalone `/validate` endpoint).
+- **Publish latency and retry exhaustion** — p95 of `workflow_definition_svc_publish_latency_seconds` exceeding 2s, and any increase in `platform_db_transaction_retries_exhausted_total`.
 - **Internal event ingest failures** — sustained `bad_payload`/`error` results on `POST /internal/events`.
-- **Postgres query error rate** — `pgcommon_query_total{status="error"}`.
+- **Postgres query error rate** — `platform_db_queries_total{outcome="error"}`.
 - **Panics** — any increase in `http_panic_total`, paged immediately.
-- **Compiled-plan cache hit ratio** (informational) — `wf_cache_hits_total`/`wf_cache_misses_total`, not an incident trigger.
+- **Compiled-plan cache hit ratio** (informational) — `workflow_definition_svc_cache_hits_total`/`workflow_definition_svc_cache_misses_total`, not an incident trigger.
 
 **Row-level security violation alerting is intentionally not implemented.** There is no `rls_violations_total` metric anywhere in this service or `platform-pgcommon` — the `rls_violation_log` table is populated by DB triggers, not application code, and nothing currently exports it to Prometheus. Flagged here as a known gap rather than shipped as a dead alert.
 

@@ -75,9 +75,6 @@ func (c *Compiler) Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNV
 	return append(callGraphErrs, c.validateSingleRoot(bpmnXML, root, defs)...), nil
 }
 
-// ValidateForPublish is Validate plus what only the compiled plan, with its
-// calls expanded, shows and publish refuses: the task limit and a task no one
-// is named for. A document with a blocking error gets Validate's answer alone.
 func (c *Compiler) ValidateForPublish(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error) {
 	errs, err := c.Validate(ctx, bpmnXML)
 	if err != nil || slices.ContainsFunc(errs, isBlocking) {
@@ -96,16 +93,10 @@ func (c *Compiler) ValidateForPublish(ctx context.Context, bpmnXML string) ([]do
 
 func isBlocking(e domain.BPMNValidationError) bool { return e.Severity != domain.SeverityWarning }
 
-// withoutCode drops code's warnings: the expanded plan's own check replaces
-// the per-document CANDIDATE_USERS_EMPTY warning once a workflow is judged
-// for publish, since a call may name the user the module leaves out.
 func withoutCode(errs []domain.BPMNValidationError, code domain.BPMNErrorCode) []domain.BPMNValidationError {
 	return slices.DeleteFunc(errs, func(e domain.BPMNValidationError) bool { return e.Code == code && !isBlocking(e) })
 }
 
-// validateSingleRoot runs every check a single-root BPMN must pass apart from
-// ValidateCallGraph, which callers run first because it also explains a
-// MULTIPLE_PROCESSES caused by a duplicated process id.
 func (c *Compiler) validateSingleRoot(bpmnXML string, proc *bpmncore.BPMNProcess, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
 	g := bpmncore.BuildGraph(proc)
 	implicitStart := ""
@@ -123,9 +114,6 @@ func (c *Compiler) Compile(ctx context.Context, bpmnXML string) (*dsl.CompiledPl
 	return plan, err
 }
 
-// CompileForPublish is CompileDraft plus the rules only a published version
-// must meet: every task has a default user and runs in an IAM department, and
-// the expanded plan is within the task limit.
 func (c *Compiler) CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error) {
 	collab, root, err := c.compileCollaboration(ctx, bpmnXML)
 	if err != nil {
@@ -140,9 +128,6 @@ func (c *Compiler) CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.
 	return collab, nil
 }
 
-// CompileDraft compiles the document's one runnable pool, in the shape the
-// Execution Service decodes, with the document's structural rules only, so a
-// draft can be compared before it is publishable.
 func (c *Compiler) CompileDraft(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error) {
 	collab, _, err := c.compileCollaboration(ctx, bpmnXML)
 	return collab, err
@@ -163,10 +148,6 @@ func (c *Compiler) compileCollaboration(ctx context.Context, bpmnXML string) (*d
 	}, root, nil
 }
 
-// lanelessWork refuses every piece of work in a workflow with no lanes: none
-// of it, a call's module included, would run in an IAM department (code 35).
-// It is judged on the document, before expansion, which such a workflow's
-// boundaries cannot pass.
 func lanelessWork(root *bpmncore.BPMNProcess) []domain.BPMNValidationError {
 	if len(root.LaneSet.Lanes) > 0 {
 		return nil
@@ -197,9 +178,6 @@ func lanelessWork(root *bpmncore.BPMNProcess) []domain.BPMNValidationError {
 	return errs
 }
 
-// unplacedTasks reports each human task of the expanded plan that runs in no
-// IAM department: nobody could be checked eligible for it (code 35). The error
-// is on the task, or on the top-level call that runs it.
 func unplacedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, d := range plan.Departments {
@@ -218,10 +196,6 @@ func unplacedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 	return errs
 }
 
-// checkExpanded expands collab's calls the way both services will, and
-// refuses a plan whose stages and calls exceed the task limit (definition LLD
-// §3.1.4 code 9), or that has a human task with no default user (code 8) or
-// in no IAM department (code 35).
 func checkExpanded(collab *dsl.CompiledCollaboration, rootID string) error {
 	expanded, err := expand(collab, rootID)
 	if err != nil {
@@ -234,8 +208,6 @@ func checkExpanded(collab *dsl.CompiledCollaboration, rootID string) error {
 	return nil
 }
 
-// compileFailure reports a compile that ran over the stage budget as
-// TASK_LIMIT_EXCEEDED on the root, and wraps any other failure as op's.
 func compileFailure(op, rootID string, err error) error {
 	if errors.Is(err, bpmncore.ErrStageBudget) {
 		return &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
@@ -248,8 +220,6 @@ func compileFailure(op, rootID string, err error) error {
 	return fmt.Errorf("%s: %w", op, err)
 }
 
-// expand runs ExpandCalls within the task limit, reporting a plan over it as
-// TASK_LIMIT_EXCEEDED on the root.
 func expand(collab *dsl.CompiledCollaboration, rootID string) (*dsl.CompiledCollaboration, error) {
 	expanded, err := dsl.ExpandCalls(collab, validator.MaxUserTasks)
 	if errors.Is(err, dsl.ErrPlanTooLarge) {
@@ -266,8 +236,6 @@ func expand(collab *dsl.CompiledCollaboration, rootID string) (*dsl.CompiledColl
 	return expanded, nil
 }
 
-// authoredNode is the element a stage's author can fix: the task itself, or,
-// for a task inside a module, the workflow's top-level call that runs it.
 func authoredNode(d dsl.DepartmentDef, s dsl.StageDef) string {
 	if call, _, inModule := strings.Cut(d.ID, dsl.CallScopeSeparator); inModule {
 		return call
@@ -275,9 +243,6 @@ func authoredNode(d dsl.DepartmentDef, s dsl.StageDef) string {
 	return s.NodeID
 }
 
-// unassignedTasks reports each human task of the expanded main plan that
-// names no default user, on the element its author can fix: the task itself,
-// or, for a task inside a module, the top-level call that runs it.
 func unassignedTasks(plan *dsl.CompiledPlan) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, d := range plan.Departments {
@@ -325,9 +290,6 @@ func (c *Compiler) compileSingleRoot(ctx context.Context, bpmnXML string) (plan 
 	return plan, called, root, nil
 }
 
-// runnableRoot is the one process a document runs: in a collaboration, the
-// pool that is executable, not marked ignore and not called. Every other pool
-// is external and produces nothing; a called process runs as a module.
 func runnableRoot(defs *bpmncore.BPMNDefinitions) (*bpmncore.BPMNProcess, *domain.BPMNValidationError) {
 	roots := executableProcesses(defs)
 	switch len(roots) {
@@ -347,11 +309,6 @@ func runnableRoot(defs *bpmncore.BPMNDefinitions) (*bpmncore.BPMNProcess, *domai
 	}
 }
 
-// executableProcesses returns the root entry-point processes to compile: the
-// executable processes that are neither external pools (ignore=true) nor
-// called by another process. An external pool's calls are drawn, never made,
-// so they do not count. A document with one process runs it unless it
-// is marked ignore.
 func executableProcesses(defs *bpmncore.BPMNDefinitions) []*bpmncore.BPMNProcess {
 	if len(defs.Processes) == 1 {
 		if bpmncore.IsIgnored(&defs.Processes[0]) {
@@ -380,8 +337,6 @@ func executableProcesses(defs *bpmncore.BPMNDefinitions) []*bpmncore.BPMNProcess
 	return out
 }
 
-// hasBlockingErrors treats an unset Severity as blocking too, for callers
-// that predate the Severity field.
 func hasBlockingErrors(errs []domain.BPMNValidationError) bool {
 	for _, e := range errs {
 		if e.Severity != domain.SeverityWarning {

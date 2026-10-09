@@ -6,9 +6,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-// The optional outbound clients are nil interfaces when unset, never a nil
-// pointer inside one, so a service's nil check skips them.
-
 func newExecutionService(cfg *config.Config) port.ExecutionService {
 	if cfg.ExecutionServiceURL == "" {
 		return nil

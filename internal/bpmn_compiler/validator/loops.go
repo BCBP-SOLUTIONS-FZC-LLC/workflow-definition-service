@@ -43,10 +43,6 @@ func ValidateLoops(g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPM
 	return errs
 }
 
-// isExternallyGuardedLoopSource reports whether a back-edge sourced at this
-// node type is gated by something outside the sequence-flow graph (a receive
-// task's inbound message), so it needs no exclusive gateway to be considered
-// terminable.
 func isExternallyGuardedLoopSource(t bpmncore.FlowNodeType) bool {
 	return t == bpmncore.NodeTypeReceiveTask
 }

@@ -33,7 +33,7 @@ func TestLoad_Success(t *testing.T) {
 	}()
 
 	_ = os.Setenv("DATABASE_URL", "postgres://localhost:5432/test")
-	_ = os.Setenv("APP_ENV", "production")
+	_ = os.Setenv("APP_ENV", "staging")
 	_ = os.Setenv("BUILD_VERSION", "v1.2.3")
 	_ = os.Setenv("HTTP_PORT", "9000")
 	_ = os.Setenv("OTEL_SERVICE_NAME", "custom-service")
@@ -58,8 +58,8 @@ func TestLoad_Success(t *testing.T) {
 	if cfg.DatabaseURL != "postgres://localhost:5432/test" {
 		t.Errorf("DatabaseURL = %q, want postgres://localhost:5432/test", cfg.DatabaseURL)
 	}
-	if cfg.AppEnv != "production" {
-		t.Errorf("AppEnv = %q, want production", cfg.AppEnv)
+	if cfg.AppEnv != "staging" {
+		t.Errorf("AppEnv = %q, want staging", cfg.AppEnv)
 	}
 	if cfg.BuildVersion != "v1.2.3" {
 		t.Errorf("BuildVersion = %q, want v1.2.3", cfg.BuildVersion)
@@ -133,6 +133,12 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		wantErrVar string
 	}{
 		{
+			name:       "app env outside the observability registry set",
+			env:        map[string]string{"DATABASE_URL": "postgres://localhost", "APP_ENV": "production"},
+			wantErr:    true,
+			wantErrVar: "APP_ENV",
+		},
+		{
 			name:    "missing database url",
 			env:     map[string]string{"DATABASE_URL": ""},
 			wantErr: true,
@@ -140,7 +146,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		{
 			name: "valid in non-dev with every required setting",
 			env: map[string]string{
-				"DATABASE_URL": "postgres://localhost", "APP_ENV": "production",
+				"DATABASE_URL": "postgres://localhost", "APP_ENV": "staging",
 				"INTERNAL_API_TOKEN":      "t",
 				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
 			},
@@ -150,7 +156,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			name: "missing org membership url in non-dev",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost",
-				"APP_ENV":      "production", "INTERNAL_API_TOKEN": "t",
+				"APP_ENV":      "staging", "INTERNAL_API_TOKEN": "t",
 				"ORG_MEMBERSHIP_BASE_URL": "", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
 			},
 			wantErr:    true,
@@ -160,7 +166,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			name: "missing execution url in non-dev",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost",
-				"APP_ENV":      "production", "INTERNAL_API_TOKEN": "t",
+				"APP_ENV":      "staging", "INTERNAL_API_TOKEN": "t",
 				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "", "EXECUTION_SERVICE_TOKEN": "t",
 			},
 			wantErr:    true,
@@ -170,7 +176,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			name: "missing execution token in non-dev",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost",
-				"APP_ENV":      "production", "INTERNAL_API_TOKEN": "t",
+				"APP_ENV":      "staging", "INTERNAL_API_TOKEN": "t",
 				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "",
 			},
 			wantErr:    true,

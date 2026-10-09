@@ -11,12 +11,10 @@ import (
 )
 
 type StarterDeps struct {
-	Starters       port.StarterTemplateRepository
-	GlobalStarters port.StarterTemplateRepository
-	Versions       port.WorkflowVersionRepository
-	Compiler       port.PlanCompiler
-	// ModuleVersions and GlobalModuleVersions resolve the library modules a
-	// tenant or global starter calls.
+	Starters             port.StarterTemplateRepository
+	GlobalStarters       port.StarterTemplateRepository
+	Versions             port.WorkflowVersionRepository
+	Compiler             port.PlanCompiler
 	ModuleVersions       port.ModuleVersionRepository
 	GlobalModuleVersions port.ModuleVersionRepository
 	Log                  port.Logger
