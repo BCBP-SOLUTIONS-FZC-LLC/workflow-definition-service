@@ -63,7 +63,7 @@ func TestValidate_XOR_LoopWithAllTerminateBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
 	}
-	if len(errs) != 0 {
+	if len(blockingErrors(errs)) != 0 {
 		t.Errorf("expected valid BPMN with guarded loop; got errors: %v", errCodes(errs))
 	}
 }
@@ -184,7 +184,7 @@ func TestValidate_XOR_EarlyExitBranchWithJoin_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
 	}
-	if len(errs) != 0 {
+	if len(blockingErrors(errs)) != 0 {
 		t.Errorf("expected valid BPMN with early-exit branch; got errors: %v", errCodes(errs))
 	}
 }

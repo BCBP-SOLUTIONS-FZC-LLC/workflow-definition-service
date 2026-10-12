@@ -34,7 +34,7 @@ func ValidateSingleOutgoing(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backE
 func singleOutgoingErrors(g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
 	ids := make([]string, 0, len(g.NodeType))
 	for id, kind := range g.NodeType {
-		if _, ok := singleOutgoingKinds[kind]; ok {
+		if _, ok := singleOutgoingKinds[kind]; ok || kind == bpmncore.NodeTypeEndEvent {
 			ids = append(ids, id)
 		}
 	}
@@ -42,6 +42,13 @@ func singleOutgoingErrors(g *bpmncore.Graph, backEdges map[[2]string]bool) []dom
 
 	var errs []domain.BPMNValidationError
 	for _, id := range ids {
+		if g.NodeType[id] == bpmncore.NodeTypeEndEvent {
+			if forwardOutCount(id, g, backEdges) > 0 {
+				errs = AppendErr(errs, domain.BPMNErrEndEventWithOutgoingFlow, id,
+					"end event has an outgoing flow; nothing runs after an end event, so remove the flow or end the path elsewhere")
+			}
+			continue
+		}
 		if n := forwardOutCount(id, g, backEdges); n > 1 {
 			errs = AppendErr(errs, domain.BPMNErrSplitWithoutGateway, id,
 				fmt.Sprintf("%s has %d outgoing flows; a flow splits only at a gateway, so give it one outgoing flow and branch with a parallel, exclusive or inclusive gateway", singleOutgoingKinds[g.NodeType[id]], n))

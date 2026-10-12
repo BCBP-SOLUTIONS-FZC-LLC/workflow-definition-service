@@ -18,16 +18,14 @@ func ValidateLoops(g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPM
 				"self-loop is not allowed; model a loop via an exclusive gateway")
 			continue
 		}
-		switch t := g.NodeType[src]; {
-		case t == bpmncore.NodeTypeExclusiveGateway:
-			if _, ok := bpmncore.FirstForward(src, g, backEdges); !ok {
-				errs = AppendErr(errs, domain.BPMNErrUnguardedLoop, src,
-					"exclusive gateway has no forward exit branch; loop cannot terminate")
-			}
-		case isExternallyGuardedLoopSource(t):
-		default:
+		if g.NodeType[src] != bpmncore.NodeTypeExclusiveGateway {
 			errs = AppendErr(errs, domain.BPMNErrUnguardedLoop, src,
 				"back-edge (revert flow) must originate at an exclusive gateway")
+			continue
+		}
+		if _, ok := bpmncore.FirstForward(src, g, backEdges); !ok {
+			errs = AppendErr(errs, domain.BPMNErrUnguardedLoop, src,
+				"exclusive gateway has no forward exit branch; loop cannot terminate")
 		}
 	}
 
@@ -41,10 +39,6 @@ func ValidateLoops(g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPM
 		}
 	}
 	return errs
-}
-
-func isExternallyGuardedLoopSource(t bpmncore.FlowNodeType) bool {
-	return t == bpmncore.NodeTypeReceiveTask
 }
 
 func sccHasGuardedExit(scc []string, g *bpmncore.Graph) bool {

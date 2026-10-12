@@ -20,25 +20,11 @@ func (SubProcessHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *
 		return nil
 	}
 
-	errorIDs := make(map[string]struct{}, len(defs.Errors))
-	for _, e := range defs.Errors {
-		errorIDs[e.ID] = struct{}{}
-	}
-
 	inner := bpmncore.SubProcToProcess(sp)
 	innerG := bpmncore.BuildGraph(inner)
 	var errs []domain.BPMNValidationError
 	errs = append(errs, validator.AnchorOn(sp.ID, validator.Validate(inner, innerG, stageTypes, elements, defs))...)
 
-	for _, be := range proc.BoundaryEvents {
-		if be.AttachedToRef != sp.ID || be.Error == nil || be.Error.ErrorRef == "" {
-			continue
-		}
-		if _, ok := errorIDs[be.Error.ErrorRef]; !ok {
-			errs = validator.AppendErr(errs, domain.BPMNErrInvalidBoundaryAttachment, be.ID,
-				fmt.Sprintf("error boundary event errorRef %q does not reference a known bpmn:error element", be.Error.ErrorRef))
-		}
-	}
 	return errs
 }
 

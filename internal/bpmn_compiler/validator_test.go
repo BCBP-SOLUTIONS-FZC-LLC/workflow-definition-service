@@ -484,7 +484,7 @@ func TestValidateConditionExprs_TooLong(t *testing.T) {
 	g := &bpmncore.Graph{
 		Outgoing: map[string][]string{"GW_split": {"TaskA", "TaskB"}},
 	}
-	errs := validator.ValidateConditionExprs(proc, g)
+	errs := validator.ValidateConditionExprs(proc, g, nil)
 	if !hasCodeIn(errs, domain.BPMNErrInvalidConditionExpression) {
 		t.Errorf("expected INVALID_CONDITION_EXPRESSION for over-long conditionExpression; got %v", errCodesOf(errs))
 	}
@@ -658,7 +658,7 @@ func TestValidateConditionExprs_SingleOutflow_Skipped(t *testing.T) {
 		},
 	}
 	g := &bpmncore.Graph{Outgoing: map[string][]string{"T1": {"E1"}}}
-	if errs := validator.ValidateConditionExprs(proc, g); len(errs) != 0 {
+	if errs := validator.ValidateConditionExprs(proc, g, nil); len(errs) != 0 {
 		t.Errorf("expected no error for single-outflow source; got %v", errs)
 	}
 }
@@ -670,7 +670,7 @@ func TestValidateConditionExprs_NoConditionExpression(t *testing.T) {
 		},
 	}
 	g := &bpmncore.Graph{Outgoing: map[string][]string{"GW1": {"T1", "T2"}}}
-	if errs := validator.ValidateConditionExprs(proc, g); len(errs) != 0 {
+	if errs := validator.ValidateConditionExprs(proc, g, nil); len(errs) != 0 {
 		t.Errorf("expected no error when conditionExpression is absent; got %v", errs)
 	}
 }

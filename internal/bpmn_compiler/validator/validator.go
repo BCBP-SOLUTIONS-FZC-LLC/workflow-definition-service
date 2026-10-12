@@ -37,15 +37,17 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 	}
 	errs = append(errs, ValidateLaneNames(proc)...)
 	errs = append(errs, ValidateNoNestedSubProcess(proc)...)
+	errs = append(errs, ValidateDuplicateIDs(proc)...)
 	errs = append(errs, ValidateSeqFlowRefs(proc, g)...)
 	errs = append(errs, ValidateDanglingNodes(proc, g, implicitStart)...)
 	errs = append(errs, ValidateReachability(proc, g, implicitStart)...)
 	errs = append(errs, ValidateLoops(g, backEdges)...)
 	errs = append(errs, ValidateGatewayMatching(proc, g, backEdges)...)
 	errs = append(errs, ValidateSingleOutgoing(proc, g, backEdges)...)
-	errs = append(errs, ValidateConditionExprs(proc, g)...)
+	errs = append(errs, ValidateConditionExprs(proc, g, backEdges)...)
 	errs = append(errs, ValidateBoundaryEvents(proc, g, backEdges)...)
 	errs = append(errs, ValidateMessageBoundaryNames(proc, defs)...)
+	errs = append(errs, ValidateErrorBoundaryRefs(proc, defs)...)
 	errs = append(errs, ValidateIgnoredLanes(proc, g, backEdges)...)
 	errs = append(errs, validatePerElement(proc, g, stageTypes, elements, defs)...)
 
@@ -89,6 +91,7 @@ func validatePerElement(
 
 	if h, ok := elements[bpmncore.NodeTypeSubProcess]; ok {
 		for _, sp := range proc.SubProcesses {
+			errs = append(errs, ValidateLaneMembership(sp.ID, laneRefs)...)
 			errs = append(errs, h.Validate(sp.ID, proc, g, defs, stageTypes, elements)...)
 		}
 	}

@@ -32,6 +32,7 @@ func ValidateMessageBoundaryNames(proc *bpmncore.BPMNProcess, defs *bpmncore.BPM
 
 func ValidateBoundaryEvents(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
 	timerCountByHost := make(map[string]int)
+	messageCountByHost := make(map[string]int)
 	var errs []domain.BPMNValidationError
 	for _, be := range proc.BoundaryEvents {
 		if _, ok := g.NodeIDs[be.AttachedToRef]; !ok {
@@ -44,13 +45,60 @@ func ValidateBoundaryEvents(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backE
 		if skip {
 			continue
 		}
+		errs = append(errs, validateBoundaryHost(be, g)...)
 		if be.Timer != nil {
 			errs = append(errs, validateTimerBoundary(be, timerCountByHost)...)
+		}
+		if be.Message != nil {
+			errs = append(errs, validateMessageBoundaryCount(be, messageCountByHost)...)
 		}
 		if be.Error != nil {
 			errs = append(errs, validateErrorBoundary(be, g)...)
 		}
+		if n := forwardOutCount(be.ID, g, backEdges); n > 1 {
+			errs = AppendErr(errs, domain.BPMNErrSplitWithoutGateway, be.ID,
+				fmt.Sprintf("boundary event has %d outgoing flows; its path continues along one flow, so branch with a gateway after its first task", n))
+		}
 		errs = append(errs, validateBoundaryTarget(be, proc, g, backEdges)...)
+	}
+	return errs
+}
+
+func validateBoundaryHost(be bpmncore.BPMNBoundaryEvent, g *bpmncore.Graph) []domain.BPMNValidationError {
+	host := g.NodeType[be.AttachedToRef]
+	switch {
+	case be.Error != nil:
+		return nil
+	case host == bpmncore.NodeTypeUserTask, host == bpmncore.NodeTypeSubProcess, host == bpmncore.NodeTypeCallActivity:
+		return nil
+	}
+	return AppendErr(nil, domain.BPMNErrInvalidBoundaryAttachment, be.ID,
+		fmt.Sprintf("timer and message boundary events attach to a userTask, subProcess or callActivity, not to node %q", be.AttachedToRef))
+}
+
+func validateMessageBoundaryCount(be bpmncore.BPMNBoundaryEvent, countByHost map[string]int) []domain.BPMNValidationError {
+	countByHost[be.AttachedToRef]++
+	if countByHost[be.AttachedToRef] > 1 {
+		return AppendErr(nil, domain.BPMNErrInvalidBoundaryAttachment, be.ID,
+			fmt.Sprintf("node %q already has a message boundary event; only one is allowed", be.AttachedToRef))
+	}
+	return nil
+}
+
+func ValidateErrorBoundaryRefs(proc *bpmncore.BPMNProcess, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
+	known := make(map[string]struct{}, len(defs.Errors))
+	for _, e := range defs.Errors {
+		known[e.ID] = struct{}{}
+	}
+	var errs []domain.BPMNValidationError
+	for _, be := range proc.BoundaryEvents {
+		if be.Error == nil || be.Error.ErrorRef == "" {
+			continue
+		}
+		if _, ok := known[be.Error.ErrorRef]; !ok {
+			errs = AppendErr(errs, domain.BPMNErrInvalidBoundaryAttachment, be.ID,
+				fmt.Sprintf("error boundary event errorRef %q does not reference a known bpmn:error element", be.Error.ErrorRef))
+		}
 	}
 	return errs
 }
