@@ -499,3 +499,16 @@ func TestValidate_ExpandedPlanOverTaskLimit_IsRejected(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_MainProcessNamedLikeACalledProcess_IsRefusedNotLeftToFailAtPublish(t *testing.T) {
+	bpmnXML := callerBPMN("Process_Main", "Main", moduleWithTask("Main", validCandidateUser))
+
+	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !hasCode(errs, domain.BPMNErrDuplicateProcessID) {
+		t.Errorf("errors = %v, want DUPLICATE_PROCESS_ID: the main plan is named Main and so is the called plan", errCodes(errs))
+	}
+	assertCompileRefusedWith(t, bpmnXML, domain.BPMNErrDuplicateProcessID)
+}

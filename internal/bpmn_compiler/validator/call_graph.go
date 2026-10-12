@@ -53,6 +53,7 @@ func ValidateCallGraph(defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationEr
 			visit(&defs.Processes[i])
 		}
 	}
+	errs = append(errs, validatePlanNameClash(defs, isCalled)...)
 	return append(errs, validateExpandedSize(defs, expandedSize, isCalled, calls)...)
 }
 
@@ -116,4 +117,20 @@ func calledProcess(ca bpmncore.BPMNCallActivity, defs *bpmncore.BPMNDefinitions)
 		return nil
 	}
 	return bpmncore.FindProcessByID(defs, ext.ProcessID)
+}
+
+func validatePlanNameClash(defs *bpmncore.BPMNDefinitions, isCalled map[string]bool) []domain.BPMNValidationError {
+	ids := make(map[string]bool, len(defs.Processes))
+	for _, p := range defs.Processes {
+		ids[p.ID] = true
+	}
+	var errs []domain.BPMNValidationError
+	for _, p := range defs.Processes {
+		if isCalled[p.ID] || p.Name == "" || p.Name == p.ID || !ids[p.Name] {
+			continue
+		}
+		errs = AppendErr(errs, domain.BPMNErrDuplicateProcessID, p.ID,
+			fmt.Sprintf("the main process is named %q, which is also the id of another process in this file; a plan is named by the process name for the main process and by the id for a called one, so rename one of them", p.Name))
+	}
+	return errs
 }
