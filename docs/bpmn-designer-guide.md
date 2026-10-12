@@ -247,6 +247,7 @@ These are checked on every upload. Breaking them causes rejection.
 | A boundary event has one outgoing flow, sits on a user task, sub-process or call (an error boundary on a sub-process or call), and a task has at most one timer and one message boundary | `INVALID_BOUNDARY_ATTACHMENT`, `SPLIT_WITHOUT_GATEWAY` |
 | An end event has no outgoing flow | `END_EVENT_WITH_OUTGOING_FLOW` |
 | Element ids are unique within a process | `DUPLICATE_ELEMENT_ID` |
+| A task's `dueDate` and `followUpDate` are RFC 3339 date-times, such as `2026-10-12T09:00:00Z` | `INVALID_TASK_SCHEDULE` |
 | An exclusive split has a condition on every flow but one | `GATEWAY_BRANCH_WITHOUT_CONDITION` (warning) |
 | A revert flow starts at an exclusive gateway, never at a receive task (a receive task may be the place a revert returns to) | `UNGUARDED_LOOP` |
 | Diagram block present (Camunda Modeler adds this) | `MISSING_DIAGRAM` |
