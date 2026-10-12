@@ -318,6 +318,43 @@ func TestWorkflowVersionRepo_Publish_DraftEditedAfterRead_ReturnsDraftConcurrenc
 	}
 }
 
+func TestWorkflowVersionRepo_UpdateDraft_UnchangedSaveKeepsRecordVersionInSync(t *testing.T) {
+	pool := newTestPool(t)
+	wfRepo := postgres.NewWorkflowRepo(pool)
+	vRepo := postgres.NewWorkflowVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	wf := &domain.Workflow{
+		ID: uuid.New(), TenantID: tenantID,
+		CreatedByUserID: uuid.New(), BusinessKey: "wv-noop-save", Name: "X",
+	}
+	if err := wfRepo.Create(ctx, wf); err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	draft := newDraftVersion(wf.ID, tenantID)
+	if err := vRepo.Create(ctx, draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+	held, err := vRepo.GetByID(ctx, tenantID, draft.ID)
+	if err != nil {
+		t.Fatalf("read draft: %v", err)
+	}
+
+	for save := 1; save <= 2; save++ {
+		if err := vRepo.UpdateDraft(ctx, held); err != nil {
+			t.Fatalf("save %d of unchanged draft: %v", save, err)
+		}
+		stored, err := vRepo.GetByID(ctx, tenantID, draft.ID)
+		if err != nil {
+			t.Fatalf("read after save %d: %v", save, err)
+		}
+		if held.RecordVersion != stored.RecordVersion {
+			t.Fatalf("after save %d the caller holds record_version %d but the row has %d", save, held.RecordVersion, stored.RecordVersion)
+		}
+	}
+}
+
 func TestWorkflowVersionRepo_Publish_NotDraft(t *testing.T) {
 	pool := newTestPool(t)
 	vRepo := postgres.NewWorkflowVersionRepo(pool)

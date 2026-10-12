@@ -36,7 +36,7 @@ OFFSET $4;
 -- name: CountVersionsByWorkflow :one
 SELECT COUNT(*) FROM workflow_version WHERE tenant_id = $1 AND workflow_id = $2;
 
--- name: UpdateDraftVersion :execresult
+-- name: UpdateDraftVersion :one
 -- updated_at and record_version are bumped by the update_meta_columns trigger.
 -- The record_version predicate ($8) is the optimistic-lock guard; 0 rows means
 -- not-found, wrong-status, or a concurrent write (disambiguated by the repo).
@@ -46,7 +46,8 @@ SET bpmn_xml               = $3,
     artifact_hash           = $5,
     is_valid                = $6,
     validation_errors_json  = $7
-WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT' AND record_version = $8;
+WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT' AND record_version = $8
+RETURNING record_version;
 
 -- name: PublishVersion :execresult
 UPDATE workflow_version

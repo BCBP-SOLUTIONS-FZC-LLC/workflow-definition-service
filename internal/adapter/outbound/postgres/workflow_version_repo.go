@@ -3,9 +3,11 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
@@ -124,7 +126,7 @@ func (r *WorkflowVersionRepo) ListByWorkflow(
 
 func (r *WorkflowVersionRepo) UpdateDraft(ctx context.Context, v *domain.WorkflowVersion) error {
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		tag, err := db.New(dbtx).UpdateDraftVersion(ctx, db.UpdateDraftVersionParams{
+		recordVersion, err := db.New(dbtx).UpdateDraftVersion(ctx, db.UpdateDraftVersionParams{
 			TenantID:             v.TenantID,
 			ID:                   v.ID,
 			BpmnXml:              v.BPMNXML,
@@ -134,13 +136,13 @@ func (r *WorkflowVersionRepo) UpdateDraft(ctx context.Context, v *domain.Workflo
 			ValidationErrorsJson: toNullableJSONB(v.ValidationErrorsJSON),
 			RecordVersion:        v.RecordVersion,
 		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return statusOrNotFoundOrConcurrency(ctx, dbtx, v.TenantID, v.ID)
+		}
 		if err != nil {
 			return mapErr(err)
 		}
-		if tag.RowsAffected() == 0 {
-			return statusOrNotFoundOrConcurrency(ctx, dbtx, v.TenantID, v.ID)
-		}
-		v.RecordVersion++
+		v.RecordVersion = recordVersion
 		return nil
 	})
 }
