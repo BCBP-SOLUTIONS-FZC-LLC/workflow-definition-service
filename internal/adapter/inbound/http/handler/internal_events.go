@@ -57,7 +57,7 @@ func (h *Handler) acknowledgeUnknownEventType(c *gin.Context, eventType string) 
 	if h.log != nil {
 		h.log.Info("internal events: ignoring unhandled type", map[string]any{"event_type": eventType})
 	}
-	observability.IncCounterVec(observability.InternalEventsIngestTotal, eventType, "ok")
+	observability.IncCounterVec(observability.InternalEventsIngestTotal, "unknown", "ok")
 	c.Status(http.StatusOK)
 }
 

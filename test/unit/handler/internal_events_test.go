@@ -11,9 +11,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/unit/testkit"
 )
 
@@ -215,4 +221,24 @@ func TestInternalEvents_InvalidPayloadJSON_400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.False(t, rev.called)
+}
+
+func TestInternalEvents_UnknownTypes_ShareOneMetricLabel(t *testing.T) {
+	log, err := logger.NewLogger("dev")
+	require.NoError(t, err)
+	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{
+		Logger: log, ServiceName: "workflow-definition-service", BuildVersion: "test",
+		Domain: observability.Domain, Environment: "test",
+	})
+	observability.Register()
+	observability.InternalEventsIngestTotal.Reset()
+
+	for _, eventType := range []string{"SomethingNew", "SomethingElse", "x"} {
+		w := postEvent(&fakeMembershipRevoker{}, envelope(eventType, ieEventID.String(), ieTenantID.String(), map[string]string{}))
+		require.Equal(t, http.StatusOK, w.Code)
+	}
+
+	assert.Equal(t, 1, testutil.CollectAndCount(observability.InternalEventsIngestTotal),
+		"event types an outside producer chooses must not become metric series")
+	assert.Equal(t, float64(3), testutil.ToFloat64(observability.InternalEventsIngestTotal.WithLabelValues("unknown", "ok")))
 }
