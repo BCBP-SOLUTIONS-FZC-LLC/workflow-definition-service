@@ -66,6 +66,10 @@ func ValidateNoNestedSubProcess(proc *bpmncore.BPMNProcess) []domain.BPMNValidat
 			errs = AppendErr(errs, domain.BPMNErrNestedSubProcessNotSupported, nested.ID,
 				fmt.Sprintf("subProcess %q contains a nested subProcess %q which is not supported", sp.ID, nested.ID))
 		}
+		for _, call := range sp.CallActivities {
+			errs = AppendErr(errs, domain.BPMNErrUnsupportedElement, call.ID,
+				fmt.Sprintf("subProcess %q contains the callActivity %q; a call is made from the main flow, not from inside a sub-process", sp.ID, call.ID))
+		}
 	}
 	return errs
 }

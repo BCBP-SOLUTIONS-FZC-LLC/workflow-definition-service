@@ -146,6 +146,7 @@ type BPMNSubProcess struct {
 	SequenceFlows     []BPMNSequenceFlow    `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL sequenceFlow"`
 	BoundaryEvents    []BPMNBoundaryEvent   `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL boundaryEvent"`
 	SubProcesses      []BPMNSubProcess      `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL subProcess"`
+	CallActivities    []BPMNCallActivity    `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL callActivity"`
 }
 
 type BPMNError struct {
@@ -300,5 +301,6 @@ func SubProcToProcess(sp *BPMNSubProcess) *BPMNProcess {
 		InclusiveGateways: sp.InclusiveGateways,
 		SequenceFlows:     sp.SequenceFlows,
 		BoundaryEvents:    sp.BoundaryEvents,
+		CallActivities:    sp.CallActivities,
 	}
 }

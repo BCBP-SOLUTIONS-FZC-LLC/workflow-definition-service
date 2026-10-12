@@ -155,3 +155,13 @@ func TestValidate_SubProcessMissingFromEveryLane_IsRefused(t *testing.T) {
 
 	assertErrorOn(t, errs, domain.BPMNErrTaskNotInLane, "SP")
 }
+
+func TestValidate_CallActivityInsideASubProcess_IsNamedAsUnsupported(t *testing.T) {
+	sub := "    <bpmn:subProcess id=\"SP\"><bpmn:startEvent id=\"SP_S\"/>\n" + userTaskXML("SP_T") + callXML("SP_C", "Mod") + "    <bpmn:endEvent id=\"SP_E\"/>\n" +
+		flowXML("SP_F1", "SP_S", "SP_T") + flowXML("SP_F2", "SP_T", "SP_C") + flowXML("SP_F3", "SP_C", "SP_E") + "    </bpmn:subProcess>\n"
+	body := "    <bpmn:startEvent id=\"S\"/>\n" + sub + "    <bpmn:endEvent id=\"E\"/>\n" + flowXML("F1", "S", "SP") + flowXML("F2", "SP", "E")
+	errs := validateDocument(t, flowDocument(oneLane("S", "SP", "E"), body))
+
+	assertErrorOn(t, errs, domain.BPMNErrUnsupportedElement, "SP_C")
+	assertNoError(t, errs, domain.BPMNErrInvalidSequenceFlowRef)
+}
