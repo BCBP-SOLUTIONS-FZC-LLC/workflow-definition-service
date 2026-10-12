@@ -13,6 +13,10 @@ import (
 var version = "dev"
 
 func main() {
+	if isHealthcheckInvocation(os.Args) {
+		os.Exit(runHealthcheck())
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
