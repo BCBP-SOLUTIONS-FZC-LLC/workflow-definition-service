@@ -38,6 +38,7 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 	errs = append(errs, ValidateLaneNames(proc)...)
 	errs = append(errs, ValidateNoNestedSubProcess(proc)...)
 	errs = append(errs, ValidateDuplicateIDs(proc)...)
+	errs = append(errs, ValidateTaskSchedules(proc)...)
 	errs = append(errs, ValidateSeqFlowRefs(proc, g)...)
 	errs = append(errs, ValidateDanglingNodes(proc, g, implicitStart)...)
 	errs = append(errs, ValidateReachability(proc, g, implicitStart)...)

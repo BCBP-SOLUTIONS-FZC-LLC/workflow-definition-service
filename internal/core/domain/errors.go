@@ -83,6 +83,7 @@ const (
 	BPMNErrSplitWithoutGateway            BPMNErrorCode = "SPLIT_WITHOUT_GATEWAY"
 	BPMNErrEndEventWithOutgoingFlow       BPMNErrorCode = "END_EVENT_WITH_OUTGOING_FLOW"
 	BPMNErrDuplicateElementID             BPMNErrorCode = "DUPLICATE_ELEMENT_ID"
+	BPMNErrInvalidTaskSchedule            BPMNErrorCode = "INVALID_TASK_SCHEDULE"
 )
 
 type BPMNValidationSeverity string

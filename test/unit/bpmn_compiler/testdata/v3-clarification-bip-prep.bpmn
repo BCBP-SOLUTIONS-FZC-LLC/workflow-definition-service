@@ -166,7 +166,7 @@
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review" />
         <zeebe:assignmentDefinition candidateGroups="tender-business" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
-        <zeebe:taskSchedule dueDate="a" followUpDate="a" />
+        <zeebe:taskSchedule dueDate="2026-11-01T09:00:00Z" followUpDate="2026-10-25T09:00:00Z" />
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_0zpmm3z</bpmn:incoming>
       <bpmn:outgoing>Flow_0vhv1fp</bpmn:outgoing>
