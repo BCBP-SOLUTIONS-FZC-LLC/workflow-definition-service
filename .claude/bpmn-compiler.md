@@ -30,7 +30,7 @@ Beyond XXE/entity-injection guarding and namespace checks, the parser applies th
 
 ## One Outgoing Flow, Splits at Gateways
 
-A start event, task, send or receive task, subProcess and callActivity continue along one flow, and the compiler follows only the first forward flow of each, so `ValidateSingleOutgoing` refuses a second one with `SPLIT_WITHOUT_GATEWAY` (sub-process bodies included; back-edges do not count). Branches come from parallel, exclusive or inclusive gateways. A timer boundary duration must be positive and short enough for the Execution Service to run (`IsValidDuration` mirrors its parser).
+A start event, task, send or receive task, subProcess, callActivity and boundary event continue along one flow, and the compiler follows only the first forward flow of each, so `ValidateSingleOutgoing` and the boundary rules refuse a second one with `SPLIT_WITHOUT_GATEWAY` (sub-process bodies included; back-edges do not count), and an end event with a flow is `END_EVENT_WITH_OUTGOING_FLOW`. A timer or message boundary sits on a userTask, subProcess or callActivity, one of each per node. At an exclusive split the Execution Service takes the first flow whose condition holds, else the first without one, so two unconditioned flows warn (`GATEWAY_BRANCH_WITHOUT_CONDITION`). Element ids are unique per process (`DUPLICATE_ELEMENT_ID`). Branches come from parallel, exclusive or inclusive gateways. A timer boundary duration must be positive and short enough for the Execution Service to run (`IsValidDuration` mirrors its parser).
 
 ## Guarded BPMN Loops
 
@@ -38,7 +38,7 @@ Cycles are not rejected outright. `classifyBackEdges` does a DFS; back-edges are
 
 - Every back-edge must originate at an **exclusive gateway** with a forward exit.
 - Every multi-node SCC must contain such a gateway — else `UNGUARDED_LOOP` / `CYCLE_DETECTED`.
-- Exception: a `receiveTask` may be a back-edge target without a preceding XOR gateway (it is externally guarded by the inbound message).
+- A `receiveTask` may be a back-edge **target**, never a source: the compiler follows forward flows only, so a revert out of a receive task would be dropped (`UNGUARDED_LOOP`).
 
 The compiler walks **forward edges only** (skipping back-edges) so traversal always terminates. `validateMaxDepth` caps forward path length at 2000.
 

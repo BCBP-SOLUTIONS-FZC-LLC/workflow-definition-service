@@ -1066,7 +1066,12 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | In a workflow, every lane a module slot binds to has a `dept_id` | `MISSING_DEPT_ID` |
 | No chain of calls returns to a process already on it | `CALLED_ELEMENT_CYCLE` (anchored on the callActivity that closes the cycle) |
 | No two processes in the bundled document share an `id` | `DUPLICATE_PROCESS_ID` |
-| A start event, task, send or receive task, subProcess or callActivity has one outgoing flow; a flow splits only at a gateway | `SPLIT_WITHOUT_GATEWAY` |
+| A start event, task, send or receive task, subProcess, callActivity or boundary event has one outgoing flow; a flow splits only at a gateway | `SPLIT_WITHOUT_GATEWAY` |
+| A timer or message boundary sits on a userTask, subProcess or callActivity; a node has one timer and one message boundary; an error boundary's `errorRef` names a `bpmn:error` | `INVALID_BOUNDARY_ATTACHMENT` |
+| An end event has no outgoing flow | `END_EVENT_WITH_OUTGOING_FLOW` |
+| Element ids are unique within a process | `DUPLICATE_ELEMENT_ID` |
+| An exclusive split has a condition on every flow but one default flow | `GATEWAY_BRANCH_WITHOUT_CONDITION` (warning) |
+| A receive task is never the source of a revert flow | `UNGUARDED_LOOP` |
 | The called process's own body passes every rule in these tables, without the diagram rules | the body's own codes, anchored on its own nodes, or on the called process id for a whole-process rule |
 
 Message, timer and error boundary events on `callActivity` compile to the call step's `message_paths`, `timer_paths` and `error_paths`. Every boundary names the department of the first task or subProcess on its path, or `terminates` at an end event; a path starting at a call or a message task is `UNSUPPORTED_BOUNDARY_TARGET`.
@@ -1166,7 +1171,10 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `MISSING_DEPT_INPUT_FOR_MODULE` | A called process has two or more open lanes and the call's `Depts` input does not map every one |
 | `CALLED_ELEMENT_CYCLE` | A chain of `callActivity` calls returns to a process already on it |
 | `DUPLICATE_PROCESS_ID` | Two processes in the bundled document share an `id` |
-| `SPLIT_WITHOUT_GATEWAY` | A start event, task, send or receive task, subProcess or callActivity has more than one outgoing flow |
+| `SPLIT_WITHOUT_GATEWAY` | A start event, task, send or receive task, subProcess, callActivity or boundary event has more than one outgoing flow |
+| `END_EVENT_WITH_OUTGOING_FLOW` | An end event has an outgoing flow |
+| `DUPLICATE_ELEMENT_ID` | Two elements of one process share an `id` |
+| `GATEWAY_BRANCH_WITHOUT_CONDITION` | Warning: an exclusive split has more than one flow without a condition, so only the first is ever taken |
 | `UNSUPPORTED_BOUNDARY_TARGET` | A boundary event's path reaches a `callActivity`, `sendTask` or `receiveTask` before any `userTask`, `subProcess` or end event, or a `subProcess` whose body does not start with a `userTask` |
 | `MISSING_DEPT_ID` | A task's lane has no `dept_id`; a call binds a module lane to a workflow lane with no `dept_id`; or, at publish and `/validate`, a workflow has no lanes, or a task of its expanded plan runs in no IAM department |
 | `INVALID_DEPT_ID` | A lane's `dept_id` is not a UUID |

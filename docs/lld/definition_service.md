@@ -1464,7 +1464,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
 17. **`CYCLE_DETECTED` / `UNGUARDED_LOOP`** *(redefined — see §4.4 Guarded-Loop Enforcement)*
     - **Trigger Scenario**: The sequence flows create an **unguarded** cyclic loop — a cycle that cannot be exited. Guarded rework loops (a back-edge from a diverging exclusive gateway that also has a forward exit branch) are **valid** and no longer trigger this error.
     - **Trigger Logic** (`CYCLE_DETECTED`): The compiler classifies back-edges via DFS and runs Tarjan's SCC over the graph to enumerate loops. A loop (SCC with more than one node) is rejected when it has no guarded exit; i.e. it contains no exclusive gateway with an outgoing edge leaving the SCC.
-    - **`UNGUARDED_LOOP`**: A separate code emitted when a back-edge is structurally illegal; its source is not a diverging exclusive gateway, an exclusive gateway's outgoing edges are all back-edges (no forward exit), or a node has a self-edge (`u → u`). The validator checks each back-edge's source node type and confirms its originating exclusive gateway retains at least one forward branch. (A self-edge forms an SCC of size 1, so it is caught here rather than by SCC size.)
+    - **`UNGUARDED_LOOP`**: A separate code emitted when a back-edge is structurally illegal; its source is not a diverging exclusive gateway, an exclusive gateway's outgoing edges are all back-edges (no forward exit), or a node has a self-edge (`u → u`). The validator checks each back-edge's source node type and confirms its originating exclusive gateway retains at least one forward branch. (A self-edge forms an SCC of size 1, so it is caught here rather than by SCC size.) A receive task is never the source of a revert flow: the compiler follows forward flows only, so a revert out of a receive task would be dropped; a receive task may be the place a revert returns to.
 
 18. **`UNMATCHED_GATEWAY`**
     - **Trigger Scenario**: A split gateway (e.g. Exclusive, Parallel) does not have a corresponding join gateway to merge the execution branches.
@@ -1483,8 +1483,8 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Logic**: The unified duration converter (`parseDuration`) is applied to the `timeDuration` value. Accepted formats: ISO 8601 (`P3D`, `PT72H`) or Go duration (`72h`, `3h30m`), and the duration must be positive and short enough for the Execution Service to run as a timer (about 292 years at most). Any other format, a zero or negative duration, or one too long emits this error against the boundary event or intermediate catch event node ID. The legacy `sla_duration` Zeebe property is not read; SLA is modelled exclusively via timer boundary events.
 
 22. **`INVALID_BOUNDARY_ATTACHMENT`**
-    - **Trigger Scenario**: A boundary event is attached to a node that does not legally host that boundary type. Specifically: an error boundary event attached to anything other than `bpmn:subProcess` or `bpmn:callActivity`, or a timer boundary event whose host is anything other than `bpmn:userTask` or `bpmn:subProcess`. Message boundary events may attach to `bpmn:userTask`, `bpmn:subProcess`, or `bpmn:callActivity`. A timer boundary event may also attach to `bpmn:callActivity`.
-    - **Trigger Logic**: `ValidateBoundaryEvents` in `bpmn_compiler/validator/boundary.go` iterates all boundary events. If `attachedToRef` resolves to an unsupported host element, this error is emitted against the boundary event node ID.
+    - **Trigger Scenario**: A boundary event is attached to a node that does not legally host that boundary type. Specifically: an error boundary event attached to anything other than `bpmn:subProcess` or `bpmn:callActivity`, or a timer boundary event whose host is anything other than `bpmn:userTask` or `bpmn:subProcess`. Message boundary events may attach to `bpmn:userTask`, `bpmn:subProcess`, or `bpmn:callActivity`. A timer boundary event may also attach to `bpmn:callActivity`. A node has at most one timer boundary and at most one message boundary, and an error boundary's `errorRef` names a `bpmn:error` of the document.
+    - **Trigger Logic**: `ValidateBoundaryEvents` in `bpmn_compiler/validator/boundary.go` iterates all boundary events. If `attachedToRef` resolves to an unsupported host element, a second timer or message boundary repeats a host, or an `errorRef` names no error, this error is emitted against the boundary event node ID.
 
 23. **`UNSUPPORTED_ELEMENT`**
     - **Trigger Scenario**: The uploaded XML contains a Tier 2 element that is on the roadmap but not yet supported (§4.1.2 / §4.1.4). Examples: `<bpmn:intermediateCatchEvent>` with a message or signal definition.
@@ -1574,8 +1574,21 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
 
 
 41. **`SPLIT_WITHOUT_GATEWAY`**
-    - **Trigger Scenario**: A start event, a task, a send or receive task, a `subProcess` or a `callActivity` has more than one outgoing sequence flow.
+    - **Trigger Scenario**: A start event, a task, a send or receive task, a `subProcess`, a `callActivity` or a boundary event has more than one outgoing sequence flow.
     - **Trigger Logic**: A flow splits only at a gateway. The error is emitted on the node with the extra flows, inside sub-process bodies as well, and counts forward flows only: the flow of a revert loop back to an earlier node is not a split. A second flow out of an activity cannot be run as a parallel branch, because every activity continues along one flow; a workflow that needs parallel or alternative branches places a parallel, exclusive or inclusive gateway after the activity.
+
+
+42. **`END_EVENT_WITH_OUTGOING_FLOW`**
+    - **Trigger Scenario**: An end event has an outgoing sequence flow.
+    - **Trigger Logic**: An end event ends the path it is on, so the compiler stops there and drops whatever the flow leads to. The error is emitted on the end event, in sub-process bodies as well.
+
+43. **`DUPLICATE_ELEMENT_ID`**
+    - **Trigger Scenario**: Two elements of one process, flow nodes or sequence flows, share an `id`.
+    - **Trigger Logic**: The compiler identifies a node by its id, so a repeated id merges two elements into one stage. One error is emitted per repeated id.
+
+44. **`GATEWAY_BRANCH_WITHOUT_CONDITION`** *(warning)*
+    - **Trigger Scenario**: An exclusive gateway has more than one forward flow without a `conditionExpression`.
+    - **Trigger Logic**: The Execution Service takes the first flow whose condition holds, or else the first flow with no condition, so at most one flow of a split is the default and a second flow without a condition can never run. The warning is emitted on the gateway and does not block publishing. Revert flows are not counted.
 
 ---
 
@@ -1795,6 +1808,8 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 - **POST** `/workflows/:id/versions/:version_id/promote`
 - **Semantics**: Atomic pointer swap to select an older published version as the active pointer (`active_version_id`).
   - **Status Constraint**: Only `PUBLISHED` versions can be promoted. Attempting to promote a version in `DRAFT` or `ARCHIVED` status returns `409 Conflict` (`INVALID_VERSION_STATUS`).
+  - **Validity Constraint**: A version with `is_valid = false`, one whose assignees lost a required department role, cannot be promoted and returns `409 Conflict` (`INVALID_VERSION_STATUS`).
+  - **No Active Version**: Promote is a pointer swap, so it also makes a published version active on a workflow with no active version, for example one that was archived.
   - **Already Active Pointer (Early Exit / Silent No-Op)**: If the target version is already set as the `active_version_id` for the workflow, the API returns a silent `200 OK` early exit without creating a new audit record.
   - **Event Emission**: None. Promote's own state transition (the atomic `active_version_id` pointer swap) commits without enqueueing any outbound event (§7.2, §10.7).
 
@@ -1871,7 +1886,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 #### 3.3.14 Get Version Diff
 
 - **GET** `/workflows/:id/versions/:version_id/diff/:target_version_id`
-- **Response (`200 OK`)**: Structured JSON payload highlighting added/removed departments and step-level structural alterations.
+- **Response (`200 OK`)**: Structured JSON payload highlighting added/removed departments, step-level structural alterations and `stage_changes`. A stage whose timer boundary, message boundary or connector type differs is a structural change, so `metadata_only` is false and a publish needs `force_publish_structural`; role, assignee, due date and input mapping changes are metadata.
 
 #### 3.3.15 Liveness Probe
 
@@ -2129,7 +2144,7 @@ Elements are classified into three tiers. The raw-XML denylist scan (`rejectedEl
 - `<bpmn:receiveTask>` — Waits for an inbound message, named, in order, by its `messageRef`'s `<bpmn:message>`, by the message flow into it (Message Flow Name Resolution below), or by its own `id`. The name is `StageDef.Extras["message"]`.
 - `<bpmn:serviceTask>` — **Scoped exception to the Tier 3 rejection below.** Recognized only when `<zeebe:taskDefinition type="connector:<name>"/>` carries the `connector:` prefix — an automatic task, run without a human. Compiles to `StageDef.Type = enums.StageTypeConnector` (`"connector"`) plus `StageDef.ConnectorType = "<name>"` (the prefix is stripped once, at compile time — Execution Service never re-parses it), and `StageDef.IOMapping` from the element's `<zeebe:ioMapping>` (`workflow_models_lib.md` §2.3). Dispatch of the actual connector call happens outside this service entirely — see `workflow_connectors.md` (worker placement is decided there, a `cmd/connector-worker` binary inside `execution_service`'s own repo; this compiler's output was written placement-agnostic and needed no change either way). A `serviceTask` with any other `type`, or none, is still `REJECTED_ELEMENT` exactly as before; this is not a general un-rejection of `serviceTask`. Input mapping via `<zeebe:ioMapping>`, same as `callActivity` (§4.1.2 above). See §4.1.3.3 for the full extension contract.
 - `<bpmn:parallelGateway>` — 0–N. Concurrent department execution. Split/join pairs required.
-- `<bpmn:exclusiveGateway>` — 0–N. Routing-only branching + guarded rework loops. All outgoing flows from a split must carry `<bpmn:conditionExpression>`. Split/join pairs required.
+- `<bpmn:exclusiveGateway>` — 0–N. Routing-only branching + guarded rework loops. Every outgoing flow of a split carries `<bpmn:conditionExpression>` except at most one default flow, which the Execution Service takes when no condition holds (code 44). Split/join pairs required.
 - `<bpmn:inclusiveGateway>` — 0–N. OR-split/join: one or more branches fire based on `conditionExpression` evaluation. All outgoing flows from a split must carry `<bpmn:conditionExpression>`. Split/join pairs required.
 - `<bpmn:eventBasedGateway>` — 0–N. Exclusive wait for the first of N events (timer or signal). All outgoing flows must target an `intermediateCatchEvent`. At least one timer branch required. Not permitted inside a subprocess.
 - `<bpmn:subProcess>` (embedded, non-event, non-ad-hoc) — 0–N. Grouped sub-flow with its own start/end events, userTasks, and gateways. Must **not** contain an internal `<bpmn:laneSet>` — tasks inside a subprocess belong to the department of the subprocess's containing lane in the parent process. If a subprocess logically spans multiple departments, those tasks must be modelled as separate activities in the parent process lanes connected via parallel gateways. Must use `<bpmn:userTask>` (not plain `<bpmn:task>`) for all internal activities.
@@ -2734,7 +2749,7 @@ stop
 }
 ```
 
-> **Exclusive Gateway condition expressions**: When the compiler encounters a `<bpmn:exclusiveGateway>` split, it reads the `<bpmn:conditionExpression>` child element from each outgoing `<bpmn:sequenceFlow>` and populates a `condition_expression` field on the outgoing `exclusive` `ExecutionStep` entry. When an outgoing flow is a **back-edge** (revert/loop), the entry additionally carries a revert target keyed by `(dept, stage_type)` (an additive field, e.g. `revert_to_dept` / `revert_to_stage`) instead of advancing to a forward department. Runtime evaluation of the expression — and realisation of the revert via `stage-defer` / `stage-transition` — is the responsibility of the Temporal Worker (Workers LLD §Exclusive Routing).
+> **Exclusive Gateway condition expressions**: When the compiler encounters a `<bpmn:exclusiveGateway>` split, it reads the `<bpmn:conditionExpression>` child element from each outgoing `<bpmn:sequenceFlow>` and populates a `condition_expression` field on the outgoing `exclusive` `ExecutionStep` entry. When an outgoing flow is a **back-edge** (revert/loop), the entry additionally carries a revert target keyed by `(dept, stage_type)` (an additive field, e.g. `revert_to_dept` / `revert_to_stage`) instead of advancing to a forward department. Runtime evaluation of the expression — and realisation of the revert via `stage-defer` / `stage-transition` — is the responsibility of the Temporal Worker (Workers LLD §Exclusive Routing). The worker evaluates the conditions in order and takes the first branch whose condition holds, or else the first branch without a condition.
 
 #### Per-Element Plugin Architecture
 
@@ -3675,13 +3690,13 @@ The queue topology (`membership-workflow-q`, its `membership-workflow-q-dlq` DLQ
     "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
     "data": {
       "user_id": "3fa18cde-7244-47ac-986c-665cd42caaaa",
-      "department_id": "<format TBD by Org & Membership service LLD>",
+      "department_id": "0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a10",
       "role": "reviewer"
     }
   }
   ```
 
-  > **`department_id` format**: The exact format of `department_id` in this event payload is owned by the Org & Membership service and will be defined in its LLD. The Definition Service stores the lane `name` attribute from the BPMN (owned by the Profile Service) in `workflow_node_assignee.department_id`. Both formats must align for the invalidation query (`WHERE department_id = :revoked_department_id`) to match. **Revisit when the Org & Membership service LLD is complete.**
+  > **`department_id` format**: The department's UUID, the `dept_id` of the lane it names. A value that is not a UUID is answered `400 Bad Request` and is not retried, since a redelivery would fail the same way.
 
 - **AsyncAPI documentation**: also documented as a `receive` operation in `api/asyncapi.yaml` (messages `DepartmentMembershipRevoked` and `MembershipRevoked`, schemas `DepartmentMembershipRevokedInbound` and `MembershipRevokedInbound`) — non-`Payload`-suffixed so `schema-gov`'s extractor skips it, since this event is owned/registered by the Org & Membership service, not Definition. Mirrors `execution_service`'s own convention for its inbound events.
 
@@ -4888,6 +4903,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.34 | 2026-10-09 | **Platform libraries at their latest majors, the platform metric standard, and RLS violation logging** (§1.1, §1.6, §1.7.5, §6.1, §6.2, §7.4.2, §10.6, Appendix A). `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.0, `platform-gincommon` v1.6.0; `workflow-models` v1.2.0, `workflow-connectors` v1.0.0. Metrics follow the platform tiers: `platform_*` from the libraries, `workflow_definition_service_<metric>` for the service. The request deadline runs innermost. `APP_ENV` is validated; OpenBao is required outside dev. Tenant tables force RLS through the sampled violation-logging functions, exported as `workflow_definition_service_rls_violations_total`. `api/asyncapi.yaml` documents both inbound events. The publish path emits the `BPMN_Compilation` and `DB_Publish_Transaction` spans. |
 | 1.35 | 2026-10-12 | **Publish and archive are consistent under concurrent edits, timers must be runnable, and the cache and lock behaviour is stated as built** (§1.1, §1.9, §2.5, §2.6, §3.1.3, §3.1.4, §3.3.7, §3.3.8, §3.4.1, DR posture). A publish is refused when the draft changed after it was read, so the stored plan always belongs to the stored BPMN. A save that changes nothing returns the `record_version` the row holds. Archive of a workflow or module acts on the version active at commit. A timer boundary needs a positive duration the Execution Service can run. Only published versions are cached as compiled plans. The draft-edit lock fails a save while the cache is unreachable. Idempotency and draft-lock key formats match the service. Libraries: `platform-pgcommon/v2` v2.0.1, `workflow-connectors/v2` v2.0.0, `workflow-models/v2` v2.0.0-rc.1. |
 | 1.36 | 2026-10-12 | **A flow splits only at a gateway; the container health check; and the write-role guard stated as built** (§1.4, §1.6.1, §3.1.4 new code 41, §8.2). A start event, task, send or receive task, subProcess or callActivity with more than one outgoing flow is refused with `SPLIT_WITHOUT_GATEWAY`; before, the plan kept the first flow and silently dropped the rest. The container image's health check is a probe of the service's own `/healthz`. The write-role guard is a role check at the start of each mutating handler, not a middleware. |
+| 1.37 | 2026-10-12 | **The validator refuses what the compiler would drop, and the review's contract fixes** (§3.1.3, §3.1.4 codes 22, 41–44, §3.3.11, §3.3.14, §4.1, §7.4). Boundary hosts, one message boundary per node, a boundary with one flow, a receive task as a revert source, an end event with an outgoing flow, duplicate element ids and an unknown error reference are refused; before, the plan silently dropped the work. An exclusive split with several unconditioned flows warns, since the Execution Service takes the first. A version marked invalid cannot be promoted. The version diff treats a changed timer boundary, message boundary or connector type as structural. A `DepartmentMembershipRevoked` whose department is not a UUID is a 400. |
 ---
 
 ## Appendix E: Open Items

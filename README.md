@@ -197,6 +197,7 @@ make help
 | `make cover` | Unit tests + coverage summary |
 | `make cover-html` | Open HTML coverage report |
 | `make cover-check` | Fail if coverage < 95% (postgres adapter + generated pkgs excluded) |
+| `make helm-check` | Lint the chart, render it with production settings, and require a prod render with no service addresses to fail |
 | `make fmt-check` / `make lint` / `make arch-lint` | Formatting, lint, and Clean Architecture import-direction checks (read-only) |
 | `make fix` | Auto-fix formatting and lint issues |
 | `make check` | Full local CI pass: fmt + lint + vet + arch-lint + metrics-lint + tests + coverage gate |
@@ -452,7 +453,7 @@ helm upgrade workflow-definition-service ./deploy/helm --install --namespace <ns
 
 **Migrations run as a Helm hook, not at boot.** `cmd/server/main.go` never migrates on the normal server boot path — schema changes are applied by a dedicated `migrate` subcommand (`/server migrate`) that runs this service's domain migrations, then exits. Running that inline at boot would let two replicas race on `golang-migrate`'s advisory lock during a rolling deploy, stalling the loser and risking a readiness-probe timeout for no reason.
 
-The chart wires this up as `templates/migrate-job.yaml`, a Kubernetes `Job` annotated `helm.sh/hook: pre-install,pre-upgrade`. Helm runs it — and waits for it to complete — before rolling out the Deployment, so every `helm upgrade --install` applies pending migrations first, sequentially, with no replica race. It's gated by `migrationJob.enabled` (default `true`) in case migrations are ever driven out-of-band instead.
+The chart wires this up as `templates/migrate-job.yaml`, a Kubernetes `Job` annotated `helm.sh/hook: pre-install,pre-upgrade`. Helm runs it — and waits for it to complete, within 10 minutes — before rolling out the Deployment, and the ServiceAccount and the chart-created Secret are earlier hooks so a first install finds them, so every `helm upgrade --install` applies pending migrations first, sequentially, with no replica race. It's gated by `migrationJob.enabled` (default `true`) in case migrations are ever driven out-of-band instead.
 
 One consequence worth knowing: `cmd/server/main.go` loads and validates the full `Config` *before* it even checks whether it was invoked as `migrate` — so the migrate Job needs the exact same required environment variables and secrets as the main Deployment (not just `DATABASE_URL`), or config validation fails before a single migration runs. The chart template already reuses the same `env`/`envFromSecret` blocks as the Deployment for this reason.
 
@@ -465,7 +466,7 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 **Secrets.** Two mutually exclusive modes, selected by whether `existingSecret` is set:
 
 - **`existingSecret: "<name>"`** (recommended beyond local testing) — points at a Secret already provisioned by External Secrets Operator, the AWS Secrets Manager CSI driver, or Sealed Secrets. The chart creates no Secret resource of its own. Bump `rotationEpoch` (`--set rotationEpoch=$(date +%s)`) to force a rollout after the external secret rotates.
-- **`secretValues.*`** (dev/CI only) — pass real values via `--set` or a Helm secrets plugin. `secret.yaml` hard-fails the render if any key required by `envFromSecret` (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `VALKEY_PASSWORD`, `INTERNAL_API_TOKEN`, `EXECUTION_SERVICE_TOKEN`) is empty. These land in the Helm release history unencrypted (base64) — never use this mode against a shared cluster.
+- **`secretValues.*`** (dev/CI only) — pass real values via `--set` or a Helm secrets plugin. `secret.yaml` hard-fails the render if any key listed in `envFromSecret` (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `SYSTEM_DATABASE_URL`, `VALKEY_PASSWORD`, `INTERNAL_API_TOKEN`, `EXECUTION_SERVICE_TOKEN`, `OPENBAO_TOKEN`) is empty. These land in the Helm release history unencrypted (base64) — never use this mode against a shared cluster.
 
 **Networking.** `networkPolicy.enabled: true` by default. The gateway/ingress-controller rule and the named callers (the Execution Service) both reach `8080`; the gateway routes only the public path prefixes (`ingress.hosts[].paths`), so `/api/v1/internal` is reachable only in-cluster, and every internal route also requires `x-internal-token`. A separate rule scopes `/metrics` scraping to the monitoring namespace only. Egress allows DNS, HTTPS, Postgres/PgBouncer, Valkey, and OTel OTLP explicitly, plus same-namespace pod egress for `ORG_MEMBERSHIP_BASE_URL` and `EXECUTION_SERVICE_URL`.
 
@@ -489,7 +490,7 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 
 `release.yml`'s `deploy-gate` job runs after the image is built, signed, and pushed, and before the GitHub Release is published:
 
-1. `helm upgrade workflow-definition-service ./deploy/helm --install --wait --timeout=5m --atomic` — `--atomic` rolls back automatically if the release fails to become healthy within the timeout.
+1. `helm upgrade workflow-definition-service ./deploy/helm --install --wait --timeout=5m --atomic`, passing `env.ORG_MEMBERSHIP_BASE_URL`, `env.OPENBAO_ADDR` and `env.VALKEY_ADDR` from the repository variables of the same names — `--atomic` rolls back automatically if the release fails to become healthy within the timeout. The chart refuses to render for a non-dev `APP_ENV` while any of `ORG_MEMBERSHIP_BASE_URL`, `EXECUTION_SERVICE_URL`, `OPENBAO_ADDR` or `VALKEY_ADDR` is empty, and CI runs `make helm-check` to prove it.
 2. Verifies the running Deployment's image digest matches the digest that was actually signed and pushed.
 3. Waits for `kubectl rollout status` to confirm the new pods are ready.
 4. Runs a 2-minute Prometheus check on the 5xx ratio; if it exceeds 1%, `helm rollback` runs automatically and the job — and therefore the release — fails.

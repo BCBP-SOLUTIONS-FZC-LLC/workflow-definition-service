@@ -148,7 +148,7 @@ Routes to exactly one downstream path. Two uses:
 
 **1. Multi-way forward routing** (different outcomes lead to different paths)
 
-Each outgoing flow needs a condition expression. See [Condition Expressions](#condition-expressions).
+Each outgoing flow needs a condition expression, except one default flow that is taken when no condition holds. See [Condition Expressions](#condition-expressions).
 
 **2. Approve / reject loop** (a task can be sent back for rework)
 
@@ -182,7 +182,7 @@ Decision XOR ──┤
                └──(decision = "bid")────→ Organise Team
 ```
 
-Each outgoing flow must have a condition. The variable names (like `decision`) are agreed with engineering — they are set at runtime by the task worker.
+Each outgoing flow must have a condition, except one default flow: the Execution Service takes the first flow without a condition when no condition holds, so a second flow without one can never run (`GATEWAY_BRANCH_WITHOUT_CONDITION`, a warning). The variable names (like `decision`) are agreed with engineering — they are set at runtime by the task worker.
 
 ### When you do NOT need them
 
@@ -215,6 +215,19 @@ Conditions are stored verbatim and evaluated at runtime. The definition service 
 
 ---
 
+## What the validator checks and what the compiler does
+
+The compiler turns each element into plan steps in a fixed way, so the validator refuses a diagram the compiler would turn into something other than what you drew. Draw to these rules and the plan matches the diagram:
+
+- **One way out.** A start event, task, send or receive task, sub-process and call continue along one flow, and the compiler follows only that flow. To run branches at the same time or to choose between them, put a parallel, exclusive or inclusive gateway after the element.
+- **Boundaries sit on work that waits.** A timer or message boundary attaches to a user task, a sub-process or a call, and an error boundary to a sub-process or a call. A task has at most one timer and one message boundary, and a boundary's path is one flow.
+- **A default flow.** At an exclusive gateway the Execution Service evaluates the conditions in order and takes the first flow whose condition holds, or else the first flow with no condition. Give every flow but one a condition, or the others can never run.
+- **A revert returns to earlier work.** A revert flow starts at an exclusive gateway and goes back to a task or a receive task; the compiler does not follow a flow that leaves a receive task backwards.
+- **An end event ends the path.** Nothing is drawn after it.
+- **Every element has its own id**, and every element is in a lane.
+
+---
+
 ## Structural rules
 
 These are checked on every upload. Breaking them causes rejection.
@@ -230,6 +243,12 @@ These are checked on every upload. Breaking them causes rejection.
 | Lane names have no `/`, `::` or `~` | `INVALID_LANE_NAME` |
 | Revert loops always have a forward exit (guarded) | `UNGUARDED_LOOP` |
 | Sub-processes have their own start and end events | compile error |
+| A start event, task, call or sub-process has one outgoing flow; a flow splits only at a gateway | `SPLIT_WITHOUT_GATEWAY` |
+| A boundary event has one outgoing flow, sits on a user task, sub-process or call (an error boundary on a sub-process or call), and a task has at most one timer and one message boundary | `INVALID_BOUNDARY_ATTACHMENT`, `SPLIT_WITHOUT_GATEWAY` |
+| An end event has no outgoing flow | `END_EVENT_WITH_OUTGOING_FLOW` |
+| Element ids are unique within a process | `DUPLICATE_ELEMENT_ID` |
+| An exclusive split has a condition on every flow but one | `GATEWAY_BRANCH_WITHOUT_CONDITION` (warning) |
+| A revert flow starts at an exclusive gateway, never at a receive task (a receive task may be the place a revert returns to) | `UNGUARDED_LOOP` |
 | Diagram block present (Camunda Modeler adds this) | `MISSING_DIAGRAM` |
 
 ### Limits
@@ -242,7 +261,6 @@ These are checked on every upload. Breaking them causes rejection.
 | Nested sub-processes | not supported (`NESTED_SUBPROCESS_NOT_SUPPORTED`) |
 | A module that calls itself, directly or through others | `CALLED_ELEMENT_CYCLE` |
 | Two processes with one `id` in a file | `DUPLICATE_PROCESS_ID` |
-| A task, call or sub-process with more than one outgoing flow (use a gateway to split) | `SPLIT_WITHOUT_GATEWAY` |
 
 ### Errors that appear when you publish
 
@@ -346,7 +364,7 @@ Pool "Docs Prep" (a module with two open lanes, Sender and Receiver)
 - [ ] Every task is inside a lane
 - [ ] Every task has been stamped with the IAM element template (stage type + assignment)
 - [ ] Send/receive tasks reference a `<bpmn:message>` definition
-- [ ] XOR gateways with multiple forward paths have condition expressions on every outgoing flow
+- [ ] XOR gateways with multiple forward paths have a condition on every outgoing flow but one default flow
 - [ ] Revert loops always have a forward exit
 - [ ] Sub-processes have start and end events inside them
 - [ ] No disallowed elements (script task, business rule task, etc.)

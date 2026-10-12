@@ -24,6 +24,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - A timer boundary needs a positive duration the Execution Service can run; zero, negative and over-long durations are `INVALID_SLA_DURATION`.
 - A start event, task, send or receive task, subProcess or callActivity with more than one outgoing flow is refused with `SPLIT_WITHOUT_GATEWAY`; the compiler kept only the first flow, so a published plan silently dropped the other branches.
 - The container image's `HEALTHCHECK` runs a `-healthcheck` probe of the service's own `/healthz`; it used to fall through to starting a second server.
+- The validator refuses what the compiler would silently drop: a timer or message boundary on a send task, receive task or gateway, a second message boundary on one task, a boundary with two outgoing flows, a revert flow out of a receive task, an end event with an outgoing flow (`END_EVENT_WITH_OUTGOING_FLOW`), duplicate element ids (`DUPLICATE_ELEMENT_ID`), an error boundary on a call with an unknown `errorRef`, and a sub-process in no lane. An exclusive split with several flows and no condition warns (`GATEWAY_BRANCH_WITHOUT_CONDITION`), since the Execution Service takes the first.
+- A long chain of gateways no longer uses gigabytes: the join of a split is found once per split from its immediate post-dominator, and validation stops at `MAX_DEPTH_EXCEEDED` before analysing every split.
+- A database failure while reading a version no longer loses a membership revocation; the event is redelivered.
+- A `DepartmentMembershipRevoked` whose `department_id` is not a UUID is a 400, not a retried 500; the internal OpenAPI and AsyncAPI state the real contract.
+- A version marked invalid by a membership revocation cannot be promoted.
+- A timer boundary, message boundary or connector type change counts as structural in the version diff, and the diff response lists `stage_changes`.
+- The release deploy passes the Org-Membership, OpenBao and Valkey addresses, the chart refuses a prod render without them, CI runs `make helm-check`, and the migrate hook finds its ServiceAccount and Secret on a first install.
 - Docs state the draft-edit lock failing a save when Valkey is unreachable, `/readyz` pinging Valkey, and the idempotency and lock key formats.
 
 ### Added
