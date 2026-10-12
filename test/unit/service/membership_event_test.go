@@ -66,7 +66,7 @@ func TestHandleDepartmentMembershipRevoked_ListByUserError(t *testing.T) {
 	}
 }
 
-func TestHandleDepartmentMembershipRevoked_VersionGetByIDError(t *testing.T) {
+func TestHandleDepartmentMembershipRevoked_VersionDeletedMeanwhile_IsSkipped(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -76,12 +76,29 @@ func TestHandleDepartmentMembershipRevoked_VersionGetByIDError(t *testing.T) {
 	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).
 		Return([]*domain.NodeAssignee{assignee(mVerID, "task-1", mDeptID)}, nil)
 	// Version may have been concurrently deleted — handler skips it silently.
-	vRepo.EXPECT().GetByID(gomock.Any(), mTenantID, mVerID).Return(nil, errors.New("not found"))
+	vRepo.EXPECT().GetByID(gomock.Any(), mTenantID, mVerID).Return(nil, domain.ErrNotFound)
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
 	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
 		t.Fatalf("expected nil (silent skip), got %v", err)
+	}
+}
+
+func TestHandleDepartmentMembershipRevoked_VersionLookupFailure_IsReturnedSoTheEventIsRedelivered(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	aRepo := mocks.NewMockAssigneeRepository(ctrl)
+	tx := mocks.NewMockTransactor(ctrl)
+	exec := mocks.NewMockExecutionService(ctrl)
+
+	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).
+		Return([]*domain.NodeAssignee{assignee(mVerID, "task-1", mDeptID)}, nil)
+	vRepo.EXPECT().GetByID(gomock.Any(), mTenantID, mVerID).Return(nil, errors.New("connection reset"))
+
+	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err == nil {
+		t.Fatal("a database failure while reading the version must be returned, or the revocation is lost for good")
 	}
 }
 

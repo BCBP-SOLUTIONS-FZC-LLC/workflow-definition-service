@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -114,10 +115,10 @@ func (s *VersionService) invalidateVersion(
 }
 
 func (s *VersionService) skipDeletedVersion(versionID uuid.UUID, err error) error {
-	s.log.Error("membership revoked: get version", map[string]any{
-		"version_id": versionID.String(),
-		"error":      err.Error(),
-	})
+	if !errors.Is(err, domain.ErrNotFound) {
+		return fmt.Errorf("get version %s: %w", versionID, err)
+	}
+	s.log.Warn("membership revoked: version no longer exists", map[string]any{"version_id": versionID.String()})
 	return nil
 }
 
