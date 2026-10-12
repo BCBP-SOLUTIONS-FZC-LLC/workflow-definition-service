@@ -28,6 +28,10 @@ Beyond XXE/entity-injection guarding and namespace checks, the parser applies th
 - **Empty-ref sequence flows stripped**: sequence flows with an empty `sourceRef` or `targetRef` are silently discarded before the graph is built. These are orphan artefacts produced by bpmnjs when a connection is partially deleted; retaining them would cause spurious `INVALID_SEQUENCE_FLOW_REF` errors.
 - **Message boundary events with no outgoing flow**: a `<bpmn:boundaryEvent>` carrying a `messageEventDefinition` and zero outgoing sequence flows is **valid** — it is treated as a terminal interrupt notification. Timer and error boundary events still require at least one outgoing flow.
 
+## One Outgoing Flow, Splits at Gateways
+
+A start event, task, send or receive task, subProcess and callActivity continue along one flow, and the compiler follows only the first forward flow of each, so `ValidateSingleOutgoing` refuses a second one with `SPLIT_WITHOUT_GATEWAY` (sub-process bodies included; back-edges do not count). Branches come from parallel, exclusive or inclusive gateways. A timer boundary duration must be positive and short enough for the Execution Service to run (`IsValidDuration` mirrors its parser).
+
 ## Guarded BPMN Loops
 
 Cycles are not rejected outright. `classifyBackEdges` does a DFS; back-edges are permitted only when guarded:
