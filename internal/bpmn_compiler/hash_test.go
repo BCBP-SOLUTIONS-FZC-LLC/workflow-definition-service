@@ -130,11 +130,11 @@ func TestCompiler_Hash_MultiProcess(t *testing.T) {
 func TestCanonicalBundleHash_DuplicateProcessIDs_OrderIndependent(t *testing.T) {
 	a := bpmncore.BPMNProcess{ID: "X", Name: "first"}
 	b := bpmncore.BPMNProcess{ID: "X", Name: "second"}
-	h1, err := canonicalBundleHash([]bpmncore.BPMNProcess{a, b})
+	h1, err := canonicalBundleHash(&bpmncore.BPMNDefinitions{Processes: []bpmncore.BPMNProcess{a, b}})
 	if err != nil {
 		t.Fatalf("canonicalBundleHash: %v", err)
 	}
-	h2, err := canonicalBundleHash([]bpmncore.BPMNProcess{b, a})
+	h2, err := canonicalBundleHash(&bpmncore.BPMNDefinitions{Processes: []bpmncore.BPMNProcess{b, a}})
 	if err != nil {
 		t.Fatalf("canonicalBundleHash: %v", err)
 	}

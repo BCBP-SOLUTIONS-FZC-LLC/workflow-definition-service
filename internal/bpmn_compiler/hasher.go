@@ -5,46 +5,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 )
 
-func copySlice[T any](s []T) []T {
-	c := make([]T, len(s))
-	copy(c, s)
-	return c
-}
-
 func canonicalHash(proc *bpmncore.BPMNProcess) (string, error) {
-	clone := *proc
-	clone.UserTasks = copySlice(proc.UserTasks)
-	clone.GenericTasks = copySlice(proc.GenericTasks)
-	clone.SendTasks = copySlice(proc.SendTasks)
-	clone.ReceiveTasks = copySlice(proc.ReceiveTasks)
-	clone.StartEvents = copySlice(proc.StartEvents)
-	clone.EndEvents = copySlice(proc.EndEvents)
-	clone.ParallelGateways = copySlice(proc.ParallelGateways)
-	clone.ExclusiveGateways = copySlice(proc.ExclusiveGateways)
-	clone.InclusiveGateways = copySlice(proc.InclusiveGateways)
-	clone.SequenceFlows = copySlice(proc.SequenceFlows)
-	clone.BoundaryEvents = copySlice(proc.BoundaryEvents)
-	clone.CallActivities = copySlice(proc.CallActivities)
-	clone.DataStoreRefs = copySlice(proc.DataStoreRefs)
-	clone.SubProcesses = copySlice(proc.SubProcesses)
+	sortZeebeProperties(reflect.ValueOf(proc))
 
-	for i := range clone.UserTasks {
-		clone.UserTasks[i].ExtensionElements.ZeebeProps.Items = sortedZeebeItems(
-			clone.UserTasks[i].ExtensionElements.ZeebeProps.Items,
-		)
-	}
-	for i := range clone.SequenceFlows {
-		clone.SequenceFlows[i].ExtensionElements.ZeebeProps.Items = sortedZeebeItems(
-			clone.SequenceFlows[i].ExtensionElements.ZeebeProps.Items,
-		)
-	}
-
-	data, err := json.Marshal(clone)
+	data, err := json.Marshal(proc)
 	if err != nil {
 		return "", fmt.Errorf("canonical hash marshal: %w", err)
 	}
@@ -52,10 +22,57 @@ func canonicalHash(proc *bpmncore.BPMNProcess) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func canonicalBundleHash(procs []bpmncore.BPMNProcess) (string, error) {
-	if len(procs) == 1 {
-		return canonicalHash(&procs[0])
+func sortZeebeProperties(v reflect.Value) {
+	if v.Kind() == reflect.Pointer {
+		if !v.IsNil() {
+			sortZeebeProperties(v.Elem())
+		}
+		return
 	}
+	if v.Kind() == reflect.Struct {
+		for i := 0; i < v.NumField(); i++ {
+			sortZeebeProperties(v.Field(i))
+		}
+		return
+	}
+	if v.Kind() != reflect.Slice {
+		return
+	}
+	if items, ok := v.Interface().([]bpmncore.ZeebeProperty); ok {
+		sort.SliceStable(items, func(a, b int) bool { return items[a].Name < items[b].Name })
+		return
+	}
+	for i := 0; i < v.Len(); i++ {
+		sortZeebeProperties(v.Index(i))
+	}
+}
+
+type referenceData struct {
+	Messages     []bpmncore.BPMNMessage     `json:"messages,omitempty"`
+	Errors       []bpmncore.BPMNError       `json:"errors,omitempty"`
+	MessageFlows []bpmncore.BPMNMessageFlow `json:"message_flows,omitempty"`
+}
+
+func (r referenceData) empty() bool {
+	return len(r.Messages) == 0 && len(r.Errors) == 0 && len(r.MessageFlows) == 0
+}
+
+func definitionReferences(defs *bpmncore.BPMNDefinitions) referenceData {
+	ref := referenceData{
+		Messages: append([]bpmncore.BPMNMessage(nil), defs.Messages...),
+		Errors:   append([]bpmncore.BPMNError(nil), defs.Errors...),
+	}
+	if defs.Collaboration != nil {
+		ref.MessageFlows = append([]bpmncore.BPMNMessageFlow(nil), defs.Collaboration.MessageFlows...)
+	}
+	sort.Slice(ref.Messages, func(a, b int) bool { return ref.Messages[a].ID < ref.Messages[b].ID })
+	sort.Slice(ref.Errors, func(a, b int) bool { return ref.Errors[a].ID < ref.Errors[b].ID })
+	sort.Slice(ref.MessageFlows, func(a, b int) bool { return ref.MessageFlows[a].ID < ref.MessageFlows[b].ID })
+	return ref
+}
+
+func canonicalBundleHash(defs *bpmncore.BPMNDefinitions) (string, error) {
+	procs := defs.Processes
 	type procHash struct{ id, hash string }
 	hashes := make([]procHash, len(procs))
 	for i := range procs {
@@ -64,6 +81,10 @@ func canonicalBundleHash(procs []bpmncore.BPMNProcess) (string, error) {
 			return "", fmt.Errorf("process %q: %w", procs[i].ID, err)
 		}
 		hashes[i] = procHash{id: procs[i].ID, hash: h}
+	}
+	ref := definitionReferences(defs)
+	if len(procs) == 1 && ref.empty() {
+		return hashes[0].hash, nil
 	}
 	sort.Slice(hashes, func(a, b int) bool {
 		if hashes[a].id != hashes[b].id {
@@ -76,12 +97,12 @@ func canonicalBundleHash(procs []bpmncore.BPMNProcess) (string, error) {
 	for _, ph := range hashes {
 		bundle.Write([]byte(ph.hash))
 	}
+	if !ref.empty() {
+		data, err := json.Marshal(ref)
+		if err != nil {
+			return "", fmt.Errorf("canonical hash marshal references: %w", err)
+		}
+		bundle.Write(data)
+	}
 	return hex.EncodeToString(bundle.Sum(nil)), nil
-}
-
-func sortedZeebeItems(items []bpmncore.ZeebeProperty) []bpmncore.ZeebeProperty {
-	sorted := make([]bpmncore.ZeebeProperty, len(items))
-	copy(sorted, items)
-	sort.Slice(sorted, func(a, b int) bool { return sorted[a].Name < sorted[b].Name })
-	return sorted
 }

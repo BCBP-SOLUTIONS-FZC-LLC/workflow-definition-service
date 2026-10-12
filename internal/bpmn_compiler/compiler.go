@@ -354,7 +354,7 @@ func (c *Compiler) Hash(ctx context.Context, bpmnXML string) (string, error) {
 	if len(defs.Processes) == 0 {
 		return "", errors.New("bpmn hash: no process")
 	}
-	h, err := canonicalBundleHash(defs.Processes)
+	h, err := canonicalBundleHash(defs)
 	if err != nil {
 		return "", fmt.Errorf("bpmn hash: %w", err)
 	}
