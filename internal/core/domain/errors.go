@@ -79,6 +79,7 @@ const (
 	BPMNErrInvalidLaneName              BPMNErrorCode = "INVALID_LANE_NAME"
 	BPMNErrCalledElementCycle           BPMNErrorCode = "CALLED_ELEMENT_CYCLE"
 	BPMNErrDuplicateProcessID           BPMNErrorCode = "DUPLICATE_PROCESS_ID"
+	BPMNErrSplitWithoutGateway          BPMNErrorCode = "SPLIT_WITHOUT_GATEWAY"
 )
 
 type BPMNValidationSeverity string

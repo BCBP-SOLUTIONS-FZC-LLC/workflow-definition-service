@@ -40,6 +40,7 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 	errs = append(errs, ValidateLoops(g, backEdges)...)
 	errs = append(errs, ValidateMaxDepth(proc, g, backEdges)...)
 	errs = append(errs, ValidateGatewayMatching(proc, g, backEdges)...)
+	errs = append(errs, ValidateSingleOutgoing(proc, g, backEdges)...)
 	errs = append(errs, ValidateConditionExprs(proc, g)...)
 	errs = append(errs, ValidateBoundaryEvents(proc, g, backEdges)...)
 	errs = append(errs, ValidateMessageBoundaryNames(proc, defs)...)
