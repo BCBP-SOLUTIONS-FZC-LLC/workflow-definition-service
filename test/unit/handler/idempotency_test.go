@@ -42,6 +42,8 @@ func (f *fakeCache) Del(ctx context.Context, keys ...string) error {
 	}
 	return nil
 }
+func (f *fakeCache) DelIfEqual(context.Context, string, string) error { return nil }
+
 func (f *fakeCache) SetNX(ctx context.Context, key, value string, ttl time.Duration) (bool, error) {
 	if f.setnx != nil {
 		return f.setnx(ctx, key, value, ttl)

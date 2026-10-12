@@ -163,8 +163,8 @@ func TestDraftService_Update_OK_BPMNOnly(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	draft := &domain.WorkflowVersion{ID: uuid.New(), UpdatedAt: now, RecordVersion: 3}
 
-	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), "1", 30*time.Second).Return(true, nil)
-	cache.EXPECT().Del(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
+	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(draft, nil)
 	vRepo.EXPECT().UpdateDraft(gomock.Any(), gomock.Any()).Return(nil)
 
@@ -191,8 +191,8 @@ func TestDraftService_Update_OK_MetadataOnly(t *testing.T) {
 	tenantID, userID, wfID := uuid.New(), uuid.New(), uuid.New()
 	draft := &domain.WorkflowVersion{ID: uuid.New()}
 
-	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), "1", 30*time.Second).Return(true, nil)
-	cache.EXPECT().Del(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
+	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(draft, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
 		Return(&domain.Workflow{Name: "old", Description: "old-desc"}, nil)
@@ -218,8 +218,8 @@ func TestDraftService_Update_OK_DescriptionOnly(t *testing.T) {
 	tenantID, userID, wfID := uuid.New(), uuid.New(), uuid.New()
 	draft := &domain.WorkflowVersion{ID: uuid.New()}
 
-	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), "1", 30*time.Second).Return(true, nil)
-	cache.EXPECT().Del(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
+	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(draft, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
 		Return(&domain.Workflow{Name: "kept-name", Description: "old"}, nil)
@@ -240,7 +240,7 @@ func TestDraftService_Update_LockNotAcquired(t *testing.T) {
 	cache := mocks.NewMockCacheStore(ctrl)
 	svc := newDraftSvc(ctrl, cache, nil, nil)
 
-	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), "1", 30*time.Second).Return(false, nil)
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(false, nil)
 
 	_, err := svc.Update(context.Background(), uuid.New(), uuid.New(), uuid.New(), service.UpdateDraftReq{})
 	if !errors.Is(err, domain.ErrDraftConcurrency) {
@@ -253,7 +253,7 @@ func TestDraftService_Update_LockError(t *testing.T) {
 	cache := mocks.NewMockCacheStore(ctrl)
 	svc := newDraftSvc(ctrl, cache, nil, nil)
 
-	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), "1", 30*time.Second).
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).
 		Return(false, errors.New("cache error"))
 
 	_, err := svc.Update(context.Background(), uuid.New(), uuid.New(), uuid.New(), service.UpdateDraftReq{})
@@ -270,8 +270,8 @@ func TestDraftService_Update_StaleRecordVersion(t *testing.T) {
 
 	tenantID, wfID := uuid.New(), uuid.New()
 
-	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), "1", 30*time.Second).Return(true, nil)
-	cache.EXPECT().Del(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
+	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	// Draft is at record_version 5; the client supplies a stale 2.
 	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).
 		Return(&domain.WorkflowVersion{RecordVersion: 5}, nil)
@@ -290,8 +290,8 @@ func TestDraftService_Update_GetDraftError(t *testing.T) {
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	svc := newDraftSvc(ctrl, cache, nil, vRepo)
 
-	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), "1", 30*time.Second).Return(true, nil)
-	cache.EXPECT().Del(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
+	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	vRepo.EXPECT().GetDraft(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrNoDraftExists)
 
 	_, err := svc.Update(context.Background(), uuid.New(), uuid.New(), uuid.New(), service.UpdateDraftReq{})
@@ -323,8 +323,8 @@ func TestDraftService_Update_UpdateMetadataError(t *testing.T) {
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	svc := newDraftSvc(ctrl, cache, wfRepo, vRepo)
 
-	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), "1", 30*time.Second).Return(true, nil)
-	cache.EXPECT().Del(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
+	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	vRepo.EXPECT().GetDraft(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&domain.WorkflowVersion{}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -362,8 +362,8 @@ func TestDraftService_Update_GetWorkflowForMetaError(t *testing.T) {
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	svc := newDraftSvc(ctrl, cache, wfRepo, vRepo)
 
-	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), "1", 30*time.Second).Return(true, nil)
-	cache.EXPECT().Del(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
+	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	vRepo.EXPECT().GetDraft(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&domain.WorkflowVersion{}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrNotFound)
@@ -415,5 +415,43 @@ func TestDraftService_Discard_DeleteError(t *testing.T) {
 
 	if err := svc.Discard(context.Background(), uuid.New(), uuid.New()); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestDraftService_Update_ReleasesTheLockWithTheTokenItTookItWith(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cache := mocks.NewMockCacheStore(ctrl)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := newDraftSvc(ctrl, cache, wfRepo, vRepo)
+
+	tenantID, userID, wfID := uuid.New(), uuid.New(), uuid.New()
+	var taken []string
+	var released []string
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).
+		DoAndReturn(func(_ context.Context, _ string, value string, _ time.Duration) (bool, error) {
+			taken = append(taken, value)
+			return true, nil
+		}).Times(2)
+	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, value string) error {
+			released = append(released, value)
+			return nil
+		}).Times(2)
+	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(&domain.WorkflowVersion{ID: uuid.New(), RecordVersion: 1}, nil).Times(2)
+	vRepo.EXPECT().UpdateDraft(gomock.Any(), gomock.Any()).Return(nil).Times(2)
+
+	xml := "<bpmn/>"
+	for i := 0; i < 2; i++ {
+		if _, err := svc.Update(context.Background(), tenantID, userID, wfID, service.UpdateDraftReq{BPMNXML: &xml, RecordVersion: 1}); err != nil {
+			t.Fatalf("Update %d: %v", i, err)
+		}
+	}
+
+	if len(taken) != 2 || len(released) != 2 || taken[0] != released[0] || taken[1] != released[1] {
+		t.Errorf("taken %v released %v: each save must release with its own token", taken, released)
+	}
+	if taken[0] == taken[1] || taken[0] == "" {
+		t.Errorf("tokens %v must be unique per save, or a late release can delete another editor's lock", taken)
 	}
 }

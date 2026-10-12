@@ -171,14 +171,15 @@ func (s *DraftService) acquireDraftLock(ctx context.Context, tenantID, workflowI
 		return func() {}, nil
 	}
 	lockKey := fmt.Sprintf("draft-lock:%s:%s", tenantID, workflowID)
-	acquired, err := s.cache.SetNX(ctx, lockKey, "1", 30*time.Second)
+	token := uuid.NewString()
+	acquired, err := s.cache.SetNX(ctx, lockKey, token, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("acquire draft lock: %w", err)
 	}
 	if !acquired {
 		return nil, domain.ErrDraftConcurrency
 	}
-	return func() { _ = s.cache.Del(ctx, lockKey) }, nil
+	return func() { _ = s.cache.DelIfEqual(ctx, lockKey, token) }, nil
 }
 
 func failFastOnStaleRecordVersion(draft *domain.WorkflowVersion, recordVersion int64) error {

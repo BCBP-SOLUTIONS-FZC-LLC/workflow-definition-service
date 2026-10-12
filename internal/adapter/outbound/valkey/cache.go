@@ -50,6 +50,15 @@ func (c *Cache) SetNX(ctx context.Context, key string, value string, ttl time.Du
 	return val, nil
 }
 
+const deleteIfEqualScript = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) end return 0`
+
+func (c *Cache) DelIfEqual(ctx context.Context, key string, value string) error {
+	if err := c.client.Eval(ctx, deleteIfEqualScript, []string{key}, value).Err(); err != nil {
+		return fmt.Errorf("valkey del if equal: %w", err)
+	}
+	return nil
+}
+
 func (c *Cache) Ping(ctx context.Context) error {
 	if err := c.client.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("valkey ping: %w", err)

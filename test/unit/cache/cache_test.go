@@ -3,6 +3,7 @@ package cache_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ type mockCmdable struct {
 	delFunc   func(ctx context.Context, keys ...string) *redis.IntCmd
 	setNXFunc func(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.BoolCmd
 	pingFunc  func(ctx context.Context) *redis.StatusCmd
+	evalFunc  func(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
 }
 
 func (m *mockCmdable) Ping(ctx context.Context) *redis.StatusCmd {
@@ -53,6 +55,50 @@ func (m *mockCmdable) SetNX(ctx context.Context, key string, value interface{}, 
 		return m.setNXFunc(ctx, key, value, expiration)
 	}
 	return nil
+}
+
+func (m *mockCmdable) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
+	if m.evalFunc != nil {
+		return m.evalFunc(ctx, script, keys, args...)
+	}
+	return nil
+}
+
+func TestCache_DelIfEqual(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("deletes only the key whose value is the caller's", func(t *testing.T) {
+		var gotKeys []string
+		var gotArgs []interface{}
+		var gotScript string
+		cache := valkey.NewCache(&mockCmdable{
+			evalFunc: func(_ context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
+				gotScript, gotKeys, gotArgs = script, keys, args
+				return redis.NewCmdResult(int64(1), nil)
+			},
+		})
+
+		if err := cache.DelIfEqual(ctx, "draft-lock:t:w", "token-1"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(gotKeys) != 1 || gotKeys[0] != "draft-lock:t:w" || len(gotArgs) != 1 || gotArgs[0] != "token-1" {
+			t.Errorf("keys %v args %v, want the key and the caller's token", gotKeys, gotArgs)
+		}
+		if !strings.Contains(gotScript, `redis.call("get", KEYS[1]) == ARGV[1]`) || !strings.Contains(gotScript, `redis.call("del", KEYS[1])`) {
+			t.Errorf("script %q must compare the stored value before deleting", gotScript)
+		}
+	})
+
+	t.Run("error", func(t *testing.T) {
+		cache := valkey.NewCache(&mockCmdable{
+			evalFunc: func(context.Context, string, []string, ...interface{}) *redis.Cmd {
+				return redis.NewCmdResult(nil, errors.New("redis error"))
+			},
+		})
+		if err := cache.DelIfEqual(ctx, "k", "v"); err == nil {
+			t.Fatal("expected error but got nil")
+		}
+	})
 }
 
 func TestCache_Get(t *testing.T) {
