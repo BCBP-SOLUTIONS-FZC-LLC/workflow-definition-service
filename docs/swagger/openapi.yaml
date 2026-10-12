@@ -769,6 +769,15 @@ components:
           steps:
             - sequential: [Tender, Engineering]
 
+    StageChange:
+      type: object
+      properties:
+        node_key:    { type: string, description: "Department id and node id of the stage." }
+        description: { type: string }
+      example:
+        node_key: "dept-eng/Task_Review"
+        description: "timer boundary changed"
+
     StepChange:
       type: object
       properties:
@@ -1984,6 +1993,10 @@ paths:
                       step_changes:
                         type: array
                         items: { $ref: '#/components/schemas/StepChange' }
+                      stage_changes:
+                        type: array
+                        description: Stages whose timer boundary, message boundary or connector type changed. Each one is a structural change.
+                        items: { $ref: '#/components/schemas/StageChange' }
                       metadata_only: { type: boolean }
         "400": { $ref: '#/components/responses/UnprocessableEntity' }
         "401": { $ref: '#/components/responses/Unauthorized' }

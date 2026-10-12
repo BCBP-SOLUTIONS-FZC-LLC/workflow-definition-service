@@ -71,7 +71,13 @@ type DiffChanges struct {
 	AddedDepartments   []string
 	RemovedDepartments []string
 	StepChanges        []StepChange
+	StageChanges       []StageChange
 	MetadataOnly       bool
+}
+
+type StageChange struct {
+	NodeKey     string
+	Description string
 }
 
 type StepChange struct {

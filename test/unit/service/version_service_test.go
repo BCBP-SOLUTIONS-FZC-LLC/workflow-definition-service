@@ -351,6 +351,50 @@ func TestVersionService_Publish_MainPlanMissingFromCollaboration_Fails(t *testin
 	}
 }
 
+func planWithStage(stage dsl.StageDef) *dsl.CompiledPlan {
+	return &dsl.CompiledPlan{
+		Name:        "test",
+		Departments: []dsl.DepartmentDef{{ID: "a", Label: "a", Stages: []dsl.StageDef{stage}}},
+	}
+}
+
+func TestVersionService_Publish_StageBoundaryRewrite_IsStructural(t *testing.T) {
+	plain := dsl.StageDef{Type: "task", NodeID: "T1", Role: "reviewer"}
+	withTimer := plain
+	withTimer.BoundaryTimer = &dsl.BoundaryTimer{BoundaryID: "B1", Duration: "P1D", Interrupting: true, Terminates: true}
+	withMessage := plain
+	withMessage.BoundaryMessage = &dsl.MessagePath{MessageName: "stop", BoundaryID: "B2", Interrupting: true, Terminates: true}
+	otherConnector := plain
+	otherConnector.ConnectorType = "send-email"
+
+	for name, changed := range map[string]dsl.StageDef{"timer": withTimer, "message": withMessage, "connector type": otherConnector} {
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+			vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+			compiler := mocks.NewMockPlanCompiler(ctrl)
+			svc := service.NewVersionService(service.VersionDeps{Workflows: wfRepo, Versions: vRepo, Compiler: compiler})
+
+			tenantID, wfID, vID, activeID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+			vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(&domain.WorkflowVersion{
+				ID: vID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>",
+			}, nil)
+			compiler.EXPECT().ModuleCalls(gomock.Any(), "<bpmn/>").Return(nil, nil, nil)
+			compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
+			compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(planWithStage(changed)), nil)
+			compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
+			wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ActiveVersionID: &activeID}, nil)
+			vRepo.EXPECT().GetByID(gomock.Any(), tenantID, activeID).
+				Return(&domain.WorkflowVersion{CompiledPlanJSON: marshalledPlan(t, planWithStage(plain))}, nil)
+
+			_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
+			if !errors.Is(err, domain.ErrStructuralDivergence) {
+				t.Fatalf("err = %v, want ErrStructuralDivergence: a %s that rewrites where the flow goes is a structural change", err, name)
+			}
+		})
+	}
+}
+
 // force=true publishes through a structural divergence.
 func TestVersionService_Publish_ForceStructural(t *testing.T) {
 	ctrl := gomock.NewController(t)

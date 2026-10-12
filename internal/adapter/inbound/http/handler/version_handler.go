@@ -324,7 +324,21 @@ func (h *Handler) GetVersionDiff(c *gin.Context) {
 			"added_departments":   result.Changes.AddedDepartments,
 			"removed_departments": result.Changes.RemovedDepartments,
 			"step_changes":        result.Changes.StepChanges,
+			"stage_changes":       toStageChangeResps(result.Changes.StageChanges),
 			"metadata_only":       result.Changes.MetadataOnly,
 		},
 	})
+}
+
+type stageChangeResp struct {
+	NodeKey     string `json:"node_key"`
+	Description string `json:"description"`
+}
+
+func toStageChangeResps(changes []service.StageChange) []stageChangeResp {
+	out := make([]stageChangeResp, len(changes))
+	for i, c := range changes {
+		out[i] = stageChangeResp{NodeKey: c.NodeKey, Description: c.Description}
+	}
+	return out
 }
