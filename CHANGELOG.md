@@ -22,6 +22,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - Archiving a workflow or a module archives the version that is active when it commits, so a publish landing at the same moment cannot leave a published version nothing references.
 - Only published versions are cached as compiled plans, so a draft read before publish no longer hides the published plan until the entry expires.
 - A timer boundary needs a positive duration the Execution Service can run; zero, negative and over-long durations are `INVALID_SLA_DURATION`.
+- A start event, task, send or receive task, subProcess or callActivity with more than one outgoing flow is refused with `SPLIT_WITHOUT_GATEWAY`; the compiler kept only the first flow, so a published plan silently dropped the other branches.
+- The container image's `HEALTHCHECK` runs a `-healthcheck` probe of the service's own `/healthz`; it used to fall through to starting a second server.
 - Docs state the draft-edit lock failing a save when Valkey is unreachable, `/readyz` pinging Valkey, and the idempotency and lock key formats.
 
 ### Added

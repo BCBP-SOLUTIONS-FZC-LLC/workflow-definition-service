@@ -278,8 +278,7 @@ Incoming request
 
   → GET endpoints          ← read-only, no further authz
 
-  → RequirePermission("write","workflow",authz)   ← POST/PUT/DELETE
-  → handler
+  → handler                                       ← POST/PUT/PATCH/DELETE check the admin role first (403 otherwise)
 ```
 
 **Why `InjectGUCSet` is needed:** `gincommon.ContextMiddleware` stores `RequestContext` in the Gin context (`c.Set`) rather than the Go request context (`c.Request.Context()`). `pgcommon.GUCSetFromContext` reads only the Go context, so without this bridge the HTTP path never sets `app.tenant_id` and PostgreSQL RLS filters against a null GUC — a multi-tenant isolation failure. The internal routes do not use it: no gateway identity reaches them, so each internal handler calls `pgcommon.WithGUCSet` itself from the `tenant_id` its request carries.
@@ -1067,6 +1066,7 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | In a workflow, every lane a module slot binds to has a `dept_id` | `MISSING_DEPT_ID` |
 | No chain of calls returns to a process already on it | `CALLED_ELEMENT_CYCLE` (anchored on the callActivity that closes the cycle) |
 | No two processes in the bundled document share an `id` | `DUPLICATE_PROCESS_ID` |
+| A start event, task, send or receive task, subProcess or callActivity has one outgoing flow; a flow splits only at a gateway | `SPLIT_WITHOUT_GATEWAY` |
 | The called process's own body passes every rule in these tables, without the diagram rules | the body's own codes, anchored on its own nodes, or on the called process id for a whole-process rule |
 
 Message, timer and error boundary events on `callActivity` compile to the call step's `message_paths`, `timer_paths` and `error_paths`. Every boundary names the department of the first task or subProcess on its path, or `terminates` at an end event; a path starting at a call or a message task is `UNSUPPORTED_BOUNDARY_TARGET`.
@@ -1166,6 +1166,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `MISSING_DEPT_INPUT_FOR_MODULE` | A called process has two or more open lanes and the call's `Depts` input does not map every one |
 | `CALLED_ELEMENT_CYCLE` | A chain of `callActivity` calls returns to a process already on it |
 | `DUPLICATE_PROCESS_ID` | Two processes in the bundled document share an `id` |
+| `SPLIT_WITHOUT_GATEWAY` | A start event, task, send or receive task, subProcess or callActivity has more than one outgoing flow |
 | `UNSUPPORTED_BOUNDARY_TARGET` | A boundary event's path reaches a `callActivity`, `sendTask` or `receiveTask` before any `userTask`, `subProcess` or end event, or a `subProcess` whose body does not start with a `userTask` |
 | `MISSING_DEPT_ID` | A task's lane has no `dept_id`; a call binds a module lane to a workflow lane with no `dept_id`; or, at publish and `/validate`, a workflow has no lanes, or a task of its expanded plan runs in no IAM department |
 | `INVALID_DEPT_ID` | A lane's `dept_id` is not a UUID |
@@ -1287,14 +1288,5 @@ sequenceDiagram
 
 `gincommon.InitTracingWithConfig` runs once at startup, before `gincommon.ObservabilityMiddlewares` and the router, with the same `ServiceName`, `Domain` and `Environment` as the metrics identity. It reads `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_INSECURE`; an endpoint of `none` turns export off while trace and request IDs keep working.
 
-Per-route authorization:
-
-```go
-api.POST("/workflows/:id/archive",
-    gincommon.RequirePermission("write", "workflow", authzPort),
-    h.ArchiveWorkflow,
-)
-```
-
-`authzPort` implements `port.Authorizer`; `RequirePermission` returns `403` if denied, before the handler runs.
+Per-route authorization: every mutating handler begins with `mustAdminCtx`, which takes the request context and returns `403` unless `x-tenant-roles` holds `tenant_admin` or `tenant_owner`; writes to the global catalogue additionally call `requirePlatformOperator`. The check runs before the handler does any work.
 

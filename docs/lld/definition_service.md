@@ -95,7 +95,7 @@ Below is a detailed breakdown of each internal module within the Workflow Defini
   - **Input**: Raw HTTP request body (JSON/XML) and identity headers (`x-tenant-id`, `x-user-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`).
   - **Output**: HTTP status codes (200, 201, 4xx, 5xx) and structured response payloads (JSON).
   - **Context Access**: After the `ContextMiddleware` runs, all handlers call `gincommon.RequestContext(c)` to obtain a fully-populated `*domain.RequestContext` carrying `TenantID`, `UserID`, `Roles`, and `TraceID`.
-  - **RBAC**: Read-only endpoints (`GET`) require a valid `x-tenant-id`; mutating endpoints additionally check `x-tenant-roles` contains `tenant_admin` or `tenant_owner` via a custom `port.Authorizer` backed by the `RequirePermission` middleware.
+  - **RBAC**: Read-only endpoints (`GET`) require a valid `x-tenant-id`; mutating endpoints additionally require `x-tenant-roles` to contain `tenant_admin` or `tenant_owner` and answer `403 FORBIDDEN` otherwise; a write to the global catalogue also requires `platform_operator`.
   - **Internal routes**: `/api/v1/internal` skips the gateway-identity middleware and is guarded by `RequireInternalToken` instead (§3.4); it shares the HTTP server, its metrics and its tracing.
 
 - **BPMN Parser**
@@ -133,7 +133,6 @@ The service follows clean architecture: nothing in `core/` imports from `adapter
       - `service/` — Use case services orchestrating operations (e.g. publication).
     - **`adapter/`** — Outward-facing transport and driver implementations.
       - `inbound/http/` — Gin HTTP handlers, routes, and custom authentication middleware (using `platform-gincommon` helpers).
-      - `inbound/http/authz/` — `WorkflowAuthorizer` implementing `port.Authorizer` (role-based write guard).
       - `inbound/http/middleware/` — Service-specific middleware: payload size limit, content-type check, idempotency key.
       - `outbound/http/` — Clients for Org & Membership, OpenBao and the Execution Service's internal API.
       - `outbound/postgres/` — sqlc-generated DB layer (`db/` sub-package, gitignored) and hand-written repo adapters.
@@ -236,10 +235,8 @@ Incoming HTTP request
                                               errResponse maps to 413 PAYLOAD_TOO_LARGE
   → [read endpoints — GET /workflows, GET /workflows/:id, ...]
   → [mutating endpoints — POST / PUT / DELETE]
-  → RequirePermission("write", "workflow", authz) (gincommon) — checks port.Authorizer backed by
-                                                                 x-tenant-roles header; returns 403 if
-                                                                 caller lacks tenant_admin or tenant_owner
-  → handler
+  → handler                     — checks x-tenant-roles; returns 403 if the caller lacks
+                                  tenant_admin or tenant_owner, before any work is done
 ```
 
 ```mermaid
@@ -276,7 +273,7 @@ Incoming HTTP request
     I --> J[Handler]
 
     H --> K[Mutating Endpoints<br/>POST / PUT / DELETE]
-    K --> L["RequirePermission<br/>('write','workflow')"]
+    K --> L["Role check in the handler<br/>(tenant_admin / tenant_owner)"]
     L --> J
 
     classDef middleware fill:#eef,stroke:#447;
@@ -1574,6 +1571,11 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
 40. **`CONNECTOR_SECRET_AUTHORED`**
     - **Trigger Scenario**: A connector `serviceTask`'s `<zeebe:ioMapping>` has an input whose `target` is a secret field of its connector type (`storage`'s `accessKey`, `send-email`'s `apiKey`, and so on).
     - **Trigger Logic**: `ValidateConnectorNoAuthoredSecret` in `bpmn_compiler/validator/connector_task.go` compares each input's `target` with the secret fields in `workflow-connectors`' `pkg/registry`. A connector always uses the tenant's stored credential, at `connectors/<tenant>/<type>/<field>`; a diagram never names one, so a secret never appears in a stored plan or a diagram.
+
+
+41. **`SPLIT_WITHOUT_GATEWAY`**
+    - **Trigger Scenario**: A start event, a task, a send or receive task, a `subProcess` or a `callActivity` has more than one outgoing sequence flow.
+    - **Trigger Logic**: A flow splits only at a gateway. The error is emitted on the node with the extra flows, inside sub-process bodies as well, and counts forward flows only: the flow of a revert loop back to an earlier node is not a split. A second flow out of an activity cannot be run as a parallel branch, because every activity continues along one flow; a workflow that needs parallel or alternative branches places a parallel, exclusive or inclusive gateway after the activity.
 
 ---
 
@@ -3801,7 +3803,7 @@ This section consolidates all security controls enforced by the Definition Servi
 
 - **Identity**: Authentication is handled entirely upstream by Keycloak + the ext_authz service. The Definition Service does not validate JWTs; it trusts the injected headers. The `gincommon.RequireAuth` middleware (part of `ProtectedMiddlewares`) enforces that `x-user-id` and `x-tenant-id` are both present, non-empty, trimmed, ≤ 256 characters, and free of control characters. Any request failing these checks receives an immediate `401 Unauthorized` before the handler is reached.
 - **Tenant context propagation**: `gincommon.ContextMiddleware` (also part of `ProtectedMiddlewares`) reads the validated headers and constructs a `*domain.RequestContext` stored in the Gin context. All handlers call `gincommon.RequestContext(c)` to access `TenantID`, `UserID`, `Roles`, and `TraceID` — no direct header parsing occurs in handler code.
-- **Role enforcement**: All mutating endpoints (`POST`, `PUT`, `DELETE`) are protected with `gincommon.RequirePermission("write", "workflow", authz)` where `authz` is a production `port.Authorizer` implementation backed by the `x-tenant-roles` header. It rejects callers whose roles do not include `tenant_admin` or `tenant_owner` with `403 Forbidden`. Read endpoints (`GET`) require only a valid `x-tenant-id` (enforced by `RequireAuth`).
+- **Role enforcement**: Every mutating endpoint (`POST`, `PUT`, `PATCH`, `DELETE`) checks the `x-tenant-roles` header before doing any work and rejects callers whose roles do not include `tenant_admin` or `tenant_owner` with `403 Forbidden`; writes to the global catalogue also require `platform_operator`. Read endpoints (`GET`) require only a valid `x-tenant-id` (enforced by `RequireAuth`).
 - **Department/role header**: `x-departments` (§3.1) is gateway-injected to this service like every other header, as comma-separated `dept_uuid:role` pairs — this service doesn't currently gate any authorization decision on it (role enforcement above uses `x-tenant-roles` only), but it's documented here for completeness since a future department-scoped endpoint would read it the same way `execution_service.md` §9.2 already does.
 - **Tenant boundary**: Every database query sets the `app.tenant_id` GUC via `pgcommon.WithGUCSet` before any DB access. The `tenant_id` is always sourced from the validated `x-tenant-id` gateway header — never from the request body. This prevents callers from self-selecting a different tenant's data. Cross-tenant data access is impossible regardless of application-layer checks because RLS enforces it at the DB layer.
 - **Connection Role Restrictions**:
@@ -4885,6 +4887,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.33 | 2026-10-08 | **A boundary carries the whole path it leads to** (§4.1.3.2, §4.2, Appendix E). A boundary named only the department it moved to, so a path of several tasks, lanes or gateways ran its first department alone and the flow then went on as if the host had finished. Each boundary, on a task, a subProcess or a call, now carries its path as `Steps` and the boundary event's ID as `BoundaryID`, compiled after the main traversal on a state of its own; the Execution Service runs them and an interrupting boundary ends its path (workflow-models LLD rev 2.17, execution LLD rev 1.72). A path that continues into a node the main flow compiled keeps naming only its department. The outside waits read looks into the steps of boundary paths. |
 | 1.34 | 2026-10-09 | **Platform libraries at their latest majors, the platform metric standard, and RLS violation logging** (§1.1, §1.6, §1.7.5, §6.1, §6.2, §7.4.2, §10.6, Appendix A). `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.0, `platform-gincommon` v1.6.0; `workflow-models` v1.2.0, `workflow-connectors` v1.0.0. Metrics follow the platform tiers: `platform_*` from the libraries, `workflow_definition_service_<metric>` for the service. The request deadline runs innermost. `APP_ENV` is validated; OpenBao is required outside dev. Tenant tables force RLS through the sampled violation-logging functions, exported as `workflow_definition_service_rls_violations_total`. `api/asyncapi.yaml` documents both inbound events. The publish path emits the `BPMN_Compilation` and `DB_Publish_Transaction` spans. |
 | 1.35 | 2026-10-12 | **Publish and archive are consistent under concurrent edits, timers must be runnable, and the cache and lock behaviour is stated as built** (§1.1, §1.9, §2.5, §2.6, §3.1.3, §3.1.4, §3.3.7, §3.3.8, §3.4.1, DR posture). A publish is refused when the draft changed after it was read, so the stored plan always belongs to the stored BPMN. A save that changes nothing returns the `record_version` the row holds. Archive of a workflow or module acts on the version active at commit. A timer boundary needs a positive duration the Execution Service can run. Only published versions are cached as compiled plans. The draft-edit lock fails a save while the cache is unreachable. Idempotency and draft-lock key formats match the service. Libraries: `platform-pgcommon/v2` v2.0.1, `workflow-connectors/v2` v2.0.0, `workflow-models/v2` v2.0.0-rc.1. |
+| 1.36 | 2026-10-12 | **A flow splits only at a gateway; the container health check; and the write-role guard stated as built** (§1.4, §1.6.1, §3.1.4 new code 41, §8.2). A start event, task, send or receive task, subProcess or callActivity with more than one outgoing flow is refused with `SPLIT_WITHOUT_GATEWAY`; before, the plan kept the first flow and silently dropped the rest. The container image's health check is a probe of the service's own `/healthz`. The write-role guard is a role check at the start of each mutating handler, not a middleware. |
 ---
 
 ## Appendix E: Open Items

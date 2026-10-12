@@ -242,6 +242,7 @@ These are checked on every upload. Breaking them causes rejection.
 | Nested sub-processes | not supported (`NESTED_SUBPROCESS_NOT_SUPPORTED`) |
 | A module that calls itself, directly or through others | `CALLED_ELEMENT_CYCLE` |
 | Two processes with one `id` in a file | `DUPLICATE_PROCESS_ID` |
+| A task, call or sub-process with more than one outgoing flow (use a gateway to split) | `SPLIT_WITHOUT_GATEWAY` |
 
 ### Errors that appear when you publish
 
