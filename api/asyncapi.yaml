@@ -99,17 +99,18 @@ components:
     DepartmentMembershipRevokedInbound:
       type: object
       additionalProperties: true
-      required: [user_id, department_id, role]
+      required: [user_id, department_id]
       properties:
         user_id:
           type: string
           format: uuid
         department_id:
           type: string
-          description: Format owned by the Org & Membership Service.
+          format: uuid
+          description: The department the user left. A value that is not a UUID is answered 400 and is not retried.
         role:
           type: string
-          description: The membership role being revoked.
+          description: The membership role being revoked. Informational; the service does not read it.
 
     MembershipRevokedInbound:
       type: object

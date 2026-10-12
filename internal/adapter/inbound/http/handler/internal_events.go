@@ -90,6 +90,11 @@ func (h *Handler) parseRevocation(c *gin.Context, env events.Envelope[json.RawMe
 	if err != nil {
 		return badPayload("invalid user_id in payload")
 	}
+	if evtType == eventDepartmentMembershipRevoked {
+		if _, err := uuid.Parse(p.DepartmentID); err != nil {
+			return badPayload("invalid department_id in payload")
+		}
+	}
 
 	return revocationIdentity{
 		eventID: eventID, tenantID: tenantID, userID: userID, departmentID: p.DepartmentID,

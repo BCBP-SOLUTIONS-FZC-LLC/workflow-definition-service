@@ -93,7 +93,7 @@ components:
         tenant_id: "7ca648b2-b432-4744-884c-35fd556a310c"
         data:
           user_id: "3fa18cde-7244-47ac-986c-665cd42caaaa"
-          department_id: "engineering"
+          department_id: "0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a10"
           role: "reviewer"
 
     ProblemDetails:
@@ -224,15 +224,7 @@ paths:
             schema: { $ref: '#/components/schemas/EventEnvelope' }
       responses:
         "200":
-          description: Event processed. A redelivered envelope id is reprocessed and converges on the same state.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status: { type: string, example: "processed", enum: [processed, ignored] }
-        "204":
-          description: Event accepted with no response body (alternative to 200).
+          description: Event processed, or ignored when its type is not one this service handles. The body is empty. A redelivered envelope id is reprocessed and converges on the same state.
         "400":
           description: Malformed envelope or payload (non-retryable — the consumer routes to its DLQ).
           content:

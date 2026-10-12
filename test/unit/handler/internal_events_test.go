@@ -56,7 +56,7 @@ var (
 	ieEventID  = uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	ieTenantID = uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 	ieUserID   = uuid.MustParse("cccccccc-cccc-cccc-cccc-cccccccccccc")
-	ieDeptID   = "dept-finance"
+	ieDeptID   = "dddddddd-dddd-dddd-dddd-dddddddddddd"
 )
 
 func internalRouter(rev *fakeMembershipRevoker) *gin.Engine {
@@ -98,6 +98,19 @@ func TestInternalEvents_HappyPath(t *testing.T) {
 	assert.Equal(t, ieTenantID, rev.gotTenantID)
 	assert.Equal(t, ieUserID, rev.gotUserID)
 	assert.Equal(t, ieDeptID, rev.gotDeptID)
+}
+
+func TestInternalEvents_DepartmentRevoked_NonUUIDDepartment_400(t *testing.T) {
+	for name, deptID := range map[string]string{"a name": "engineering", "empty": ""} {
+		t.Run(name, func(t *testing.T) {
+			rev := &fakeMembershipRevoker{}
+			w := postEvent(rev, envelope("DepartmentMembershipRevoked", ieEventID.String(), ieTenantID.String(),
+				map[string]string{"user_id": ieUserID.String(), "department_id": deptID}))
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.False(t, rev.called, "a malformed event must not reach the service")
+		})
+	}
 }
 
 // TestInternalEvents_TenantMembershipRevoked covers IAM's tenant-level
