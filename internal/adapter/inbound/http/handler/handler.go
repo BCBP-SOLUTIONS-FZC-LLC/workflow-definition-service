@@ -221,11 +221,16 @@ func parseUUIDParam(c *gin.Context, param string) (uuid.UUID, bool) {
 	return id, true
 }
 
+const maxPage = 100000
+
 func paginate(c *gin.Context) (page, limit int) {
 	page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
 	if page < 1 {
 		page = 1
+	}
+	if page > maxPage {
+		page = maxPage
 	}
 	if limit < 1 || limit > 100 {
 		limit = 20

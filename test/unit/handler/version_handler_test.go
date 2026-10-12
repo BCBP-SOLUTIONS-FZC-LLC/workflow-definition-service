@@ -3,6 +3,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"testing"
 
@@ -55,6 +56,21 @@ func TestListVersions_ReturnsSummariesNotTheBPMNOrThePlan(t *testing.T) {
 	for _, field := range []string{"id", "status", "is_valid", "created_by_user_id", "created_at"} {
 		assert.Contains(t, resp.Versions[0], field)
 	}
+}
+
+func TestListVersions_HugePage_IsBoundedSoTheOffsetCannotOverflow(t *testing.T) {
+	var gotPage, gotLimit int
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
+		list: func(_ context.Context, _, _ uuid.UUID, page, limit int) ([]*domain.WorkflowVersion, int64, error) {
+			gotPage, gotLimit = page, limit
+			return nil, 0, nil
+		},
+	}, &fakeValidationSvc{})
+
+	w := do(newRouter(h), req(http.MethodGet, "/api/v1/workflows/"+testWFID.String()+"/versions?page=21474838&limit=100", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	assert.LessOrEqual(t, int64(gotPage-1)*int64(gotLimit), int64(math.MaxInt32), "page %d at limit %d gives an offset the database column cannot hold", gotPage, gotLimit)
 }
 
 func TestListVersions_InvalidWorkflowUUID(t *testing.T) {
