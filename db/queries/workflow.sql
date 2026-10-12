@@ -27,9 +27,13 @@ OFFSET $3;
 SELECT COUNT(*) FROM workflow WHERE tenant_id = $1;
 
 -- name: UpdateActiveVersion :execresult
-UPDATE workflow
+-- The pointer may only name a PUBLISHED version of this workflow, or be cleared.
+UPDATE workflow AS w
 SET active_version_id = $3, updated_at = now()
-WHERE tenant_id = $1 AND id = $2;
+WHERE w.tenant_id = $1 AND w.id = $2
+  AND ($3::uuid IS NULL OR EXISTS (
+        SELECT 1 FROM workflow_version v
+        WHERE v.id = $3 AND v.workflow_id = w.id AND v.tenant_id = w.tenant_id AND v.status = 'PUBLISHED'));
 
 -- name: UpdateWorkflowMetadata :execresult
 UPDATE workflow

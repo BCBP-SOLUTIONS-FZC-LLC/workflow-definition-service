@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -231,6 +232,9 @@ func TestWorkflowRepo_List_ArchivedFilter(t *testing.T) {
 	if err := vRepo.Create(ctx, v); err != nil {
 		t.Fatalf("create version: %v", err)
 	}
+	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, 1, `{}`, "h", nil); err != nil {
+		t.Fatalf("publish version: %v", err)
+	}
 	if err := repo.UpdateActiveVersion(ctx, tenantID, active.ID, &v.ID); err != nil {
 		t.Fatalf("set active version: %v", err)
 	}
@@ -363,6 +367,9 @@ func TestWorkflowRepo_UpdateActiveVersion(t *testing.T) {
 		t.Fatalf("Create version: %v", err)
 	}
 
+	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, 1, `{}`, "h", nil); err != nil {
+		t.Fatalf("publish version: %v", err)
+	}
 	if err := repo.UpdateActiveVersion(ctx, tenantID, wf.ID, &v.ID); err != nil {
 		t.Fatalf("UpdateActiveVersion: %v", err)
 	}
@@ -434,4 +441,44 @@ func firstKey(wfs []*domain.Workflow) string {
 		return "<empty>"
 	}
 	return wfs[0].BusinessKey
+}
+
+func TestWorkflowRepo_UpdateActiveVersion_OnlyAPublishedVersionOfThatWorkflow(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewWorkflowRepo(pool)
+	vRepo := postgres.NewWorkflowVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	newWorkflow := func(key string) *domain.Workflow {
+		wf := &domain.Workflow{ID: uuid.New(), TenantID: tenantID, CreatedByUserID: uuid.New(), BusinessKey: key, Name: key}
+		if err := repo.Create(ctx, wf); err != nil {
+			t.Fatalf("create workflow %s: %v", key, err)
+		}
+		return wf
+	}
+	wf, other := newWorkflow("guard-wf"), newWorkflow("guard-other")
+
+	draft := newDraftVersion(wf.ID, tenantID)
+	if err := vRepo.Create(ctx, draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+	if err := repo.UpdateActiveVersion(ctx, tenantID, wf.ID, &draft.ID); !errors.Is(err, domain.ErrVersionNotPublished) {
+		t.Errorf("activating a draft = %v, want ErrVersionNotPublished", err)
+	}
+
+	foreign := newDraftVersion(other.ID, tenantID)
+	if err := vRepo.Create(ctx, foreign); err != nil {
+		t.Fatalf("create foreign draft: %v", err)
+	}
+	if err := vRepo.Publish(ctx, tenantID, foreign.ID, 1, 1, `{}`, "h", nil); err != nil {
+		t.Fatalf("publish foreign: %v", err)
+	}
+	if err := repo.UpdateActiveVersion(ctx, tenantID, wf.ID, &foreign.ID); !errors.Is(err, domain.ErrVersionNotPublished) {
+		t.Errorf("activating another workflow's version = %v, want ErrVersionNotPublished", err)
+	}
+
+	if err := repo.UpdateActiveVersion(ctx, tenantID, wf.ID, nil); err != nil {
+		t.Errorf("clearing the pointer = %v, want nil", err)
+	}
 }

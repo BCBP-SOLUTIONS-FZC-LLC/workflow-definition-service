@@ -2,11 +2,13 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -103,10 +105,24 @@ func (r *WorkflowRepo) UpdateActiveVersion(
 			return mapErr(err)
 		}
 		if tag.RowsAffected() == 0 {
-			return domain.ErrNotFound
+			return workflowOrVersionNotPublished(ctx, dbtx, tenantID, workflowID)
 		}
 		return nil
 	})
+}
+
+func workflowOrVersionNotPublished(ctx context.Context, dbtx db.DBTX, tenantID, workflowID uuid.UUID) error {
+	_, err := db.New(dbtx).GetWorkflowByIDWithVersionNumber(ctx, db.GetWorkflowByIDWithVersionNumberParams{
+		TenantID: tenantID,
+		ID:       workflowID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrNotFound
+	}
+	if err != nil {
+		return mapErr(err)
+	}
+	return domain.ErrVersionNotPublished
 }
 
 func (r *WorkflowRepo) UpdateMetadata(
