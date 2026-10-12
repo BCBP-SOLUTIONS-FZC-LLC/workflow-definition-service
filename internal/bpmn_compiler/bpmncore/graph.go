@@ -1,10 +1,5 @@
 package bpmncore
 
-import (
-	"maps"
-	"slices"
-)
-
 type Graph struct {
 	Outgoing map[string][]string
 	Incoming map[string][]string
@@ -91,43 +86,83 @@ func BuildCondExprs(proc *BPMNProcess) map[[2]string]string {
 }
 
 func FindJoin(splitID string, g *Graph, backEdges map[[2]string]bool) (string, bool) {
-	forward := func(n string) []string {
-		return slices.DeleteFunc(slices.Clone(g.Outgoing[n]), func(next string) bool { return backEdges[[2]string{n, next}] })
-	}
-	if len(forward(splitID)) < 2 {
+	if forwardCount(splitID, g, backEdges) < 2 {
 		return "", false
 	}
-	pdom := map[string]map[string]bool{}
-	var postDominators func(n string) map[string]bool
-	postDominators = func(n string) map[string]bool {
-		if set, seen := pdom[n]; seen {
-			return set
+	join := immediatePostDominator(splitID, g, backEdges)
+	return join, join != ""
+}
+
+func forwardCount(node string, g *Graph, backEdges map[[2]string]bool) int {
+	n := 0
+	for _, next := range g.Outgoing[node] {
+		if !backEdges[[2]string{node, next}] {
+			n++
 		}
-		pdom[n] = map[string]bool{}
-		var common map[string]bool
-		for _, next := range forward(n) {
-			nextSet := postDominators(next)
-			if common == nil {
-				common = maps.Clone(nextSet)
+	}
+	return n
+}
+
+func immediatePostDominator(root string, g *Graph, backEdges map[[2]string]bool) string {
+	const (
+		onStack = 1
+		done    = 2
+	)
+	state := map[string]int{root: onStack}
+	successors := map[string][]string{}
+	var order []string
+	type frame struct {
+		node string
+		next int
+	}
+	stack := []frame{{node: root}}
+	for len(stack) > 0 {
+		top := &stack[len(stack)-1]
+		out := g.Outgoing[top.node]
+		if top.next == len(out) {
+			state[top.node] = done
+			order = append(order, top.node)
+			stack = stack[:len(stack)-1]
+			continue
+		}
+		next := out[top.next]
+		top.next++
+		if backEdges[[2]string{top.node, next}] || state[next] == onStack {
+			continue
+		}
+		successors[top.node] = append(successors[top.node], next)
+		if state[next] == 0 {
+			state[next] = onStack
+			stack = append(stack, frame{node: next})
+		}
+	}
+
+	parent := map[string]string{}
+	depth := map[string]int{"": 0}
+	for _, n := range order {
+		var meet string
+		for i, succ := range successors[n] {
+			if i == 0 {
+				meet = succ
 				continue
 			}
-			maps.DeleteFunc(common, func(k string, _ bool) bool { return !nextSet[k] })
+			meet = commonAncestor(meet, succ, parent, depth)
 		}
-		if common == nil {
-			common = map[string]bool{}
-		}
-		common[n] = true
-		pdom[n] = common
-		return common
+		parent[n] = meet
+		depth[n] = depth[meet] + 1
 	}
-	candidates := maps.Clone(postDominators(splitID))
-	delete(candidates, splitID)
-	for c := range candidates {
-		if len(postDominators(c)) == len(candidates) {
-			return c, true
+	return parent[root]
+}
+
+func commonAncestor(a, b string, parent map[string]string, depth map[string]int) string {
+	for a != b {
+		if depth[a] >= depth[b] {
+			a = parent[a]
+		} else {
+			b = parent[b]
 		}
 	}
-	return "", false
+	return a
 }
 
 func FirstForward(node string, g *Graph, backEdges map[[2]string]bool) (string, bool) {
