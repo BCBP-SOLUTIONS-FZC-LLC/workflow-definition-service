@@ -57,7 +57,7 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/http:3 \
                       internal/bpmn_compiler/element:75 \
                       internal/config:90
 
-.PHONY: metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-breaking \
+.PHONY: helm-check metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-breaking \
         build migrate test test-integration test-ci merge-coverage \
         cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
@@ -346,6 +346,18 @@ docker-trivy:
 ## docker-check: Run Dockerfile lint + dependency CVE scan (no image build required)
 docker-check: docker-lint docker-trivy
 	@echo "✓ all container checks passed"
+
+## helm-check: lint the chart, render it with production settings, and require a prod render with no service addresses to fail
+HELM_PROD_SETTINGS = --set existingSecret=workflow-definition-service-secrets \
+	--set env.ORG_MEMBERSHIP_BASE_URL=http://org-membership.platform.svc:8080 \
+	--set env.OPENBAO_ADDR=http://openbao.platform.svc:8200 \
+	--set env.VALKEY_ADDR=valkey.platform.svc:6379
+
+helm-check:
+	helm lint deploy/helm $(HELM_PROD_SETTINGS)
+	helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) > /dev/null
+	@if helm template workflow-definition-service deploy/helm --set existingSecret=workflow-definition-service-secrets > /dev/null 2>&1; then \
+		echo "helm-check: the chart renders for prod without ORG_MEMBERSHIP_BASE_URL, OPENBAO_ADDR and VALKEY_ADDR"; exit 1; fi
 
 ## pin-base-images: Resolve current digests for Dockerfile base images and pin them (writes .docker-digests)
 pin-base-images:

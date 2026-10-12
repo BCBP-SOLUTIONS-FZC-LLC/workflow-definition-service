@@ -247,6 +247,9 @@ jobs:
         env:
           IMAGE_VERSION: ${{ needs.docker.outputs.version }}
           K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'workflow-app' }}
+          ORG_MEMBERSHIP_BASE_URL: ${{ vars.ORG_MEMBERSHIP_BASE_URL }}
+          OPENBAO_ADDR: ${{ vars.OPENBAO_ADDR }}
+          VALKEY_ADDR: ${{ vars.VALKEY_ADDR }}
         run: |
           helm upgrade workflow-definition-service ./deploy/helm \
             --install \
@@ -255,6 +258,9 @@ jobs:
             --namespace="$K8S_NAMESPACE" \
             --set image.tag="$IMAGE_VERSION" \
             --set existingSecret=workflow-definition-service-secrets \
+            --set env.ORG_MEMBERSHIP_BASE_URL="$ORG_MEMBERSHIP_BASE_URL" \
+            --set env.OPENBAO_ADDR="$OPENBAO_ADDR" \
+            --set env.VALKEY_ADDR="$VALKEY_ADDR" \
             --atomic
 
       # Verify the running image digest matches what was signed and published.
