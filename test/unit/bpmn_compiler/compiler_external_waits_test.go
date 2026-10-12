@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 )
 
 func externalWaits(t *testing.T, collab *dsl.CompiledCollaboration) []dsl.ExternalWait {

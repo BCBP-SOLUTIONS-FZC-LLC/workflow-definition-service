@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl/dsltest"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl/dsltest"
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 

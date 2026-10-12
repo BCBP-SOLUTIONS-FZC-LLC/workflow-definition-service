@@ -10,7 +10,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/enums"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/enums"
 )
 
 const (

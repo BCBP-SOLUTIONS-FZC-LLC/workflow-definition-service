@@ -3,7 +3,7 @@ package bpmncore
 import (
 	"testing"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 )
 
 func TestPatchStep(t *testing.T) {

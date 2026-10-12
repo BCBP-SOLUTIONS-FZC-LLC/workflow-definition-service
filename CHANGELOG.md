@@ -27,7 +27,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
-- Platform libraries: `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.1, `platform-gincommon` v1.6.0, `workflow-models` v1.2.0, `workflow-connectors/v2` v2.0.0.
+- Platform libraries: `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.1, `platform-gincommon` v1.6.0, `workflow-models/v2` v2.0.0-rc.1, `workflow-connectors/v2` v2.0.0.
 - The service is named `workflow-definition-service`. HTTP and database series are `platform_http_*` and `platform_db_*`; this service's collectors are `workflow_definition_service_<metric>`. The metrics identity (`domain=workflow`, `service`, `environment`) is fixed before any collector or pool is created, `/metrics` is served by `gincommon.MetricsHandler()`, and pgcommon queries export `db.query` spans through `gincommon.NewSpanTracer`. Alert rules, the Helm `PrometheusRule`, the prometheus-adapter rule and the release smoke query use these names.
 - `APP_ENV` is one of `local`, `dev`, `test`, `staging`, `prod`; any other value fails startup. `prod` enforces `SYSTEM_DATABASE_URL`. The CI smoke job runs with `APP_ENV=test`.
 - `OPENBAO_ADDR` and `OPENBAO_TOKEN` are required whenever `APP_ENV` is not `dev`; the Helm chart sets the OpenBao, secrets-client, connector-alias and RLS export values and takes `OPENBAO_TOKEN` from the Secret.

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl/dsltest"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl/dsltest"
 	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -39,7 +39,7 @@ var goldenFlowOrderBPMN string
 //	go test ./test/unit/service -run TestGolden -update-golden
 var updateGolden = flag.Bool("update-golden", false, "rewrite workflow-models' dsltest golden from this publish")
 
-const workflowModels = "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models"
+const workflowModels = "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2"
 
 // TestGolden publishes each golden workflow through the real compiler and
 // library resolution, and requires the stored plan to be the one

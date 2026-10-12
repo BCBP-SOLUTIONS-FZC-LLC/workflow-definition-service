@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/enums"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/enums"
 )
 
 func (h *Handler) AllowedBPMNElements(c *gin.Context) {

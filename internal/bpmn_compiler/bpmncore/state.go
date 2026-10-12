@@ -6,7 +6,7 @@ import (
 	"maps"
 	"strings"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/pkg/dsl"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 )
 
 const defaultTaskQueue = "wf-queue-default"

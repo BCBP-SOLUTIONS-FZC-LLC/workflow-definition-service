@@ -12,8 +12,8 @@ github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.1 h1:slrOE29/H7JGwrw
 github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.1/go.mod h1:Y7kwnvVdASCEYRtbsjC+/O5gYjOqJD2z3nDeXcF0JCU=
 github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors/v2 v2.0.0 h1:2VeXHicl5V+Fr8ERAzxRBjWE/1HSDCoM0nAMfednhH0=
 github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors/v2 v2.0.0/go.mod h1:Rg9raX+24Jhfu6c2SyHiJy/rBrkQV0l0aqkfjHoqVII=
-github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.2.0 h1:KQY/gjO9p1n5i1cc+U4M887PKLjRchz/1S/ZU0ksCaY=
-github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.2.0/go.mod h1:ZOAy+khxiBNGZdXfT7JD8IKO+p97VDrww1Hz4VidNPw=
+github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2 v2.0.0-rc.1 h1:CstNFRcpGyWgkYNj02Bc3702dfU5ZwINqgmwSZv28dM=
+github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2 v2.0.0-rc.1/go.mod h1:g2W735s/rWg13R80drrjiHR1CJQIYxiYGiPhMYapgGo=
 github.com/KyleBanks/depth v1.2.1 h1:5h8fQADFrWtarTdtDudMmGsC7GPbOAu6RVB3ffsVFHc=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
