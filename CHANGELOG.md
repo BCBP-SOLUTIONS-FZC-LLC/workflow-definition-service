@@ -31,6 +31,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - A version marked invalid by a membership revocation cannot be promoted.
 - A timer boundary, message boundary or connector type change counts as structural in the version diff, and the diff response lists `stage_changes`.
 - The release deploy passes the Org-Membership, OpenBao and Valkey addresses, the chart refuses a prod render without them, CI runs `make helm-check`, and the migrate hook finds its ServiceAccount and Secret on a first install.
+- A page of versions carries summaries, not each version's BPMN and compiled plan, and a huge `page` is bounded.
+- A pod leaves the endpoint lists before it stops listening: `/readyz` fails for `SHUTDOWN_DRAIN_DELAY` (default 5s) after SIGTERM.
+- Unknown event types share one metric label, `AddModuleVersion` and `PublishVersion` return 400 for a malformed body, and clone normalizes `x-plan` like create.
+- A main process named like a called process, and a call inside a sub-process, are refused by validation instead of failing at publish or as a dangling flow.
+- The artifact hash covers messages, errors and message flows and ignores property order inside every element.
+- The active version pointer can only name a published version of its own workflow, and the draft-edit lock is released only by the save that took it.
 - Docs state the draft-edit lock failing a save when Valkey is unreachable, `/readyz` pinging Valkey, and the idempotency and lock key formats.
 
 ### Added

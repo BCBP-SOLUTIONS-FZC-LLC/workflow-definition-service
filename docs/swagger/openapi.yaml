@@ -181,6 +181,7 @@ components:
             event; does not reflect BPMN structural validity.
         created_by_user_id:  { type: string, format: uuid }
         published_at:        { type: string, format: date-time, nullable: true }
+        created_at:          { type: string, format: date-time }
       example:
         id: 8fa88cde-824c-47bc-836b-665cd42c2222
         version_number: 2

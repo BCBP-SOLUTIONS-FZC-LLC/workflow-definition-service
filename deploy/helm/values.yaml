@@ -144,7 +144,7 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /readyz   # checks Postgres pool health + Valkey ping (cmd/server/handlers.go)
+    path: /readyz   # checks Postgres pool health + Valkey ping (internal/adapter/inbound/http/router.go)
     port: 8080
   initialDelaySeconds: 0
   periodSeconds: 10

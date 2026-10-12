@@ -449,7 +449,7 @@ helm template my-release ./deploy/helm --set secretValues.DATABASE_URL=... # ...
 helm upgrade workflow-definition-service ./deploy/helm --install --namespace <ns>
 ```
 
-**Ports and probes.** The Service and Deployment both expose named `http` (8080) and `metrics` (9091) ports. `startupProbe`/`livenessProbe`/`readinessProbe` all target `http` — `/healthz` is a trivial liveness check, `/readyz` actually verifies the Postgres pool and Valkey are reachable (`cmd/server/handlers.go`), so a pod only receives traffic once its real dependencies are up.
+**Ports and probes.** The Service and Deployment both expose named `http` (8080) and `metrics` (9091) ports. `startupProbe`/`livenessProbe`/`readinessProbe` all target `http` — `/healthz` is a trivial liveness check, `/readyz` actually verifies the Postgres pool and Valkey are reachable (`internal/adapter/inbound/http/router.go`), so a pod only receives traffic once its real dependencies are up.
 
 **Migrations run as a Helm hook, not at boot.** `cmd/server/main.go` never migrates on the normal server boot path — schema changes are applied by a dedicated `migrate` subcommand (`/server migrate`) that runs this service's domain migrations, then exits. Running that inline at boot would let two replicas race on `golang-migrate`'s advisory lock during a rolling deploy, stalling the loser and risking a readiness-probe timeout for no reason.
 
@@ -601,6 +601,16 @@ Database: PostgreSQL 18, schema `workflow_definition`. Multi-tenancy is enforced
 | `workflow_node_assignee` | Denormalised reverse index: user → versions that reference them as default assignees |
 
 See full DDL in [`db/migrations/`](db/migrations/).
+
+### Database roles
+
+The migrations create no roles and no grants: they run under `MIGRATION_DATABASE_URL`, and every table has `REVOKE ALL FROM PUBLIC` with row-level security forced. Provision these roles with the database before the first deploy, or every query fails with permission denied:
+
+| Role | Used by | Needs |
+| --- | --- | --- |
+| Migrator | the `migrate` subcommand (`MIGRATION_DATABASE_URL`) | owns the schema and its tables; `BYPASSRLS` so data migrations are not blocked by the service's own policies |
+| Runtime | the server (`DATABASE_URL`) | `USAGE` on the schema and `SELECT`, `INSERT`, `UPDATE`, `DELETE` on its tables and `USAGE` on its sequences; never `BYPASSRLS` |
+| System | global-catalogue writes and the RLS-violation exporter (`SYSTEM_DATABASE_URL`, required in prod) | `BYPASSRLS` with the same table privileges, including `SELECT` and `DELETE` on `rls_violation_log` |
 
 ### Query patterns
 

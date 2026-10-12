@@ -291,12 +291,13 @@ Tracing starts once at startup, before the metrics identity is fixed and before 
 
 ```text
 1. OS signal received
-2. HTTP server: stop accepting new connections (httpServer.Shutdown)
-3. gincommon.Shutdown(logger)   — flushes OTel HTTP spans + Zap buffer (platform-gincommon v1.2.0)
-4. DB pool: pool.Close()
+2. Readiness fails (`/readyz` answers 503) and the pod waits `SHUTDOWN_DRAIN_DELAY` (default 5 s), so the gateway and the Execution Service drop it from their endpoint lists
+3. HTTP server: stop accepting new connections and finish in-flight requests, bounded by 30 s
+4. gincommon.Shutdown(logger)   — flushes OTel HTTP spans + Zap buffer (platform-gincommon v1.2.0)
+5. DB pool: pool.Close()
 ```
 
-Step 3 must run before pool.Close() to ensure any in-flight DB-related spans are flushed before the pool drains.
+Step 4 must run before pool.Close() to ensure any in-flight DB-related spans are flushed before the pool drains. The drain delay plus the 30 s bound stays within the pod's termination grace period.
 
 **Request deadline** (30 s): a request exceeding it is cancelled and returns 503, and `platform_http_request_timeouts_total` counts it separately from other 5xx errors. The deadline runs innermost in the middleware chain, so the metrics, the access log and the server span record the same 503 the client receives.
 
@@ -618,9 +619,11 @@ The service uses Valkey 8.0 (Redis-compatible, via `github.com/redis/go-redis/v9
 | --- | --- | --- | --- |
 | Compiled workflow plan | `wf:plan:<tenantID>:<versionID>` | 1 h | Archive, or a membership revocation that marks the version invalid (key deleted); only published versions are cached |
 | Idempotency key | `idem:<tenantID>:<method>:<path>:<idempotency-key>` | 24 h | Not invalidated — expires naturally; only 2xx responses are cached |
-| Draft-edit lock | `draft-lock:<tenantID>:<workflowID>` | 30 s | Taken for the duration of a save and released when it ends |
+| Draft-edit lock | `draft-lock:<tenantID>:<workflowID>` | 30 s | Taken for the duration of a save with a per-save token and released only by that token, so a save that outlived the lock cannot delete the next editor's |
 
 The compiled-plan cache is populated lazily: on the first internal compiled-plan read (§3.4.1) after a version is published, the plan is fetched from Postgres and written to Valkey. Subsequent requests on the same version hit the cache without a DB round-trip.
+
+A cached published plan can outlive an archive or a membership revocation, by at most `CACHE_COMPILED_PLAN_TTL`, only when the invalidation fails or races the read that repopulates the entry; the TTL bounds that window.
 
 **Valkey client timeout**: 50 ms. A timeout is treated as a cache miss and the request falls through to Postgres, so Valkey latency can never block the HTTP SLO budget (see §9.3).
 
@@ -877,7 +880,7 @@ A **denormalized reverse index** that inverts the compiled DSL's `default_assign
 
     business_key (VARCHAR): The external business key serving as the canonical reference for the workflow across the overall system architecture (e.g., referencing process types like tender-123-abc across decoupled domain services). Ensures clean, human-readable lookups and strict multi-service alignment instead of relying solely on random UUIDs.
 
-    active_version_id (UUID): A nullable foreign key pointing to the currently active/published workflow_version. This allows O(1) reads of the running template schema when spawning new workflow instances, bypassing sequential version scans.
+    active_version_id (UUID): A nullable foreign key pointing to the currently active/published workflow_version. It names only a `PUBLISHED` version of the same workflow, or nothing; the database refuses any other value. This allows O(1) reads of the running template schema when spawning new workflow instances, bypassing sequential version scans.
 
     record_version (BIGINT): Monotonic optimistic-lock counter. Starts at 1, incremented by a `BEFORE UPDATE` trigger on every row change. `PATCH /workflows/:id` supplies the client's last-read value via `If-Match` header or body field; a mismatch returns `409 WORKFLOW_CONCURRENCY_VIOLATION`.
 
@@ -897,7 +900,7 @@ A **denormalized reverse index** that inverts the compiled DSL's `default_assign
 
     compiled_plan_json (JSONB): The compiled, validated JSON DSL, always stored as a `CompiledCollaboration` (§7.5). Pre-compilation avoids XML parsing during runtime workflow starts.
 
-    artifact_hash (TEXT): A canonical SHA-256 hash computed from the normalized BPMN XML elements of every process in the bundled XML, called processes and bundled modules included. Stored at publish and returned with the version. The version diff compares the expanded compiled plans; no code path reads `artifact_hash`.
+    artifact_hash (TEXT): A canonical SHA-256 hash computed from the normalized BPMN XML elements of every process in the bundled XML, called processes and bundled modules included, and from the document's message and error definitions and message flows. The order of properties inside any element does not change it. Stored at publish and returned with the version. The version diff compares the expanded compiled plans; no code path reads `artifact_hash`.
 
     created_by_user_id (UUID): The tenant admin who created/updated this specific version. Provides strict revision history auditing.
 
@@ -1056,7 +1059,7 @@ Input validation is enforced at the service layer before any DB write. Violation
 
 **Concurrency tokens**: `PATCH /workflows/:id` and `PUT /workflows/:id/draft` accept the lock token as `If-Match: "<record_version>"` header (preferred) or `record_version` in the JSON body. Header takes precedence when both are present. Omitting both is last-writer-wins (acceptable for single-admin tenants; the guard matters for concurrent admin edits). See §10.11.
 
-**Pagination params** (`GET /workflows`, `GET /workflows/:id/versions`): `page` ≥ 1 (default 1), `limit` ∈ [1, 100] (default 20). `versions_limit` on `GET /workflows/:id` is clamped to [1, 100] in the service layer.
+**Pagination params** (`GET /workflows`, `GET /workflows/:id/versions`): `page` ∈ [1, 100000] (default 1; a larger value is clamped), `limit` ∈ [1, 100] (default 20). `versions_limit` on `GET /workflows/:id` is clamped to [1, 100] in the service layer.
 
 #### Standard Error Patterns (RFC-9457)
 
@@ -1488,7 +1491,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
 
 23. **`UNSUPPORTED_ELEMENT`**
     - **Trigger Scenario**: The uploaded XML contains a Tier 2 element that is on the roadmap but not yet supported (§4.1.2 / §4.1.4). Examples: `<bpmn:intermediateCatchEvent>` with a message or signal definition.
-    - **Trigger Logic**: `parser.go` checks each scoped element against an `unsupportedElements` map. If a match is found, this error is emitted against the element ID. Distinct from `REJECTED_ELEMENT` — signals "this will be supported in a future version" rather than "permanently rejected".
+    - **Trigger Logic**: `parser.go` checks each scoped element against an `unsupportedElements` map. If a match is found, this error is emitted against the element ID. A `callActivity` inside a `subProcess` is refused with it too: a call is made from the main flow. Distinct from `REJECTED_ELEMENT` — signals "this will be supported in a future version" rather than "permanently rejected".
 
 22a. **`MISSING_DIAGRAM`**
     - **Trigger Scenario**: The uploaded BPMN document has no `<bpmndi:BPMNDiagram>` element.
@@ -1541,7 +1544,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Logic**: `ValidateCallGraph` in `bpmn_compiler/validator/call_graph.go` walks the calls of every process in the bundled document. The error is emitted on the callActivity that closes the cycle. A called process runs inside its caller, so a cycle has no finite plan. When a module is saved or published, the library resolution also emits it for a call that reaches the module itself at its latest version (§3.3.18), which would be a cycle once that version is published.
 
 33. **`DUPLICATE_PROCESS_ID`**
-    - **Trigger Scenario**: Two `<bpmn:process>` elements in the document share an `id`.
+    - **Trigger Scenario**: Two `<bpmn:process>` elements in the document share an `id`, or the main process is named like another process of the document: the main plan is named by the process name and a called plan by its id, so the two would share a plan name.
     - **Trigger Logic**: `ValidateCallGraph` in `bpmn_compiler/validator/call_graph.go` emits one error per repeated id. A `calledElement` must resolve to exactly one process. Library modules are bundled under their plan names, so only the author's own file can repeat an id.
 
 34. **`UNSUPPORTED_BOUNDARY_TARGET`**
@@ -1719,7 +1722,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 - **Query Params**:
   - `page` (default 1): Pagination page index.
   - `limit` (default 20, max 100): Page size.
-- **Response (`200 OK`)**: Retrieves the paginated full history list of workflow versions:
+- **Response (`200 OK`)**: Retrieves a page of the workflow's version history. Each item is a summary; the BPMN, the compiled plan and the module references come from the single-version read (§3.3.4), so a page stays small however large the plans are:
 
   ```json
   {
@@ -1778,6 +1781,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 - **Semantics**: Computes structural diff compared to the previous version. If structural elements changed (e.g. split/join gateways, routing steps) and `force_publish_structural` is `false`, returns `409 Conflict` (recommending a new workflow key).
 - **Overriding**: If `force_publish_structural` is `true`, the publish transaction overrides the warning and registers the new version under the existing key.
 - **Consistency**: The plan, hash, assignees and module references a publish stores always come from the BPMN as it was when the publish compiled it. If the draft is saved after the publish read it and before the publish commits, the publish is refused with `409 Conflict` (`DRAFT_CONCURRENCY`) and the draft stays as saved; the client publishes again.
+  A membership revocation that lands between a publish's eligibility check and its commit is not seen by that publish, because the version's assignee rows do not exist yet; the version publishes valid and the next revocation or publish corrects it.
 
 #### 3.3.8 Archive Workflow
 
@@ -4904,6 +4908,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.35 | 2026-10-12 | **Publish and archive are consistent under concurrent edits, timers must be runnable, and the cache and lock behaviour is stated as built** (§1.1, §1.9, §2.5, §2.6, §3.1.3, §3.1.4, §3.3.7, §3.3.8, §3.4.1, DR posture). A publish is refused when the draft changed after it was read, so the stored plan always belongs to the stored BPMN. A save that changes nothing returns the `record_version` the row holds. Archive of a workflow or module acts on the version active at commit. A timer boundary needs a positive duration the Execution Service can run. Only published versions are cached as compiled plans. The draft-edit lock fails a save while the cache is unreachable. Idempotency and draft-lock key formats match the service. Libraries: `platform-pgcommon/v2` v2.0.1, `workflow-connectors/v2` v2.0.0, `workflow-models/v2` v2.0.0-rc.1. |
 | 1.36 | 2026-10-12 | **A flow splits only at a gateway; the container health check; and the write-role guard stated as built** (§1.4, §1.6.1, §3.1.4 new code 41, §8.2). A start event, task, send or receive task, subProcess or callActivity with more than one outgoing flow is refused with `SPLIT_WITHOUT_GATEWAY`; before, the plan kept the first flow and silently dropped the rest. The container image's health check is a probe of the service's own `/healthz`. The write-role guard is a role check at the start of each mutating handler, not a middleware. |
 | 1.37 | 2026-10-12 | **The validator refuses what the compiler would drop, and the review's contract fixes** (§3.1.3, §3.1.4 codes 22, 41–44, §3.3.11, §3.3.14, §4.1, §7.4). Boundary hosts, one message boundary per node, a boundary with one flow, a receive task as a revert source, an end event with an outgoing flow, duplicate element ids and an unknown error reference are refused; before, the plan silently dropped the work. An exclusive split with several unconditioned flows warns, since the Execution Service takes the first. A version marked invalid cannot be promoted. The version diff treats a changed timer boundary, message boundary or connector type as structural. A `DepartmentMembershipRevoked` whose department is not a UUID is a 400. |
+| 1.38 | 2026-10-12 | **The version list is summaries, shutdown drains, and the review's smaller fixes** (§1.8, §1.9, §2.2, §3.1.4 codes 23 and 33, §3.3.3.1, §3.1.3). A page of versions carries summaries only; a page number is bounded. The pod fails readiness for `SHUTDOWN_DRAIN_DELAY` before it stops listening. The artifact hash covers messages, errors and message flows and ignores property order everywhere. A call inside a sub-process is `UNSUPPORTED_ELEMENT`, and a main process named like a called one is `DUPLICATE_PROCESS_ID`. The active-version pointer names only a published version of its workflow. The draft-edit lock is released only by the save that took it. The bounded windows that remain are stated: a stale cached plan up to the TTL, and a revocation between a publish's eligibility check and its commit. |
 ---
 
 ## Appendix E: Open Items

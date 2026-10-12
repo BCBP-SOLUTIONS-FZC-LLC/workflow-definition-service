@@ -497,6 +497,7 @@ All configuration is read from environment variables via `internal/config.Config
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `HTTP_PORT` | No | `8080` | Gin HTTP listener port |
+| `METRICS_PORT` | No | `9091` | Prometheus scrape listener port, separate from the API port so a NetworkPolicy can scope them independently |
 
 ### Observability (platform-gincommon)
 
