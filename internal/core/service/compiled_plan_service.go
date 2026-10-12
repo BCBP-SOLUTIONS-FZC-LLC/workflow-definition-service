@@ -56,7 +56,9 @@ func (s *CompiledPlanService) Get(ctx context.Context, tenantID, versionID uuid.
 		WorkflowID: v.WorkflowID, VersionID: v.ID, VersionNumber: v.VersionNumber,
 		Status: v.Status, IsValid: v.IsValid, PlanJSON: v.CompiledPlanJSON,
 	}
-	s.writeCache(ctx, key, p)
+	if v.Status == domain.VersionStatusPublished {
+		s.writeCache(ctx, key, p)
+	}
 	return p, nil
 }
 

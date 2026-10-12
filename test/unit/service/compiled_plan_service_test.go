@@ -80,6 +80,32 @@ func TestCompiledPlan_PublishedVersion(t *testing.T) {
 
 // A draft has no stored plan and no number; the read returns it as it is and
 // the Execution Service refuses it for not being published.
+func TestCompiledPlan_DraftIsNotCachedSoThePublishedPlanIsServedAfterPublish(t *testing.T) {
+	tenantID, versionID, workflowID := uuid.New(), uuid.New(), uuid.New()
+	published := false
+	versions := &planVersions{get: func(uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error) {
+		if published {
+			return publishedPlanVersion(versionID, workflowID, `{"schema_version":1}`), nil
+		}
+		return &domain.WorkflowVersion{ID: versionID, WorkflowID: workflowID, Status: domain.VersionStatusDraft}, nil
+	}}
+	cache := newPlanCache()
+	svc := service.NewCompiledPlanService(service.CompiledPlanDeps{Versions: versions, Cache: cache, CacheTTL: time.Hour})
+
+	before, err := svc.Get(context.Background(), tenantID, versionID)
+	if err != nil || before.Status != domain.VersionStatusDraft {
+		t.Fatalf("Get of the draft = %+v, %v", before, err)
+	}
+	published = true
+	after, err := svc.Get(context.Background(), tenantID, versionID)
+	if err != nil {
+		t.Fatalf("Get after publish: %v", err)
+	}
+	if after.Status != domain.VersionStatusPublished || after.PlanJSON == nil {
+		t.Errorf("after publish the service returned status %v with plan %v, want the published plan", after.Status, after.PlanJSON)
+	}
+}
+
 func TestCompiledPlan_DraftHasNoPlan(t *testing.T) {
 	versionID := uuid.New()
 	versions := &planVersions{get: func(uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error) {
