@@ -57,7 +57,7 @@ SET status          = 'PUBLISHED',
     module_refs     = $6,
     published_at    = now(),
     updated_at      = now()
-WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT';
+WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT' AND record_version = $7;
 
 -- name: ArchiveVersion :execresult
 UPDATE workflow_version

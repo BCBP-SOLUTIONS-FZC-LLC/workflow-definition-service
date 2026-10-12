@@ -31,6 +31,7 @@ type WorkflowVersionRepository interface {
 	Publish(
 		ctx context.Context,
 		tenantID, versionID uuid.UUID,
+		recordVersion int64,
 		versionNumber int32,
 		compiledPlanJSON, artifactHash string,
 		moduleRefs []domain.ModuleRef,

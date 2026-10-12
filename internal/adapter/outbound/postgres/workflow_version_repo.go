@@ -148,6 +148,7 @@ func (r *WorkflowVersionRepo) UpdateDraft(ctx context.Context, v *domain.Workflo
 func (r *WorkflowVersionRepo) Publish(
 	ctx context.Context,
 	tenantID, versionID uuid.UUID,
+	recordVersion int64,
 	versionNumber int32,
 	compiledPlanJSON, artifactHash string,
 	moduleRefs []domain.ModuleRef,
@@ -164,12 +165,13 @@ func (r *WorkflowVersionRepo) Publish(
 			CompiledPlanJson: json.RawMessage(compiledPlanJSON),
 			ArtifactHash:     toNullableText(artifactHash),
 			ModuleRefs:       refs,
+			RecordVersion:    recordVersion,
 		})
 		if err != nil {
 			return mapErr(err)
 		}
 		if tag.RowsAffected() == 0 {
-			return statusOrNotFound(ctx, dbtx, tenantID, versionID, domain.ErrVersionNotDraft)
+			return statusOrNotFoundOrConcurrency(ctx, dbtx, tenantID, versionID)
 		}
 		return nil
 	})

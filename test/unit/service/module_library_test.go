@@ -89,8 +89,8 @@ func publishWithLibrary(t *testing.T, bpmnXML string, library map[libraryKey]*do
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil).AnyTimes()
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) }).AnyTimes()
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _, _ uuid.UUID, _ int32, compiledPlanJSON, _ string, refs []domain.ModuleRef) error {
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, gomock.Any(), int32(1), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _, _ uuid.UUID, _ int64, _ int32, compiledPlanJSON, _ string, refs []domain.ModuleRef) error {
 			out.stored, out.refs = compiledPlanJSON, refs
 			return nil
 		}).AnyTimes()

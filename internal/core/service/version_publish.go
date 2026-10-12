@@ -19,6 +19,7 @@ type publishTxInput struct {
 	tenantID      uuid.UUID
 	workflowID    uuid.UUID
 	versionID     uuid.UUID
+	recordVersion int64
 	versionNumber int32
 	compiledJSON  string
 	artifactHash  string
@@ -149,7 +150,7 @@ func (s *VersionService) checkStructuralDivergence(
 }
 
 func (s *VersionService) runPublishTx(ctx context.Context, in publishTxInput) error {
-	if err := s.versions.Publish(ctx, in.tenantID, in.versionID, in.versionNumber, in.compiledJSON, in.artifactHash, in.moduleRefs); err != nil {
+	if err := s.versions.Publish(ctx, in.tenantID, in.versionID, in.recordVersion, in.versionNumber, in.compiledJSON, in.artifactHash, in.moduleRefs); err != nil {
 		return err
 	}
 	if err := s.assignees.DeleteByVersion(ctx, in.tenantID, in.versionID); err != nil {

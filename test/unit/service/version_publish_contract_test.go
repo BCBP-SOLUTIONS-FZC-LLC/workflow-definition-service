@@ -78,8 +78,8 @@ func publishRecordingAssignees(t *testing.T, bpmnXML string) (string, []*domain.
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil).AnyTimes()
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) }).AnyTimes()
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _, _ uuid.UUID, _ int32, compiledPlanJSON, _ string, _ []domain.ModuleRef) error {
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, gomock.Any(), int32(1), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _, _ uuid.UUID, _ int64, _ int32, compiledPlanJSON, _ string, _ []domain.ModuleRef) error {
 			stored = compiledPlanJSON
 			return nil
 		}).AnyTimes()

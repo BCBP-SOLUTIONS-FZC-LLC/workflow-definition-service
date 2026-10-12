@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -191,7 +192,7 @@ func TestWorkflowVersionRepo_DeleteDraft_ExistsPublished_ReturnsVersionNotDraft(
 	if err := vRepo.Create(ctx, v); err != nil {
 		t.Fatalf("create draft: %v", err)
 	}
-	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, `{}`, "hash1", nil); err != nil {
+	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, 1, `{}`, "hash1", nil); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
 
@@ -221,7 +222,7 @@ func TestWorkflowVersionRepo_Publish(t *testing.T) {
 		t.Fatalf("create draft: %v", err)
 	}
 
-	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, `{"steps":[]}`, "abc123", nil); err != nil {
+	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, 1, `{"steps":[]}`, "abc123", nil); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
@@ -268,9 +269,52 @@ func TestWorkflowVersionRepo_Publish_PgBouncerMode(t *testing.T) {
 		if err := vRepo.Create(ctx, v); err != nil {
 			t.Fatalf("create draft: %v", err)
 		}
-		if err := vRepo.Publish(ctx, tenantID, v.ID, int32(len(refs)+1), `{"steps":[]}`, "abc123", refs); err != nil {
+		if err := vRepo.Publish(ctx, tenantID, v.ID, 1, int32(len(refs)+1), `{"steps":[]}`, "abc123", refs); err != nil {
 			t.Fatalf("Publish with %d module refs: %v", len(refs), err)
 		}
+	}
+}
+
+func TestWorkflowVersionRepo_Publish_DraftEditedAfterRead_ReturnsDraftConcurrency(t *testing.T) {
+	pool := newTestPool(t)
+	wfRepo := postgres.NewWorkflowRepo(pool)
+	vRepo := postgres.NewWorkflowVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	wf := &domain.Workflow{
+		ID: uuid.New(), TenantID: tenantID,
+		CreatedByUserID: uuid.New(), BusinessKey: "wv-pub-stale", Name: "X",
+	}
+	if err := wfRepo.Create(ctx, wf); err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	draft := newDraftVersion(wf.ID, tenantID)
+	if err := vRepo.Create(ctx, draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+	readAt, err := vRepo.GetByID(ctx, tenantID, draft.ID)
+	if err != nil {
+		t.Fatalf("read draft: %v", err)
+	}
+
+	edited := *readAt
+	edited.BPMNXML = "<definitions><!-- edited --></definitions>"
+	if err := vRepo.UpdateDraft(ctx, &edited); err != nil {
+		t.Fatalf("edit draft: %v", err)
+	}
+
+	err = vRepo.Publish(ctx, tenantID, draft.ID, readAt.RecordVersion, 1, `{"steps":[]}`, "stale-hash", nil)
+	if !errors.Is(err, domain.ErrDraftConcurrency) {
+		t.Fatalf("Publish after the draft changed = %v, want ErrDraftConcurrency", err)
+	}
+
+	got, err := vRepo.GetByID(ctx, tenantID, draft.ID)
+	if err != nil {
+		t.Fatalf("read after refused publish: %v", err)
+	}
+	if got.Status != domain.VersionStatusDraft || got.BPMNXML != edited.BPMNXML {
+		t.Errorf("refused publish left status %v and bpmn %q, want the edited draft", got.Status, got.BPMNXML)
 	}
 }
 
@@ -280,7 +324,7 @@ func TestWorkflowVersionRepo_Publish_NotDraft(t *testing.T) {
 	ctx := context.Background()
 
 	// Non-existent version → ErrNotFound.
-	err := vRepo.Publish(ctx, uuid.New(), uuid.New(), 1, `{}`, "", nil)
+	err := vRepo.Publish(ctx, uuid.New(), uuid.New(), 1, 1, `{}`, "", nil)
 	if err != domain.ErrNotFound {
 		t.Errorf("Publish non-existent = %v, want ErrNotFound", err)
 	}

@@ -114,6 +114,7 @@ func (s *VersionService) Publish(
 			tenantID:      tenantID,
 			workflowID:    workflowID,
 			versionID:     versionID,
+			recordVersion: draft.RecordVersion,
 			versionNumber: versionNumber,
 			compiledJSON:  prep.compiledJSON,
 			artifactHash:  prep.artifactHash,

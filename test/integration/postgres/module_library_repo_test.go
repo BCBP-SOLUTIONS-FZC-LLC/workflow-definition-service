@@ -202,7 +202,7 @@ func TestWorkflowVersionRepo_ModuleRefsAndUsages(t *testing.T) {
 		if err := vRepo.Create(ctx, v); err != nil {
 			t.Fatalf("create draft: %v", err)
 		}
-		if err := vRepo.Publish(ctx, tenantID, v.ID, 1, `{}`, "h", refs); err != nil {
+		if err := vRepo.Publish(ctx, tenantID, v.ID, 1, 1, `{}`, "h", refs); err != nil {
 			t.Fatalf("publish: %v", err)
 		}
 		return v

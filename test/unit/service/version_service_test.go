@@ -132,7 +132,7 @@ func TestVersionService_Publish_OK(t *testing.T) {
 	tenantID, userID, wfID, vID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	draft := &domain.WorkflowVersion{
 		ID: vID, WorkflowID: wfID, TenantID: tenantID,
-		Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>",
+		Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>", RecordVersion: 7,
 	}
 
 	// Pre-flight (outside transaction)
@@ -147,7 +147,7 @@ func TestVersionService_Publish_OK(t *testing.T) {
 	// Transaction
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "abc123", gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int64(7), int32(1), gomock.Any(), "abc123", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	// No BulkInsert — empty plan produces no assignees
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
@@ -318,7 +318,7 @@ func TestVersionService_Publish_UnchangedStructureAgainstStoredBaseline_Publishe
 
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, gomock.Any(), int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
@@ -383,7 +383,7 @@ func TestVersionService_Publish_ForceStructural(t *testing.T) {
 
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, gomock.Any(), int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
@@ -463,7 +463,7 @@ func TestVersionService_Publish_BaselineThatNoLongerCompiles_IsDivergent(t *test
 				vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(2), nil)
 				tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 					func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-				vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
+				vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, gomock.Any(), int32(2), gomock.Any(), "h", gomock.Any()).Return(nil)
 				assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 				wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 			}
@@ -625,7 +625,7 @@ func TestVersionService_Publish_SkipEligibilityCheck(t *testing.T) {
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(2), nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
@@ -674,7 +674,7 @@ func TestVersionService_Publish_WithAssignees_BulkInsert(t *testing.T) {
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "hash", gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, gomock.Any(), int32(1), gomock.Any(), "hash", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	assignees.EXPECT().BulkInsert(gomock.Any(), tenantID, vID, gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
@@ -1354,7 +1354,7 @@ func TestVersionService_Publish_DeleteByVersionError(t *testing.T) {
 	publishPreFlightMocks(t, vRepo, compiler, tenantID, wfID, vID, buildPlan())
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("delete error"))
 
 	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
@@ -1389,7 +1389,7 @@ func TestVersionService_Publish_BulkInsertError(t *testing.T) {
 	publishPreFlightMocks(t, vRepo, compiler, tenantID, wfID, vID, plan)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	assignees.EXPECT().BulkInsert(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("bulk error"))
 
@@ -1415,7 +1415,7 @@ func TestVersionService_Publish_UpdateActiveVersionError(t *testing.T) {
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("update error"))
 
@@ -1554,7 +1554,7 @@ func TestVersionService_Publish_PublishVersionError(t *testing.T) {
 	publishPreFlightMocks(t, vRepo, compiler, tenantID, wfID, vID, buildPlan())
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	vRepo.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.New("publish db error"))
 
 	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
@@ -1606,7 +1606,7 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "h", gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, gomock.Any(), int32(1), gomock.Any(), "h", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	assignees.EXPECT().BulkInsert(gomock.Any(), tenantID, vID, gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
@@ -1655,7 +1655,7 @@ func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
-	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, int32(1), gomock.Any(), "h", gomock.Any()).Return(nil)
+	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, gomock.Any(), int32(1), gomock.Any(), "h", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
 	// BulkInsert NOT called — invalid UUID skipped by extractAssignees → empty slice
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
