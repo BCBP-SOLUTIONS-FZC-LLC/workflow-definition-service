@@ -486,3 +486,28 @@ func TestLoad_ConnectorAliasAllowedHosts(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad_ShutdownDrainDelay(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost:5432/test")
+	t.Setenv("APP_ENV", "dev")
+
+	t.Setenv("SHUTDOWN_DRAIN_DELAY", "")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ShutdownDrainDelay != 5*time.Second {
+		t.Errorf("default drain delay = %s, want 5s", cfg.ShutdownDrainDelay)
+	}
+
+	t.Setenv("SHUTDOWN_DRAIN_DELAY", "12s")
+	cfg, err = config.Load()
+	if err != nil || cfg.ShutdownDrainDelay != 12*time.Second {
+		t.Errorf("SHUTDOWN_DRAIN_DELAY=12s gave %s, %v", cfg.ShutdownDrainDelay, err)
+	}
+
+	t.Setenv("SHUTDOWN_DRAIN_DELAY", "-1s")
+	if _, err := config.Load(); err == nil {
+		t.Error("a negative drain delay must be refused at startup")
+	}
+}

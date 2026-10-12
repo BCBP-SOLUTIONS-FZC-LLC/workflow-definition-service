@@ -530,6 +530,7 @@ All configuration is read from environment variables via `internal/config.Config
 | `VALKEY_WRITE_TIMEOUT` | No | `1s` | Timeout for socket writes |
 | `CACHE_COMPILED_PLAN_TTL` | No | `1h` | TTL for the internal compiled-plan read's cache; entries are also deleted on archive / membership invalidation |
 | `IDEMPOTENCY_TTL` | No | `24h` | TTL for idempotency keys on HTTP mutations |
+| `SHUTDOWN_DRAIN_DELAY` | No | `5s` | On SIGTERM `/readyz` fails for this long before the listener closes, so the pod leaves endpoint lists first; must be less than the pod's termination grace period minus the 30 s shutdown bound |
 
 ### Internal endpoint
 

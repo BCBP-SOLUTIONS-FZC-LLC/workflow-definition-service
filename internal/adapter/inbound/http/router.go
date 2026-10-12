@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -47,8 +48,11 @@ type RouterConfig struct {
 const requestTimeout = 30 * time.Second
 
 type Router struct {
-	engine *gin.Engine
+	engine   *gin.Engine
+	draining *atomic.Bool
 }
+
+func (r *Router) BeginDrain() { r.draining.Store(true) }
 
 func (r *Router) Handler() http.Handler { return r.engine }
 
@@ -69,7 +73,8 @@ func NewRouter(cfg RouterConfig) *Router {
 	}
 
 	r.GET("/healthz", gincommon.HealthHandler())
-	r.GET("/readyz", readyzHandler(cfg.DB, cfg.Cache))
+	draining := &atomic.Bool{}
+	r.GET("/readyz", readyzHandler(cfg.DB, cfg.Cache, draining))
 
 	if cfg.AppEnv == "dev" {
 		r.StaticFile("/api/openapi.yaml", "docs/swagger/openapi.yaml")
@@ -155,11 +160,15 @@ func NewRouter(cfg RouterConfig) *Router {
 	starters.GET("/:id", h.GetStarter)
 	starters.DELETE("/:id", idem(h.DeleteStarter))
 
-	return &Router{engine: r}
+	return &Router{engine: r, draining: draining}
 }
 
-func readyzHandler(db DBPinger, cache Pinger) gin.HandlerFunc {
+func readyzHandler(db DBPinger, cache Pinger, draining *atomic.Bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if draining.Load() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "draining"})
+			return
+		}
 		hs := db.Health(c.Request.Context())
 		if !hs.Healthy {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable", "db": "unreachable"})

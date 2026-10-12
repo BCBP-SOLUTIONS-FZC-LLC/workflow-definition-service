@@ -39,6 +39,7 @@ type Config struct {
 	ValkeyWriteTimeout   time.Duration
 	CacheCompiledPlanTTL time.Duration
 	IdempotencyTTL       time.Duration
+	ShutdownDrainDelay   time.Duration
 
 	InternalAPIToken string
 
@@ -90,6 +91,7 @@ func Load() (*Config, error) {
 		ValkeyWriteTimeout:   getEnvDurationOrDefault("VALKEY_WRITE_TIMEOUT", 1*time.Second),
 		CacheCompiledPlanTTL: getEnvDurationOrDefault("CACHE_COMPILED_PLAN_TTL", time.Hour),
 		IdempotencyTTL:       getEnvDurationOrDefault("IDEMPOTENCY_TTL", 24*time.Hour),
+		ShutdownDrainDelay:   getEnvDurationOrDefault("SHUTDOWN_DRAIN_DELAY", 5*time.Second),
 
 		InternalAPIToken: getEnvOrDefault("INTERNAL_API_TOKEN", ""),
 
@@ -146,6 +148,9 @@ func (c *Config) validate() error {
 	}
 	if c.ExecutionClientTimeout <= 0 {
 		return fmt.Errorf("EXECUTION_CLIENT_TIMEOUT must be > 0")
+	}
+	if c.ShutdownDrainDelay < 0 {
+		return fmt.Errorf("SHUTDOWN_DRAIN_DELAY must not be negative")
 	}
 	if c.SecretsClientTimeout <= 0 {
 		return fmt.Errorf("SECRETS_CLIENT_TIMEOUT must be > 0")

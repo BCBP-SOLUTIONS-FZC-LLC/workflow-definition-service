@@ -153,3 +153,23 @@ func TestInternalRoutes_RejectBodiesOverTheLimit(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+func TestReadyz_AfterDrainBegins_Returns503EvenWhenHealthy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := NewRouter(RouterConfig{
+		GinConfig: testGinConfig,
+		AppEnv:    "test",
+		Handler:   handler.New(handler.Services{}),
+		DB:        fakeDBPinger{health: DBHealth{Healthy: true}}, Cache: fakePinger{},
+	})
+
+	w := httptest.NewRecorder()
+	router.engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	router.BeginDrain()
+
+	w = httptest.NewRecorder()
+	router.engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "a pod that is shutting down must leave the endpoint lists before it stops listening")
+}

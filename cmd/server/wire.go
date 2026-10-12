@@ -200,6 +200,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		metricsServer: metricsSrv,
 		rlsExporter:   rlsExporter,
 		shutdown:      tracingShutdown,
+		beginDrain:    router.BeginDrain,
 		cacheClose:    redisClient,
 	}, nil
 }

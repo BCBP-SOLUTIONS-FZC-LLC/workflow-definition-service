@@ -28,6 +28,7 @@ type app struct {
 	rlsExporter   *service.RLSViolationExporter
 	cancelExport  context.CancelFunc
 	shutdown      func()
+	beginDrain    func()
 	cacheClose    io.Closer
 }
 
@@ -39,6 +40,9 @@ func (a *app) run() {
 	sig := <-quit
 
 	a.log.Info("shutting down", map[string]any{"signal": sig.String()})
+
+	a.beginDrain()
+	time.Sleep(a.cfg.ShutdownDrainDelay)
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()

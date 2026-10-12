@@ -50,6 +50,7 @@ env:
   PG_SLOW_QUERY_THRESHOLD_MS: "200"
   CACHE_COMPILED_PLAN_TTL: "1h"
   IDEMPOTENCY_TTL: "24h"
+  SHUTDOWN_DRAIN_DELAY: "5s"                       # /readyz fails this long before the listener closes, so endpoint lists drop the pod first
   VALKEY_ADDR: ""                                  # cluster-internal Valkey address
   VALKEY_DIAL_TIMEOUT: "2s"
   VALKEY_READ_TIMEOUT: "1s"
