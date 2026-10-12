@@ -410,8 +410,16 @@ func (s *ModuleService) Archive(ctx context.Context, callerTenantID, userID, mod
 
 	versions := s.versionsFor(m.Scope)
 	modules := s.modulesFor(m.Scope)
-	activeVersionID := *m.ActiveVersionID
-	if err := s.transactorFor(m.Scope).RunInTx(ctx, func(ctx context.Context) error {
+	var activeVersionID uuid.UUID
+	if err := s.transactorFor(m.Scope).RunInTxWithRetry(ctx, func(ctx context.Context) error {
+		current, err := modules.GetByID(ctx, callerTenantID, moduleID)
+		if err != nil {
+			return fmt.Errorf("get module: %w", err)
+		}
+		if current.ActiveVersionID == nil {
+			return domain.ErrNoActiveVersion
+		}
+		activeVersionID = *current.ActiveVersionID
 		if err := versions.Archive(ctx, activeVersionID); err != nil {
 			return err
 		}

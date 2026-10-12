@@ -304,11 +304,40 @@ func TestWorkflowService_Archive_OK(t *testing.T) {
 
 	tenantID, userID, wfID, activeVID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
-		Return(&domain.Workflow{ID: wfID, ActiveVersionID: &activeVID}, nil)
+		Return(&domain.Workflow{ID: wfID, ActiveVersionID: &activeVID}, nil).Times(2)
 	exec.EXPECT().CheckActiveInstances(gomock.Any(), tenantID, wfID).Return(false, int32(0), nil)
-	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	vRepo.EXPECT().Archive(gomock.Any(), tenantID, activeVID).Return(nil)
+	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, (*uuid.UUID)(nil)).Return(nil)
+
+	if err := svc.Archive(context.Background(), tenantID, userID, wfID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWorkflowService_Archive_ArchivesTheVersionActiveInsideTheTransaction(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tx := mocks.NewMockTransactor(ctrl)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	exec := mocks.NewMockExecutionService(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo, Execution: exec,
+	})
+
+	tenantID, userID, wfID := uuid.New(), uuid.New(), uuid.New()
+	readBeforeTx, publishedMeanwhile := uuid.New(), uuid.New()
+	gomock.InOrder(
+		wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
+			Return(&domain.Workflow{ID: wfID, ActiveVersionID: &readBeforeTx}, nil),
+		wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
+			Return(&domain.Workflow{ID: wfID, ActiveVersionID: &publishedMeanwhile}, nil),
+	)
+	exec.EXPECT().CheckActiveInstances(gomock.Any(), tenantID, wfID).Return(false, int32(0), nil)
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
+	vRepo.EXPECT().Archive(gomock.Any(), tenantID, publishedMeanwhile).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, (*uuid.UUID)(nil)).Return(nil)
 
 	if err := svc.Archive(context.Background(), tenantID, userID, wfID); err != nil {
@@ -377,8 +406,8 @@ func TestWorkflowService_Archive_SkipsExecutionWhenNil(t *testing.T) {
 
 	tenantID, userID, wfID, activeVID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
-		Return(&domain.Workflow{ActiveVersionID: &activeVID}, nil)
-	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
+		Return(&domain.Workflow{ActiveVersionID: &activeVID}, nil).Times(2)
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	vRepo.EXPECT().Archive(gomock.Any(), tenantID, activeVID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, (*uuid.UUID)(nil)).Return(nil)
@@ -411,8 +440,8 @@ func TestWorkflowService_Archive_VersionArchiveError(t *testing.T) {
 
 	activeVID := uuid.New()
 	wfRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&domain.Workflow{ActiveVersionID: &activeVID}, nil)
-	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
+		Return(&domain.Workflow{ActiveVersionID: &activeVID}, nil).Times(2)
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	vRepo.EXPECT().Archive(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("archive error"))
 
@@ -432,8 +461,8 @@ func TestWorkflowService_Archive_UpdateActiveVersionError(t *testing.T) {
 
 	activeVID := uuid.New()
 	wfRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&domain.Workflow{ActiveVersionID: &activeVID}, nil)
-	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
+		Return(&domain.Workflow{ActiveVersionID: &activeVID}, nil).Times(2)
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	vRepo.EXPECT().Archive(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -458,9 +487,9 @@ func TestWorkflowService_Archive_OK_WithCache(t *testing.T) {
 	})
 
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
-		Return(&domain.Workflow{ID: wfID, ActiveVersionID: &activeVID}, nil)
+		Return(&domain.Workflow{ID: wfID, ActiveVersionID: &activeVID}, nil).Times(2)
 	exec.EXPECT().CheckActiveInstances(gomock.Any(), tenantID, wfID).Return(false, int32(0), nil)
-	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	vRepo.EXPECT().Archive(gomock.Any(), tenantID, activeVID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, (*uuid.UUID)(nil)).Return(nil)
@@ -485,9 +514,9 @@ func TestWorkflowService_Archive_CacheDelError_Logs(t *testing.T) {
 	})
 
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).
-		Return(&domain.Workflow{ID: wfID, ActiveVersionID: &activeVID}, nil)
+		Return(&domain.Workflow{ID: wfID, ActiveVersionID: &activeVID}, nil).Times(2)
 	exec.EXPECT().CheckActiveInstances(gomock.Any(), tenantID, wfID).Return(false, int32(0), nil)
-	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	vRepo.EXPECT().Archive(gomock.Any(), tenantID, activeVID).Return(nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, (*uuid.UUID)(nil)).Return(nil)

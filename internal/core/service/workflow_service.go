@@ -159,8 +159,16 @@ func (s *WorkflowService) Archive(ctx context.Context, tenantID, userID, id uuid
 		}
 	}
 
-	versionID := *wf.ActiveVersionID
-	if err := s.transactor.RunInTx(ctx, func(ctx context.Context) error {
+	var versionID uuid.UUID
+	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
+		current, err := s.workflows.GetByID(ctx, tenantID, id)
+		if err != nil {
+			return fmt.Errorf("get workflow: %w", err)
+		}
+		if current.ActiveVersionID == nil {
+			return domain.ErrNoActiveVersion
+		}
+		versionID = *current.ActiveVersionID
 		if err := s.versions.Archive(ctx, tenantID, versionID); err != nil {
 			return err
 		}
