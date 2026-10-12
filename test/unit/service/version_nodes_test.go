@@ -83,7 +83,7 @@ func TestVersionNodes_KeysAreTheExecutionServiceKeys(t *testing.T) {
 	if err := json.Unmarshal(dsltest.LibraryCalls(), &golden); err != nil {
 		t.Fatalf("decode golden: %v", err)
 	}
-	expanded, err := dsl.ExpandCalls(&golden, 0)
+	expanded, err := dsl.ExpandCalls(&golden, domain.MaxPlanStages)
 	if err != nil {
 		t.Fatalf("expand golden: %v", err)
 	}

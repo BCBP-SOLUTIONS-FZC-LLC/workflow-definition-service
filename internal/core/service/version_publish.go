@@ -238,7 +238,7 @@ func extractAssignees(
 }
 
 func expandedMainPlan(collab *dsl.CompiledCollaboration) (*dsl.CompiledPlan, error) {
-	expanded, err := dsl.ExpandCalls(collab, 0)
+	expanded, err := dsl.ExpandCalls(collab, domain.MaxPlanStages)
 	if err != nil {
 		return nil, fmt.Errorf("expand calls: %w", err)
 	}

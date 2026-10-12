@@ -116,7 +116,7 @@ func TestBundleModules_TwoVersionsOfOneModuleBecomeTwoPlans(t *testing.T) {
 	if calls[0].Plan != "Process_Lib@v3" || calls[1].Plan != "Process_Lib@v4" {
 		t.Errorf("calls name %q and %q, want the pinned v3 and the latest v4", calls[0].Plan, calls[1].Plan)
 	}
-	if _, err := dsl.ExpandCalls(collab, 0); err != nil {
+	if _, err := dsl.ExpandCalls(collab, domain.MaxPlanStages); err != nil {
 		t.Errorf("the bundle does not expand: %v", err)
 	}
 }

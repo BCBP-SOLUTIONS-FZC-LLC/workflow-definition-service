@@ -6,6 +6,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 )
 
@@ -13,7 +14,7 @@ const defaultTaskQueue = "wf-queue-default"
 
 const SegmentSeparator = "~"
 
-const StageBudget = 1000
+const StageBudget = domain.MaxPlanStages
 
 const nodeBudget = 10 * StageBudget
 

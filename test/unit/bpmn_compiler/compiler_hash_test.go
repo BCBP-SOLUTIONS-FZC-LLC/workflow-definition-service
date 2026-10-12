@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/validator"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
 func hashOf(t *testing.T, bpmnXML string) string {
@@ -52,5 +54,14 @@ func TestHash_IgnoresThePropertyOrderOfATaskInsideASubProcess(t *testing.T) {
 	}
 	if strings.Compare(hashOf(t, subProcessWithProperties(a, b)), hashOf(t, subProcessWithProperties(a, `<zeebe:property name="beta" value="3"/>`))) == 0 {
 		t.Error("changing a property value must change the artifact hash")
+	}
+}
+
+func TestPlanStageBudget_IsPositiveAndMatchesTheValidatorLimit(t *testing.T) {
+	if domain.MaxPlanStages <= 0 {
+		t.Fatalf("MaxPlanStages = %d, want a positive budget", domain.MaxPlanStages)
+	}
+	if validator.MaxUserTasks != domain.MaxPlanStages {
+		t.Fatalf("validator task limit %d differs from the expansion budget %d", validator.MaxUserTasks, domain.MaxPlanStages)
 	}
 }

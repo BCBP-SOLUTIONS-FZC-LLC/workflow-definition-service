@@ -14,5 +14,5 @@ func (h *Handler) AllowedBPMNElements(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"elements": enums.AllowedBPMNElements})
+	c.JSON(http.StatusOK, gin.H{"elements": enums.AllowedBPMNElements()})
 }

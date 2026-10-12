@@ -210,7 +210,7 @@ func callSteps(p *dsl.CompiledPlan) []*dsl.CallPlanStep {
 
 func expandedMain(t *testing.T, c *dsl.CompiledCollaboration) *dsl.CompiledPlan {
 	t.Helper()
-	out, err := dsl.ExpandCalls(c, 0)
+	out, err := dsl.ExpandCalls(c, domain.MaxPlanStages)
 	if err != nil {
 		t.Fatalf("ExpandCalls: %v", err)
 	}

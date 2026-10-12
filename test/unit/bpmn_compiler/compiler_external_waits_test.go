@@ -5,12 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 )
 
 func externalWaits(t *testing.T, collab *dsl.CompiledCollaboration) []dsl.ExternalWait {
 	t.Helper()
-	expanded, err := dsl.ExpandCalls(collab, 0)
+	expanded, err := dsl.ExpandCalls(collab, domain.MaxPlanStages)
 	if err != nil {
 		t.Fatalf("ExpandCalls: %v", err)
 	}

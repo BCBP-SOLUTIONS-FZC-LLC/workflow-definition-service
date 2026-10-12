@@ -553,7 +553,7 @@ func TestCompile_CallActivity_DeptsBindsAModuleLaneToACallerLane(t *testing.T) {
 	if call == nil || call.Departments["engineering"] != "management" {
 		t.Fatalf("call = %+v, want engineering bound to management", call)
 	}
-	expanded, err := dsl.ExpandCalls(collab, 0)
+	expanded, err := dsl.ExpandCalls(collab, domain.MaxPlanStages)
 	if err != nil {
 		t.Fatal(err)
 	}

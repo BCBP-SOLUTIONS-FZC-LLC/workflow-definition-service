@@ -142,7 +142,7 @@ func TestPublish_ResolvesPinnedAndLatestLibraryVersions(t *testing.T) {
 	if !reflect.DeepEqual(got.refs, wantRefs) {
 		t.Errorf("module refs = %+v, want %+v", got.refs, wantRefs)
 	}
-	expanded, err := dsl.ExpandCalls(collab, 0)
+	expanded, err := dsl.ExpandCalls(collab, domain.MaxPlanStages)
 	if err != nil {
 		t.Fatalf("stored plan does not expand: %v", err)
 	}

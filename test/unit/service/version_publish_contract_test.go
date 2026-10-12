@@ -113,7 +113,7 @@ func assertExecutionCanStart(t *testing.T, compiledPlanJSON string) *dsl.Compile
 	if collab.MainPlan == "" {
 		t.Fatalf("main_plan is empty; Execution fails with \"main plan not found\"")
 	}
-	if _, err := dsl.ExpandCalls(&collab, 0); err != nil {
+	if _, err := dsl.ExpandCalls(&collab, domain.MaxPlanStages); err != nil {
 		t.Fatalf("compiled_plan_json does not expand as Execution expands it: %v", err)
 	}
 	for _, p := range collab.Plans {

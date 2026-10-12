@@ -51,8 +51,8 @@ func init() {
 		"eventBasedGateway":      {},
 		"intermediateCatchEvent": {},
 	}
-	tier1Elems = make(map[string]struct{}, len(enums.AllowedBPMNElements))
-	for _, elem := range enums.AllowedBPMNElements {
+	tier1Elems = make(map[string]struct{}, len(enums.AllowedBPMNElements()))
+	for _, elem := range enums.AllowedBPMNElements() {
 		tier1Elems[elem] = struct{}{}
 	}
 }

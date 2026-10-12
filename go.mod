@@ -70,7 +70,7 @@ require (
 	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.1.0
 	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.1
 	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors/v2 v2.0.0
-	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2 v2.0.0-rc.1
+	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2 v2.0.0
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/joho/godotenv v1.5.1

@@ -51,7 +51,7 @@ func (s *ModuleService) Contract(ctx context.Context, callerTenantID, moduleID, 
 	if err != nil {
 		return nil, fmt.Errorf("compile module: %w", err)
 	}
-	expanded, err := dsl.ExpandCalls(collab, 0)
+	expanded, err := dsl.ExpandCalls(collab, domain.MaxPlanStages)
 	if err != nil {
 		return nil, fmt.Errorf("expand module: %w", err)
 	}

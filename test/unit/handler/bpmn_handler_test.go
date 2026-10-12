@@ -21,7 +21,7 @@ func TestAllowedBPMNElements_OK(t *testing.T) {
 		Elements []string `json:"elements"`
 	}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, enums.AllowedBPMNElements, resp.Elements)
+	assert.Equal(t, enums.AllowedBPMNElements(), resp.Elements)
 }
 
 func TestAllowedBPMNElements_MissingCtx(t *testing.T) {
