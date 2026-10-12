@@ -769,7 +769,7 @@ func TestVersionService_Promote_OK(t *testing.T) {
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	prevID := uuid.New()
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
-		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
+		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: true}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
 		&domain.Workflow{ID: wfID, ActiveVersionID: &prevID}, nil)
 	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -789,7 +789,7 @@ func TestVersionService_Promote_AlreadyActive(t *testing.T) {
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
-		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
+		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: true}, nil)
 	// Target is already active → early exit: no transactor, no UpdateActiveVersion.
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
 		&domain.Workflow{ID: wfID, ActiveVersionID: &vID}, nil)
@@ -814,6 +814,22 @@ func TestVersionService_Promote_NotPublished(t *testing.T) {
 	}
 }
 
+func TestVersionService_Promote_VersionMarkedInvalid_IsRefused(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := service.NewVersionService(service.VersionDeps{Workflows: wfRepo, Versions: vRepo})
+
+	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
+		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: false}, nil)
+
+	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID)
+	if !errors.Is(err, domain.ErrInvalidVersionStatus) {
+		t.Fatalf("expected ErrInvalidVersionStatus for a version whose assignees are revoked, got %v", err)
+	}
+}
+
 func TestVersionService_Promote_WorkflowMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
@@ -821,7 +837,7 @@ func TestVersionService_Promote_WorkflowMismatch(t *testing.T) {
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
-		&domain.WorkflowVersion{WorkflowID: uuid.New(), Status: domain.VersionStatusPublished}, nil)
+		&domain.WorkflowVersion{WorkflowID: uuid.New(), Status: domain.VersionStatusPublished, IsValid: true}, nil)
 
 	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID)
 	if !errors.Is(err, domain.ErrNotFound) {
@@ -837,7 +853,7 @@ func TestVersionService_Promote_WorkflowGetError(t *testing.T) {
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
-		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
+		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: true}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(nil, errors.New("db error"))
 
 	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err == nil {
@@ -868,7 +884,7 @@ func TestVersionService_Promote_UpdateError(t *testing.T) {
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
-		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
+		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: true}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
 		&domain.Workflow{ID: wfID}, nil)
 	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -893,7 +909,7 @@ func TestVersionService_Promote_WithVersionNumberAndPlan(t *testing.T) {
 	vNum := int32(5)
 	plan := `{"name":"p"}`
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(&domain.WorkflowVersion{
-		ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished,
+		ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: true,
 		VersionNumber: &vNum, CompiledPlanJSON: &plan,
 	}, nil)
 	// No active version on the target workflow.

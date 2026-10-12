@@ -220,6 +220,9 @@ func (s *VersionService) Promote(
 	if v.Status != domain.VersionStatusPublished {
 		return nil, domain.ErrVersionNotPublished
 	}
+	if !v.IsValid {
+		return nil, domain.ErrInvalidVersionStatus
+	}
 
 	wf, err := s.workflows.GetByID(ctx, tenantID, workflowID)
 	if err != nil {
