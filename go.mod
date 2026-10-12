@@ -68,13 +68,13 @@ require (
 
 require (
 	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.1.0
-	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.0
-	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors v1.0.0
+	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.1
+	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors/v2 v2.0.0
 	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models v1.2.0
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/joho/godotenv v1.5.1
-	github.com/redis/go-redis/v9 v9.20.0
+	github.com/redis/go-redis/v9 v9.22.0
 	github.com/stretchr/testify v1.12.1
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
