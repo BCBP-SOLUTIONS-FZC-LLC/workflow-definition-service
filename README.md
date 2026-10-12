@@ -318,7 +318,7 @@ rctx := gincommon.RequestContext(c)
 | `GET` | `/api/v1/workflows/:id/versions/:version_id/export` | Any | Download raw BPMN XML |
 | `GET` | `/api/v1/workflows/:id/versions/:version_id/diff/:target_version_id` | Any | Structural diff between two versions |
 | `GET` | `/healthz` | Public | Liveness probe |
-| `GET` | `/readyz` | Public | Readiness probe (DB ping) |
+| `GET` | `/readyz` | Public | Readiness probe (database and Valkey ping) |
 | `GET` | `/metrics` | Public | Prometheus metrics |
 | `POST` | `/internal/events` | Internal | Ingest a domain-event envelope from the shared workflow-events consumer (e.g. `DepartmentMembershipRevoked`) |
 

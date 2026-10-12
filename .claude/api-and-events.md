@@ -38,7 +38,7 @@ When `HandleDepartmentMembershipRevoked` finishes marking template versions `is_
 
 `handler.WithIdempotency` in `handler/idempotency.go`. Applied to all mutation endpoints via `idem(fn)` in `router.go`.
 
-Cache key: `"idem:" + tenantID + ":" + routePath + ":" + Idempotency-Key` (tenant- and route-scoped).
+Cache key: `"idem:" + tenantID + ":" + method + ":" + path + ":" + Idempotency-Key` (tenant-, method- and path-scoped).
 
 - Only `2xx` responses are cached (TTL `IDEMPOTENCY_TTL`, env `IDEMPOTENCY_TTL`, default `24h`) along with a SHA-256 hash of the raw request body.
 - On replay: matching hash → replay cached response; mismatched hash → 409 `IDEMPOTENCY_KEY_REPLAY`.
@@ -59,7 +59,7 @@ Test patterns:
 
 ## Compiled-Plan Cache (Valkey)
 
-The internal compiled-plan read (`CompiledPlanService`) lazily reads/populates `wf:plan:<tenant>:<version>` in Valkey (fail-open; TTL `CACHE_COMPILED_PLAN_TTL`, env `CACHE_COMPILED_PLAN_TTL`, default 1 h).
+The internal compiled-plan read (`CompiledPlanService`) lazily reads/populates `wf:plan:<tenant>:<version>` in Valkey for PUBLISHED versions only (fail-open; TTL `CACHE_COMPILED_PLAN_TTL`, env `CACHE_COMPILED_PLAN_TTL`, default 1 h).
 
 
 - **Invalidated on:** `Archive` (status change) and `SetInvalid` membership path (is_valid change)

@@ -129,7 +129,7 @@ A boundary event sits on the edge of a user task, a sub-process or a called proc
 
 | Kind | Fires when | Notes |
 |---|---|---|
-| Timer | the duration has passed (ISO 8601, for example `PT48H`, `P5D`) | SLA escalation |
+| Timer | the duration has passed (positive ISO 8601, for example `PT48H`, `P5D`) | SLA escalation |
 | Message | the named message arrives | the message name is agreed with engineering |
 | Error | a stage inside the sub-process or called process fails | sub-process or called process only; always interrupting |
 

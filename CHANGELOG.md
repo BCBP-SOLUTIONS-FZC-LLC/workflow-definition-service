@@ -15,6 +15,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - The metrics server sets read-header, read, write and idle timeouts.
 - Tenant tables force row-level security, and their policies log sampled violations.
 
+### Fixed
+
+- A publish is refused with `DRAFT_CONCURRENCY` when the draft was saved after the publish read it, so the stored plan, hash, assignees and module references always belong to the stored BPMN.
+- A draft save that changes nothing returns the `record_version` the row holds instead of an incremented one, so the next save no longer fails as a concurrent edit.
+- Archiving a workflow or a module archives the version that is active when it commits, so a publish landing at the same moment cannot leave a published version nothing references.
+- Only published versions are cached as compiled plans, so a draft read before publish no longer hides the published plan until the entry expires.
+- A timer boundary needs a positive duration the Execution Service can run; zero, negative and over-long durations are `INVALID_SLA_DURATION`.
+- Docs state the draft-edit lock failing a save when Valkey is unreachable, `/readyz` pinging Valkey, and the idempotency and lock key formats.
+
 ### Added
 
 - The published-version nodes read lists `waits`: the receive tasks and message boundaries that no send task of the plan feeds, each with the key an outside party's answer addresses (`dsl.ExternalWaits`). A compiled message boundary keeps its BPMN id (`MessagePath.BoundaryID`).

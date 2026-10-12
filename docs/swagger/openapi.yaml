@@ -1683,7 +1683,7 @@ paths:
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
         "409":
-          description: Structural divergence detected (see suggested_action), or idempotency key reused with a different payload.
+          description: Structural divergence detected (see suggested_action), the draft was saved after the publish read it (`DRAFT_CONCURRENCY`; publish again), or idempotency key reused with a different payload.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/StructuralDivergenceError' }

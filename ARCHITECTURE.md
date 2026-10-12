@@ -461,8 +461,10 @@ The happy path is always a single query. The probe only fires on the exceptional
 | Purpose | Key pattern | TTL |
 | --- | --- | --- |
 | Compiled plan cache | `wf:plan:{tenant_id}:{version_id}` | 1 h (configurable: `CACHE_COMPILED_PLAN_TTL`) |
-| Idempotency key | `idem:{tenant_id}:{route}:{key}` | 24 h (configurable: `IDEMPOTENCY_TTL`) |
-| Draft edit lock | `draft_lock:{tenant_id}:{workflow_id}` | 30 s (refreshed) |
+| Idempotency key | `idem:{tenant_id}:{method}:{path}:{key}` | 24 h (configurable: `IDEMPOTENCY_TTL`) |
+| Draft edit lock | `draft-lock:{tenant_id}:{workflow_id}` | 30 s (refreshed) |
+
+When Valkey is unreachable the service stays up but degrades by purpose: compiled-plan reads fall through to Postgres, a duplicate-request replay is not detected and the request runs, and a draft save fails because the draft lock cannot be taken. `/readyz` reports not ready, since it pings Valkey as well as the database.
 
 ---
 
@@ -473,7 +475,7 @@ The happy path is always a single query. The probe only fires on the exceptional
 | Single DRAFT per workflow | `UNIQUE INDEX idx_wv_single_draft ON workflow_version(workflow_id) WHERE status='DRAFT'` — DB-enforced; returns `ErrDraftAlreadyExists` on violation |
 | Status-guarded mutations use `statusOrNotFound` | Publish/Archive SQL filters on `status=X`; on `RowsAffected()==0` a secondary `GetByID` distinguishes absent (→ `ErrNotFound`) from wrong-status (→ `ErrVersionNotDraft` etc.) — happy path is always single-query |
 | `is_valid` reflects assignee eligibility only | `workflow_version.is_valid=false` means an assignee left a required department role; it does not reflect BPMN structural validity |
-| Idempotency-Key scoped per tenant | Cache key format: `idem:<tenant_id>:<key>` — prevents cross-tenant replay; only 2xx responses are cached (24 h TTL) |
+| Idempotency-Key scoped per tenant | Cache key format: `idem:<tenant_id>:<method>:<path>:<key>` — prevents cross-tenant replay; only 2xx responses are cached (24 h TTL) |
 | Internal routes require manual GUC injection | `WithGUCSet` must be called by each internal handler before any repo access; the public HTTP path injects via `InjectGUCSet` after `gincommon.ProtectedMiddlewares` |
 | Tenant policy logs violations | Every tenant table forces row-level security with `rls_check_tenant()` / `rls_check_tenant_or_global()`; a blocked row is written to `rls_violation_log` at a 1% sample and exported as `workflow_definition_service_rls_violations_total` |
 | `ProtectedMiddlewares` must wrap all protected routes | Missing middleware causes `RequestContext` lookup to fail → 500 (server misconfiguration, not 401) |
@@ -966,7 +968,7 @@ Attach to a `userTask` to enforce a deadline:
 </bpmn:boundaryEvent>
 ```
 
-Duration format: ISO 8601 (`PT48H`, `P3D`, `PT2H30M`, `P3W`) or Go duration (`48h`). Both forms are accepted and stored verbatim — the compiler does not normalise the value.
+Duration format: ISO 8601 (`PT48H`, `P3D`, `PT2H30M`, `P3W`) or Go duration (`48h`). Both forms are accepted and stored verbatim — the compiler does not normalise the value. The duration must be positive and short enough for the Execution Service to run as a timer (about 292 years at most); zero, negative and longer values are `INVALID_SLA_DURATION`.
 
 **System semantics**: compiles to `StageDef.BoundaryTimer {Duration, Interrupting}`. On fire, the Execution Service either creates a parallel escalation task (non-interrupting) or cancels the current task and starts the escalation path (interrupting). Max one timer boundary per task.
 
@@ -1079,7 +1081,7 @@ Message, timer and error boundary events on `callActivity` compile to the call s
 
 | Rule | Error code |
 | --- | --- |
-| Timer duration is valid ISO 8601 or Go duration | `INVALID_SLA_DURATION` |
+| Timer duration is a positive ISO 8601 or Go duration the Execution Service can run | `INVALID_SLA_DURATION` |
 | At most one timer boundary per task | (structural: `DANGLING_NODE` / `UNREACHABLE_NODE`) |
 
 **Message boundary events**
@@ -1138,7 +1140,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `INVALID_CANDIDATE_USER` | `candidateUsers` is not a valid UUID v7, or a global module names a user |
 | `INVALID_CONDITION_EXPRESSION` | Condition expression exceeds 4096 chars |
 | `INVALID_ZEEBE_PROPERTY` | callActivity: malformed `Depts`/`Assignees` input, an unknown lane, task or call path in them, an `Assignees` user that is not a UUID v7, or a retired `dept_id` input |
-| `INVALID_SLA_DURATION` | Timer boundary duration is not valid ISO 8601 or Go duration |
+| `INVALID_SLA_DURATION` | Timer boundary duration is not a positive ISO 8601 or Go duration, or is too long to run |
 | `MISSING_MESSAGE_DEFINITION` | `messageRef` on a flow or task references an undeclared `<bpmn:message>` |
 | `UNMATCHED_MESSAGE_FLOW` | Message flow source/target does not reference a known element |
 | `TASK_LIMIT_EXCEEDED` | User task count > 1000 in the process, a compile making more than 1000 stages or visiting more than 10000 nodes, or more than 1000 stages and calls once its calls are expanded |

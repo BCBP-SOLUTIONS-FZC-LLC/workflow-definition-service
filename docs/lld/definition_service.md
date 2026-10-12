@@ -12,7 +12,7 @@ The **Workflow Definition Service** acts as the design-time control plane for th
 - **HTTP Framework**: Gin (REST APIs)
 - **Shared Middleware Library**: `platform-gincommon v1.6.0` — the only path for logs, metrics and traces: correlation IDs, OTel HTTP/gRPC spans, the `platform_http_*` Prometheus series, structured Zap logging, panic recovery, gateway header authentication, tenant context propagation, per-route RBAC, per-request timeout middleware, and graceful telemetry shutdown. See §1.6 for the full middleware integration.
 - **Database**: PostgreSQL (schema: `workflow_definition`)
-- **Database Driver**: `platform-pgcommon/v2 v2.0.0` — wraps `github.com/jackc/pgx/v5` with RLS GUC injection (`app.tenant_id`, `app.user_id`, `app.tenant_roles`), slow-query logging, OTel tracing, Prometheus pool metrics, transaction helpers, pool health check, and a golang-migrate-based `migrate.Runner`. See §1.7 for the full integration.
+- **Database Driver**: `platform-pgcommon/v2 v2.0.1` — wraps `github.com/jackc/pgx/v5` with RLS GUC injection (`app.tenant_id`, `app.user_id`, `app.tenant_roles`), slow-query logging, OTel tracing, Prometheus pool metrics, transaction helpers, pool health check, and a golang-migrate-based `migrate.Runner`. See §1.7 for the full integration.
 - **Database Tooling**: `sqlc` for type-safe query generation, `platform-pgcommon/v2 migrate.Runner` for schema migrations.
 - **Distributed Cache / Store**: Valkey 8.0 (Redis-compatible), via `github.com/redis/go-redis/v9`. Used for: compiled-plan caching, idempotency key deduplication (`Idempotency-Key` header), and distributed draft-edit locking (prevents concurrent draft overwrites between sessions).
 - **Events**: this service publishes none and keeps no outbox. `platform-events v1.2.0` supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /internal/events`. See §1.8 for the full integration.
@@ -619,9 +619,9 @@ The service uses Valkey 8.0 (Redis-compatible, via `github.com/redis/go-redis/v9
 
 | Purpose | Key format | TTL | Invalidated by |
 | --- | --- | --- | --- |
-| Compiled workflow plan | `wf:plan:<tenantID>:<versionID>` | 1 h | Publish, promote, or discard (key deleted on state change) |
-| Idempotency key | `idem:<tenantID>:<routePath>:<idempotency-key>` | 24 h | Not invalidated — expires naturally; only 2xx responses are cached |
-| Draft-edit lock | `wf:draft:lock:<tenantID>:<workflowID>` | 30 s (sliding) | Released on successful save or session expiry |
+| Compiled workflow plan | `wf:plan:<tenantID>:<versionID>` | 1 h | Archive, or a membership revocation that marks the version invalid (key deleted); only published versions are cached |
+| Idempotency key | `idem:<tenantID>:<method>:<path>:<idempotency-key>` | 24 h | Not invalidated — expires naturally; only 2xx responses are cached |
+| Draft-edit lock | `draft-lock:<tenantID>:<workflowID>` | 30 s | Taken for the duration of a save and released when it ends |
 
 The compiled-plan cache is populated lazily: on the first internal compiled-plan read (§3.4.1) after a version is published, the plan is fetched from Postgres and written to Valkey. Subsequent requests on the same version hit the cache without a DB round-trip.
 
@@ -998,18 +998,18 @@ CREATE TRIGGER trg_touch_workflow
 
 - **`WHEN (OLD.* IS DISTINCT FROM NEW.*)` guard**: the trigger fires only when a row actually changes. If a future SQS replay produces an identical row (same field values, no business change), `record_version` does not increment and a concurrent optimistic-lock holder is not spuriously invalidated.
 - **`BEFORE UPDATE` timing**: the application's `WHERE record_version = :client_version` clause compares against the pre-trigger value. The new incremented value is committed atomically in the same statement — there is no window where the check and the write are inconsistent.
-- **No application-layer management**: application SQL must not set `updated_at = NOW()` or `record_version = record_version + 1` explicitly. Doing so would make the trigger fire twice (BEFORE trigger sees the application-provided value, then overwrites it with its own calculation). See §2.6 for the convention.
+- **No application-layer `record_version` management**: application SQL never sets `record_version`; the trigger owns it, and it moves only when a row actually changes. A save that changes nothing therefore returns the `record_version` the row already holds, and the next save with that value succeeds. A statement that must mark an otherwise identical row as touched sets `updated_at` itself, which the guard counts as a change (§2.2). See §2.6 for the convention.
 
 Cross-reference: Appendix A contains the full DDL. §10.11 documents how clients supply the optimistic-lock token (`If-Match` header or `record_version` body field).
 
 ### 2.6 Migration Practices
 
-- **Tool**: `platform-pgcommon migrate.Runner` (golang-migrate, pgx/v5 driver). Runs programmatically at service startup. See §1.8.1 for the startup sequence.
+- **Tool**: `platform-pgcommon migrate.Runner` (golang-migrate, pgx/v5 driver). Runs as the chart's pre-install and pre-upgrade hook and locally through `make migrate`; the server does not migrate at boot (§1.8.1).
 - **File format**: `db/migrations/NNNN_description.up.sql` + `NNNN_description.down.sql` pairs. No goose annotations. PL/pgSQL function bodies (`$$...$$`) work without special delimiters — the pgx/v5 driver executes each file as a single unit.
 - **`lock_timeout`**: auto-appended (`30s`) by `migrate.Runner` — no manual DSN parameter needed. This prevents a blocked migration from holding the advisory lock across rolling deploys.
 - **Tracking table**: `wf_definition_migrations` (service-specific, set via `MigrationsTable` field). Isolated from any `pgcommon_migrations` table — no version-number collisions.
 - **Forward-only additive**: new columns are added as `NOT NULL DEFAULT x`; column drops are split across two releases (deprecate → stop using → drop) to stay compatible with in-flight pods during rolling deploys.
-- **No `updated_at` or `record_version` in UPDATE queries**: both columns are trigger-managed (§2.5). Application SQL must not include `SET updated_at = NOW()` or `SET record_version = record_version + 1` — the trigger handles it unconditionally.
+- **No `record_version` in UPDATE queries**: the column is trigger-managed (§2.5). A write that returns the row's `record_version` reads it back from the statement, never computes it.
 - **Migrator role**: the DB role used at startup (`definition_svc_migrator`) must have `BYPASSRLS` to avoid being blocked by the service's own RLS policies during data migrations. The application role (`definition_svc_app`) must **not** have `BYPASSRLS`.
 - **CI verification** (run after every migration): `SELECT rolname FROM pg_roles WHERE rolname = 'definition_svc_app' AND rolbypassrls = true` must return 0 rows; `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND (rowsecurity = false OR forcerls = false)` must also return 0 rows.
 
@@ -1169,7 +1169,7 @@ Below is a detailed walkthrough of the endpoints, checks, and flow execution tra
    - **Technical Cause**: The Idempotency Middleware validates the `Idempotency-Key` UUID. If it already exists in the Valkey cache, it compares the SHA-256 checksum of the new request payload with the checksum stored in cache. A mismatch indicates that the same key is being reused for a different operation — a conflict on the idempotency record.
    - **Step-by-Step Flow**:
      1. The client sends a mutating request with an `Idempotency-Key` header.
-     2. The Idempotency Middleware reads the header and looks up the key in Valkey: `GET idem:<tenantID>:<routePath>:<key>`.
+     2. The Idempotency Middleware reads the header and looks up the key in Valkey: `GET idem:<tenantID>:<method>:<path>:<key>`.
      3. Valkey returns the cached response details, including the SHA-256 hash of the initial payload.
      4. The middleware computes the SHA-256 hash of the incoming request body and finds it does not match the cached hash.
      5. The middleware aborts the request chain immediately and returns `409 Conflict` with `code: IDEMPOTENCY_KEY_REPLAY`.
@@ -1482,8 +1482,8 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Logic**: A workflow runs exactly one process (§4.1.2, pools), so every outside party's pool must carry the zeebe property `ignore=true`. Calls drawn in an outside pool do not count.
 
 21. **`INVALID_SLA_DURATION`**
-    - **Trigger Scenario**: A timer boundary event or intermediate timer catch event declares a duration in an invalid format.
-    - **Trigger Logic**: The unified duration converter (`parseDuration`) is applied to the `timeDuration` value. Accepted formats: ISO 8601 (`P3D`, `PT72H`) or Go duration (`72h`, `3h30m`). Any other format emits this error against the boundary event or intermediate catch event node ID. The legacy `sla_duration` Zeebe property is not read; SLA is modelled exclusively via timer boundary events.
+    - **Trigger Scenario**: A timer boundary event or intermediate timer catch event declares a duration in an invalid format, or one the Execution Service cannot run: it fires a zero timer at once and disables one it cannot parse.
+    - **Trigger Logic**: The unified duration converter (`parseDuration`) is applied to the `timeDuration` value. Accepted formats: ISO 8601 (`P3D`, `PT72H`) or Go duration (`72h`, `3h30m`), and the duration must be positive and short enough for the Execution Service to run as a timer (about 292 years at most). Any other format, a zero or negative duration, or one too long emits this error against the boundary event or intermediate catch event node ID. The legacy `sla_duration` Zeebe property is not read; SLA is modelled exclusively via timer boundary events.
 
 22. **`INVALID_BOUNDARY_ATTACHMENT`**
     - **Trigger Scenario**: A boundary event is attached to a node that does not legally host that boundary type. Specifically: an error boundary event attached to anything other than `bpmn:subProcess` or `bpmn:callActivity`, or a timer boundary event whose host is anything other than `bpmn:userTask` or `bpmn:subProcess`. Message boundary events may attach to `bpmn:userTask`, `bpmn:subProcess`, or `bpmn:callActivity`. A timer boundary event may also attach to `bpmn:callActivity`.
@@ -1762,6 +1762,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 - **Request Body**: `{"force_publish_structural": false}`
 - **Semantics**: Computes structural diff compared to the previous version. If structural elements changed (e.g. split/join gateways, routing steps) and `force_publish_structural` is `false`, returns `409 Conflict` (recommending a new workflow key).
 - **Overriding**: If `force_publish_structural` is `true`, the publish transaction overrides the warning and registers the new version under the existing key.
+- **Consistency**: The plan, hash, assignees and module references a publish stores always come from the BPMN as it was when the publish compiled it. If the draft is saved after the publish read it and before the publish commits, the publish is refused with `409 Conflict` (`DRAFT_CONCURRENCY`) and the draft stays as saved; the client publishes again.
 
 #### 3.3.8 Archive Workflow
 
@@ -1769,6 +1770,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 - **Semantics**: Sets the active published version status to `ARCHIVED` and clears the active pointer on the root record (`active_version_id = NULL`). Physical SQL deletion of workflows/versions is strictly prohibited due to audit trail requirements.
 - **Precondition**: Before archiving, the Definition Service reads the workflow's active instances from the Execution Service's internal API (§3.4.2) to verify that no instances are in `RUNNING` or `PAUSED` state for this workflow definition. If any active instances are detected, the request immediately terminates and returns `409 Conflict` (`ACTIVE_INSTANCES_EXIST`). See §3.4.2 for the contract.
 - **Archive semantics**: Archive is non-destructive to in-flight instances. Running instances hold their compiled plan from the moment they started — they never re-fetch it, so archiving the template version has no effect on them. Archive only blocks *new* instance starts. The active-instances guard is an operational safety net to prevent accidental archiving while work is actively in progress; it does not protect running instances from being broken by archive (they cannot be).
+- **Concurrency**: Archive acts on the version that is active when it commits, in a serializable transaction that retries. A publish or promote landing at the same moment cannot leave a published version the workflow no longer points to. Archiving a module follows the same rule.
 
 #### 3.3.9 Discard Workspace Draft
 
@@ -2048,7 +2050,7 @@ Kubernetes NetworkPolicy admits only those callers. The service refuses to start
   - `version_number` is `null` for a `DRAFT`.
   - Every status is returned; the caller refuses a version that is not `PUBLISHED` or not valid.
 - **Errors**: `400` for a malformed `version_id` or `tenant_id`; `401`; `404` when the tenant has no such version; `500`.
-- **Cache**: a fail-open Valkey entry under `wf:plan:<tenant_id>:<version_id>` (TTL `CACHE_COMPILED_PLAN_TTL`), written on a miss. A cache error falls through to Postgres.
+- **Cache**: a fail-open Valkey entry under `wf:plan:<tenant_id>:<version_id>` (TTL `CACHE_COMPILED_PLAN_TTL`), written on a miss for a published version only; a draft or archived version is read from Postgres and never cached, so publish and archive leave no stale entry. A cache error falls through to Postgres.
 
 The other served endpoints, `POST /events` (§7.4) and the connector-alias registry (§10.15), are in the same document.
 
@@ -4049,8 +4051,8 @@ This section captures the key architectural and design decisions made for the Wo
 Valkey is a pure operational cache — it holds no primary data and contributes nothing to the RPO. The service uses it for three purposes (§1.9):
 
 - Compiled plan cache_ (`wf:plan:<tenantID>:<versionID>`, 1 h TTL): On failover or cold-start, the cache is empty. The first compiled-plan read for each version triggers a DB fallback and repopulates the entry; subsequent calls are served from cache. No data is lost — the compiled plan is always re-derivable from `compiled_plan_json` in `workflow_version`.
-- Idempotency keys_ (`idem:<tenantID>:<routePath>:<key>`, 24 h TTL): A cache outage opens a window where duplicate HTTP mutations from the same `Idempotency-Key` may be re-applied. The window is bounded by the cache downtime. SQS-delivered events are unaffected: their redelivery safety is a property of the handlers themselves (§2.3.1), not of the cache.
-- Draft-edit locks_ (`wf:draft:lock:<tenantID>:<workflowID>`, 30 s sliding TTL): Locks expire naturally. After a cache failure, concurrent PUT /draft calls to the same draft may both succeed for up to 30 s, but the `record_version` optimistic-lock check in Postgres is the hard backstop — only one will commit.
+- Idempotency keys_ (`idem:<tenantID>:<method>:<path>:<key>`, 24 h TTL): A cache outage opens a window where duplicate HTTP mutations from the same `Idempotency-Key` may be re-applied. The window is bounded by the cache downtime. SQS-delivered events are unaffected: their redelivery safety is a property of the handlers themselves (§2.3.1), not of the cache.
+- Draft-edit locks_ (`draft-lock:<tenantID>:<workflowID>`, 30 s TTL): The lock is taken for the duration of a save. While the cache is unreachable a draft save fails, since the lock cannot be taken; the `record_version` optimistic-lock check in Postgres remains the hard guarantee that only one of two saves commits. Readiness reports not ready while the cache is unreachable.
 
 ElastiCache Multi-AZ replication (with automatic failover) is the primary mitigation. RTO for the cache tier matches ElastiCache's automatic replica promotion, typically under 60 seconds.
 
@@ -4882,6 +4884,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.32 | 2026-10-08 | **The service has no outbox, relay, SNS publisher or Glue codec** (§1.1, §1.2, §1.4, §1.5, §1.8, §2.2, §2.3, §6, §7, §8, §9, §10.2, §10.4, §10.12, §11, Appendix A). It publishes no event, and the apparatus had been kept against a future producer; it also made every cluster boot require SNS and Glue settings no deployment has. The outbox tables and their RLS migration, the relay worker and its alert, the `OutboxRepository` port, the `AWS_USE_STUB`, `SNS_TOPIC_ARN`, `GLUE_REGISTRY_NAME` and `OUTBOX_*` settings and the Glue codec are gone. The Execution Service and Org & Membership URLs and tokens are required whenever `APP_ENV` is not `dev`. A future outbound event designs its contract and consumer first, and brings its own outbox. |
 | 1.33 | 2026-10-08 | **A boundary carries the whole path it leads to** (§4.1.3.2, §4.2, Appendix E). A boundary named only the department it moved to, so a path of several tasks, lanes or gateways ran its first department alone and the flow then went on as if the host had finished. Each boundary, on a task, a subProcess or a call, now carries its path as `Steps` and the boundary event's ID as `BoundaryID`, compiled after the main traversal on a state of its own; the Execution Service runs them and an interrupting boundary ends its path (workflow-models LLD rev 2.17, execution LLD rev 1.72). A path that continues into a node the main flow compiled keeps naming only its department. The outside waits read looks into the steps of boundary paths. |
 | 1.34 | 2026-10-09 | **Platform libraries at their latest majors, the platform metric standard, and RLS violation logging** (§1.1, §1.6, §1.7.5, §6.1, §6.2, §7.4.2, §10.6, Appendix A). `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.0, `platform-gincommon` v1.6.0; `workflow-models` v1.2.0, `workflow-connectors` v1.0.0. Metrics follow the platform tiers: `platform_*` from the libraries, `workflow_definition_service_<metric>` for the service. The request deadline runs innermost. `APP_ENV` is validated; OpenBao is required outside dev. Tenant tables force RLS through the sampled violation-logging functions, exported as `workflow_definition_service_rls_violations_total`. `api/asyncapi.yaml` documents both inbound events. The publish path emits the `BPMN_Compilation` and `DB_Publish_Transaction` spans. |
+| 1.35 | 2026-10-12 | **Publish and archive are consistent under concurrent edits, timers must be runnable, and the cache and lock behaviour is stated as built** (§1.1, §1.9, §2.5, §2.6, §3.1.3, §3.1.4, §3.3.7, §3.3.8, §3.4.1, DR posture). A publish is refused when the draft changed after it was read, so the stored plan always belongs to the stored BPMN. A save that changes nothing returns the `record_version` the row holds. Archive of a workflow or module acts on the version active at commit. A timer boundary needs a positive duration the Execution Service can run. Only published versions are cached as compiled plans. The draft-edit lock fails a save while the cache is unreachable. Idempotency and draft-lock key formats match the service. Libraries: `platform-pgcommon/v2` v2.0.1, `workflow-connectors/v2` v2.0.0, `workflow-models/v2` v2.0.0-rc.1. |
 ---
 
 ## Appendix E: Open Items
