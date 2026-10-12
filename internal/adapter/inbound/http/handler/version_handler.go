@@ -2,6 +2,8 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"mime"
 	"net/http"
 	"time"
@@ -162,7 +164,10 @@ func (h *Handler) PublishVersion(c *gin.Context) {
 	}
 
 	var req publishVersionReq
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		bindErrResponse(c, err)
+		return
+	}
 
 	v, err := h.versions.Publish(c.Request.Context(), tenantID, userID, workflowID, versionID, req.ForcePublishStructural)
 	if err != nil {
@@ -213,7 +218,7 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 		return
 	}
 
-	wf, version, err := h.versions.Clone(c.Request.Context(), tenantID, userID, workflowID, versionID, c.GetHeader("x-plan"), service.CloneReq{
+	wf, version, err := h.versions.Clone(c.Request.Context(), tenantID, userID, workflowID, versionID, normalizePlanTier(c.GetHeader("x-plan")), service.CloneReq{
 		NewKey:         req.NewKey,
 		NewName:        req.NewName,
 		NewDescription: req.NewDescription,

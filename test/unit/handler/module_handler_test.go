@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -249,6 +251,23 @@ func TestAddModuleVersion_EmptyBody_CopiesForward(t *testing.T) {
 	})
 	w := do(newRouter(h), adminReq(http.MethodPost, "/api/v1/modules/"+testWFID.String()+"/versions", nil))
 	assert.Equal(t, http.StatusCreated, w.Code)
+}
+
+func TestAddModuleVersion_MalformedBody_IsA400AndCreatesNothing(t *testing.T) {
+	h := newModuleHandler(&fakeModuleSvc{
+		get: func(context.Context, uuid.UUID, uuid.UUID) (*domain.Module, *domain.ModuleVersion, error) {
+			return &domain.Module{ID: testWFID, Scope: domain.ScopeTenant}, nil, nil
+		},
+		addVersion: func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, service.AddModuleVersionReq) (*domain.ModuleVersion, error) {
+			t.Error("a malformed body must not reach the service")
+			return &domain.ModuleVersion{ID: testVerID2}, nil
+		},
+	})
+	r := adminReq(http.MethodPost, "/api/v1/modules/"+testWFID.String()+"/versions", nil)
+	r.Body = io.NopCloser(strings.NewReader(`{"bpmn_xml": `))
+
+	w := do(newRouter(h), r)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestAddModuleVersion_NotAdmin(t *testing.T) {

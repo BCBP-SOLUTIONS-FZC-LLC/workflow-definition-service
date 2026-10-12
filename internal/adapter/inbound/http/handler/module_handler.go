@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -331,7 +333,10 @@ func (h *Handler) AddModuleVersion(c *gin.Context) {
 	}
 
 	var req addModuleVersionReq
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		bindErrResponse(c, err)
+		return
+	}
 
 	v, err := h.modules.AddVersion(c.Request.Context(), tenantID, userID, moduleID, service.AddModuleVersionReq{
 		BPMNXML: req.BPMNXML,

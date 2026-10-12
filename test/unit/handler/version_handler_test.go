@@ -3,8 +3,10 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -191,6 +193,22 @@ func TestPublishVersion_OK_WithSkip(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestPublishVersion_MalformedBody_IsA400AndPublishesNothing(t *testing.T) {
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
+		publish: func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, bool) (*domain.WorkflowVersion, error) {
+			t.Error("a malformed body must not reach the service")
+			return newPublishedVersion(), nil
+		},
+	}, &fakeValidationSvc{})
+
+	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/publish"
+	r := adminReq(http.MethodPost, path, nil)
+	r.Body = io.NopCloser(strings.NewReader(`{"force_publish_structural": tru`))
+
+	w := do(newRouter(h), r)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestPublishVersion_InvalidVersionStatus(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
 		publish: func(_ context.Context, _, _, _, _ uuid.UUID, _ bool) (*domain.WorkflowVersion, error) {
@@ -289,6 +307,28 @@ func TestCloneVersion_OK(t *testing.T) {
 	assert.NotNil(t, resp["version_id"])
 	assert.NotNil(t, resp["status"])
 	assert.Equal(t, "Version cloned", resp["message"])
+}
+
+func TestCloneVersion_PlanTierIsNormalizedLikeCreate(t *testing.T) {
+	for header, want := range map[string]string{"PRO": "starter", "pro": "pro", "": "starter", "enterprise": "enterprise"} {
+		t.Run(header, func(t *testing.T) {
+			var got string
+			h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
+				clone: func(_ context.Context, _, _, _, _ uuid.UUID, planTier string, _ service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error) {
+					got = planTier
+					return newWorkflow(), newDraftVersion(), nil
+				},
+			}, &fakeValidationSvc{})
+
+			path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/clone"
+			r := adminReq(http.MethodPost, path, map[string]any{"new_key": "k", "new_name": "n"})
+			r.Header.Set("x-plan", header)
+			w := do(newRouter(h), r)
+
+			require.Equal(t, http.StatusCreated, w.Code)
+			assert.Equal(t, want, got)
+		})
+	}
 }
 
 func TestCloneVersion_BindError(t *testing.T) {
