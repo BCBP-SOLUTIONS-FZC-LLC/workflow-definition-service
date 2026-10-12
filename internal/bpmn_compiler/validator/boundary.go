@@ -2,9 +2,10 @@ package validator
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
@@ -118,7 +119,7 @@ func validateTimerBoundary(be bpmncore.BPMNBoundaryEvent, timerCountByHost map[s
 	var errs []domain.BPMNValidationError
 	if !IsValidDuration(be.Timer.Duration) {
 		errs = AppendErr(errs, domain.BPMNErrInvalidSLADuration, be.ID,
-			fmt.Sprintf("timer boundary event has invalid duration %q; use Go duration (72h) or ISO 8601 period (P3D)", be.Timer.Duration))
+			fmt.Sprintf("timer boundary event has invalid duration %q; use a positive Go duration (72h) or ISO 8601 period (P3D)", be.Timer.Duration))
 	}
 	timerCountByHost[be.AttachedToRef]++
 	if timerCountByHost[be.AttachedToRef] > 1 {
@@ -137,16 +138,34 @@ func validateErrorBoundary(be bpmncore.BPMNBoundaryEvent, g *bpmncore.Graph) []d
 	return nil
 }
 
-var iso8601DurationRe = regexp.MustCompile(`^P(\d+W|(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?)$`)
+var iso8601DurationRe = regexp.MustCompile(`^P(?:(\d+)W|(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?)$`)
+
+var iso8601Units = [...]time.Duration{7 * 24 * time.Hour, 24 * time.Hour, time.Hour, time.Minute, time.Second}
 
 func IsValidDuration(s string) bool {
-	if s == "" {
+	if d, err := time.ParseDuration(s); err == nil {
+		return d > 0
+	}
+	return iso8601Positive(s)
+}
+
+func iso8601Positive(s string) bool {
+	m := iso8601DurationRe.FindStringSubmatch(s)
+	if m == nil {
 		return false
 	}
-	if _, err := time.ParseDuration(s); err == nil {
-		return true
+	var total time.Duration
+	for i, unit := range iso8601Units {
+		if m[i+1] == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(m[i+1], 10, 64)
+		if err != nil || n > int64(math.MaxInt64/unit) || total > math.MaxInt64-time.Duration(n)*unit {
+			return false
+		}
+		total += time.Duration(n) * unit
 	}
-	return iso8601DurationRe.MatchString(s) && strings.ContainsAny(s, "0123456789")
+	return total > 0
 }
 
 func bodyStartsWithTask(proc *bpmncore.BPMNProcess, spID string) bool {

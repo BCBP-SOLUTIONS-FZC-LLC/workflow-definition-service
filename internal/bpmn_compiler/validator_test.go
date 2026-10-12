@@ -715,6 +715,30 @@ func TestIsValidDuration_InvalidStringsRejected(t *testing.T) {
 	}
 }
 
+func TestIsValidDuration_NonPositiveRejected(t *testing.T) {
+	for _, s := range []string{"0", "0s", "-72h", "-1m", "P0D", "P0W", "PT0S", "PT0H0M"} {
+		if validator.IsValidDuration(s) {
+			t.Errorf("expected %q (zero or negative) to be rejected", s)
+		}
+	}
+}
+
+func TestIsValidDuration_TooLongToRunRejected(t *testing.T) {
+	for _, s := range []string{"P106752D", "P99999999999999999999D", "P15251W"} {
+		if validator.IsValidDuration(s) {
+			t.Errorf("expected %q (longer than a timer can run) to be rejected", s)
+		}
+	}
+}
+
+func TestIsValidDuration_SmallestAndLargestRunnableAccepted(t *testing.T) {
+	for _, s := range []string{"1ns", "PT0H0M1S", "P106751D"} {
+		if !validator.IsValidDuration(s) {
+			t.Errorf("expected %q to be valid", s)
+		}
+	}
+}
+
 // ValidateBoundaryEvents
 
 func TestValidateBoundaryEvents_DanglingAttachedToRef(t *testing.T) {
