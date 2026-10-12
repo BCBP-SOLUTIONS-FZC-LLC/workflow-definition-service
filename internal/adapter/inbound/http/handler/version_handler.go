@@ -105,9 +105,9 @@ func (h *Handler) ListVersions(c *gin.Context) {
 		return
 	}
 
-	resp := make([]versionResp, len(versions))
+	resp := make([]versionSummary, len(versions))
 	for i, v := range versions {
-		resp[i] = toVersionResp(v)
+		resp[i] = toVersionSummary(v)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"versions": resp,

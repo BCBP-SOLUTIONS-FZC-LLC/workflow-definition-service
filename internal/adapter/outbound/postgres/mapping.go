@@ -143,6 +143,22 @@ func workflowVersionFromDB(row db.WorkflowVersion) *domain.WorkflowVersion {
 	}
 }
 
+func workflowVersionSummaryFromDB(row db.ListVersionsByWorkflowRow) *domain.WorkflowVersion {
+	return &domain.WorkflowVersion{
+		ID:              row.ID,
+		WorkflowID:      mustUUID(row.WorkflowID),
+		TenantID:        row.TenantID,
+		Status:          fromVersionStatus(row.Status),
+		VersionNumber:   fromPgtypeInt4(row.VersionNumber),
+		PublishedAt:     fromPgtypeTimestampPtr(row.PublishedAt),
+		CreatedByUserID: row.CreatedByUserID,
+		IsValid:         row.IsValid,
+		CreatedAt:       fromPgtypeTimestamp(row.CreatedAt),
+		UpdatedAt:       fromPgtypeTimestamp(row.UpdatedAt),
+		RecordVersion:   row.RecordVersion,
+	}
+}
+
 func toCatalogScope(s domain.CatalogScope) db.CatalogScope {
 	return db.CatalogScope(s)
 }

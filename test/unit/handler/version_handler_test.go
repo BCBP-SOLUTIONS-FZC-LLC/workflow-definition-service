@@ -33,6 +33,30 @@ func TestListVersions_OK(t *testing.T) {
 	assert.Len(t, versions, 1)
 }
 
+func TestListVersions_ReturnsSummariesNotTheBPMNOrThePlan(t *testing.T) {
+	ver := newPublishedVersion()
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
+		list: func(_ context.Context, _, _ uuid.UUID, _, _ int) ([]*domain.WorkflowVersion, int64, error) {
+			return []*domain.WorkflowVersion{ver}, 1, nil
+		},
+	}, &fakeValidationSvc{})
+
+	w := do(newRouter(h), req(http.MethodGet, "/api/v1/workflows/"+testWFID.String()+"/versions", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Versions []map[string]any `json:"versions"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp.Versions, 1)
+	for _, heavy := range []string{"bpmn_xml", "compiled_plan_json", "module_refs", "validation_errors"} {
+		assert.NotContains(t, resp.Versions[0], heavy, "a list page must not carry %s; the version read does", heavy)
+	}
+	for _, field := range []string{"id", "status", "is_valid", "created_by_user_id", "created_at"} {
+		assert.Contains(t, resp.Versions[0], field)
+	}
+}
+
 func TestListVersions_InvalidWorkflowUUID(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 	w := do(newRouter(h), req(http.MethodGet, "/api/v1/workflows/bad/versions", nil))

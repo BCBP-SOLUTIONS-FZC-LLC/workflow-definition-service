@@ -23,10 +23,9 @@ FROM workflow_version
 WHERE tenant_id = $1 AND workflow_id = $2 AND status = 'DRAFT';
 
 -- name: ListVersionsByWorkflow :many
-SELECT id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
-       artifact_hash, version_number, published_at, created_by_user_id,
-       is_valid, validation_errors_json, created_at, updated_at, record_version,
-       module_refs
+-- Summary columns only: a page of versions never reads the BPMN or the compiled plan.
+SELECT id, workflow_id, tenant_id, status, version_number, published_at,
+       created_by_user_id, is_valid, created_at, updated_at, record_version
 FROM workflow_version
 WHERE tenant_id = $1 AND workflow_id = $2
 ORDER BY created_at DESC

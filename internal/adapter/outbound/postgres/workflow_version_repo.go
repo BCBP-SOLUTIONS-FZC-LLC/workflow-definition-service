@@ -117,7 +117,7 @@ func (r *WorkflowVersionRepo) ListByWorkflow(
 		}
 		results = make([]*domain.WorkflowVersion, 0, len(rows))
 		for _, row := range rows {
-			results = append(results, workflowVersionFromDB(row))
+			results = append(results, workflowVersionSummaryFromDB(row))
 		}
 		return nil
 	})
