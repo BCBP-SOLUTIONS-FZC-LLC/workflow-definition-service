@@ -126,7 +126,10 @@ func (h *Handler) ListModules(c *gin.Context) {
 		return
 	}
 
-	page, limit := paginate(c)
+	page, limit, ok := paginate(c)
+	if !ok {
+		return
+	}
 	filter := port.ModuleFilter{Page: page, Limit: limit}
 	scope, ok := parseScopeFilter(c, c.Query("scope"))
 	if !ok {
@@ -165,7 +168,7 @@ func (h *Handler) CreateModule(c *gin.Context) {
 
 	var req createModuleReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		bindErrResponse(c, err)
+		h.bindErrResponse(c, err)
 		return
 	}
 	scope, ok := parseModuleScope(c, req.Scope)
@@ -274,7 +277,10 @@ func (h *Handler) ListModuleVersions(c *gin.Context) {
 	if !ok {
 		return
 	}
-	page, limit := paginate(c)
+	page, limit, ok := paginate(c)
+	if !ok {
+		return
+	}
 
 	versions, total, err := h.modules.ListVersions(c.Request.Context(), tenantID, moduleID, page, limit)
 	if err != nil {
@@ -334,7 +340,7 @@ func (h *Handler) AddModuleVersion(c *gin.Context) {
 
 	var req addModuleVersionReq
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
-		bindErrResponse(c, err)
+		h.bindErrResponse(c, err)
 		return
 	}
 

@@ -32,14 +32,14 @@ func (f *fakeConnectorSvc) Registry(ctx context.Context) map[string]registry.Def
 	return nil
 }
 
-func (f *fakeConnectorSvc) WriteCredential(ctx context.Context, tenantID uuid.UUID, connectorType, fieldName, value string) (string, error) {
+func (f *fakeConnectorSvc) WriteCredential(ctx context.Context, tenantID, _ uuid.UUID, connectorType, fieldName, value string) (string, error) {
 	if f.writeFn != nil {
 		return f.writeFn(ctx, tenantID, connectorType, fieldName, value)
 	}
 	return "", nil
 }
 
-func (f *fakeConnectorSvc) RevokeCredential(ctx context.Context, tenantID uuid.UUID, connectorType, fieldName string) error {
+func (f *fakeConnectorSvc) RevokeCredential(ctx context.Context, tenantID, _ uuid.UUID, connectorType, fieldName string) error {
 	if f.revokeFn != nil {
 		return f.revokeFn(ctx, tenantID, connectorType, fieldName)
 	}

@@ -14,8 +14,8 @@ import (
 
 type connectorSvc interface {
 	Registry(ctx context.Context) map[string]registry.Definition
-	WriteCredential(ctx context.Context, tenantID uuid.UUID, connectorType, fieldName, value string) (string, error)
-	RevokeCredential(ctx context.Context, tenantID uuid.UUID, connectorType, fieldName string) error
+	WriteCredential(ctx context.Context, tenantID, userID uuid.UUID, connectorType, fieldName, value string) (string, error)
+	RevokeCredential(ctx context.Context, tenantID, userID uuid.UUID, connectorType, fieldName string) error
 	ListAliases(ctx context.Context) ([]domain.ConnectorRestAlias, error)
 	WriteRestAlias(ctx context.Context, a domain.ConnectorRestAlias) error
 	DeleteRestAlias(ctx context.Context, alias string) (bool, error)
@@ -85,7 +85,7 @@ type writeConnectorCredentialReq struct {
 }
 
 func (h *Handler) WriteConnectorCredential(c *gin.Context) {
-	tenantID, _, ok := mustCtx(c)
+	tenantID, userID, ok := mustCtx(c)
 	if !ok {
 		return
 	}
@@ -95,11 +95,11 @@ func (h *Handler) WriteConnectorCredential(c *gin.Context) {
 
 	var req writeConnectorCredentialReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		bindErrResponse(c, err)
+		h.bindErrResponse(c, err)
 		return
 	}
 
-	secretPath, err := h.connectors.WriteCredential(c.Request.Context(), tenantID, req.ConnectorType, req.FieldName, req.Value)
+	secretPath, err := h.connectors.WriteCredential(c.Request.Context(), tenantID, userID, req.ConnectorType, req.FieldName, req.Value)
 	if err != nil {
 		errResponse(c, h.log, err)
 		return
@@ -108,7 +108,7 @@ func (h *Handler) WriteConnectorCredential(c *gin.Context) {
 }
 
 func (h *Handler) RevokeConnectorCredential(c *gin.Context) {
-	tenantID, _, ok := mustCtx(c)
+	tenantID, userID, ok := mustCtx(c)
 	if !ok {
 		return
 	}
@@ -119,7 +119,7 @@ func (h *Handler) RevokeConnectorCredential(c *gin.Context) {
 	connectorType := c.Param("connector_type")
 	fieldName := c.Param("field_name")
 
-	if err := h.connectors.RevokeCredential(c.Request.Context(), tenantID, connectorType, fieldName); err != nil {
+	if err := h.connectors.RevokeCredential(c.Request.Context(), tenantID, userID, connectorType, fieldName); err != nil {
 		errResponse(c, h.log, err)
 		return
 	}

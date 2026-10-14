@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -40,8 +41,8 @@ func TestSecretsClient_Write_Forbidden(t *testing.T) {
 
 	c := &SecretsClient{addr: srv.URL, token: "bad-token", mount: "secret", client: srv.Client()}
 	err := c.Write(context.Background(), "some/path", map[string]string{"k": "v"})
-	if !errors.Is(err, domain.ErrUnauthorized) {
-		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	if !errors.Is(err, domain.ErrUpstreamUnavailable) || errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("a refused service token is an outage of the store, not the caller's login: got %v", err)
 	}
 }
 
@@ -107,8 +108,8 @@ func TestSecretsClient_Delete_Forbidden(t *testing.T) {
 
 	c := &SecretsClient{addr: srv.URL, token: "bad-token", mount: "secret", client: srv.Client()}
 	err := c.Delete(context.Background(), "some/path")
-	if !errors.Is(err, domain.ErrUnauthorized) {
-		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	if !errors.Is(err, domain.ErrUpstreamUnavailable) || errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("a refused service token is an outage of the store, not the caller's login: got %v", err)
 	}
 }
 
@@ -123,4 +124,29 @@ func TestSecretsClient_Delete_UpstreamError(t *testing.T) {
 	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
 		t.Fatalf("expected ErrUpstreamUnavailable, got %v", err)
 	}
+}
+
+func TestSecretsClient_ErrorBodyIsCapped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(strings.Repeat("x", 1<<20)))
+	}))
+	defer srv.Close()
+
+	c := &SecretsClient{addr: srv.URL, token: "t", mount: "secret", client: srv.Client()}
+	for name, err := range map[string]error{
+		"write":  c.Write(context.Background(), "some/path", map[string]string{"k": "v"}),
+		"delete": c.Delete(context.Background(), "some/path"),
+	} {
+		if err == nil || len(err.Error()) > 2048 {
+			t.Errorf("%s: error text is %d bytes, want at most 2048", name, len(errText(err)))
+		}
+	}
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

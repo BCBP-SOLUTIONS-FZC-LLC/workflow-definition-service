@@ -60,7 +60,10 @@ func (h *Handler) ListStarters(c *gin.Context) {
 		return
 	}
 
-	page, limit := paginate(c)
+	page, limit, ok := paginate(c)
+	if !ok {
+		return
+	}
 	filter := port.StarterFilter{Page: page, Limit: limit}
 	scope, ok := parseScopeFilter(c, c.Query("scope"))
 	if !ok {
@@ -102,7 +105,7 @@ func (h *Handler) CreateStarter(c *gin.Context) {
 
 	var req createStarterReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		bindErrResponse(c, err)
+		h.bindErrResponse(c, err)
 		return
 	}
 	scope, ok := parseModuleScope(c, req.Scope)
@@ -140,7 +143,7 @@ func (h *Handler) CreateStarterFromWorkflowVersion(c *gin.Context) {
 
 	var req createStarterFromWorkflowVersionReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		bindErrResponse(c, err)
+		h.bindErrResponse(c, err)
 		return
 	}
 

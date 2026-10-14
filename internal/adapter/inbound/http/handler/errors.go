@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel/trace"
 
@@ -127,11 +129,36 @@ func writeIfTooLarge(c *gin.Context, err error) bool {
 	return true
 }
 
-func bindErrResponse(c *gin.Context, err error) {
+func (h *Handler) bindErrResponse(c *gin.Context, err error) {
 	if writeIfTooLarge(c, err) {
 		return
 	}
-	writeProblem(c, http.StatusBadRequest, CodeBadRequest, err.Error(), nil)
+	if h.log != nil {
+		h.log.Warn("invalid request body", map[string]any{"path": c.FullPath(), "error": err.Error()})
+	}
+	detail, params := describeBindError(err)
+	writeProblem(c, http.StatusBadRequest, CodeBadRequest, detail, params)
+}
+
+func describeBindError(err error) (string, []invalidParam) {
+	var invalid validator.ValidationErrors
+	var wrongType *json.UnmarshalTypeError
+	switch {
+	case errors.As(err, &invalid):
+		params := make([]invalidParam, 0, len(invalid))
+		for _, fe := range invalid {
+			reason := "is not valid"
+			if fe.Tag() == "required" {
+				reason = "is required"
+			}
+			params = append(params, invalidParam{Name: fe.Field(), Reason: reason})
+		}
+		return "request body has missing or invalid fields", params
+	case errors.As(err, &wrongType):
+		return "request body has a field of the wrong type", []invalidParam{{Name: wrongType.Field, Reason: "has the wrong type"}}
+	default:
+		return "request body is not valid JSON", nil
+	}
 }
 
 func errResponse(c *gin.Context, log port.Logger, err error) {

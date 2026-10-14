@@ -99,7 +99,10 @@ func (h *Handler) ListVersions(c *gin.Context) {
 		return
 	}
 
-	page, limit := paginate(c)
+	page, limit, ok := paginate(c)
+	if !ok {
+		return
+	}
 
 	versions, total, err := h.versions.List(c.Request.Context(), tenantID, workflowID, page, limit)
 	if err != nil {
@@ -165,7 +168,7 @@ func (h *Handler) PublishVersion(c *gin.Context) {
 
 	var req publishVersionReq
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
-		bindErrResponse(c, err)
+		h.bindErrResponse(c, err)
 		return
 	}
 
@@ -202,7 +205,7 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 
 	var req cloneVersionReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		bindErrResponse(c, err)
+		h.bindErrResponse(c, err)
 		return
 	}
 

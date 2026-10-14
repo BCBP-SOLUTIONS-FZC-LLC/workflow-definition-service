@@ -63,31 +63,6 @@ func TestListWorkflows_Filters(t *testing.T) {
 	assert.Equal(t, 5, capturedFilter.Limit)
 }
 
-func TestListWorkflows_PaginateBounds(t *testing.T) {
-	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-
-	// page < 1 and limit > 100 → both clamped
-	r := req(http.MethodGet, "/api/v1/workflows?page=0&limit=999", nil)
-	w := do(newRouter(h), r)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var body map[string]any
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
-	pagination := body["pagination"].(map[string]any)
-	assert.Equal(t, float64(1), pagination["page"])
-	assert.Equal(t, float64(20), pagination["limit"])
-}
-
-func TestListWorkflows_PaginateLimitZero(t *testing.T) {
-	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-	r := req(http.MethodGet, "/api/v1/workflows?limit=0", nil)
-	w := do(newRouter(h), r)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var body map[string]any
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
-	pagination := body["pagination"].(map[string]any)
-	assert.Equal(t, float64(20), pagination["limit"])
-}
-
 func TestListWorkflows_ServiceError(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{
 		list: func(_ context.Context, _ uuid.UUID, _ port.WorkflowFilter) ([]*domain.Workflow, int64, error) {

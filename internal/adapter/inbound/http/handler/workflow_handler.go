@@ -77,7 +77,10 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		return
 	}
 
-	page, limit := paginate(c)
+	page, limit, ok := paginate(c)
+	if !ok {
+		return
+	}
 	filter := port.WorkflowFilter{Page: page, Limit: limit}
 
 	if s := c.Query("search"); s != "" {
@@ -127,7 +130,7 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 
 	var req createWorkflowReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		bindErrResponse(c, err)
+		h.bindErrResponse(c, err)
 		return
 	}
 
@@ -177,7 +180,10 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		return
 	}
 
-	versionsLimit := boundedQuery(c, "versions_limit", 20, 1, 100)
+	versionsLimit, ok := parseVersionsLimit(c)
+	if !ok {
+		return
+	}
 
 	wf, versions, err := h.workflows.Get(c.Request.Context(), tenantID, workflowID, versionsLimit)
 	if err != nil {

@@ -59,11 +59,8 @@ func (c *SecretsClient) Write(ctx context.Context, path string, data map[string]
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusNoContent:
 		return nil
-	case http.StatusForbidden:
-		return fmt.Errorf("%w: openbao write %q", domain.ErrUnauthorized, path)
 	default:
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%w: openbao write %q: status %d: %s", domain.ErrUpstreamUnavailable, path, resp.StatusCode, string(respBody))
+		return fmt.Errorf("%w: openbao write %q: status %d: %s", domain.ErrUpstreamUnavailable, path, resp.StatusCode, errorSnippet(resp.Body))
 	}
 }
 
@@ -84,10 +81,14 @@ func (c *SecretsClient) Delete(ctx context.Context, path string) error {
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusNoContent, http.StatusNotFound:
 		return nil
-	case http.StatusForbidden:
-		return fmt.Errorf("%w: openbao delete %q", domain.ErrUnauthorized, path)
 	default:
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%w: openbao delete %q: status %d: %s", domain.ErrUpstreamUnavailable, path, resp.StatusCode, string(respBody))
+		return fmt.Errorf("%w: openbao delete %q: status %d: %s", domain.ErrUpstreamUnavailable, path, resp.StatusCode, errorSnippet(resp.Body))
 	}
+}
+
+const maxErrorSnippet = 1 << 10
+
+func errorSnippet(body io.Reader) string {
+	b, _ := io.ReadAll(io.LimitReader(body, maxErrorSnippet))
+	return string(b)
 }

@@ -39,11 +39,13 @@ type fakeConnectors struct {
 
 func (fakeConnectors) Registry(context.Context) map[string]registry.Definition { return nil }
 
-func (fakeConnectors) WriteCredential(context.Context, uuid.UUID, string, string, string) (string, error) {
+func (fakeConnectors) WriteCredential(context.Context, uuid.UUID, uuid.UUID, string, string, string) (string, error) {
 	return "", nil
 }
 
-func (fakeConnectors) RevokeCredential(context.Context, uuid.UUID, string, string) error { return nil }
+func (fakeConnectors) RevokeCredential(context.Context, uuid.UUID, uuid.UUID, string, string) error {
+	return nil
+}
 
 func (f fakeConnectors) ListAliases(context.Context) ([]domain.ConnectorRestAlias, error) {
 	return f.aliases, f.listErr

@@ -45,7 +45,7 @@ type writeRestAliasReq struct {
 func (h *Handler) WriteConnectorRestAlias(c *gin.Context) {
 	var req writeRestAliasReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		bindErrResponse(c, err)
+		h.bindErrResponse(c, err)
 		return
 	}
 
@@ -79,6 +79,9 @@ func (h *Handler) DeleteConnectorRestAlias(c *gin.Context) {
 func millisOrDefault(ms int64) time.Duration {
 	if ms <= 0 {
 		return 5 * time.Second
+	}
+	if limit := domain.MaxAliasTimeout.Milliseconds(); ms > limit {
+		ms = limit + 1
 	}
 	return time.Duration(ms) * time.Millisecond
 }

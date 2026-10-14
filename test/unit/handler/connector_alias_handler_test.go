@@ -95,3 +95,12 @@ func TestListConnectorAliases_Error(t *testing.T) {
 	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodGet, "/internal/connector-aliases", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
+
+func TestWriteConnectorRestAlias_HugeTimeoutIsRefusedNotWrapped(t *testing.T) {
+	conn := &fakeConnectorSvc{
+		writeRestFn: func(_ context.Context, a domain.ConnectorRestAlias) error { return a.Validate() },
+	}
+	body := map[string]any{"alias": "tender-get", "method": "GET", "baseURL": "http://tender-service.internal", "pathTemplate": "/x", "timeoutMs": int64(9223372036854775807)}
+	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/internal/connector-aliases/rest", body))
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

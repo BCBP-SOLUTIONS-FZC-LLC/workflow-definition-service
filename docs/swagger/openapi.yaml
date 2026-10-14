@@ -1030,7 +1030,10 @@ components:
             code: "NOT_FOUND"
 
     BadRequest:
-      description: Malformed request — unparseable JSON, a missing or invalid field, or an Idempotency-Key longer than 256 characters.
+      description: >
+        Malformed request — unparseable JSON, a missing or invalid field, a page, limit or
+        versions_limit outside its range, or an Idempotency-Key longer than 256 characters.
+        Fields and parameters are named in `invalid_params`; values are never echoed.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1120,10 +1123,10 @@ paths:
         - $ref: '#/components/parameters/FeatureFlags'
         - in: query
           name: page
-          schema: { type: integer, default: 1 }
+          schema: { type: integer, default: 1, minimum: 1, maximum: 100000 }
         - in: query
           name: limit
-          schema: { type: integer, default: 20 }
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
         - in: query
           name: search
           schema: { type: string }
@@ -1164,6 +1167,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/WorkflowSummary' }
                   pagination: { $ref: '#/components/schemas/Pagination' }
+        "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "500": { $ref: '#/components/responses/InternalError' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
@@ -1327,7 +1331,7 @@ paths:
         - $ref: '#/components/parameters/WorkflowId'
         - in: query
           name: versions_limit
-          schema: { type: integer, default: 20, maximum: 100 }
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
           description: Max number of versions returned inline in the versions array.
       responses:
         "200":
@@ -1346,6 +1350,7 @@ paths:
                   versions:
                     type: array
                     items: { $ref: '#/components/schemas/VersionSummary' }
+        "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
@@ -1366,10 +1371,10 @@ paths:
         - $ref: '#/components/parameters/WorkflowId'
         - in: query
           name: page
-          schema: { type: integer, default: 1 }
+          schema: { type: integer, default: 1, minimum: 1, maximum: 100000 }
         - in: query
           name: limit
-          schema: { type: integer, default: 20, maximum: 100 }
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
       responses:
         "200":
           description: Paginated version list.
@@ -1382,6 +1387,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/VersionSummary' }
                   pagination: { $ref: '#/components/schemas/Pagination' }
+        "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
@@ -2329,10 +2335,10 @@ paths:
         - $ref: '#/components/parameters/UserId'
         - in: query
           name: page
-          schema: { type: integer, default: 1 }
+          schema: { type: integer, default: 1, minimum: 1, maximum: 100000 }
         - in: query
           name: limit
-          schema: { type: integer, default: 20 }
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
         - in: query
           name: scope
           schema: { $ref: '#/components/schemas/CatalogScope' }
@@ -2352,6 +2358,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/ModuleSummary' }
                   pagination: { $ref: '#/components/schemas/Pagination' }
+        "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -2518,10 +2525,10 @@ paths:
           schema: { type: string, format: uuid }
         - in: query
           name: page
-          schema: { type: integer, default: 1 }
+          schema: { type: integer, default: 1, minimum: 1, maximum: 100000 }
         - in: query
           name: limit
-          schema: { type: integer, default: 20 }
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
       responses:
         "200":
           description: Paginated version list.
@@ -2534,6 +2541,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/ModuleVersion' }
                   pagination: { $ref: '#/components/schemas/Pagination' }
+        "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -2712,10 +2720,10 @@ paths:
         - $ref: '#/components/parameters/UserId'
         - in: query
           name: page
-          schema: { type: integer, default: 1 }
+          schema: { type: integer, default: 1, minimum: 1, maximum: 100000 }
         - in: query
           name: limit
-          schema: { type: integer, default: 20 }
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
         - in: query
           name: scope
           schema: { $ref: '#/components/schemas/CatalogScope' }
@@ -2738,6 +2746,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/StarterTemplate' }
                   pagination: { $ref: '#/components/schemas/Pagination' }
+        "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
 

@@ -5,10 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
+	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
 	httpmiddleware "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/middleware"
@@ -103,6 +108,7 @@ type Services struct {
 }
 
 func New(s Services) *Handler {
+	nameFieldsByJSONTag.Do(registerJSONFieldNames)
 	return &Handler{
 		workflows:      s.Workflows,
 		drafts:         s.Drafts,
@@ -117,6 +123,22 @@ func New(s Services) *Handler {
 		idempotencyTTL: s.IdempotencyTTL,
 		log:            s.Log,
 	}
+}
+
+var nameFieldsByJSONTag sync.Once
+
+func registerJSONFieldNames() {
+	engine, ok := binding.Validator.Engine().(*validator.Validate)
+	if !ok {
+		return
+	}
+	engine.RegisterTagNameFunc(func(f reflect.StructField) string {
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			return f.Name
+		}
+		return name
+	})
 }
 
 var adminRoles = map[string]bool{
@@ -210,27 +232,57 @@ func parseUUIDParam(c *gin.Context, param string) (uuid.UUID, bool) {
 	return id, true
 }
 
-const maxPage = 100000
+const (
+	maxPage          = 100000
+	defaultLimit     = 20
+	maxLimit         = 100
+	defaultPage      = 1
+	maxVersionsLimit = 100
+)
 
-func paginate(c *gin.Context) (page, limit int) {
-	page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
-	if page < 1 {
-		page = 1
-	}
-	if page > maxPage {
-		page = maxPage
-	}
-	if limit < 1 || limit > 100 {
-		limit = 20
-	}
-	return
+type queryInt struct {
+	key         string
+	def, lo, hi int
 }
 
-func boundedQuery(c *gin.Context, key string, def, min, max int) int {
-	v, err := strconv.Atoi(c.DefaultQuery(key, strconv.Itoa(def)))
-	if err != nil || v < min || v > max {
-		return def
+func parseQueryInts(c *gin.Context, specs ...queryInt) ([]int, bool) {
+	values := make([]int, len(specs))
+	var invalid []invalidParam
+	for i, sp := range specs {
+		raw, present := c.GetQuery(sp.key)
+		if !present {
+			values[i] = sp.def
+			continue
+		}
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < sp.lo || v > sp.hi {
+			invalid = append(invalid, invalidParam{Name: sp.key, Reason: fmt.Sprintf("must be an integer between %d and %d", sp.lo, sp.hi)})
+			continue
+		}
+		values[i] = v
 	}
-	return v
+	if len(invalid) > 0 {
+		writeProblem(c, http.StatusBadRequest, CodeInvalidInput, "query parameters are invalid", invalid)
+		return nil, false
+	}
+	return values, true
+}
+
+func paginate(c *gin.Context) (page, limit int, ok bool) {
+	v, ok := parseQueryInts(c,
+		queryInt{"page", defaultPage, 1, maxPage},
+		queryInt{"limit", defaultLimit, 1, maxLimit},
+	)
+	if !ok {
+		return 0, 0, false
+	}
+	return v[0], v[1], true
+}
+
+func parseVersionsLimit(c *gin.Context) (int, bool) {
+	v, ok := parseQueryInts(c, queryInt{"versions_limit", defaultLimit, 1, maxVersionsLimit})
+	if !ok {
+		return 0, false
+	}
+	return v[0], true
 }

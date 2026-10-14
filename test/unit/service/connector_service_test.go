@@ -40,7 +40,7 @@ func TestConnectorService_WriteCredential_Success(t *testing.T) {
 	secrets := &fakeSecretsClient{}
 	svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
 
-	path, err := svc.WriteCredential(context.Background(), uuid.New(), "send-email", "apiKey", "sg-live-abc")
+	path, err := svc.WriteCredential(context.Background(), uuid.New(), uuid.New(), "send-email", "apiKey", "sg-live-abc")
 	require.NoError(t, err)
 	assert.Contains(t, path, "send-email/apiKey")
 	assert.Len(t, secrets.written, 1)
@@ -72,7 +72,7 @@ func TestConnectorService_WriteCredential_PathTraversal(t *testing.T) {
 			secrets := &fakeSecretsClient{}
 			svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
 
-			_, err := svc.WriteCredential(context.Background(), uuid.New(), tc.connectorType, tc.fieldName, "secret-value")
+			_, err := svc.WriteCredential(context.Background(), uuid.New(), uuid.New(), tc.connectorType, tc.fieldName, "secret-value")
 			require.Error(t, err)
 			assert.True(t, errors.Is(err, domain.ErrInvalidConnectorCredentialInput), "got: %v", err)
 			assert.Empty(t, secrets.written, "rejected input must never reach SecretsClient.Write")
@@ -88,7 +88,7 @@ func TestConnectorService_WriteCredential_UpstreamUnavailable(t *testing.T) {
 	}
 	svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
 
-	_, err := svc.WriteCredential(context.Background(), uuid.New(), "send-email", "apiKey", "x")
+	_, err := svc.WriteCredential(context.Background(), uuid.New(), uuid.New(), "send-email", "apiKey", "x")
 	require.Error(t, err)
 }
 
@@ -97,7 +97,7 @@ func TestConnectorService_RevokeCredential_Success(t *testing.T) {
 	svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
 
 	tenantID := uuid.New()
-	err := svc.RevokeCredential(context.Background(), tenantID, "send-email", "apiKey")
+	err := svc.RevokeCredential(context.Background(), tenantID, uuid.New(), "send-email", "apiKey")
 	require.NoError(t, err)
 	require.Len(t, secrets.deleted, 1)
 	assert.Contains(t, secrets.deleted[0], "send-email/apiKey")
@@ -127,7 +127,7 @@ func TestConnectorService_RevokeCredential_PathTraversal(t *testing.T) {
 			secrets := &fakeSecretsClient{}
 			svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
 
-			err := svc.RevokeCredential(context.Background(), uuid.New(), tc.connectorType, tc.fieldName)
+			err := svc.RevokeCredential(context.Background(), uuid.New(), uuid.New(), tc.connectorType, tc.fieldName)
 			require.Error(t, err)
 			assert.True(t, errors.Is(err, domain.ErrInvalidConnectorCredentialInput), "got: %v", err)
 			assert.Empty(t, secrets.deleted, "rejected input must never reach SecretsClient.Delete")
@@ -143,7 +143,7 @@ func TestConnectorService_RevokeCredential_UpstreamUnavailable(t *testing.T) {
 	}
 	svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
 
-	err := svc.RevokeCredential(context.Background(), uuid.New(), "send-email", "apiKey")
+	err := svc.RevokeCredential(context.Background(), uuid.New(), uuid.New(), "send-email", "apiKey")
 	require.Error(t, err)
 }
 

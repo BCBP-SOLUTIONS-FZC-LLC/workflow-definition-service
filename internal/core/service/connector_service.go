@@ -43,7 +43,7 @@ func (s *ConnectorService) Registry(_ context.Context) map[string]registry.Defin
 
 func (s *ConnectorService) WriteCredential(
 	ctx context.Context,
-	tenantID uuid.UUID,
+	tenantID, userID uuid.UUID,
 	connectorType, fieldName, value string,
 ) (secretPath string, err error) {
 	if _, ok := registry.All()[connectorType]; !ok {
@@ -59,10 +59,14 @@ func (s *ConnectorService) WriteCredential(
 	if err := s.secrets.Write(ctx, secretPath, map[string]string{fieldName: value}); err != nil {
 		return "", fmt.Errorf("write credential: %w", err)
 	}
+	s.log.Info("connector credential written", auditFields(ctx, tenantID, userID, map[string]any{
+		"connector_type": connectorType,
+		"field_name":     fieldName,
+	}))
 	return secretPath, nil
 }
 
-func (s *ConnectorService) RevokeCredential(ctx context.Context, tenantID uuid.UUID, connectorType, fieldName string) error {
+func (s *ConnectorService) RevokeCredential(ctx context.Context, tenantID, userID uuid.UUID, connectorType, fieldName string) error {
 	if _, ok := registry.All()[connectorType]; !ok {
 		return fmt.Errorf("%w: unrecognized connector_type %q", domain.ErrInvalidConnectorCredentialInput, connectorType)
 	}
@@ -76,6 +80,10 @@ func (s *ConnectorService) RevokeCredential(ctx context.Context, tenantID uuid.U
 	if err := s.secrets.Delete(ctx, secretPath); err != nil {
 		return fmt.Errorf("revoke credential: %w", err)
 	}
+	s.log.Info("connector credential revoked", auditFields(ctx, tenantID, userID, map[string]any{
+		"connector_type": connectorType,
+		"field_name":     fieldName,
+	}))
 	return nil
 }
 
@@ -90,9 +98,22 @@ func (s *ConnectorService) WriteRestAlias(ctx context.Context, a domain.Connecto
 	if err := domain.ValidateBaseURLHost(a.BaseURL, s.aliasAllowedHosts); err != nil {
 		return err
 	}
-	return s.aliases.UpsertRest(ctx, a)
+	if err := s.aliases.UpsertRest(ctx, a); err != nil {
+		return err
+	}
+	s.log.Info("connector alias written", stampAudit(ctx, map[string]any{
+		"alias":    a.Alias,
+		"method":   a.Method,
+		"base_url": a.BaseURL,
+	}))
+	return nil
 }
 
 func (s *ConnectorService) DeleteRestAlias(ctx context.Context, alias string) (bool, error) {
-	return s.aliases.DeleteRest(ctx, alias)
+	found, err := s.aliases.DeleteRest(ctx, alias)
+	if err != nil {
+		return false, err
+	}
+	s.log.Info("connector alias deleted", stampAudit(ctx, map[string]any{"alias": alias, "found": found}))
+	return found, nil
 }

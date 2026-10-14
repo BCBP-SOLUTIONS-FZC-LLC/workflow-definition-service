@@ -74,7 +74,7 @@ func (h *Handler) UpdateDraft(c *gin.Context) {
 
 	var req updateDraftReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		bindErrResponse(c, err)
+		h.bindErrResponse(c, err)
 		return
 	}
 

@@ -115,30 +115,16 @@ func TestGetWorkflow_BadUUIDParam_400(t *testing.T) {
 	assert.Equal(t, "BAD_REQUEST", problemCode(t, w.Body.Bytes()))
 }
 
-func TestGetWorkflow_VersionsLimitClamped(t *testing.T) {
-	tests := []struct {
-		name  string
-		query string
-		want  int
-	}{
-		{"negative clamps to default", "?versions_limit=-1", 20},
-		{"oversized clamps to default", "?versions_limit=99999", 20},
-		{"non-numeric clamps to default", "?versions_limit=abc", 20},
-		{"in range passes through", "?versions_limit=5", 5},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var got int
-			wf := &fakeWorkflowSvc{get: func(_ context.Context, _, _ uuid.UUID, versionsLimit int) (*domain.Workflow, []*domain.WorkflowVersion, error) {
-				got = versionsLimit
-				return newWorkflow(), nil, nil
-			}}
-			h := newHandler(wf, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
+func TestGetWorkflow_VersionsLimitInRangePassesThrough(t *testing.T) {
+	var got int
+	wf := &fakeWorkflowSvc{get: func(_ context.Context, _, _ uuid.UUID, versionsLimit int) (*domain.Workflow, []*domain.WorkflowVersion, error) {
+		got = versionsLimit
+		return newWorkflow(), nil, nil
+	}}
+	h := newHandler(wf, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 
-			w := do(newRouter(h), req(http.MethodGet, "/api/v1/workflows/"+testWFID.String()+tt.query, nil))
+	w := do(newRouter(h), req(http.MethodGet, "/api/v1/workflows/"+testWFID.String()+"?versions_limit=5", nil))
 
-			assert.Equal(t, http.StatusOK, w.Code)
-			assert.Equal(t, tt.want, got)
-		})
-	}
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 5, got)
 }

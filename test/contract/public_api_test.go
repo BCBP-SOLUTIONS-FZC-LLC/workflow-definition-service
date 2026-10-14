@@ -99,6 +99,14 @@ func createRequest(key string) *http.Request {
 	return req
 }
 
+func listRequest(query string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows"+query, nil)
+	req.Header.Set("x-tenant-roles", "tenant_member")
+	req.Header.Set("x-tenant-id", uuid.NewString())
+	req.Header.Set("x-user-id", uuid.NewString())
+	return req
+}
+
 func TestPublicContract_Responses(t *testing.T) {
 	spec := contract.Load(t, publicSpec)
 	free := publicRouter(t, createFake{}, freeCache{}, upDB{}, upPinger{})
@@ -115,6 +123,9 @@ func TestPublicContract_Responses(t *testing.T) {
 		{"created", free, createRequest("k-1"), http.StatusCreated, true},
 		{"key reused while the first request runs", busy, createRequest("k-2"), http.StatusConflict, true},
 		{"key longer than 256 characters", free, createRequest(strings.Repeat("k", 257)), http.StatusBadRequest, false},
+		{"page out of range", free, listRequest("?page=0"), http.StatusBadRequest, false},
+		{"limit out of range", free, listRequest("?limit=500"), http.StatusBadRequest, false},
+		{"first page", free, listRequest("?page=1&limit=100"), http.StatusOK, true},
 		{"database outage", outage, createRequest(""), http.StatusServiceUnavailable, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
