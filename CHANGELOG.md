@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Schema (migrations edited in place): every time column is `TIMESTAMPTZ`, `created_at` and `updated_at` are `NOT NULL`, the parent key of a version, module version and assignee is `NOT NULL`, each child names its parent together with its tenant (composite foreign keys, so another tenant's parent cannot be named; deleting an active version clears only the active pointer), and `record_version` must be positive. The repository mapping lost its null-parent panic and timestamp conversions with it. Both DBML files follow the migrations.
 - The identity headers are parsed as UUIDs once, by `RequireIdentity` (which replaces `InjectGUCSet` and sets the validated GUC set); a malformed `x-tenant-id` or `x-user-id` is `401`, not `500`, and never reaches the database. A request that reaches the middleware without a `RequestContext` is refused with `500` instead of being served with RLS unenforced.
 - Configuration is strict: an unparseable value, a zero TTL or timeout, a missing `APP_ENV` (no longer defaulting to `dev`) and, outside `dev`, a missing `VALKEY_ADDR` fail startup, and every problem is listed in one error. `.env` is read in `local` and `dev` only. `OTEL_EXPORTER_OTLP_*` and `OTEL_TRACES_SAMPLER_RATIO` are no longer parsed by the service (the platform library reads them).
 - A bind error returns `invalid_params` with JSON field names and nothing else, and logs the raw error. A vault `403` is `503`, not `401`, and vault error bodies are capped at 1 KiB.

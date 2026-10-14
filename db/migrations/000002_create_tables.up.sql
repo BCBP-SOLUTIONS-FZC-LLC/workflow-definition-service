@@ -6,47 +6,53 @@ CREATE TABLE workflow (
     name                VARCHAR(255) NOT NULL,
     description         TEXT,
     active_version_id   UUID,
-    created_at          TIMESTAMP DEFAULT now(),
-    updated_at          TIMESTAMP DEFAULT now(),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     record_version      BIGINT NOT NULL DEFAULT 1,
-    UNIQUE (tenant_id, business_key)
+    UNIQUE (tenant_id, business_key),
+    UNIQUE (id, tenant_id),
+    CONSTRAINT chk_workflow_record_version CHECK (record_version > 0)
 );
 
 CREATE TABLE workflow_version (
     id                      UUID PRIMARY KEY,
-    workflow_id             UUID REFERENCES workflow(id) ON DELETE CASCADE,
+    workflow_id             UUID NOT NULL,
     tenant_id               UUID NOT NULL,
     status                  workflow_version_status NOT NULL,
     bpmn_xml                TEXT NOT NULL,
     compiled_plan_json      JSONB,
     artifact_hash           TEXT,
     version_number          INT,
-    published_at            TIMESTAMP,
+    published_at            TIMESTAMPTZ,
     created_by_user_id      UUID NOT NULL,
     is_valid                BOOLEAN NOT NULL DEFAULT true,
     validation_errors_json  JSONB,
-    created_at              TIMESTAMP DEFAULT now(),
-    updated_at              TIMESTAMP DEFAULT now(),
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     record_version          BIGINT NOT NULL DEFAULT 1,
     module_refs             JSONB NOT NULL DEFAULT '[]',
     CONSTRAINT chk_version_number_on_publish
-        CHECK (status = 'DRAFT' OR version_number IS NOT NULL)
+        CHECK (status = 'DRAFT' OR version_number IS NOT NULL),
+    CONSTRAINT chk_workflow_version_record_version CHECK (record_version > 0),
+    UNIQUE (id, tenant_id),
+    FOREIGN KEY (workflow_id, tenant_id) REFERENCES workflow(id, tenant_id) ON DELETE CASCADE
 );
 
 ALTER TABLE workflow
     ADD CONSTRAINT fk_active_version
-    FOREIGN KEY (active_version_id) REFERENCES workflow_version(id)
-    ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+    FOREIGN KEY (active_version_id, tenant_id) REFERENCES workflow_version(id, tenant_id)
+    ON DELETE SET NULL (active_version_id) DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE workflow_node_assignee (
     id                  UUID PRIMARY KEY,
     tenant_id           UUID NOT NULL,
-    workflow_version_id UUID REFERENCES workflow_version(id) ON DELETE CASCADE,
+    workflow_version_id UUID NOT NULL,
     node_key            VARCHAR(255) NOT NULL,
     user_id             UUID NOT NULL,
     department_id       UUID NOT NULL,
     role                VARCHAR(64) NOT NULL,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (workflow_version_id, tenant_id) REFERENCES workflow_version(id, tenant_id) ON DELETE CASCADE
 );
 
 CREATE TABLE workflow_module (
@@ -59,18 +65,21 @@ CREATE TABLE workflow_module (
     active_version_id   UUID,
     created_by_user_id  UUID,
     record_version      BIGINT NOT NULL DEFAULT 1,
-    created_at          TIMESTAMP DEFAULT now(),
-    updated_at          TIMESTAMP DEFAULT now(),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT chk_module_scope_tenant CHECK (
         (scope = 'global' AND tenant_id IS NULL) OR
         (scope = 'tenant' AND tenant_id IS NOT NULL)
-    )
+    ),
+    CONSTRAINT chk_workflow_module_record_version CHECK (record_version > 0),
+    UNIQUE (id, tenant_id),
+    UNIQUE (id, scope)
 );
 
 CREATE TABLE workflow_module_version (
     id                      UUID PRIMARY KEY,
-    module_id               UUID REFERENCES workflow_module(id) ON DELETE CASCADE,
+    module_id               UUID NOT NULL,
     tenant_id               UUID,
     scope                   catalog_scope NOT NULL,
     status                  workflow_version_status NOT NULL,
@@ -79,19 +88,29 @@ CREATE TABLE workflow_module_version (
     version_number          INT,
     is_valid                BOOLEAN NOT NULL DEFAULT true,
     validation_errors_json  JSONB,
-    published_at            TIMESTAMP,
+    published_at            TIMESTAMPTZ,
     created_by_user_id      UUID,
     record_version          BIGINT NOT NULL DEFAULT 1,
-    created_at              TIMESTAMP DEFAULT now(),
-    updated_at              TIMESTAMP DEFAULT now(),
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT chk_module_version_number_on_publish
         CHECK (status = 'DRAFT' OR version_number IS NOT NULL),
     CONSTRAINT chk_module_version_scope_tenant CHECK (
         (scope = 'global' AND tenant_id IS NULL) OR
         (scope = 'tenant' AND tenant_id IS NOT NULL)
-    )
+    ),
+    CONSTRAINT chk_workflow_module_version_record_version CHECK (record_version > 0),
+    UNIQUE (id, tenant_id)
 );
+
+ALTER TABLE workflow_module_version
+    ADD CONSTRAINT fk_module_version_module
+    FOREIGN KEY (module_id, tenant_id) REFERENCES workflow_module(id, tenant_id) ON DELETE CASCADE;
+
+ALTER TABLE workflow_module_version
+    ADD CONSTRAINT fk_module_version_module_scope
+    FOREIGN KEY (module_id, scope) REFERENCES workflow_module(id, scope) ON DELETE CASCADE;
 
 ALTER TABLE workflow_module
     ADD CONSTRAINT fk_module_active_version
@@ -109,13 +128,14 @@ CREATE TABLE workflow_template (
     source_workflow_version_id  UUID,
     created_by_user_id          UUID,
     record_version              BIGINT NOT NULL DEFAULT 1,
-    created_at                  TIMESTAMP DEFAULT now(),
-    updated_at                  TIMESTAMP DEFAULT now(),
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT chk_template_scope_tenant CHECK (
         (scope = 'global' AND tenant_id IS NULL) OR
         (scope = 'tenant' AND tenant_id IS NOT NULL)
-    )
+    ),
+    CONSTRAINT chk_workflow_template_record_version CHECK (record_version > 0)
 );
 
 -- Org-owned internal service registry, not tenant data — no RLS.

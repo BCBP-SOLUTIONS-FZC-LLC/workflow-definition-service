@@ -29,14 +29,14 @@ func (r *WorkflowVersionRepo) Create(ctx context.Context, v *domain.WorkflowVers
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		return mapErr(db.New(dbtx).CreateWorkflowVersion(ctx, db.CreateWorkflowVersionParams{
 			ID:                   v.ID,
-			WorkflowID:           pgtype.UUID{Bytes: v.WorkflowID, Valid: true},
+			WorkflowID:           v.WorkflowID,
 			TenantID:             v.TenantID,
 			Status:               toVersionStatus(v.Status),
 			BpmnXml:              v.BPMNXML,
 			CompiledPlanJson:     toNullableJSONB(v.CompiledPlanJSON),
 			ArtifactHash:         toNullableText(v.ArtifactHash),
 			VersionNumber:        toPgtypeInt4(v.VersionNumber),
-			PublishedAt:          toPgtypeTimestamp(v.PublishedAt),
+			PublishedAt:          toPgtypeTimestamptz(v.PublishedAt),
 			CreatedByUserID:      v.CreatedByUserID,
 			IsValid:              v.IsValid,
 			ValidationErrorsJson: toNullableJSONB(v.ValidationErrorsJSON),
@@ -68,7 +68,7 @@ func (r *WorkflowVersionRepo) GetDraft(
 	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		row, err := db.New(dbtx).GetDraftVersion(ctx, db.GetDraftVersionParams{
 			TenantID:   tenantID,
-			WorkflowID: pgtype.UUID{Bytes: workflowID, Valid: true},
+			WorkflowID: workflowID,
 		})
 		if err != nil {
 			return mapErr(err)
@@ -101,14 +101,14 @@ func (r *WorkflowVersionRepo) ListByWorkflow(
 		var err error
 		total, err = q.CountVersionsByWorkflow(ctx, db.CountVersionsByWorkflowParams{
 			TenantID:   tenantID,
-			WorkflowID: pgtype.UUID{Bytes: workflowID, Valid: true},
+			WorkflowID: workflowID,
 		})
 		if err != nil {
 			return mapErr(err)
 		}
 		rows, err := q.ListVersionsByWorkflow(ctx, db.ListVersionsByWorkflowParams{
 			TenantID:   tenantID,
-			WorkflowID: pgtype.UUID{Bytes: workflowID, Valid: true},
+			WorkflowID: workflowID,
 			Limit:      int32(limit),
 			Offset:     offset,
 		})
@@ -241,7 +241,7 @@ func (r *WorkflowVersionRepo) NextVersionNumber(
 		var err error
 		n, err = db.New(dbtx).NextVersionNumber(ctx, db.NextVersionNumberParams{
 			TenantID:   tenantID,
-			WorkflowID: pgtype.UUID{Bytes: workflowID, Valid: true},
+			WorkflowID: workflowID,
 		})
 		return mapErr(err)
 	})
@@ -257,7 +257,7 @@ func (r *WorkflowVersionRepo) ListModuleUsages(ctx context.Context, tenantID, mo
 		}
 		for _, row := range rows {
 			result = append(result, &domain.ModuleUsage{
-				WorkflowID:          mustUUID(row.WorkflowID),
+				WorkflowID:          row.WorkflowID,
 				WorkflowKey:         row.BusinessKey,
 				WorkflowName:        row.WorkflowName,
 				VersionID:           row.VersionID,

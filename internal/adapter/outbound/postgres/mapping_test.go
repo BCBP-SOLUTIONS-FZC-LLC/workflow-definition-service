@@ -90,30 +90,14 @@ func TestFromPgtypeInt4(t *testing.T) {
 	}
 }
 
-func TestFromPgtypeTimestamp(t *testing.T) {
+func TestTimestamptzPtrRoundTrip(t *testing.T) {
 	now := time.Now().Truncate(time.Microsecond)
-	tests := []struct {
-		name     string
-		in       pgtype.Timestamp
-		wantZero bool
-		wantTime time.Time
-	}{
-		{"null", pgtype.Timestamp{}, true, time.Time{}},
-		{"valid", pgtype.Timestamp{Time: now, Valid: true}, false, now},
+	if got := fromPgtypeTimestamptzPtr(toPgtypeTimestamptz(nil)); got != nil {
+		t.Errorf("nil round-tripped to %v", got)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := fromPgtypeTimestamp(tt.in)
-			if tt.wantZero {
-				if !got.IsZero() {
-					t.Errorf("got %v, want zero time", got)
-				}
-				return
-			}
-			if !got.Equal(tt.wantTime) {
-				t.Errorf("got %v, want %v", got, tt.wantTime)
-			}
-		})
+	got := fromPgtypeTimestamptzPtr(toPgtypeTimestamptz(&now))
+	if got == nil || !got.Equal(now) {
+		t.Errorf("got %v, want %v", got, now)
 	}
 }
 
@@ -172,7 +156,7 @@ func TestWorkflowVersionFromDB(t *testing.T) {
 		{
 			"null JSONB columns",
 			db.WorkflowVersion{
-				ID: uuid.New(), WorkflowID: pgtype.UUID{Bytes: wfID, Valid: true},
+				ID: uuid.New(), WorkflowID: wfID,
 				TenantID: uuid.New(), Status: db.WorkflowVersionStatusDRAFT,
 				BpmnXml: "<bpmn/>", CreatedByUserID: uuid.New(), IsValid: true,
 			},
@@ -181,7 +165,7 @@ func TestWorkflowVersionFromDB(t *testing.T) {
 		{
 			"populated JSONB columns",
 			db.WorkflowVersion{
-				ID: uuid.New(), WorkflowID: pgtype.UUID{Bytes: wfID, Valid: true},
+				ID: uuid.New(), WorkflowID: wfID,
 				TenantID: uuid.New(), Status: db.WorkflowVersionStatusPUBLISHED,
 				BpmnXml: "<bpmn/>", CreatedByUserID: uuid.New(), IsValid: false,
 				CompiledPlanJson:     []byte(plan),
@@ -209,7 +193,7 @@ func TestAssigneeFromDB(t *testing.T) {
 	row := db.WorkflowNodeAssignee{
 		ID:                uuid.New(),
 		TenantID:          uuid.New(),
-		WorkflowVersionID: pgtype.UUID{Bytes: vID, Valid: true},
+		WorkflowVersionID: vID,
 		NodeKey:           "task-1",
 		UserID:            uuid.New(),
 		DepartmentID:      deptID,
@@ -234,20 +218,4 @@ func TestAssigneeFromDB(t *testing.T) {
 	if a.WorkflowVersionID != vID {
 		t.Errorf("WorkflowVersionID = %v, want %v", a.WorkflowVersionID, vID)
 	}
-}
-
-func TestMustUUID_Valid(t *testing.T) {
-	id := uuid.New()
-	if got := mustUUID(pgtype.UUID{Bytes: id, Valid: true}); got != id {
-		t.Errorf("got %v, want %v", got, id)
-	}
-}
-
-func TestMustUUID_InvalidPanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("mustUUID did not panic on invalid pgtype.UUID")
-		}
-	}()
-	mustUUID(pgtype.UUID{})
 }

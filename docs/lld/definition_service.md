@@ -690,8 +690,8 @@ erDiagram
         TEXT description
         UUID active_version_id FK
         BIGINT record_version
-        TIMESTAMP created_at
-        TIMESTAMP updated_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
 
     WORKFLOW_VERSION {
@@ -703,14 +703,14 @@ erDiagram
         JSONB compiled_plan_json
         TEXT artifact_hash
         INT version_number
-        TIMESTAMP published_at
+        TIMESTAMPTZ published_at
         UUID created_by_user_id
         BOOLEAN is_valid
         JSONB validation_errors_json
         JSONB module_refs "library module versions this version resolved"
         BIGINT record_version
-        TIMESTAMP created_at
-        TIMESTAMP updated_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
 
     WORKFLOW_NODE_ASSIGNEE {
@@ -721,7 +721,7 @@ erDiagram
         UUID user_id
         TEXT department_id
         VARCHAR role
-        TIMESTAMP created_at
+        TIMESTAMPTZ created_at
     }
 
     WORKFLOW ||--o{ WORKFLOW_VERSION : has_versions
@@ -744,8 +744,8 @@ erDiagram
         VARCHAR process_id "fixed for every version; what calledElement names"
         UUID active_version_id FK
         BIGINT record_version
-        TIMESTAMP created_at
-        TIMESTAMP updated_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
 
     WORKFLOW_MODULE_VERSION {
@@ -759,11 +759,11 @@ erDiagram
         INT version_number
         BOOLEAN is_valid
         JSONB validation_errors_json
-        TIMESTAMP published_at
+        TIMESTAMPTZ published_at
         UUID created_by_user_id
         BIGINT record_version
-        TIMESTAMP created_at
-        TIMESTAMP updated_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
 
     WORKFLOW_TEMPLATE {
@@ -777,8 +777,8 @@ erDiagram
         UUID source_workflow_version_id "informational only, no FK cascade"
         UUID created_by_user_id
         BIGINT record_version
-        TIMESTAMP created_at
-        TIMESTAMP updated_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
 
     WORKFLOW_MODULE ||--o{ WORKFLOW_MODULE_VERSION : has_versions
@@ -801,6 +801,13 @@ The full database DDL migrations and RLS policies are documented in [Appendix A:
 
 ---
 
+### 2.1.1 Schema integrity rules
+
+- Every time column is `TIMESTAMPTZ`. `created_at` and `updated_at` are `NOT NULL DEFAULT now()`; `published_at` is null until a publish.
+- A child row names its parent by the pair (parent id, `tenant_id`): a version names its workflow, an assignee names its version, a workflow names its active version and a tenant module version names its module. A row cannot point at another tenant's parent whatever the application sends. Deleting the active version clears only the active pointer, never the workflow's tenant. A module version also names its module together with its scope, so a global version belongs to a global module only and a tenant version to a tenant module only; this is what holds a global version, whose `tenant_id` is NULL, to its module.
+- The parent key of a child (`workflow_version.workflow_id`, `workflow_module_version.module_id`, `workflow_node_assignee.workflow_version_id`) is `NOT NULL`, so a row read back always has a parent.
+- `record_version` is positive on every table that carries it.
+
 ### 2.2 Data Model
 
 #### `workflow`
@@ -815,8 +822,8 @@ The full database DDL migrations and RLS policies are documented in [Appendix A:
 | `description` | TEXT | Optional description |
 | `active_version_id` | UUID | Foreign key pointing to the current published version |
 | `record_version` | BIGINT | Monotonic optimistic-lock counter (starts at 1, incremented by trigger on every update) |
-| `created_at` | TIMESTAMP | Creation timestamp |
-| `updated_at` | TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMPTZ | Creation timestamp |
+| `updated_at` | TIMESTAMPTZ | Last update timestamp |
 
 **Constraints**:
 
@@ -843,13 +850,13 @@ Stores the logical workflow definition independent of versions.
 | `compiled_plan_json` | JSONB | Pre-compiled JSON DSL execution plan |
 | `artifact_hash` | TEXT | Normalized SHA-256 hash for change detection |
 | `version_number` | INT | Monotonically increasing version number (NULL on DRAFT rows) |
-| `published_at` | TIMESTAMP | Publish timestamp |
+| `published_at` | TIMESTAMPTZ | Publish timestamp |
 | `created_by_user_id` | UUID | Version author |
 | `is_valid` | BOOLEAN | Assignee validity flag (default true). Set to `false` when a default assignee loses department membership. Versions with `is_valid = false` cannot start new instances. |
 | `validation_errors_json` | JSONB | Array of `{"node_id", "error"}` objects written when `is_valid` becomes false. Null when valid. |
 | `record_version` | BIGINT | Monotonic optimistic-lock counter (starts at 1, incremented by trigger on every update) |
-| `created_at` | TIMESTAMP | Creation timestamp |
-| `updated_at` | TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMPTZ | Creation timestamp |
+| `updated_at` | TIMESTAMPTZ | Last update timestamp |
 
 **Rules**:
 
@@ -880,7 +887,7 @@ A **denormalized reverse index** that inverts the compiled DSL's `default_assign
 | `user_id` | UUID | Assigned user |
 | `department_id` | VARCHAR(255) | Department identifier from the BPMN lane configuration. Format is determined by the workflow admin; current examples (e.g. "design", "qa-hse") are placeholders. Revisit when the Org & Membership service LLD is complete. |
 | `role` | VARCHAR(64) | IAM role level for eligibility validation. Passed as `?level=<role>` to the Org & Membership eligibility endpoint at publish time. Maps to the IAM role tier (e.g. "preparator", "reviewer", "approver"). |
-| `created_at` | TIMESTAMP | Creation timestamp |
+| `created_at` | TIMESTAMPTZ | Creation timestamp |
 
 ---
 
@@ -900,13 +907,13 @@ A **denormalized reverse index** that inverts the compiled DSL's `default_assign
 
     record_version (BIGINT): Monotonic optimistic-lock counter. Starts at 1, incremented by a `BEFORE UPDATE` trigger on every row change. `PATCH /workflows/:id` supplies the client's last-read value via `If-Match` header or body field; a mismatch returns `409 WORKFLOW_CONCURRENCY_VIOLATION`.
 
-    updated_at (TIMESTAMP): Last modification time, maintained automatically by the same `BEFORE UPDATE` trigger as `record_version`.
+    updated_at (TIMESTAMPTZ): Last modification time, maintained automatically by the same `BEFORE UPDATE` trigger as `record_version`.
 
     UNIQUE (tenant_id, business_key): Guarantees key uniqueness per tenant, allowing different tenants to declare identical keys without collision.
 
 2. workflow_version Table
 
-    workflow_id (UUID): References the parent root record. Cascades deletion to prevent orphaned draft/version rows.
+    workflow_id (UUID, not null): References the parent root record together with the tenant, so a version cannot name another tenant's workflow. Cascades deletion to prevent orphaned draft/version rows.
 
     version_number (INT, nullable): Monotonically increasing integer assigned at publishing time, not at draft creation. The column is NULL while the version remains a DRAFT. This avoids conflicts when multiple admins create consecutive drafts before any is published; the next version number is computed as COALESCE (MAX (version_number), 0) + 1 across all non-null published versions for the workflow and written atomically inside the publish transaction. A partial unique index (WHERE version_number IS NOT NULL) enforces uniqueness without blocking drafts.
 
@@ -928,7 +935,7 @@ A **denormalized reverse index** that inverts the compiled DSL's `default_assign
 
     record_version (BIGINT): Monotonic optimistic-lock counter. Starts at 1, incremented by a `BEFORE UPDATE` trigger on every row change. `PUT /workflows/:id/draft` supplies the client's last-read value via `If-Match` header or body field; a mismatch returns `409 DRAFT_CONCURRENCY`.
 
-    updated_at (TIMESTAMP): Last modification time, maintained automatically by the same `BEFORE UPDATE` trigger as `record_version`.
+    updated_at (TIMESTAMPTZ): Last modification time, maintained automatically by the same `BEFORE UPDATE` trigger as `record_version`.
 
 3. workflow_node_assignee Table
 
@@ -4159,37 +4166,40 @@ CREATE TABLE workflow (
     description TEXT,
     active_version_id UUID,
     record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),  -- optimistic-lock counter
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now(),
-    UNIQUE (tenant_id, business_key)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, business_key),
+    UNIQUE (id, tenant_id)
 );
 
 ALTER TABLE workflow ADD CONSTRAINT fk_active_version
-    FOREIGN KEY (active_version_id) REFERENCES workflow_version(id)
-    ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+    FOREIGN KEY (active_version_id, tenant_id) REFERENCES workflow_version(id, tenant_id)
+    ON DELETE SET NULL (active_version_id) DEFERRABLE INITIALLY DEFERRED;
 
 -- Version table representing drafts and published immutable iterations
 CREATE TABLE workflow_version (
     id UUID PRIMARY KEY,
-    workflow_id UUID REFERENCES workflow(id) ON DELETE CASCADE,
+    workflow_id UUID NOT NULL,
     tenant_id UUID NOT NULL,
     status workflow_version_status NOT NULL,
     bpmn_xml TEXT NOT NULL,
     compiled_plan_json JSONB,
     artifact_hash TEXT,
     version_number INT,   -- NULL on DRAFT rows; assigned atomically at publish time only
-    published_at TIMESTAMP,
+    published_at TIMESTAMPTZ,
     created_by_user_id UUID NOT NULL,
     is_valid BOOLEAN NOT NULL DEFAULT true,
     validation_errors_json JSONB,
     module_refs JSONB NOT NULL DEFAULT '[]',  -- library module versions resolved at publish (§3.3.18)
-    record_version BIGINT NOT NULL DEFAULT 1,  -- monotonic optimistic-lock counter; incremented on every update
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now(),
+    record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),  -- monotonic optimistic-lock counter; incremented on every update
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     -- Drafts have no version number; only PUBLISHED/ARCHIVED rows must have one
     CONSTRAINT chk_version_number_on_publish
-        CHECK (status = 'DRAFT' OR version_number IS NOT NULL)
+        CHECK (status = 'DRAFT' OR version_number IS NOT NULL),
+    UNIQUE (id, tenant_id),
+    FOREIGN KEY (workflow_id, tenant_id) REFERENCES workflow(id, tenant_id) ON DELETE CASCADE
 );
 
 -- Unique version numbers per workflow, only among published/archived rows
@@ -4201,12 +4211,13 @@ CREATE UNIQUE INDEX uq_workflow_version_published
 CREATE TABLE workflow_node_assignee (
     id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL,
-    workflow_version_id UUID REFERENCES workflow_version(id) ON DELETE CASCADE,
+    workflow_version_id UUID NOT NULL,
     node_key VARCHAR(255) NOT NULL,
     user_id UUID NOT NULL,
-    department_id VARCHAR(255) NOT NULL,
+    department_id UUID NOT NULL,
     role VARCHAR(64) NOT NULL,
-    created_at TIMESTAMP DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (workflow_version_id, tenant_id) REFERENCES workflow_version(id, tenant_id) ON DELETE CASCADE
 );
 
 -- Reusable BPMN modules (§3.3.18, §10.16). scope='global' rows are
@@ -4226,18 +4237,20 @@ CREATE TABLE workflow_module (
     active_version_id UUID,
     created_by_user_id UUID,  -- NULL for platform-authored global modules
     record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT chk_module_scope_tenant CHECK (
         (scope = 'global' AND tenant_id IS NULL) OR
         (scope = 'tenant' AND tenant_id IS NOT NULL)
-    )
+    ),
+    UNIQUE (id, tenant_id),
+    UNIQUE (id, scope)
 );
 
 CREATE TABLE workflow_module_version (
     id UUID PRIMARY KEY,
-    module_id UUID REFERENCES workflow_module(id) ON DELETE CASCADE,
+    module_id UUID NOT NULL,
     tenant_id UUID,  -- denormalized from workflow_module, NULL iff scope = 'global'
     scope catalog_scope NOT NULL,
     status workflow_version_status NOT NULL,
@@ -4246,14 +4259,17 @@ CREATE TABLE workflow_module_version (
     version_number INT,  -- NULL on DRAFT rows, same convention as workflow_version
     is_valid BOOLEAN NOT NULL DEFAULT true,
     validation_errors_json JSONB,
-    published_at TIMESTAMP,
+    published_at TIMESTAMPTZ,
     created_by_user_id UUID,
-    record_version BIGINT NOT NULL DEFAULT 1,
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now(),  -- was missing from this table's first draft of this Appendix; every sibling table has it
+    record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT chk_module_version_number_on_publish
-        CHECK (status = 'DRAFT' OR version_number IS NOT NULL)
+        CHECK (status = 'DRAFT' OR version_number IS NOT NULL),
+    UNIQUE (id, tenant_id),
+    FOREIGN KEY (module_id, tenant_id) REFERENCES workflow_module(id, tenant_id) ON DELETE CASCADE,
+    FOREIGN KEY (module_id, scope) REFERENCES workflow_module(id, scope) ON DELETE CASCADE
 );
 
 ALTER TABLE workflow_module ADD CONSTRAINT fk_module_active_version
@@ -4285,8 +4301,8 @@ CREATE TABLE workflow_template (
     source_workflow_version_id UUID,  -- informational only; no FK — the content is copied, not linked, so a later edit to the source workflow never changes an already-created starter
     created_by_user_id UUID,
     record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT chk_starter_scope_tenant CHECK (
         (scope = 'global' AND tenant_id IS NULL) OR
@@ -4952,6 +4968,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.41 | 2026-10-14 | **Data integrity: lanes, revocations, idempotency, back edges** (§3.1.4 codes 1, 22, 37 and 43, §3.3.11, §7.4, §9, §10.9, §12). A lane that holds work needs a name, and lane names are unique without regard to case (`INVALID_LANE_NAME`). A `cancelActivity` other than `true`, `false`, `1` or `0` is refused, and `1` and `0` are read as booleans. Sub-process bodies share the process's id space (`DUPLICATE_ELEMENT_ID`). A DOCTYPE or entity declaration is refused anywhere in the document, not only in its first 4 KiB. A workflow that calls a library module is scanned for rejected elements as authored, not after bundling. The depth-first walk enters a node when it is reached, so a loop through sibling branches is a back edge and the depth check counts the path through a cross edge. A second revocation adds to a version's validation errors instead of replacing them; a revocation leaves assignees added after the event time alone; the plan cache holds only valid published plans and is re-checked after each write; a failed eviction is retried by redelivery. Module activation names only a published version of that module, workflow activation also needs a valid version, and module-version publish and archive and starter delete are scoped to the caller's tenant in SQL. A default assignee's `created_at` is a `timestamptz`, so the revocation time filter compares instants whatever the session time zone. An `Idempotency-Key` is scoped to the user, capped at 256 characters, and a concurrent request with the same key gets `409` `IDEMPOTENCY_REQUEST_IN_PROGRESS`. |
 | 1.42 | 2026-10-14 | **Resilience and operations** (§1.6, §1.7, §3.3.16, §10.6, §12). A database outage is `503 UPSTREAM_UNAVAILABLE`: connection failures, exhausted connections, an administrator shutdown, a closed pool and a statement cancelled by the statement timeout. Readiness depends on the database only and reports the cache as `ok` or `degraded`; a pod starts while Valkey is down; a draft save with an unavailable lock store answers `503` and its lock is released even if the client has gone. The HTTP write timeout outlasts the request deadline, a listener failure runs the ordered shutdown and exits non-zero, panics in long-lived goroutines are recovered, and shutdown has configurable bounds (`SHUTDOWN_GRACE`, `SHUTDOWN_POOL_DRAIN_TIMEOUT`) with a separate budget for each pool drain. Both pools are built from `pgcommon.ConfigFromEnv` (`PG_SLOW_QUERY_THRESHOLD` is a duration; `PG_STATEMENT_TIMEOUT`, `PG_LOCK_TIMEOUT` and `PG_POOL_NAME` are new; the system pool is named `system`, small and in bouncer mode). Startup verifies each pool's database role and refuses an application role that can bypass row-level security and a system role that cannot bypass it or cannot write; the local stack creates the split roles. The RLS policy functions read the tenant through a regex-guarded helper instead of an exception block, the violation exporter retries its first read, and one replica prunes the log per tick. |
 | 1.43 | 2026-10-14 | **Edge hardening** (§1.6, §3.1, §3.3, §3.4, §5, §6.2, §8, §10.15). The identity headers are parsed as UUIDs once, in one middleware that also sets the validated GUC set; a malformed one is `401`. Configuration parsing is strict, reports every problem together, requires `APP_ENV`, requires a cache address outside dev and reads `.env` in `local` and `dev` only. A bind error names fields only, a vault `403` is `503` and vault error bodies are capped. Credential and alias writes leave an audit line without values. An alias has a name charset, a path-template rule, a timeout bound and a port-aware host allowlist. A bad `page`, `limit` or `versions_limit` is `400 INVALID_INPUT` instead of a clamp. All outbound clients share a traced transport, a response cap and the dependency histogram, and publish checks each distinct assignee once with bounded concurrency. The chart admits the events consumer to the internal API. The public spec declares the idempotency `409` and `400`, the readiness bodies, the `503` and the paging bounds. |
+| 1.44 | 2026-10-14 | **Schema integrity** (§2.1.1, §2.2). Every time column is `TIMESTAMPTZ` and every `created_at` and `updated_at` is `NOT NULL`. The parent key of a version, a module version and an assignee is `NOT NULL`, and each child names its parent together with its tenant, so a child cannot point at another tenant's parent. `record_version` must be positive. Both DBML files follow the migrations. |
 ---
 
 ## Appendix E: Open Items

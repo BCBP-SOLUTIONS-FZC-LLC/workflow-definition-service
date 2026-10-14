@@ -56,14 +56,7 @@ func toPgtypeInt4(v *int32) pgtype.Int4 {
 	return pgtype.Int4{Int32: *v, Valid: true}
 }
 
-func fromPgtypeTimestamp(p pgtype.Timestamp) time.Time {
-	if !p.Valid {
-		return time.Time{}
-	}
-	return p.Time
-}
-
-func fromPgtypeTimestampPtr(p pgtype.Timestamp) *time.Time {
+func fromPgtypeTimestamptzPtr(p pgtype.Timestamptz) *time.Time {
 	if !p.Valid {
 		return nil
 	}
@@ -71,11 +64,11 @@ func fromPgtypeTimestampPtr(p pgtype.Timestamp) *time.Time {
 	return &t
 }
 
-func toPgtypeTimestamp(t *time.Time) pgtype.Timestamp {
+func toPgtypeTimestamptz(t *time.Time) pgtype.Timestamptz {
 	if t == nil {
-		return pgtype.Timestamp{}
+		return pgtype.Timestamptz{}
 	}
-	return pgtype.Timestamp{Time: *t, Valid: true}
+	return pgtype.Timestamptz{Time: *t, Valid: true}
 }
 
 func toNullableJSONB(s *string) json.RawMessage {
@@ -91,13 +84,6 @@ func fromJSONB(b json.RawMessage) *string {
 	}
 	s := string(b)
 	return &s
-}
-
-func mustUUID(p pgtype.UUID) uuid.UUID {
-	if !p.Valid {
-		panic("postgres: mustUUID called on NULL pgtype.UUID — schema constraint violated")
-	}
-	return uuid.UUID(p.Bytes)
 }
 
 func toVersionStatus(s domain.VersionStatus) db.WorkflowVersionStatus {
@@ -117,27 +103,27 @@ func workflowFromDB(row db.Workflow) *domain.Workflow {
 		Name:            row.Name,
 		Description:     fromPgtypeText(row.Description),
 		ActiveVersionID: fromPgtypeUUID(row.ActiveVersionID),
-		CreatedAt:       fromPgtypeTimestamp(row.CreatedAt),
-		UpdatedAt:       fromPgtypeTimestamp(row.UpdatedAt),
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
 	}
 }
 
 func workflowVersionFromDB(row db.WorkflowVersion) *domain.WorkflowVersion {
 	return &domain.WorkflowVersion{
 		ID:                   row.ID,
-		WorkflowID:           mustUUID(row.WorkflowID),
+		WorkflowID:           row.WorkflowID,
 		TenantID:             row.TenantID,
 		Status:               fromVersionStatus(row.Status),
 		BPMNXML:              row.BpmnXml,
 		CompiledPlanJSON:     fromJSONB(row.CompiledPlanJson),
 		ArtifactHash:         fromPgtypeText(row.ArtifactHash),
 		VersionNumber:        fromPgtypeInt4(row.VersionNumber),
-		PublishedAt:          fromPgtypeTimestampPtr(row.PublishedAt),
+		PublishedAt:          fromPgtypeTimestamptzPtr(row.PublishedAt),
 		CreatedByUserID:      row.CreatedByUserID,
 		IsValid:              row.IsValid,
 		ValidationErrorsJSON: fromJSONB(row.ValidationErrorsJson),
-		CreatedAt:            fromPgtypeTimestamp(row.CreatedAt),
-		UpdatedAt:            fromPgtypeTimestamp(row.UpdatedAt),
+		CreatedAt:            row.CreatedAt,
+		UpdatedAt:            row.UpdatedAt,
 		RecordVersion:        row.RecordVersion,
 		ModuleRefs:           moduleRefsFromDB(row.ModuleRefs),
 	}
@@ -146,15 +132,15 @@ func workflowVersionFromDB(row db.WorkflowVersion) *domain.WorkflowVersion {
 func workflowVersionSummaryFromDB(row db.ListVersionsByWorkflowRow) *domain.WorkflowVersion {
 	return &domain.WorkflowVersion{
 		ID:              row.ID,
-		WorkflowID:      mustUUID(row.WorkflowID),
+		WorkflowID:      row.WorkflowID,
 		TenantID:        row.TenantID,
 		Status:          fromVersionStatus(row.Status),
 		VersionNumber:   fromPgtypeInt4(row.VersionNumber),
-		PublishedAt:     fromPgtypeTimestampPtr(row.PublishedAt),
+		PublishedAt:     fromPgtypeTimestamptzPtr(row.PublishedAt),
 		CreatedByUserID: row.CreatedByUserID,
 		IsValid:         row.IsValid,
-		CreatedAt:       fromPgtypeTimestamp(row.CreatedAt),
-		UpdatedAt:       fromPgtypeTimestamp(row.UpdatedAt),
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
 		RecordVersion:   row.RecordVersion,
 	}
 }
@@ -178,15 +164,15 @@ func moduleFromDB(row db.GetModuleByIDRow) *domain.Module {
 		ActiveVersionID: fromPgtypeUUID(row.ActiveVersionID),
 		CreatedByUserID: fromPgtypeUUID(row.CreatedByUserID),
 		RecordVersion:   row.RecordVersion,
-		CreatedAt:       fromPgtypeTimestamp(row.CreatedAt),
-		UpdatedAt:       fromPgtypeTimestamp(row.UpdatedAt),
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
 	}
 }
 
 func moduleVersionFromDB(row db.GetModuleVersionByIDRow) *domain.ModuleVersion {
 	return &domain.ModuleVersion{
 		ID:                   row.ID,
-		ModuleID:             mustUUID(row.ModuleID),
+		ModuleID:             row.ModuleID,
 		TenantID:             fromPgtypeUUID(row.TenantID),
 		Scope:                fromCatalogScope(row.Scope),
 		Status:               fromVersionStatus(row.Status),
@@ -195,11 +181,11 @@ func moduleVersionFromDB(row db.GetModuleVersionByIDRow) *domain.ModuleVersion {
 		VersionNumber:        fromPgtypeInt4(row.VersionNumber),
 		IsValid:              row.IsValid,
 		ValidationErrorsJSON: fromJSONB(row.ValidationErrorsJson),
-		PublishedAt:          fromPgtypeTimestampPtr(row.PublishedAt),
+		PublishedAt:          fromPgtypeTimestamptzPtr(row.PublishedAt),
 		CreatedByUserID:      fromPgtypeUUID(row.CreatedByUserID),
 		RecordVersion:        row.RecordVersion,
-		CreatedAt:            fromPgtypeTimestamp(row.CreatedAt),
-		UpdatedAt:            fromPgtypeTimestamp(row.UpdatedAt),
+		CreatedAt:            row.CreatedAt,
+		UpdatedAt:            row.UpdatedAt,
 	}
 }
 
@@ -215,8 +201,8 @@ func starterFromDB(row db.GetStarterByIDRow) *domain.StarterTemplate {
 		SourceWorkflowVersionID: fromPgtypeUUID(row.SourceWorkflowVersionID),
 		CreatedByUserID:         fromPgtypeUUID(row.CreatedByUserID),
 		RecordVersion:           row.RecordVersion,
-		CreatedAt:               fromPgtypeTimestamp(row.CreatedAt),
-		UpdatedAt:               fromPgtypeTimestamp(row.UpdatedAt),
+		CreatedAt:               row.CreatedAt,
+		UpdatedAt:               row.UpdatedAt,
 	}
 }
 
@@ -224,7 +210,7 @@ func assigneeFromDB(row db.WorkflowNodeAssignee) *domain.NodeAssignee {
 	return &domain.NodeAssignee{
 		ID:                row.ID,
 		TenantID:          row.TenantID,
-		WorkflowVersionID: mustUUID(row.WorkflowVersionID),
+		WorkflowVersionID: row.WorkflowVersionID,
 		NodeKey:           row.NodeKey,
 		UserID:            row.UserID,
 		DepartmentID:      row.DepartmentID,

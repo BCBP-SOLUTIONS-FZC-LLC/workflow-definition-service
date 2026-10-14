@@ -6,7 +6,6 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -37,7 +36,7 @@ func (r *AssigneeRepo) BulkInsert(
 			params[i] = db.InsertAssigneeParams{
 				ID:                a.ID,
 				TenantID:          tenantID,
-				WorkflowVersionID: pgtype.UUID{Bytes: versionID, Valid: true},
+				WorkflowVersionID: versionID,
 				NodeKey:           a.NodeKey,
 				UserID:            a.UserID,
 				DepartmentID:      a.DepartmentID,
@@ -84,7 +83,7 @@ func (r *AssigneeRepo) DeleteByVersion(ctx context.Context, tenantID, versionID 
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		return mapErr(db.New(dbtx).DeleteAssigneesByVersion(ctx, db.DeleteAssigneesByVersionParams{
 			TenantID:          tenantID,
-			WorkflowVersionID: pgtype.UUID{Bytes: versionID, Valid: true},
+			WorkflowVersionID: versionID,
 		}))
 	})
 }

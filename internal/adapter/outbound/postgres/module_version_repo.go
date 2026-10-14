@@ -29,7 +29,7 @@ func (r *ModuleVersionRepo) Create(ctx context.Context, v *domain.ModuleVersion)
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		return mapErr(db.New(dbtx).CreateModuleVersion(ctx, db.CreateModuleVersionParams{
 			ID:                   v.ID,
-			ModuleID:             pgtype.UUID{Bytes: v.ModuleID, Valid: true},
+			ModuleID:             v.ModuleID,
 			TenantID:             toPgtypeUUID(v.TenantID),
 			Scope:                toCatalogScope(v.Scope),
 			Status:               toVersionStatus(v.Status),
@@ -79,7 +79,7 @@ func (r *ModuleVersionRepo) ListByModule(
 	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		q := db.New(dbtx)
 		params := db.CountModuleVersionsByModuleParams{
-			ModuleID: pgtype.UUID{Bytes: moduleID, Valid: true},
+			ModuleID: moduleID,
 			TenantID: pgtype.UUID{Bytes: callerTenantID, Valid: true},
 		}
 		var err error
@@ -142,7 +142,7 @@ func (r *ModuleVersionRepo) NextVersionNumber(ctx context.Context, moduleID uuid
 	var n int32
 	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		var err error
-		n, err = db.New(dbtx).NextModuleVersionNumber(ctx, pgtype.UUID{Bytes: moduleID, Valid: true})
+		n, err = db.New(dbtx).NextModuleVersionNumber(ctx, moduleID)
 		return mapErr(err)
 	})
 	return n, err
