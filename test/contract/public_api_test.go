@@ -582,7 +582,7 @@ func TestPublicContract_CompiledPlansMatchTheirSchema(t *testing.T) {
 			spec.Undeclared(t, req, w.Code, w.Body.Bytes())
 		})
 	}
-	if compiled == 0 {
-		t.Fatal("no fixture compiled")
+	if compiled < 8 {
+		t.Fatalf("%d fixtures compiled, want at least 8 of %d", compiled, len(files))
 	}
 }

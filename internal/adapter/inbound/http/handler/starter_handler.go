@@ -108,6 +108,13 @@ func (h *Handler) CreateStarter(c *gin.Context) {
 		h.bindErrResponse(c, err)
 		return
 	}
+	if rejectTooLong(c,
+		lengthLimit{"name", req.Name, 255},
+		lengthLimit{"description", req.Description, 2000},
+		lengthLimit{"category", req.Category, 64},
+	) {
+		return
+	}
 	scope, ok := parseModuleScope(c, req.Scope)
 	if !ok {
 		return
@@ -144,6 +151,14 @@ func (h *Handler) CreateStarterFromWorkflowVersion(c *gin.Context) {
 	var req createStarterFromWorkflowVersionReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.bindErrResponse(c, err)
+		return
+	}
+
+	if rejectTooLong(c,
+		lengthLimit{"name", req.Name, 255},
+		lengthLimit{"description", req.Description, 2000},
+		lengthLimit{"category", req.Category, 64},
+	) {
 		return
 	}
 

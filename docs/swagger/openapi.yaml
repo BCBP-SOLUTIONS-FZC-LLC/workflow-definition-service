@@ -1515,9 +1515,11 @@ paths:
               properties:
                 name:
                   type: string
+                  maxLength: 255
                   example: Updated Tender Review Process
                 description:
                   type: string
+                  maxLength: 2000
                   example: Updated standard review process
                 bpmn_xml:
                   type: string
@@ -1566,6 +1568,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
         "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }
@@ -2832,6 +2835,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "400": { $ref: '#/components/responses/BadRequest' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
         "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }

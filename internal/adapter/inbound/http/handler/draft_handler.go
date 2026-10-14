@@ -78,6 +78,13 @@ func (h *Handler) UpdateDraft(c *gin.Context) {
 		return
 	}
 
+	if rejectTooLong(c,
+		lengthLimit{"name", deref(req.Name), 255},
+		lengthLimit{"description", deref(req.Description), 2000},
+	) {
+		return
+	}
+
 	draft, err := h.drafts.Update(c.Request.Context(), tenantID, userID, workflowID, service.UpdateDraftReq{
 		Name:          req.Name,
 		Description:   req.Description,
@@ -116,4 +123,11 @@ func (h *Handler) DiscardDraft(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

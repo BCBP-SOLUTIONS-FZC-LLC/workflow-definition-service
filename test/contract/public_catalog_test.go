@@ -119,11 +119,19 @@ func TestPublicContract_Catalogue(t *testing.T) {
 		{"archive a module", call(http.MethodDelete, "/api/v1/modules/"+module.ID.String(), ""), http.StatusOK},
 		{"write a connector credential", call(http.MethodPost, "/api/v1/connectors/credentials", `{"connector_type":"send-email","field_name":"apiKey","value":"secret"}`), http.StatusCreated},
 		{"revoke a connector credential", call(http.MethodDelete, "/api/v1/connectors/credentials/send-email/apiKey", ""), http.StatusNoContent},
+		{"module name over its limit", call(http.MethodPost, "/api/v1/modules", `{"name":"`+strings.Repeat("n", 256)+`","bpmn_xml":"`+xml+`"}`), http.StatusUnprocessableEntity},
+		{"module description over its limit", call(http.MethodPost, "/api/v1/modules", `{"name":"Package","description":"`+strings.Repeat("d", 2001)+`","bpmn_xml":"`+xml+`"}`), http.StatusUnprocessableEntity},
+		{"starter category over its limit", call(http.MethodPost, "/api/v1/starters", `{"name":"Review","category":"`+strings.Repeat("c", 65)+`","bpmn_xml":"`+xml+`"}`), http.StatusUnprocessableEntity},
+		{"starter from a version with a long name", call(http.MethodPost, "/api/v1/starters/from-workflow-version/"+uuid.NewString(), `{"name":"`+strings.Repeat("n", 256)+`"}`), http.StatusUnprocessableEntity},
+		{"draft name over its limit", call(http.MethodPut, wf+"/draft", `{"name":"`+strings.Repeat("n", 256)+`","record_version":3}`), http.StatusUnprocessableEntity},
+		{"draft description over its limit", call(http.MethodPut, wf+"/draft", `{"description":"`+strings.Repeat("d", 2001)+`","record_version":3}`), http.StatusUnprocessableEntity},
 		{"list connector types", call(http.MethodGet, "/api/v1/connectors/registry", ""), http.StatusOK},
 		{"allowed BPMN elements", call(http.MethodGet, "/api/v1/bpmn/allowed-elements", ""), http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			spec.Request(t, tc.req)
+			if tc.want != http.StatusUnprocessableEntity {
+				spec.Request(t, tc.req)
+			}
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, tc.req)
 			if w.Code != tc.want {

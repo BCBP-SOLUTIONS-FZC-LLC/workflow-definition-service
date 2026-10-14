@@ -171,6 +171,12 @@ func (h *Handler) CreateModule(c *gin.Context) {
 		h.bindErrResponse(c, err)
 		return
 	}
+	if rejectTooLong(c,
+		lengthLimit{"name", req.Name, 255},
+		lengthLimit{"description", req.Description, 2000},
+	) {
+		return
+	}
 	scope, ok := parseModuleScope(c, req.Scope)
 	if !ok {
 		return

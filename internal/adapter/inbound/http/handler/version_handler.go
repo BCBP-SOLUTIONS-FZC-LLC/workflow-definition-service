@@ -211,15 +211,11 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 		return
 	}
 
-	var invalids []invalidParam
-	if len(req.NewKey) > 255 {
-		invalids = append(invalids, invalidParam{Name: "new_key", Reason: "must not exceed 255 characters"})
-	}
-	if len(req.NewName) > 255 {
-		invalids = append(invalids, invalidParam{Name: "new_name", Reason: "must not exceed 255 characters"})
-	}
-	if len(invalids) > 0 {
-		writeProblem(c, http.StatusUnprocessableEntity, CodeInvalidInput, "request fields exceed maximum length", invalids)
+	if rejectTooLong(c,
+		lengthLimit{"new_key", req.NewKey, 255},
+		lengthLimit{"new_name", req.NewName, 255},
+		lengthLimit{"new_description", req.NewDescription, 2000},
+	) {
 		return
 	}
 

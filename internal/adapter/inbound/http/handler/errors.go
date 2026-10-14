@@ -3,7 +3,9 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -120,6 +122,26 @@ func writeProblem(c *gin.Context, status int, code ErrCode, detail string, param
 		Code:          code,
 		InvalidParams: params,
 	})
+}
+
+type lengthLimit struct {
+	field string
+	value string
+	max   int
+}
+
+func rejectTooLong(c *gin.Context, limits ...lengthLimit) bool {
+	var invalids []invalidParam
+	for _, l := range limits {
+		if utf8.RuneCountInString(l.value) > l.max {
+			invalids = append(invalids, invalidParam{Name: l.field, Reason: fmt.Sprintf("must not exceed %d characters", l.max)})
+		}
+	}
+	if len(invalids) == 0 {
+		return false
+	}
+	writeProblem(c, http.StatusUnprocessableEntity, CodeInvalidInput, "request fields exceed maximum length", invalids)
+	return true
 }
 
 func writeIfTooLarge(c *gin.Context, err error) bool {

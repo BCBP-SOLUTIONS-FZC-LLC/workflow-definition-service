@@ -134,18 +134,11 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 		return
 	}
 
-	var invalids []invalidParam
-	if len(req.Key) > 255 {
-		invalids = append(invalids, invalidParam{Name: "key", Reason: "must not exceed 255 characters"})
-	}
-	if len(req.Name) > 255 {
-		invalids = append(invalids, invalidParam{Name: "name", Reason: "must not exceed 255 characters"})
-	}
-	if len(req.Description) > 2000 {
-		invalids = append(invalids, invalidParam{Name: "description", Reason: "must not exceed 2000 characters"})
-	}
-	if len(invalids) > 0 {
-		writeProblem(c, http.StatusUnprocessableEntity, CodeInvalidInput, "request fields exceed maximum length", invalids)
+	if rejectTooLong(c,
+		lengthLimit{"key", req.Key, 255},
+		lengthLimit{"name", req.Name, 255},
+		lengthLimit{"description", req.Description, 2000},
+	) {
 		return
 	}
 
