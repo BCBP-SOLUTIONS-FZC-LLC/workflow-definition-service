@@ -103,3 +103,5 @@ Keep docs in sync when making changes — see the full table in [`CONTRIBUTING.m
 | Architecture / layer change | `ARCHITECTURE.md` + `docs/architecture/mermaid/*.mmd` |
 | Platform lib upgrade | `ARCHITECTURE.md` § Platform Libraries + this file |
 | New coding pattern or decision | `CONTRIBUTING.md` § Coding Standards + numbered entry in `.claude/CLAUDE.md` + relevant sub-doc |
+
+**Outbound tracing exception.** `platform-gincommon` offers no HTTP client transport, so `internal/adapter/outbound/http/transport.go` wraps the shared client in `otelhttp` directly; it is the only trace instrumentation outside gincommon, and every outbound client is built through it.

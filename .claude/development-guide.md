@@ -17,7 +17,7 @@ metadata:
 
 ## Troubleshooting
 
-- **RLS silently returns all rows / no tenant filtering** — the `InjectGUCSet` middleware bridge is missing from the route chain, or a service-layer/internal path calls `pgcommon.WithGUCSet` with the wrong tenant source. See `.claude/api-and-events.md` "RLS GUC Injection: Two Paths".
+- **RLS silently returns all rows / no tenant filtering** — the `RequireIdentity` middleware bridge is missing from the route chain, or a service-layer/internal path calls `pgcommon.WithGUCSet` with the wrong tenant source. See `.claude/api-and-events.md` "RLS GUC Injection: Two Paths".
 - **`make migrate` hangs or never returns against PgBouncer** — `DATABASE_URL` points at PgBouncer's transaction-pool port; golang-migrate needs a direct Postgres DSN for its session advisory lock. See `.claude/database.md`'s PgBouncer note; set `MIGRATION_DATABASE_URL` separately.
 - **`go-arch-lint` fails on a new import** — the change violates `domain ← port ← service ← adapter`; check `.go-arch-lint.yml` for the allowed edges before restructuring the import.
 - **Coverage gate fails just under 95%** — check `make cover-check-pkg` output for per-package floors (`COVER_PKG_FLOORS` in the Makefile) before assuming the global threshold is the problem; some packages (the AsyncAPI HTML renderer) have deliberately lower floors because they need a live connection/dev server to exercise fully.

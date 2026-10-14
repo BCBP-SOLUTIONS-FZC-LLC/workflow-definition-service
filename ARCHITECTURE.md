@@ -271,7 +271,7 @@ Incoming request
 
   → RequireAuth            (gincommon) — validates x-user-id, x-tenant-id
   → ContextMiddleware      (gincommon) — builds RequestContext{TenantID, UserID, Roles, TraceID}
-  → InjectGUCSet           (service)   — copies RequestContext into pgcommon GUC context key
+  → RequireIdentity        (service)   — parses the tenant and user ids once (401 if not UUIDs), stores the typed identity and sets the validated pgcommon GUC set
                                           so pool.GUCProvider can set app.tenant_id on every DB conn
   → LimitRequestBody       (service)   — wraps c.Request.Body with http.MaxBytesReader(10 MB); also on the internal group
   → RequireJSONContentType (service)   — 415 if a request body's Content-Type is not application/json
@@ -281,7 +281,7 @@ Incoming request
   → handler                                       ← POST/PUT/PATCH/DELETE check the admin role first (403 otherwise)
 ```
 
-**Why `InjectGUCSet` is needed:** `gincommon.ContextMiddleware` stores `RequestContext` in the Gin context (`c.Set`) rather than the Go request context (`c.Request.Context()`). `pgcommon.GUCSetFromContext` reads only the Go context, so without this bridge the HTTP path never sets `app.tenant_id` and PostgreSQL RLS filters against a null GUC — a multi-tenant isolation failure. The internal routes do not use it: no gateway identity reaches them, so each internal handler calls `pgcommon.WithGUCSet` itself from the `tenant_id` its request carries.
+**Why `RequireIdentity` is needed:** `gincommon.ContextMiddleware` stores `RequestContext` in the Gin context (`c.Set`) rather than the Go request context (`c.Request.Context()`). `pgcommon.GUCSetFromContext` reads only the Go context, so without this bridge the HTTP path never sets `app.tenant_id` and PostgreSQL RLS filters against a null GUC — a multi-tenant isolation failure. The internal routes do not use it: no gateway identity reaches them, so each internal handler calls `pgcommon.WithGUCSet` itself from the `tenant_id` its request carries.
 
 ## Internal API
 
@@ -475,7 +475,7 @@ When Valkey is unreachable the service stays up but degrades by purpose: compile
 | Status-guarded mutations use `statusOrNotFound` | Publish/Archive SQL filters on `status=X`; on `RowsAffected()==0` a secondary `GetByID` distinguishes absent (→ `ErrNotFound`) from wrong-status (→ `ErrVersionNotDraft` etc.) — happy path is always single-query |
 | `is_valid` reflects assignee eligibility only | `workflow_version.is_valid=false` means an assignee left a required department role; it does not reflect BPMN structural validity |
 | Idempotency-Key scoped per tenant | Cache key format: `idem:<tenant_id>:<method>:<path>:<key>` — prevents cross-tenant replay; only 2xx responses are cached (24 h TTL) |
-| Internal routes require manual GUC injection | `WithGUCSet` must be called by each internal handler before any repo access; the public HTTP path injects via `InjectGUCSet` after `gincommon.ProtectedMiddlewares` |
+| Internal routes require manual GUC injection | `WithGUCSet` must be called by each internal handler before any repo access; the public HTTP path injects via `RequireIdentity` after `gincommon.ProtectedMiddlewares` |
 | Tenant policy logs violations | Every tenant table forces row-level security with `rls_check_tenant()` / `rls_check_tenant_or_global()`; a blocked row is written to `rls_violation_log` at a 1% sample and exported as `workflow_definition_service_rls_violations_total` |
 | `ProtectedMiddlewares` must wrap all protected routes | Missing middleware causes `RequestContext` lookup to fail → 500 (server misconfiguration, not 401) |
 
@@ -489,7 +489,7 @@ All configuration is read from environment variables via `internal/config.Config
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `APP_ENV` | No | `dev` | One of `local`, `dev`, `test`, `staging`, `prod`; any other value fails startup. `dev` enables Gin debug mode and human-readable Zap logs; any other value activates release mode + JSON logs. It is the metrics `environment` label |
+| `APP_ENV` | Yes | *(none)* | One of `local`, `dev`, `test`, `staging`, `prod`; any other value fails startup. `dev` enables Gin debug mode and human-readable Zap logs; any other value activates release mode + JSON logs. It is the metrics `environment` label |
 | `BUILD_VERSION` | No | `dev` | Injected via `-ldflags` at build time; labels `platform_build_info` and OTel `service.version` |
 
 ### Server
@@ -527,7 +527,7 @@ All configuration is read from environment variables via `internal/config.Config
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `VALKEY_ADDR` | No | `localhost:6379` | go-redis dial address |
+| `VALKEY_ADDR` | When `APP_ENV != dev` | `localhost:6379` in dev | go-redis dial address |
 | `VALKEY_PASSWORD` | No | *(empty)* | Auth password; leave empty for local dev |
 | `VALKEY_DIAL_TIMEOUT` | No | `2s` | Timeout for establishing a new connection to Valkey |
 | `VALKEY_READ_TIMEOUT` | No | `1s` | Timeout for socket reads |
@@ -557,7 +557,7 @@ All configuration is read from environment variables via `internal/config.Config
 | `OPENBAO_TOKEN` | When `APP_ENV != dev` | *(empty)* | OpenBao token |
 | `OPENBAO_MOUNT` | No | `secret` | OpenBao KV mount |
 | `SECRETS_CLIENT_TIMEOUT` | No | `5s` | OpenBao client timeout |
-| `CONNECTOR_ALIAS_ALLOWED_HOSTS` | No | *(empty)* | Hosts a connector REST alias may target: `.suffix` or exact host; empty rejects every alias write |
+| `CONNECTOR_ALIAS_ALLOWED_HOSTS` | No | *(empty)* | Hosts a connector REST alias may target: `.suffix` or exact host, each optionally with a port (`host:8443` matches that port only; without one, any port); empty rejects every alias write |
 
 ### Row-level-security violation export
 
@@ -1208,7 +1208,7 @@ The service uses only `Envelope[T]` from this library: the inbound handler (`int
 
 ### platform-pgcommon (pool, RLS GUC injection, transactor, migrations)
 
-`pgcommon.NewPool` takes a `GUCProvider` (set to `pgcommon.GUCSetFromContext`), which reads the `GUCSet` stored by `WithGUCSet(ctx, gs)` on every acquired connection — the `InjectGUCSet` middleware does this for every authenticated HTTP request; each internal handler calls it manually (see [HTTP middleware chain](#http-middleware-chain) and [flow 2](#2-internal-compiled-plan-read) above).
+`pgcommon.NewPool` takes a `GUCProvider` (set to `pgcommon.GUCSetFromContext`), which reads the `GUCSet` stored by `WithGUCSet(ctx, gs)` on every acquired connection — the `RequireIdentity` middleware does this for every authenticated HTTP request; each internal handler calls it manually (see [HTTP middleware chain](#http-middleware-chain) and [flow 2](#2-internal-compiled-plan-read) above).
 
 `Config.Logger` is wired via `cmd/server/pglogger.go`'s `pgCommonLogger` — a small composition-root-only adapter from this service's own `port.Logger` (map[string]any fields) to `platform-pgcommon/v2/pkg/domain.Logger` (variadic `domain.Field`), the library's public logger interface. `Config.Tracer` is `gincommon.NewSpanTracer(serviceName)`, so `db.query` spans export through the same pipeline as HTTP spans.
 

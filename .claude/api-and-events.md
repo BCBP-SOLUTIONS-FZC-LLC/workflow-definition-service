@@ -9,9 +9,9 @@ metadata:
 
 ## RLS GUC Injection: Two Paths
 
-**HTTP path:** `InjectGUCSet` middleware (`middleware/gucrls.go`) bridges gincommon → pgcommon by reading `gincommon.RequestContext(c)` and calling `pgcommon.WithGUCSet(ctx, ...)` on `c.Request`. Placed immediately after `ProtectedMiddlewares` in `router.go`. Without this bridge, RLS filtering silently passes all rows.
+**HTTP path:** `RequireIdentity` middleware (`middleware/identity.go`) bridges gincommon → pgcommon by reading `gincommon.RequestContext(c)`, parsing the tenant and user UUIDs once (401 on a malformed value), storing a typed `Identity` that `mustCtx` and the role checks read (`middleware.IdentityFrom`), and calling `pgcommon.WithValidatedGUCSet(ctx, ...)` on `c.Request`. Placed immediately after `ProtectedMiddlewares` in `router.go`; a route without it answers 500 rather than serving with RLS unenforced.
 
-**Internal path (`/api/v1/internal`):** no gateway identity reaches these routes, so `InjectGUCSet` is not on the group; each handler (the compiled-plan read, `POST /internal/events`) calls `pgcommon.WithGUCSet` itself from the `tenant_id` its request carries.
+**Internal path (`/api/v1/internal`):** no gateway identity reaches these routes, so `RequireIdentity` is not on the group; each handler (the compiled-plan read, `POST /internal/events`) calls `pgcommon.WithGUCSet` itself from the `tenant_id` its request carries.
 
 ## Inbound Events: `POST /internal/events`
 

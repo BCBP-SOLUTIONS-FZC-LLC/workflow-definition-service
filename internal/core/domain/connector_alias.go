@@ -87,6 +87,9 @@ func ValidateBaseURLHost(baseURL string, allowedHosts []string) error {
 		return fmt.Errorf("%w: baseURL has no host", ErrInvalidConnectorAliasInput)
 	}
 	port := u.Port()
+	if port == "" {
+		port = map[string]string{"http": "80", "https": "443"}[u.Scheme]
+	}
 	for _, allowed := range allowedHosts {
 		allowed = strings.ToLower(strings.TrimSpace(allowed))
 		if allowed == "" {
