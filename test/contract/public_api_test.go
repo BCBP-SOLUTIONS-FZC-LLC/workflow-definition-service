@@ -18,6 +18,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/contract"
 )
 
@@ -256,6 +257,102 @@ func TestPublicContract_GetWorkflow(t *testing.T) {
 			}
 			spec.Response(t, req, w.Code, w.Header(), w.Body.Bytes())
 			spec.Undeclared(t, req, w.Code, w.Body.Bytes())
+		})
+	}
+}
+
+type versionFake struct {
+	version    *domain.WorkflowVersion
+	publishErr error
+	cloneErr   error
+}
+
+func (f versionFake) List(context.Context, uuid.UUID, uuid.UUID, int, int) ([]*domain.WorkflowVersion, int64, error) {
+	return []*domain.WorkflowVersion{f.version}, 1, nil
+}
+
+func (f versionFake) Get(_ context.Context, _, _, id uuid.UUID) (*domain.WorkflowVersion, error) {
+	if f.version == nil || f.version.ID != id {
+		return nil, domain.ErrNotFound
+	}
+	return f.version, nil
+}
+
+func (f versionFake) Publish(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, bool) (*domain.WorkflowVersion, error) {
+	return f.version, f.publishErr
+}
+
+func (f versionFake) Clone(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string, service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error) {
+	return nil, nil, f.cloneErr
+}
+
+func (f versionFake) Promote(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error) {
+	return f.version, nil
+}
+
+func (versionFake) Export(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (string, string, error) {
+	return "", "", domain.ErrNotFound
+}
+
+func (versionFake) Diff(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*service.DiffResult, error) {
+	return nil, domain.ErrNotFound
+}
+
+func (versionFake) Nodes(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*service.VersionNodes, error) {
+	return nil, domain.ErrNotFound
+}
+
+func TestPublicContract_Versions(t *testing.T) {
+	spec := contract.Load(t, publicSpec)
+	gin.SetMode(gin.TestMode)
+	n := int32(3)
+	at := time.Now().UTC()
+	version := &domain.WorkflowVersion{ID: uuid.New(), WorkflowID: uuid.New(), Status: domain.VersionStatusPublished, VersionNumber: &n, IsValid: true, CreatedAt: at, PublishedAt: &at, RecordVersion: 2}
+	router := func(f versionFake) http.Handler {
+		return httpadapter.NewRouter(httpadapter.RouterConfig{
+			GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
+			Handler: handler.New(handler.Services{Versions: f, Cache: freeCache{}, IdempotencyTTL: time.Minute}),
+			DB:      upDB{}, Cache: upPinger{},
+		}).Handler()
+	}
+	base := "/api/v1/workflows/" + version.WorkflowID.String() + "/versions"
+	post := func(path, body string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-tenant-id", uuid.NewString())
+		req.Header.Set("x-user-id", uuid.NewString())
+		req.Header.Set("x-tenant-roles", "tenant_admin")
+		return req
+	}
+	get := func(path string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("x-tenant-id", uuid.NewString())
+		req.Header.Set("x-user-id", uuid.NewString())
+		return req
+	}
+
+	for _, tc := range []struct {
+		name   string
+		router http.Handler
+		req    *http.Request
+		want   int
+	}{
+		{"list versions", router(versionFake{version: version}), get(base), http.StatusOK},
+		{"get version", router(versionFake{version: version}), get(base + "/" + version.ID.String()), http.StatusOK},
+		{"get unknown version", router(versionFake{version: version}), get(base + "/" + uuid.NewString()), http.StatusNotFound},
+		{"publish", router(versionFake{version: version}), post(base+"/"+version.ID.String()+"/publish", `{}`), http.StatusOK},
+		{"publish over a structural divergence", router(versionFake{version: version, publishErr: domain.ErrStructuralDivergence}), post(base+"/"+version.ID.String()+"/publish", `{}`), http.StatusConflict},
+		{"clone with an incomplete body", router(versionFake{version: version}), post(base+"/"+version.ID.String()+"/clone", `{}`), http.StatusBadRequest},
+		{"promote with a malformed version id", router(versionFake{version: version}), post(base+"/not-a-uuid/promote", ``), http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			tc.router.ServeHTTP(w, tc.req)
+			if w.Code != tc.want {
+				t.Fatalf("status %d, want %d: %s", w.Code, tc.want, w.Body.String())
+			}
+			spec.Response(t, tc.req, w.Code, w.Header(), w.Body.Bytes())
+			spec.Undeclared(t, tc.req, w.Code, w.Body.Bytes())
 		})
 	}
 }

@@ -472,11 +472,11 @@ components:
         due_date:
           type: string
           nullable: true
-          description: "FEEL expression or ISO 8601 datetime for the task due date. Sourced from zeebe:taskSchedule dueDate. Absent when not set in BPMN."
+          description: "RFC 3339 datetime for the task due date, the only form the validator accepts. Sourced from zeebe:taskSchedule dueDate. Absent when not set in BPMN."
         follow_up_date:
           type: string
           nullable: true
-          description: "FEEL expression or ISO 8601 datetime for the task follow-up date. Sourced from zeebe:taskSchedule followUpDate. Absent when not set in BPMN."
+          description: "RFC 3339 datetime for the task follow-up date, the only form the validator accepts. Sourced from zeebe:taskSchedule followUpDate. Absent when not set in BPMN."
         extras:
           type: object
           nullable: true
@@ -972,17 +972,6 @@ components:
             node_id: Task_audit_check
             message: "taskDefinition type \"audit\" is not a defined stage class in the workflow engine"
 
-    StructuralDivergenceError:
-      type: object
-      properties:
-        code:             { type: string, example: STRUCTURAL_DIVERGENCE }
-        message:          { type: string }
-        suggested_action: { type: string, example: CREATE_NEW_WORKFLOW }
-      example:
-        code: STRUCTURAL_DIVERGENCE
-        message: "Topological elements have diverged. Publishing may break active instances."
-        suggested_action: CREATE_NEW_WORKFLOW
-
   responses:
     Unauthorized:
       description: >
@@ -1417,7 +1406,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  version_id:         { type: string, format: uuid }
+                  id:                 { type: string, format: uuid }
                   workflow_id:        { type: string, format: uuid }
                   version_number:     { type: integer, nullable: true }
                   status:             { $ref: '#/components/schemas/VersionStatus' }
@@ -1695,7 +1684,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  version_id:         { type: string, format: uuid }
+                  id:                 { type: string, format: uuid }
                   workflow_id:        { type: string, format: uuid }
                   version_number:     { type: integer, nullable: true }
                   status:             { $ref: '#/components/schemas/VersionStatus' }
@@ -1710,6 +1699,7 @@ paths:
                   compiled_plan_json: { $ref: '#/components/schemas/CompiledCollaboration' }
                   created_by_user_id: { type: string, format: uuid }
                   created_at:         { type: string, format: date-time }
+                  updated_at:         { type: string, format: date-time }
                   published_at:       { type: string, format: date-time, nullable: true }
                   record_version:     { type: integer, format: int64, description: "Monotonic counter. Echo on PUT /draft requests." }
         "401": { $ref: '#/components/responses/Unauthorized' }
@@ -1768,10 +1758,10 @@ paths:
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
         "409":
-          description: Structural divergence detected (see suggested_action), the draft was saved after the publish read it (`DRAFT_CONCURRENCY`; publish again), or idempotency key reused with a different payload.
+          description: Structural divergence detected (`STRUCTURAL_DIVERGENCE`; `force_publish_structural` accepts it), the draft was saved after the publish read it (`DRAFT_CONCURRENCY`; publish again), or idempotency key reused with a different payload.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/StructuralDivergenceError' }
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "500": { $ref: '#/components/responses/InternalError' }
         "503":
@@ -1836,7 +1826,7 @@ paths:
                   status:         { $ref: '#/components/schemas/VersionStatus' }
                   version_number: { type: integer, nullable: true }
                   message:        { type: string }
-        "400": { $ref: '#/components/responses/UnprocessableEntity' }
+        "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
@@ -1898,7 +1888,7 @@ paths:
                   active_version_id: { type: string, format: uuid }
                   version_number:    { type: integer }
                   message:           { type: string }
-        "400": { $ref: '#/components/responses/UnprocessableEntity' }
+        "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
@@ -2078,7 +2068,7 @@ paths:
                         description: Stages whose timer boundary, message boundary or connector type changed. Each one is a structural change.
                         items: { $ref: '#/components/schemas/StageChange' }
                       metadata_only: { type: boolean }
-        "400": { $ref: '#/components/responses/UnprocessableEntity' }
+        "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
