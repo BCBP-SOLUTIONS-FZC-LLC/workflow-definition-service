@@ -516,3 +516,14 @@ func TestWorkflowRepo_UpdateActiveVersion_RefusesARevokedVersion(t *testing.T) {
 		t.Errorf("active version = %v, %v; want none", got.ActiveVersionID, err)
 	}
 }
+
+func TestWorkflowRepo_AClosedPoolIsUnavailableNotAnInternalError(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewWorkflowRepo(pool)
+	pool.Close()
+
+	_, err := repo.GetByID(context.Background(), uuid.New(), uuid.New())
+	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
+		t.Errorf("GetByID on a closed pool = %v, want ErrUpstreamUnavailable so the API answers 503 and the client retries", err)
+	}
+}

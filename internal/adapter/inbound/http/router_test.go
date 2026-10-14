@@ -56,13 +56,24 @@ func TestReadyz_DBUnhealthy_Returns503(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
-func TestReadyz_CacheUnreachable_Returns503(t *testing.T) {
+func TestReadyz_CacheUnreachable_StaysReadyAndReportsDegraded(t *testing.T) {
 	r := testRouter(fakeDBPinger{health: DBHealth{Healthy: true}}, fakePinger{err: errors.New("valkey down")})
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code, "plan reads are fail-open, so a cache outage must not take every pod out of rotation")
+	assert.Contains(t, w.Body.String(), `"cache":"degraded"`)
+}
+
+func TestReadyz_HealthyCacheIsReportedOK(t *testing.T) {
+	r := testRouter(fakeDBPinger{health: DBHealth{Healthy: true}}, fakePinger{})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"cache":"ok"`)
 }
 
 func TestNewRouter_Healthz(t *testing.T) {

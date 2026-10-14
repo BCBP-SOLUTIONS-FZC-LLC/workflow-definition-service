@@ -257,8 +257,31 @@ func TestDraftService_Update_LockError(t *testing.T) {
 		Return(false, errors.New("cache error"))
 
 	_, err := svc.Update(context.Background(), uuid.New(), uuid.New(), uuid.New(), service.UpdateDraftReq{})
-	if err == nil {
-		t.Fatal("expected error")
+	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
+		t.Fatalf("a failing lock store must answer 503 (ErrUpstreamUnavailable), got %v", err)
+	}
+}
+
+func TestDraftService_Update_ReleasesTheLockWhenTheClientHasGone(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cache := mocks.NewMockCacheStore(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := newDraftSvc(ctrl, cache, nil, vRepo)
+
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
+	released := false
+	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, _, _ string) error {
+			released = ctx.Err() == nil
+			return nil
+		})
+	vRepo.EXPECT().GetDraft(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrNoDraftExists)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = svc.Update(ctx, uuid.New(), uuid.New(), uuid.New(), service.UpdateDraftReq{})
+	if !released {
+		t.Error("the lock was not released with a live context: a client that disconnects would keep the draft locked for 30s")
 	}
 }
 

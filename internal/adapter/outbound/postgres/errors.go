@@ -2,9 +2,12 @@ package postgres
 
 import (
 	"errors"
+	"fmt"
+	"net"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
@@ -42,5 +45,24 @@ func mapErr(err error) error {
 			return domain.ErrModuleProcessIDTaken
 		}
 	}
-	return err
+	return asUnavailable(err)
+}
+
+func asUnavailable(err error) error {
+	if err == nil || errors.Is(err, domain.ErrUpstreamUnavailable) || !isUnavailable(err) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", domain.ErrUpstreamUnavailable, err)
+}
+
+func isUnavailable(err error) bool {
+	var dialErr *pgconn.ConnectError
+	var netErr net.Error
+	return pgcommon.IsConnectionException(err) ||
+		pgcommon.IsInsufficientResources(err) ||
+		pgcommon.IsOperatorIntervention(err) ||
+		pgcommon.IsQueryCanceled(err) ||
+		pgcommon.IsPoolClosed(err) ||
+		errors.As(err, &dialErr) ||
+		errors.As(err, &netErr)
 }

@@ -17,9 +17,9 @@ func exec(ctx context.Context, pool *pgcommon.Pool, fn func(db.DBTX) error) erro
 	if tx, ok := txFromContext(ctx); ok {
 		return fn(tx)
 	}
-	return pool.WithConn(ctx, func(_ context.Context, conn *pgxpool.Conn) error { //nolint:wrapcheck
+	return asUnavailable(pool.WithConn(ctx, func(_ context.Context, conn *pgxpool.Conn) error {
 		return fn(conn)
-	})
+	}))
 }
 
 func statusOrNotFound(

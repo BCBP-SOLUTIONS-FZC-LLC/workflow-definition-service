@@ -45,7 +45,7 @@ type RouterConfig struct {
 	Cache Pinger
 }
 
-const requestTimeout = 30 * time.Second
+const RequestTimeout = 30 * time.Second
 
 type Router struct {
 	engine   *gin.Engine
@@ -67,7 +67,7 @@ func NewRouter(cfg RouterConfig) *Router {
 	r := gin.New()
 	r.MaxMultipartMemory = 10 << 20
 
-	cfg.GinConfig.RequestTimeout = requestTimeout
+	cfg.GinConfig.RequestTimeout = RequestTimeout
 	for _, mw := range gincommon.ObservabilityMiddlewares(cfg.GinConfig) {
 		r.Use(mw)
 	}
@@ -174,12 +174,13 @@ func readyzHandler(db DBPinger, cache Pinger, draining *atomic.Bool) gin.Handler
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable", "db": "unreachable"})
 			return
 		}
+		cacheState := "ok"
 		if err := cache.Ping(c.Request.Context()); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable", "cache": "unreachable"})
-			return
+			cacheState = "degraded"
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"status":         "OK",
+			"cache":          cacheState,
 			"db_utilization": hs.Utilization,
 			"db_conns":       hs.AcquiredConns,
 			"db_max_conns":   hs.MaxConns,
