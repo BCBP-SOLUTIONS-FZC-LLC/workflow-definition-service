@@ -15,6 +15,11 @@ name: Validate Test
         type: string
         required: false
         default: ''
+      compat_peer_ref:
+        description: 'Branch or tag of the Execution Service the compat job runs against'
+        type: string
+        required: false
+        default: feat/service
 
 permissions:
   contents: read
@@ -98,3 +103,52 @@ jobs:
           name: coverage
           path: .coverage/coverage.out
           if-no-files-found: ignore
+
+  compat:
+    name: compat
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPAT_PEER_REF: ${{ inputs.compat_peer_ref }}
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+      AWS_ACCESS_KEY_ID: test # pragma: allowlist secret
+      AWS_SECRET_ACCESS_KEY: test # pragma: allowlist secret
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Checkout the Execution Service
+        uses: actions/checkout@v6
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/workflow-execution-service
+          ref: ${{ env.COMPAT_PEER_REF }}
+          path: peer/execution_service
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || secrets.GO_PRIVATE_TOKEN }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            go.mod
+            peer/execution_service/go.sum
+
+      - name: Configure private module access
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: .github/scripts/configure-private-module-access.sh
+
+      - name: Generate (sqlc) for both services
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install "github.com/sqlc-dev/sqlc/cmd/sqlc@$(awk '/^SQLC_VERSION/ {print $3}' Makefile)"
+          make generate-sqlc SQLC="$RUNNER_TEMP/bin/sqlc"
+          make -C peer/execution_service generate-sqlc SQLC="$RUNNER_TEMP/bin/sqlc"
+
+      - name: Execution's compatibility suite against this checkout
+        run: make -C peer/execution_service test-compat DEFINITION_SERVICE_DIR="$GITHUB_WORKSPACE"

@@ -556,7 +556,9 @@ See [ARCHITECTURE.md § BPMN Compiler](ARCHITECTURE.md#bpmn-compiler) for the fu
 | --------- | ---- | ------- |
 | `internal/**/*_test.go` | White-box unit tests (unexported access) | `make test` |
 | `test/unit/<pkg>/` | Black-box unit tests (exported API only) | `make test` |
-| `test/integration/` | DB integration tests against a real PostgreSQL container | `make test-integration` |
+| `test/contract/` | The public and internal APIs against their specs, the Execution client against the copied Execution contract | `make test` |
+| `test/integration/`, `test/e2e/` | DB integration and service lifecycle tests against a real PostgreSQL container | `make test-integration` |
+| Execution's `test/compat/` | This service's binary against the Execution Service's real API and worker | `make -C <execution checkout> test-compat DEFINITION_SERVICE_DIR=$PWD` |
 
 Integration tests require Docker. Pre-pull the image once:
 
@@ -722,7 +724,7 @@ psql "postgresql://workflow_definition_app:devpassword@localhost:6432/pgbouncer"
 
 ## CI
 
-Pull requests and pushes run `ci.yml`: a `ci-gate` job skips draft pull requests and those labelled `skip-ci`, then code generation, `validate-quality` (format, tidy, vet, lint, metrics-lint, govulncheck, contract and Dockerfile pin checks), `validate-test` (unit and integration tests with a merged coverage gate), a container image build, a Trivy scan and a smoke test. Pull requests that change only Markdown or `docs/` skip CI. `changelog-check.yml` requires a CHANGELOG entry on every pull request that touches `internal/`, `api/` or `cmd/`, and `pr-summary` keeps one comment on the pull request current.
+Pull requests and pushes run `ci.yml`: a `ci-gate` job skips draft pull requests and those labelled `skip-ci`, then code generation, `validate-quality` (format, tidy, vet, lint, metrics-lint, govulncheck, contract and Dockerfile pin checks), `validate-test` (unit and integration tests with a merged coverage gate, and a `compat` job that checks out the Execution Service's `feat/service` branch and runs its compatibility suite, which builds this checkout's binary and drives it against Execution's real API and worker), a container image build, a Trivy scan and a smoke test. Pull requests that change only Markdown or `docs/` skip CI. `changelog-check.yml` requires a CHANGELOG entry on every pull request that touches `internal/`, `api/` or `cmd/`, and `pr-summary` keeps one comment on the pull request current.
 
 ## Versioning and releases
 
