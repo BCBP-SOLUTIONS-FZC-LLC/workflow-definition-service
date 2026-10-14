@@ -49,7 +49,7 @@
     <bpmn:sequenceFlow id="Flow_2" sourceRef="Draft" targetRef="Check"/>
     <bpmn:sequenceFlow id="Flow_3" sourceRef="Check" targetRef="Approve"/>
     <bpmn:sequenceFlow id="Flow_4" sourceRef="Approve" targetRef="X_Route"/>
-    <bpmn:sequenceFlow id="Flow_Review" sourceRef="X_Route" targetRef="CA_Review"><bpmn:conditionExpression>decision == "review"</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Review" sourceRef="X_Route" targetRef="CA_Review"><bpmn:conditionExpression>= decision = "review"</bpmn:conditionExpression></bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_Fix" sourceRef="X_Route" targetRef="Fix"/>
     <bpmn:sequenceFlow id="Flow_5" sourceRef="CA_Review" targetRef="J_Route"/>
     <bpmn:sequenceFlow id="Flow_6" sourceRef="Fix" targetRef="J_Route"/>

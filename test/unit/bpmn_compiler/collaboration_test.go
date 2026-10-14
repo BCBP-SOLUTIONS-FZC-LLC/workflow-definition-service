@@ -486,10 +486,10 @@ const xorAllTerminateContinuationBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:sequenceFlow id="Fx1_1"     sourceRef="Start_x1"    targetRef="Task_eval"/>
     <bpmn:sequenceFlow id="Fx1_2"     sourceRef="Task_eval"   targetRef="XOR_bid"/>
     <bpmn:sequenceFlow id="Fx1_bid"   sourceRef="XOR_bid"     targetRef="Task_proceed">
-      <bpmn:conditionExpression>bid</bpmn:conditionExpression>
+      <bpmn:conditionExpression>decision == "bid"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Fx1_nobid" sourceRef="XOR_bid"     targetRef="End_nobid">
-      <bpmn:conditionExpression>no-bid</bpmn:conditionExpression>
+      <bpmn:conditionExpression>decision == "no-bid"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Fx1_3"     sourceRef="Task_proceed" targetRef="End_main"/>
   </bpmn:process>
@@ -545,10 +545,10 @@ const xorAllTerminateAllEndBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:sequenceFlow id="Fx2_1"   sourceRef="Start_x2"    targetRef="Task_decide"/>
     <bpmn:sequenceFlow id="Fx2_2"   sourceRef="Task_decide" targetRef="XOR_dec"/>
     <bpmn:sequenceFlow id="Fx2_yes" sourceRef="XOR_dec"     targetRef="End_yes">
-      <bpmn:conditionExpression>yes</bpmn:conditionExpression>
+      <bpmn:conditionExpression>decision == "yes"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Fx2_no"  sourceRef="XOR_dec"     targetRef="End_no">
-      <bpmn:conditionExpression>no</bpmn:conditionExpression>
+      <bpmn:conditionExpression>decision == "no"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
   </bpmn:process>
   <bpmndi:BPMNDiagram id="BD_xor2">

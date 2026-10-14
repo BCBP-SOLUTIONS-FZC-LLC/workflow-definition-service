@@ -418,7 +418,7 @@ func TestCompile_ParallelDiagram(t *testing.T) {
 	// Expected execution plan:
 	// step 0: sequential ["design"]
 	// step 1: parallel   ["procurement", "planning"]
-	// step 2: exclusive  [{construction, "$.approved == true"}, {qa, "$.approved == false"}]
+	// step 2: exclusive  [{construction, "approved == true"}, {qa, "approved == false"}]
 	// step 3: sequential ["commissioning"]
 	if len(plan.Execution.Steps) != 4 {
 		t.Fatalf("execution steps: got %d, want 4\n steps: %+v", len(plan.Execution.Steps), plan.Execution.Steps)
@@ -444,10 +444,10 @@ func TestCompile_ParallelDiagram(t *testing.T) {
 	if s2.Exclusive[1].Target != "qa" {
 		t.Errorf("exclusive[1].Target = %q, want \"qa\"", s2.Exclusive[1].Target)
 	}
-	if s2.Exclusive[0].ConditionExpression != "$.approved == true" {
+	if s2.Exclusive[0].ConditionExpression != "approved == true" {
 		t.Errorf("exclusive[0].ConditionExpression = %q", s2.Exclusive[0].ConditionExpression)
 	}
-	if s2.Exclusive[1].ConditionExpression != "$.approved == false" {
+	if s2.Exclusive[1].ConditionExpression != "approved == false" {
 		t.Errorf("exclusive[1].ConditionExpression = %q", s2.Exclusive[1].ConditionExpression)
 	}
 
@@ -510,8 +510,8 @@ func TestCompile_LoopDiagram(t *testing.T) {
 	if revert.RevertToDept != "construction" || revert.RevertToStage != "prep" {
 		t.Errorf("revert target = %q/%q, want construction/prep", revert.RevertToDept, revert.RevertToStage)
 	}
-	if revert.ConditionExpression != "$.approved == false" {
-		t.Errorf("revert condition = %q, want $.approved == false", revert.ConditionExpression)
+	if revert.ConditionExpression != "approved == false" {
+		t.Errorf("revert condition = %q, want approved == false", revert.ConditionExpression)
 	}
 }
 

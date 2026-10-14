@@ -203,15 +203,16 @@ The compiled plan already knows the target of each branch from the BPMN element 
 
 ### Format
 
-Conditions use FEEL (Friendly Enough Expression Language). Agree the variable names with engineering before modelling.
+A condition compares one result field with one value. Agree the field names with engineering before modelling.
 
 | Pattern | Example |
 |---|---|
 | String equality | `= decision = "no-bid"` |
-| Numeric comparison | `= score < 70` |
+| String inequality | `decision != "no-bid"` |
+| Number equality | `= score = 70` |
 | Boolean flag | `= is_complete = true` |
 
-Conditions are stored verbatim and evaluated at runtime. The definition service does not validate their logic — only that they are present on the right flows.
+The operator is `=`, `==` or `!=`. The value is a double-quoted string, a number such as `70`, `-2` or `1.5`, `true` or `false`; the leading `=` is optional. Greater-than and less-than comparisons, `and`, `or` and single quotes are not supported, and the validator refuses them as `INVALID_CONDITION_EXPRESSION`. Conditions are stored verbatim and evaluated at runtime by the Execution Service.
 
 ---
 

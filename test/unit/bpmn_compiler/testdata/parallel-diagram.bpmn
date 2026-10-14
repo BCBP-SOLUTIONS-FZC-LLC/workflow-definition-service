@@ -77,11 +77,11 @@
     <bpmn:sequenceFlow id="Flow_planning_join" sourceRef="Task_planning_prep" targetRef="Gateway_ParallelJoin" />
     <bpmn:sequenceFlow id="Flow_join_exclusive" sourceRef="Gateway_ParallelJoin" targetRef="Gateway_ExclusiveSplit" />
     <bpmn:sequenceFlow id="Flow_exclusive_construction" sourceRef="Gateway_ExclusiveSplit" targetRef="Task_construction_prep">
-      <bpmn:conditionExpression>$.approved == true</bpmn:conditionExpression>
+      <bpmn:conditionExpression>approved == true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_construction_merge" sourceRef="Task_construction_prep" targetRef="Gateway_ExclusiveJoin" />
     <bpmn:sequenceFlow id="Flow_exclusive_qa" sourceRef="Gateway_ExclusiveSplit" targetRef="Task_qa_prep">
-      <bpmn:conditionExpression>$.approved == false</bpmn:conditionExpression>
+      <bpmn:conditionExpression>approved == false</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_qa_merge" sourceRef="Task_qa_prep" targetRef="Gateway_ExclusiveJoin" />
     <bpmn:sequenceFlow id="Flow_merge_commissioning" sourceRef="Gateway_ExclusiveJoin" targetRef="Task_commissioning_prep" />

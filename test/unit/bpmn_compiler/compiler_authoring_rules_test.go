@@ -123,7 +123,7 @@ func TestValidate_ExclusiveSplitWithTwoBranchesAndNoCondition_Warns(t *testing.T
 }
 
 func TestValidate_ExclusiveSplitWithOneDefaultBranch_IsValid(t *testing.T) {
-	errs := validateDocument(t, flowDocument(oneLane("S", "A", "X", "J", "B", "C", "E"), exclusiveSplit("=x", "")))
+	errs := validateDocument(t, flowDocument(oneLane("S", "A", "X", "J", "B", "C", "E"), exclusiveSplit("x == \"y\"", "")))
 
 	assertNoError(t, errs, domain.BPMNWarnGatewayBranchWithoutCondition)
 }

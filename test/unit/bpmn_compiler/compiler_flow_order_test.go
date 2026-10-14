@@ -176,7 +176,7 @@ func TestCompileForPublish_FlowReturningToALane_RunsInFlowOrder(t *testing.T) {
 func exclusiveWithJoin(first, firstXML string, firstLane []string, procs ...string) string {
 	body := "    <bpmn:startEvent id=\"S\"/>\n" + userTaskXML("A") + "    <bpmn:exclusiveGateway id=\"X1\"/>\n" + firstXML + userTaskXML("C") +
 		"    <bpmn:exclusiveGateway id=\"J1\"/>\n" + userTaskXML("D") + "    <bpmn:endEvent id=\"E\"/>\n" +
-		flowXML("F1", "S", "A") + flowXML("F2", "A", "X1") + conditionalFlowXML("F3", "X1", first, "=x") + flowXML("F4", "X1", "C") +
+		flowXML("F1", "S", "A") + flowXML("F2", "A", "X1") + conditionalFlowXML("F3", "X1", first, "x == \"y\"") + flowXML("F4", "X1", "C") +
 		flowXML("F5", first, "J1") + flowXML("F6", "C", "J1") + flowXML("F7", "J1", "D") + flowXML("F8", "D", "E")
 	return flowDocument([]flowLane{
 		{"Engineering", engDeptID, append([]string{"S", "A", "X1", "J1", "D", "E"}, firstLane...)},
@@ -215,7 +215,7 @@ func TestValidateForPublish_NestedAssigneesThroughACallOnAnExclusiveBranch(t *te
     <bpmn:laneSet id="M2_LS"><bpmn:lane id="M2_L" name="Rev"><bpmn:flowNodeRef>M2_S</bpmn:flowNodeRef><bpmn:flowNodeRef>M2_X</bpmn:flowNodeRef><bpmn:flowNodeRef>Inner</bpmn:flowNodeRef><bpmn:flowNodeRef>M2_T</bpmn:flowNodeRef><bpmn:flowNodeRef>M2_J</bpmn:flowNodeRef><bpmn:flowNodeRef>M2_E</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="M2_S"/><bpmn:exclusiveGateway id="M2_X"/>
 ` + callXML("Inner", "Mod3") + userTaskXML("M2_T") + `    <bpmn:exclusiveGateway id="M2_J"/><bpmn:endEvent id="M2_E"/>
-` + flowXML("M2_F1", "M2_S", "M2_X") + conditionalFlowXML("M2_F2", "M2_X", "Inner", "=x") + flowXML("M2_F3", "M2_X", "M2_T") +
+` + flowXML("M2_F1", "M2_S", "M2_X") + conditionalFlowXML("M2_F2", "M2_X", "Inner", "x == \"y\"") + flowXML("M2_F3", "M2_X", "M2_T") +
 		flowXML("M2_F4", "Inner", "M2_J") + flowXML("M2_F5", "M2_T", "M2_J") + flowXML("M2_F6", "M2_J", "M2_E") + "  </bpmn:process>"
 	inner := strings.Replace(lanedModule("Mod3", moduleLane{"Rev3", "", "M3_T"}), ` candidateUsers="`+validCandidateUser+`"`, "", 1)
 	call := fmt.Sprintf(`    <bpmn:callActivity id="CA"><bpmn:extensionElements><zeebe:calledElement processId="Mod2"/><zeebe:ioMapping><zeebe:input source="{&quot;Inner::M3_T&quot;:&quot;%s&quot;}" target="Assignees"/></zeebe:ioMapping></bpmn:extensionElements></bpmn:callActivity>
@@ -339,7 +339,7 @@ func stageCount(p *dsl.CompiledPlan, nodeID string) int {
 func TestCompileForPublish_BoundaryPathRejoiningTheMainPath_KeepsTheMainTask(t *testing.T) {
 	body := "    <bpmn:startEvent id=\"S\"/>\n" + userTaskXML("A") + userTaskXML("B") + "    <bpmn:exclusiveGateway id=\"X\"/>\n" +
 		"    <bpmn:boundaryEvent id=\"BE\" attachedToRef=\"A\">" + timerP1D + "</bpmn:boundaryEvent>\n" + userTaskXML("Esc") + "    <bpmn:endEvent id=\"E\"/>\n" +
-		flowXML("F1", "S", "A") + flowXML("F2", "A", "B") + flowXML("F3", "B", "X") + conditionalFlowXML("F4", "X", "B", "=r") + flowXML("F5", "X", "E") +
+		flowXML("F1", "S", "A") + flowXML("F2", "A", "B") + flowXML("F3", "B", "X") + conditionalFlowXML("F4", "X", "B", "r == \"y\"") + flowXML("F5", "X", "E") +
 		flowXML("F6", "BE", "Esc") + flowXML("F7", "Esc", "B")
 	main := expandedMain(t, compileForPublish(t, flowDocument([]flowLane{
 		{"Engineering", engDeptID, []string{"S", "A", "X", "E", "BE"}},
@@ -365,7 +365,7 @@ func TestCompileForPublish_BoundaryPathRejoiningTheMainPath_KeepsTheMainTask(t *
 func TestCompileForPublish_BoundaryToATaskTwoBranchesReach_RunsFromThatTask(t *testing.T) {
 	body := "    <bpmn:startEvent id=\"S\"/>\n    <bpmn:exclusiveGateway id=\"X1\"/>\n" + userTaskXML("A") + userTaskXML("B") + userTaskXML("C") + userTaskXML("M") +
 		"    <bpmn:exclusiveGateway id=\"J\"/>\n" + userTaskXML("R") + "    <bpmn:boundaryEvent id=\"BE\" attachedToRef=\"R\">" + timerP1D + "</bpmn:boundaryEvent>\n    <bpmn:endEvent id=\"E\"/>\n" +
-		flowXML("F1", "S", "X1") + conditionalFlowXML("F2", "X1", "A", "=a") + conditionalFlowXML("F3", "X1", "B", "=b") + flowXML("F4", "X1", "C") +
+		flowXML("F1", "S", "X1") + conditionalFlowXML("F2", "X1", "A", "a == \"y\"") + conditionalFlowXML("F3", "X1", "B", "b == \"y\"") + flowXML("F4", "X1", "C") +
 		flowXML("F5", "A", "M") + flowXML("F6", "B", "M") + flowXML("F7", "M", "J") + flowXML("F8", "C", "J") + flowXML("F9", "J", "R") + flowXML("F10", "R", "E") + flowXML("F11", "BE", "M")
 	main := expandedMain(t, compileForPublish(t, flowDocument([]flowLane{
 		{"Engineering", engDeptID, []string{"S", "X1", "A", "J", "R", "E", "BE"}},
@@ -381,7 +381,7 @@ func TestCompileForPublish_ParallelBranchLedByAGateway_NamesItsFirstDepartment(t
 	body := "    <bpmn:startEvent id=\"S\"/>\n" + userTaskXML("A") + "    <bpmn:parallelGateway id=\"P\"/>\n    <bpmn:exclusiveGateway id=\"X\"/>\n" +
 		userTaskXML("T1") + userTaskXML("T2") + "    <bpmn:exclusiveGateway id=\"J2\"/>\n" + userTaskXML("W") + "    <bpmn:parallelGateway id=\"J1\"/>\n    <bpmn:endEvent id=\"E\"/>\n" +
 		flowXML("F1", "S", "A") + flowXML("F2", "A", "P") + flowXML("F3", "P", "X") + flowXML("F4", "P", "W") +
-		conditionalFlowXML("F5", "X", "T1", "=x") + flowXML("F6", "X", "T2") + flowXML("F7", "T1", "J2") + flowXML("F8", "T2", "J2") +
+		conditionalFlowXML("F5", "X", "T1", "x == \"y\"") + flowXML("F6", "X", "T2") + flowXML("F7", "T1", "J2") + flowXML("F8", "T2", "J2") +
 		flowXML("F9", "J2", "J1") + flowXML("F10", "W", "J1") + flowXML("F11", "J1", "E")
 	main := expandedMain(t, compileForPublish(t, flowDocument([]flowLane{
 		{"Engineering", engDeptID, []string{"S", "A", "P", "X", "J2", "J1", "E", "W"}},
@@ -411,8 +411,8 @@ func TestCompile_ChainedExclusiveSplitsWithoutAJoin_StopAtTheTaskLimit(t *testin
 		g, ta, tb, k, m, end := fmt.Sprintf("G%d", i), fmt.Sprintf("Ta%d", i), fmt.Sprintf("Tb%d", i), fmt.Sprintf("K%d", i), fmt.Sprintf("M%d", i), fmt.Sprintf("End%d", i)
 		fmt.Fprintf(&body, "    <bpmn:exclusiveGateway id=%q/>\n    <bpmn:exclusiveGateway id=%q/>\n    <bpmn:endEvent id=%q/>\n", g, k, end)
 		body.WriteString(userTaskXML(ta) + userTaskXML(tb) + userTaskXML(m))
-		body.WriteString(flowXML("Fin"+g, prev, g) + conditionalFlowXML("Fa"+g, g, ta, "=a") + flowXML("Fb"+g, g, tb) + flowXML("Fk"+g, ta, k) +
-			conditionalFlowXML("Fm"+g, k, m, "=m") + flowXML("Fe"+g, k, end) + flowXML("Fbm"+g, tb, m))
+		body.WriteString(flowXML("Fin"+g, prev, g) + conditionalFlowXML("Fa"+g, g, ta, "a == \"y\"") + flowXML("Fb"+g, g, tb) + flowXML("Fk"+g, ta, k) +
+			conditionalFlowXML("Fm"+g, k, m, "m == \"y\"") + flowXML("Fe"+g, k, end) + flowXML("Fbm"+g, tb, m))
 		eng = append(eng, g, ta, tb, k, m, end)
 		prev = m
 	}
@@ -446,8 +446,8 @@ func TestCompile_ChainedGatewaysWithoutTasks_StopAtTheBudget(t *testing.T) {
 	for i := range blocks {
 		g, k, m, end := fmt.Sprintf("G%d", i), fmt.Sprintf("K%d", i), fmt.Sprintf("M%d", i), fmt.Sprintf("End%d", i)
 		fmt.Fprintf(&body, "    <bpmn:exclusiveGateway id=%q/>\n    <bpmn:exclusiveGateway id=%q/>\n    <bpmn:exclusiveGateway id=%q/>\n    <bpmn:endEvent id=%q/>\n", g, k, m, end)
-		body.WriteString(flowXML("Fin"+g, prev, g) + conditionalFlowXML("Fk"+g, g, k, "=k") + flowXML("Fm"+g, g, m) +
-			conditionalFlowXML("Fkm"+g, k, m, "=m") + flowXML("Fke"+g, k, end))
+		body.WriteString(flowXML("Fin"+g, prev, g) + conditionalFlowXML("Fk"+g, g, k, "k == \"y\"") + flowXML("Fm"+g, g, m) +
+			conditionalFlowXML("Fkm"+g, k, m, "m == \"y\"") + flowXML("Fke"+g, k, end))
 		eng = append(eng, g, k, m, end)
 		prev = m
 	}
@@ -475,7 +475,7 @@ func TestCompile_ChainedGatewaysWithoutTasks_StopAtTheBudget(t *testing.T) {
 // subprocess's gateway whatever its condition.
 func TestValidate_BoundaryToASubProcessStartingWithAGateway_IsUnsupported(t *testing.T) {
 	sub := "    <bpmn:subProcess id=\"SP\"><bpmn:startEvent id=\"SP_S\"/>\n    <bpmn:exclusiveGateway id=\"SP_X\"/>\n" + userTaskXML("T1") + userTaskXML("T2") +
-		"    <bpmn:endEvent id=\"SP_E1\"/>\n    <bpmn:endEvent id=\"SP_E2\"/>\n" + flowXML("SP_F1", "SP_S", "SP_X") + conditionalFlowXML("SP_F2", "SP_X", "T1", "=x") +
+		"    <bpmn:endEvent id=\"SP_E1\"/>\n    <bpmn:endEvent id=\"SP_E2\"/>\n" + flowXML("SP_F1", "SP_S", "SP_X") + conditionalFlowXML("SP_F2", "SP_X", "T1", "x == \"y\"") +
 		flowXML("SP_F3", "SP_X", "T2") + flowXML("SP_F4", "T1", "SP_E1") + flowXML("SP_F5", "T2", "SP_E2") + "    </bpmn:subProcess>\n"
 	body := "    <bpmn:startEvent id=\"S\"/>\n" + userTaskXML("A") + "    <bpmn:boundaryEvent id=\"BE\" attachedToRef=\"A\">" + timerP1D + "</bpmn:boundaryEvent>\n" +
 		sub + "    <bpmn:endEvent id=\"E\"/>\n    <bpmn:endEvent id=\"E2\"/>\n" +
@@ -492,9 +492,9 @@ func TestValidate_BoundaryToASubProcessStartingWithAGateway_IsUnsupported(t *tes
 func TestCompileForPublish_RevertToATaskTwoBranchesReach_NamesItsOwnBranchsCopy(t *testing.T) {
 	body := "    <bpmn:startEvent id=\"S\"/>\n    <bpmn:exclusiveGateway id=\"X1\"/>\n" + userTaskXML("A") + "    <bpmn:exclusiveGateway id=\"K\"/>\n" + userTaskXML("B") + userTaskXML("M") +
 		userTaskXML("R") + "    <bpmn:exclusiveGateway id=\"X2\"/>\n    <bpmn:endEvent id=\"E\"/>\n    <bpmn:endEvent id=\"EK\"/>\n" +
-		flowXML("F1", "S", "X1") + conditionalFlowXML("F2", "X1", "A", "=a") + flowXML("F3", "X1", "B") + flowXML("F4", "A", "K") +
-		conditionalFlowXML("F5", "K", "M", "=m") + flowXML("F6", "K", "EK") + flowXML("F7", "B", "M") + flowXML("F8", "M", "R") + flowXML("F9", "R", "X2") +
-		conditionalFlowXML("F10", "X2", "M", "=r") + flowXML("F11", "X2", "E")
+		flowXML("F1", "S", "X1") + conditionalFlowXML("F2", "X1", "A", "a == \"y\"") + flowXML("F3", "X1", "B") + flowXML("F4", "A", "K") +
+		conditionalFlowXML("F5", "K", "M", "m == \"y\"") + flowXML("F6", "K", "EK") + flowXML("F7", "B", "M") + flowXML("F8", "M", "R") + flowXML("F9", "R", "X2") +
+		conditionalFlowXML("F10", "X2", "M", "r == \"y\"") + flowXML("F11", "X2", "E")
 	main := expandedMain(t, compileForPublish(t, flowDocument([]flowLane{
 		{"Engineering", engDeptID, []string{"S", "X1", "A", "K", "R", "X2", "E", "EK"}},
 		{"Ops", opsDeptID, []string{"B", "M"}},

@@ -89,12 +89,12 @@
     <bpmn:sequenceFlow id="Flow_10" sourceRef="Task_construction_approve" targetRef="Gateway_Approve" />
     <!-- Forward (exit) branch: leaves the loop when approved. -->
     <bpmn:sequenceFlow id="Flow_11" name="approved" sourceRef="Gateway_Approve" targetRef="EndEvent_1">
-      <bpmn:conditionExpression>$.approved == true</bpmn:conditionExpression>
+      <bpmn:conditionExpression>approved == true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <!-- Back-edge: revert/loop to construction prep when rejected. Guarded because
          Gateway_Approve also has the forward exit Flow_11. -->
     <bpmn:sequenceFlow id="Flow_12" name="revert to prep" sourceRef="Gateway_Approve" targetRef="Task_construction_prep">
-      <bpmn:conditionExpression>$.approved == false</bpmn:conditionExpression>
+      <bpmn:conditionExpression>approved == false</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
   </bpmn:process>
   <bpmndi:BPMNDiagram id="BPMNDiagram_1">

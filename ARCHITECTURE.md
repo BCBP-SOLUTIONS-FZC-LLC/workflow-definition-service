@@ -789,7 +789,7 @@ Limits: 1–100 lanes per process.
 | `<bpmn:boundaryEvent cancelActivity="…">` + `messageEventDefinition` | Inbound message interrupt → `StageDef.BoundaryMessage` (userTask), `SubWorkflowStep.MessagePaths` (subProcess), or `CallPlanStep.MessagePaths` (callActivity); attached to `userTask`, `subProcess`, or `callActivity`; zero outgoing flows is a valid terminal interrupt notification |
 | `<bpmn:intermediateCatchEvent>` + `timerEventDefinition` | Wait/delay step |
 | `<bpmn:sequenceFlow>` | Structural connector |
-| `<bpmn:conditionExpression>` (child of sequenceFlow) | FEEL expression for routing decisions; stored verbatim; evaluated at runtime by the Execution Service; max 4096 chars |
+| `<bpmn:conditionExpression>` (child of sequenceFlow) | One comparison for routing decisions: `[= ] field (=|==|!=) literal` with a double-quoted string, number, `true` or `false`; stored verbatim; evaluated at runtime by the Execution Service with the same parser; max 4096 chars |
 | `<bpmn:error>` | Error definition referenced by error events |
 | `<zeebe:taskDefinition>` | Stage type and worker routing — see §User Task Contract |
 | `<zeebe:assignmentDefinition>` | Task ownership — see §User Task Contract |
@@ -916,7 +916,7 @@ The message name is resolved from the `messageRef` attribute to a `<bpmn:message
 </bpmn:sequenceFlow>
 ```
 
-Condition expressions use FEEL syntax (prefix `= ` for expression mode). They are stored verbatim in the compiled plan; the Execution Service evaluates them at runtime.
+A condition is one comparison of a result field with a literal: `[= ] field (=|==|!=) literal`, the literal a double-quoted string, a number, `true` or `false`; the leading `=` is the designer's expression marker. The validator parses it with `workflow-models` `dsl.ParseCondition`, the parser the Execution Service evaluates with, and refuses anything else. Expressions are stored verbatim in the compiled plan.
 
 **Use error events for stage rejection / rework.** When an approval stage rejects, the work must loop back. Model this with a subprocess containing the rework-candidate stages and an error boundary event that catches rejection.
 
@@ -1083,7 +1083,7 @@ Message, timer and error boundary events on `callActivity` compile to the call s
 
 | Rule | Error code |
 | --- | --- |
-| `conditionExpression` on flows leaving an XOR split, ≤ 4096 chars | `INVALID_CONDITION_EXPRESSION` |
+| `conditionExpression` on flows leaving an XOR split, ≤ 4096 chars and one comparison of a field with a literal | `INVALID_CONDITION_EXPRESSION` |
 
 **Timer boundary events**
 
@@ -1146,7 +1146,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `CANDIDATE_GROUPS_EMPTY` | `candidateGroups` absent or exceeds 256 chars |
 | `CANDIDATE_USERS_EMPTY` | `candidateUsers` absent: a warning on the document; an error at publish and `/validate` for any task of the expanded plan with no default, on the task or the top-level call that runs it |
 | `INVALID_CANDIDATE_USER` | `candidateUsers` is not a valid UUID v7, or a global module names a user |
-| `INVALID_CONDITION_EXPRESSION` | Condition expression exceeds 4096 chars |
+| `INVALID_CONDITION_EXPRESSION` | Condition expression exceeds 4096 chars or is not one comparison of a field with a literal |
 | `INVALID_ZEEBE_PROPERTY` | callActivity: malformed `Depts`/`Assignees` input, an unknown lane, task or call path in them, an `Assignees` user that is not a UUID v7, or a retired `dept_id` input |
 | `INVALID_SLA_DURATION` | Timer boundary duration is not a positive ISO 8601 or Go duration, or is too long to run |
 | `MISSING_MESSAGE_DEFINITION` | `messageRef` on a flow or task references an undeclared `<bpmn:message>` |

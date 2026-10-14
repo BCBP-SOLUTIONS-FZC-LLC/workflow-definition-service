@@ -8,6 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+### Changed
+
+- A branch condition must be one comparison of a result field with a literal, `[= ] field (=|==|!=) literal`, parsed by `workflow-models` `dsl.ParseCondition`, the parser the Execution Service evaluates with. The validator refuses anything else as `INVALID_CONDITION_EXPRESSION` (before, it checked the length only, and a condition the Execution Service could not evaluate failed the gateway at run time). A request body over 10 MiB on `POST /api/v1/internal/events` returns 413, not 400.
+- `make contract-breaking` also gates `docs/swagger/openapi.yaml`.
+- The copy of the Execution Service's internal spec is refreshed, and `SOURCES` names `feat/service`, where the file is, so `make contract-check` reads it.
+
+### Added
+
+- Contract tests send the internal events and connector alias routes through the real router against `api/internal-openapi.yaml`, including 400, 401, 413 and 500, and the internal spec declares 413.
+
 ### Security
 
 - Go 1.26.9, `golang.org/x/net` v0.60.0 and `github.com/moby/go-archive` v0.3.0; the pinned Dockerfile builder image is go1.26.9.

@@ -70,7 +70,7 @@ See [ARCHITECTURE.md § BPMN Compiler](../ARCHITECTURE.md#bpmn-compiler).
 
 ## XOR Gateways vs Error Events
 
-`<bpmn:conditionExpression>` on XOR outgoing flows is for **explicit routing decisions** (bid vs no-bid, value thresholds, path selection).
+`<bpmn:conditionExpression>` on XOR outgoing flows is for **explicit routing decisions** (bid vs no-bid, path selection). It is one comparison, `[= ] field (=|==|!=) literal`, parsed by `dsl.ParseCondition` from `workflow-models` (the parser Execution evaluates with); `validator.ValidateConditionExprs` refuses anything else as `INVALID_CONDITION_EXPRESSION`.
 
 **Approval-stage rejection** is modelled with error events: the approve-stage worker signals an error code on rejection; an error boundary event on the enclosing subprocess catches it and routes the rework path. This keeps XOR semantics clean (deterministic choice) vs error semantics (exception outcome).
 

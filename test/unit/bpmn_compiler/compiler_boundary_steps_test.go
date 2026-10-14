@@ -139,7 +139,7 @@ func TestCompileForPublish_BoundaryPathRejoiningThroughAGateway_KeepsItsDepartme
 	body := "    <bpmn:startEvent id=\"S\"/>\n" + userTaskXML("A") + userTaskXML("B") + userTaskXML("Esc") + "    <bpmn:exclusiveGateway id=\"XG\"/>\n" +
 		"    <bpmn:boundaryEvent id=\"BE\" attachedToRef=\"A\">" + timerP1D + "</bpmn:boundaryEvent>\n    <bpmn:endEvent id=\"E\"/>\n    <bpmn:endEvent id=\"E2\"/>\n" +
 		flowXML("F1", "S", "A") + flowXML("F2", "A", "B") + flowXML("F3", "B", "E") +
-		flowXML("F4", "BE", "Esc") + flowXML("F5", "Esc", "XG") + conditionalFlowXML("F6", "XG", "B", "=r") + flowXML("F7", "XG", "E2")
+		flowXML("F4", "BE", "Esc") + flowXML("F5", "Esc", "XG") + conditionalFlowXML("F6", "XG", "B", "r == \"y\"") + flowXML("F7", "XG", "E2")
 	main := planNamed(t, compileForPublish(t, flowDocument([]flowLane{
 		{"Engineering", engDeptID, []string{"S", "A", "E", "E2", "BE", "XG"}},
 		{"Ops", opsDeptID, []string{"B", "Esc"}},

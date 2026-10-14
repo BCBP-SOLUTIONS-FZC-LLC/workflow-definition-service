@@ -1597,6 +1597,10 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Scenario**: A task's `zeebe:taskSchedule` carries a `dueDate` or `followUpDate` that is not an RFC 3339 date-time.
     - **Trigger Logic**: The Execution Service reads both dates as RFC 3339 and ignores any other value, so a duration such as `P3D` or a plain date would silently remove the task's SLA timers. An empty attribute is allowed. One error is emitted per invalid attribute, on the task.
 
+46. **`INVALID_CONDITION_EXPRESSION`**
+    - **Trigger Scenario**: A `conditionExpression` on a flow that leaves a split is longer than 4096 characters, or is not one comparison of a result field with a literal (`[= ] field (=|==|!=) literal`).
+    - **Trigger Logic**: The Execution Service evaluates branch conditions with the same shared condition parser of `workflow-models` and fails the gateway at run time on any other form, so a condition it cannot evaluate is refused at validation. A whitespace-only expression is refused too, since it would count as conditional.
+
 ---
 
 ### 3.2 Endpoint Registry
@@ -2186,7 +2190,7 @@ Elements are classified into three tiers. The raw-XML denylist scan (`rejectedEl
 - `<zeebe:assignmentDefinition candidateGroups="..." candidateUsers="...">` — Required on `userTask`. `candidateGroups` → role (validated against Membership at publish); `candidateUsers` → optional single UUID v7 default assignee (code 8).
 - `<zeebe:subscription messageCorrelationKey="...">` — Required on `receiveTask`. Key used at runtime to correlate incoming messages to the correct process instance.
 - `<zeebe:properties>` / `<zeebe:property>` — Optional domain flags. Every property is forwarded verbatim into `StageDef.Extras`; the compiler does not special-case any property name (`requires_comment` is just one convention the Execution Service happens to interpret).
-- `<bpmn:conditionExpression>` (child of `sequenceFlow`) — FEEL expression (prefix `= expr`). Required on all outgoing flows of an exclusive or inclusive gateway split. Max 4096 chars. Stored verbatim; evaluated by Execution Service at runtime.
+- `<bpmn:conditionExpression>` (child of `sequenceFlow`) — a single comparison of one result field with one literal: `[= ] field (=|==|!=) literal`, where the literal is a double-quoted string, a number, or `true` or `false`; the optional leading `=` is the designer's expression marker. The Execution Service evaluates exactly this form, so the validator refuses anything else with `INVALID_CONDITION_EXPRESSION`. Required on all outgoing flows of an exclusive or inclusive gateway split except one default flow. Max 4096 chars. Stored verbatim; evaluated by Execution Service at runtime.
 
 ##### Tier 2: Unsupported (Planned — `UNSUPPORTED_ELEMENT`)
 
@@ -2256,7 +2260,7 @@ Every `<zeebe:property>` is forwarded verbatim into `StageDef.Extras` (`map[stri
 
 **Department** — derived from lane membership via `<bpmn:flowNodeRef>`. No `dept_id` property needed. Lane `name` → `DepartmentDef.ID` + `DepartmentDef.Label`. Format is owned by the Profile Service and trusted as-is.
 
-**Condition expressions** — use standard `<bpmn:conditionExpression>` as a direct child of `<bpmn:sequenceFlow>` (not a Zeebe property). FEEL syntax (`= expr` prefix); max 4096 chars. For routing decisions only — not for approval state (use error events for rejection/rework; see §4.1.3.1).
+**Condition expressions** — use standard `<bpmn:conditionExpression>` as a direct child of `<bpmn:sequenceFlow>` (not a Zeebe property). one comparison of a result field with a literal (`= decision = "bid"`, `decision != "no-bid"`, `amount == 5`, `approved == true`); max 4096 chars. For routing decisions only — not for approval state (use error events for rejection/rework; see §4.1.3.1).
 
 **Example XML block** — user task with all required extensions and a non-interrupting SLA timer:
 
@@ -4914,6 +4918,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.37 | 2026-10-12 | **The validator refuses what the compiler would drop, and the review's contract fixes** (§3.1.3, §3.1.4 codes 22, 41–44, §3.3.11, §3.3.14, §4.1, §7.4). Boundary hosts, one message boundary per node, a boundary with one flow, a receive task as a revert source, an end event with an outgoing flow, duplicate element ids and an unknown error reference are refused; before, the plan silently dropped the work. An exclusive split with several unconditioned flows warns, since the Execution Service takes the first. A version marked invalid cannot be promoted. The version diff treats a changed timer boundary, message boundary or connector type as structural. A `DepartmentMembershipRevoked` whose department is not a UUID is a 400. |
 | 1.38 | 2026-10-12 | **The version list is summaries, shutdown drains, and the review's smaller fixes** (§1.8, §1.9, §2.2, §3.1.4 codes 23 and 33, §3.3.3.1, §3.1.3). A page of versions carries summaries only; a page number is bounded. The pod fails readiness for `SHUTDOWN_DRAIN_DELAY` before it stops listening. The artifact hash covers messages, errors and message flows and ignores property order everywhere. A call inside a sub-process is `UNSUPPORTED_ELEMENT`, and a main process named like a called one is `DUPLICATE_PROCESS_ID`. The active-version pointer names only a published version of its workflow. The draft-edit lock is released only by the save that took it. The bounded windows that remain are stated: a stale cached plan up to the TTL, and a revocation between a publish's eligibility check and its commit. |
 | 1.39 | 2026-10-13 | **A task's due and follow-up dates must be RFC 3339** (§3.1.4 code 45). The validator refuses a `dueDate` or `followUpDate` that is not an RFC 3339 date-time, with the new code `INVALID_TASK_SCHEDULE`; the Execution Service dropped any other value and the task ran with no SLA. The plan-expansion budget of 1000 stages is a domain constant shared by the compiler and by the publish, node-read and module-contract paths, since `workflow-models` `v2.0.0` refuses a zero budget. Definition is on `workflow-models/v2` `v2.0.0`. |
+| 1.40 | 2026-10-13 | **Branch conditions are one comparison, parsed by the shared parser** (§3.1.4 code 46, §4). The validator parses every `conditionExpression` of a split with `workflow-models` `dsl.ParseCondition` and refuses anything but `[= ] field (=|==|!=) literal` with a string, number or boolean literal as `INVALID_CONDITION_EXPRESSION`, so the form the designer guide documents (`= decision = "bid"`) is the form the Execution Service evaluates and a comparison such as `score < 70` is refused at publish instead of failing the gateway at run time. The internal events and alias routes return 413 for a body over the limit, declared in the internal spec, and a contract test sends every route through the real router against `api/internal-openapi.yaml`. |
 ---
 
 ## Appendix E: Open Items

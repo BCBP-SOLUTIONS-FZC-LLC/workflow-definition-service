@@ -3,6 +3,8 @@ package validator
 import (
 	"fmt"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
@@ -10,8 +12,12 @@ import (
 func ValidateConditionExprs(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	errs = append(errs, validateDefaultFlow(proc, g, backEdges)...)
+	exclusive := make(map[string]bool, len(proc.ExclusiveGateways))
+	for _, gw := range proc.ExclusiveGateways {
+		exclusive[gw.ID] = true
+	}
 	for _, sf := range proc.SequenceFlows {
-		if len(g.Outgoing[sf.SourceRef]) < 2 {
+		if len(g.Outgoing[sf.SourceRef]) < 2 && !exclusive[sf.SourceRef] {
 			continue
 		}
 		cond := sf.ConditionExpression
@@ -21,6 +27,10 @@ func ValidateConditionExprs(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backE
 		if len(cond) > maxCondExpr {
 			errs = AppendErr(errs, domain.BPMNErrInvalidConditionExpression, sf.ID,
 				fmt.Sprintf("conditionExpression exceeds %d character limit", maxCondExpr))
+			continue
+		}
+		if _, err := dsl.ParseCondition(cond); err != nil {
+			errs = AppendErr(errs, domain.BPMNErrInvalidConditionExpression, sf.ID, err.Error())
 		}
 	}
 	return errs

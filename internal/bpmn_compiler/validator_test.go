@@ -490,6 +490,48 @@ func TestValidateConditionExprs_TooLong(t *testing.T) {
 	}
 }
 
+func TestValidateConditionExprs_Grammar(t *testing.T) {
+	g := &bpmncore.Graph{Outgoing: map[string][]string{"GW_split": {"TaskA", "TaskB"}}}
+	for _, tc := range []struct {
+		name, expr string
+		valid      bool
+	}{
+		{"FEEL equality as the designer guide writes it", `= decision = "bid"`, true},
+		{"double equals", `decision == "bid"`, true},
+		{"inequality", `decision != "no-bid"`, true},
+		{"an operator inside the literal", `decision != "x==y"`, true},
+		{"a comparison the Execution Service cannot evaluate", `amount > 5`, false},
+		{"a conjunction", `a == "x" and b == "y"`, false},
+		{"single quotes", `decision == 'bid'`, false},
+		{"whitespace only", "   ", false},
+		{"an unquoted word", `decision == bid`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proc := &bpmncore.BPMNProcess{SequenceFlows: []bpmncore.BPMNSequenceFlow{
+				{ID: "F1", SourceRef: "GW_split", TargetRef: "TaskA", ConditionExpression: tc.expr},
+			}}
+			errs := validator.ValidateConditionExprs(proc, g, nil)
+			if got := hasCodeIn(errs, domain.BPMNErrInvalidConditionExpression); got == tc.valid {
+				t.Errorf("%q: INVALID_CONDITION_EXPRESSION reported = %v, want %v; got %v", tc.expr, got, !tc.valid, errCodesOf(errs))
+			}
+		})
+	}
+}
+
+func TestValidateConditionExprs_GatewayWithOneOutflow_IsStillChecked(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		ExclusiveGateways: []bpmncore.BPMNGateway{{ID: "GW1"}},
+		SequenceFlows: []bpmncore.BPMNSequenceFlow{
+			{ID: "F1", SourceRef: "GW1", TargetRef: "T1", ConditionExpression: `amount > 5`},
+		},
+	}
+	g := &bpmncore.Graph{Outgoing: map[string][]string{"GW1": {"T1"}}}
+	errs := validator.ValidateConditionExprs(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrInvalidConditionExpression) {
+		t.Errorf("a gateway's only flow still reaches the plan with its condition, so it must be checked; got %v", errCodesOf(errs))
+	}
+}
+
 // CheckDangling tests
 
 func TestCheckDangling_NoIncoming(t *testing.T) {
