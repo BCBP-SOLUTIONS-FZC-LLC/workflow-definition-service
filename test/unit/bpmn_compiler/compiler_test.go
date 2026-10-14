@@ -693,6 +693,16 @@ func TestCompile_ForbiddenXML_Sentinel(t *testing.T) {
 	}
 }
 
+func TestCompile_ForbiddenXML_AfterALongLeadingComment(t *testing.T) {
+	bpmn := `<?xml version="1.0"?><!-- ` + strings.Repeat("padding ", 1500) + `-->` +
+		`<!DOCTYPE x [<!ENTITY a "b">]>` +
+		`<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"/>`
+	_, err := bpmn_compiler.New().Compile(context.Background(), bpmn)
+	if !errors.Is(err, domain.ErrForbiddenXML) {
+		t.Errorf("a DOCTYPE after %d bytes of comment must still be forbidden; got %v", 12000, err)
+	}
+}
+
 func TestValidate_MissingNamespace(t *testing.T) {
 	// BPMN root namespace present, Zeebe namespace absent (§4.1.1 requires both).
 	bpmn := `<?xml version="1.0" encoding="UTF-8"?>

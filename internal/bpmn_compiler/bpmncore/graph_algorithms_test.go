@@ -1,6 +1,8 @@
 package bpmncore
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestClassifyBackEdges(t *testing.T) {
 	g := &Graph{
@@ -74,5 +76,59 @@ func TestTarjanSCC_NoCycle(t *testing.T) {
 	sccs := TarjanSCC(g)
 	if len(sccs) != 2 {
 		t.Fatalf("expected 2 singleton SCCs; got %v", sccs)
+	}
+}
+
+func acyclicWithout(g *Graph, backEdges map[[2]string]bool) bool {
+	const (
+		unseen = iota
+		onPath
+		done
+	)
+	state := map[string]int{}
+	var visit func(string) bool
+	visit = func(n string) bool {
+		state[n] = onPath
+		for _, next := range g.Outgoing[n] {
+			if backEdges[[2]string{n, next}] {
+				continue
+			}
+			switch state[next] {
+			case onPath:
+				return false
+			case unseen:
+				if !visit(next) {
+					return false
+				}
+			}
+		}
+		state[n] = done
+		return true
+	}
+	for n := range g.Outgoing {
+		if state[n] == unseen && !visit(n) {
+			return false
+		}
+	}
+	return true
+}
+
+func TestClassifyBackEdges_LoopThroughSiblingBranches(t *testing.T) {
+	for name, split := range map[string][]string{"first sibling first": {"T2", "T3"}, "second sibling first": {"T3", "T2"}} {
+		t.Run(name, func(t *testing.T) {
+			g := &Graph{Outgoing: map[string][]string{
+				"G":  split,
+				"T2": {"T3"},
+				"T3": {"G3"},
+				"G3": {"T2", "End"},
+			}}
+			backEdges := ClassifyBackEdges(g, "G")
+			if len(backEdges) == 0 {
+				t.Fatal("the loop T2 -> T3 -> G3 -> T2 has no back edge, so it would compile as a forward branch")
+			}
+			if !acyclicWithout(g, backEdges) {
+				t.Errorf("back edges %v leave a cycle in the graph", backEdges)
+			}
+		})
 	}
 }

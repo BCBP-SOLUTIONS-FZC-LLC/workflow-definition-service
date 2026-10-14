@@ -1,6 +1,10 @@
 package bpmncore
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+	"time"
+)
 
 func TestIterativeDFS_NilCallbacks(t *testing.T) {
 	g := &Graph{Outgoing: map[string][]string{"a": {"b"}, "b": {}}}
@@ -66,5 +70,47 @@ func TestIterativeDFS_AlreadyScheduledEdge(t *testing.T) {
 	})
 	if len(alreadySeen) != 2 || alreadySeen[0] == alreadySeen[1] {
 		t.Errorf("expected exactly one already-scheduled and one fresh edge into d; got %v", alreadySeen)
+	}
+}
+
+func TestIterativeDFS_EntersANodeWhenItIsReached(t *testing.T) {
+	g := &Graph{Outgoing: map[string][]string{"a": {"b", "c"}, "b": {"c"}}}
+	var order []string
+	IterativeDFS(g, "a", DFSVisitor{
+		OnEnter: func(id string) bool { order = append(order, "in:"+id); return true },
+		OnExit:  func(id string) { order = append(order, "out:"+id) },
+	})
+	want := []string{"in:a", "in:b", "in:c", "out:c", "out:b", "out:a"}
+	if fmt.Sprint(order) != fmt.Sprint(want) {
+		t.Errorf("order = %v, want %v: a depth-first walk reaches c through b before it returns to a", order, want)
+	}
+}
+
+func TestIterativeDFS_LongChainAndWideFanOutAreLinear(t *testing.T) {
+	chain := &Graph{Outgoing: map[string][]string{}}
+	for i := 0; i < 50000; i++ {
+		chain.Outgoing[fmt.Sprintf("n%d", i)] = []string{fmt.Sprintf("n%d", i+1)}
+	}
+	fan := &Graph{Outgoing: map[string][]string{"root": nil}}
+	for i := 0; i < 50000; i++ {
+		leaf := fmt.Sprintf("l%d", i)
+		fan.Outgoing["root"] = append(fan.Outgoing["root"], leaf)
+		fan.Outgoing[leaf] = []string{"sink"}
+	}
+	for name, tc := range map[string]struct {
+		g     *Graph
+		start string
+	}{"chain": {chain, "n0"}, "fan-out": {fan, "root"}} {
+		t.Run(name, func(t *testing.T) {
+			entered := 0
+			begin := time.Now()
+			IterativeDFS(tc.g, tc.start, DFSVisitor{OnEnter: func(string) bool { entered++; return true }})
+			if elapsed := time.Since(begin); elapsed > 2*time.Second {
+				t.Errorf("walking %d nodes took %s", entered, elapsed)
+			}
+			if entered < 50000 {
+				t.Errorf("entered %d nodes, want every node", entered)
+			}
+		})
 	}
 }

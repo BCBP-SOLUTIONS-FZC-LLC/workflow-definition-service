@@ -182,18 +182,20 @@ func elementID(se xml.StartElement) string {
 	return se.Name.Local
 }
 
-const docTypeScanWindowBytes = 4096
-
 func securityScan(xmlData string) error {
-	head := xmlData
-	if len(head) > docTypeScanWindowBytes {
-		head = head[:docTypeScanWindowBytes]
-	}
-	upper := strings.ToUpper(head)
-	if strings.Contains(upper, "<!DOCTYPE") || strings.Contains(upper, "<!ENTITY") {
+	if containsFold(xmlData, "<!DOCTYPE") || containsFold(xmlData, "<!ENTITY") {
 		return fmt.Errorf("%w: DOCTYPE or entity declaration detected", errForbiddenXML)
 	}
 	return nil
+}
+
+func containsFold(s, marker string) bool {
+	for i := 0; i+len(marker) <= len(s); i++ {
+		if s[i] == '<' && strings.EqualFold(s[i:i+len(marker)], marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func countTokens(ctx context.Context, xmlData string) error {

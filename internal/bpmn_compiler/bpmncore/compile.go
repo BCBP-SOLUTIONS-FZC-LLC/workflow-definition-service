@@ -123,7 +123,7 @@ func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, p
 	if be := TimerBoundaryFor(task.ID, proc); be != nil {
 		stage.BoundaryTimer = &dsl.BoundaryTimer{
 			Duration:     be.Timer.Duration,
-			Interrupting: be.CancelActivity != "false",
+			Interrupting: IsInterrupting(be.CancelActivity),
 		}
 	}
 
@@ -135,7 +135,7 @@ func BuildStageDef(task *BPMNUserTask, stageTypes map[string]StageTypeHandler, p
 		stage.BoundaryMessage = &dsl.MessagePath{
 			MessageName:  msgName,
 			BoundaryID:   be.ID,
-			Interrupting: be.CancelActivity != "false",
+			Interrupting: IsInterrupting(be.CancelActivity),
 		}
 	}
 
@@ -177,7 +177,7 @@ func buildConnectorStageDef(task *BPMNUserTask, connectorType string, proc *BPMN
 	if be := TimerBoundaryFor(task.ID, proc); be != nil {
 		stage.BoundaryTimer = &dsl.BoundaryTimer{
 			Duration:     be.Timer.Duration,
-			Interrupting: be.CancelActivity != "false",
+			Interrupting: IsInterrupting(be.CancelActivity),
 		}
 	}
 	if be := MessageBoundaryFor(task.ID, proc); be != nil {
@@ -188,7 +188,7 @@ func buildConnectorStageDef(task *BPMNUserTask, connectorType string, proc *BPMN
 		stage.BoundaryMessage = &dsl.MessagePath{
 			MessageName:  msgName,
 			BoundaryID:   be.ID,
-			Interrupting: be.CancelActivity != "false",
+			Interrupting: IsInterrupting(be.CancelActivity),
 		}
 	}
 	if ts := ext.TaskSchedule; ts != nil {
@@ -307,4 +307,17 @@ func ResolveMessageFlowTarget(nodeID string, defs *BPMNDefinitions) string {
 		return ResolveMessageFlowName(mf, defs)
 	}
 	return ""
+}
+
+func IsInterrupting(cancelActivity string) bool {
+	return cancelActivity != "false" && cancelActivity != "0"
+}
+
+func ValidCancelActivity(cancelActivity string) bool {
+	switch cancelActivity {
+	case "", "true", "false", "1", "0":
+		return true
+	default:
+		return false
+	}
 }

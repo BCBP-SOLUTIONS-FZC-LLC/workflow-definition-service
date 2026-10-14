@@ -8,42 +8,44 @@ type DFSVisitor struct {
 
 func IterativeDFS(g *Graph, start string, v DFSVisitor) {
 	type frame struct {
-		id          string
-		pendingExit bool
+		id      string
+		entered bool
+		next    int
 	}
-	scheduled := make(map[string]bool)
-	scheduled[start] = true
+	visited := map[string]bool{start: true}
 	stack := []frame{{id: start}}
 
 	for len(stack) > 0 {
-		n := len(stack) - 1
-		id, pendingExit := stack[n].id, stack[n].pendingExit
+		top := &stack[len(stack)-1]
 
-		if pendingExit {
-			stack = stack[:n]
+		if !top.entered {
+			top.entered = true
+			if v.OnEnter != nil && !v.OnEnter(top.id) {
+				stack = stack[:len(stack)-1]
+				continue
+			}
+		}
+
+		children := g.Outgoing[top.id]
+		if top.next >= len(children) {
+			id := top.id
+			stack = stack[:len(stack)-1]
 			if v.OnExit != nil {
 				v.OnExit(id)
 			}
 			continue
 		}
 
-		stack[n].pendingExit = true
-
-		if v.OnEnter != nil && !v.OnEnter(id) {
-			stack = stack[:n]
-			continue
+		from, next := top.id, children[top.next]
+		top.next++
+		alreadySeen := visited[next]
+		descend := !alreadySeen
+		if v.OnEdge != nil {
+			descend = v.OnEdge(from, next, alreadySeen)
 		}
-
-		for _, next := range g.Outgoing[id] {
-			alreadySeen := scheduled[next]
-			push := !alreadySeen
-			if v.OnEdge != nil {
-				push = v.OnEdge(id, next, alreadySeen)
-			}
-			if push && !alreadySeen {
-				scheduled[next] = true
-				stack = append(stack, frame{id: next})
-			}
+		if descend && !alreadySeen {
+			visited[next] = true
+			stack = append(stack, frame{id: next})
 		}
 	}
 }

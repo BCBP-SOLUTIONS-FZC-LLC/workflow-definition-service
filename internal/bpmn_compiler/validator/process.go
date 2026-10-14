@@ -50,11 +50,26 @@ func ValidateCounts(proc *bpmncore.BPMNProcess, implicitStart string) []domain.B
 
 func ValidateLaneNames(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
+	seen := make(map[string]string, len(proc.LaneSet.Lanes))
 	for _, lane := range proc.LaneSet.Lanes {
 		if strings.Contains(lane.Name, "/") || strings.Contains(lane.Name, dsl.CallScopeSeparator) || strings.Contains(lane.Name, bpmncore.SegmentSeparator) {
 			errs = AppendErr(errs, domain.BPMNErrInvalidLaneName, lane.ID,
 				fmt.Sprintf("lane name %q contains /, %s or %s, which department keys reserve", lane.Name, dsl.CallScopeSeparator, bpmncore.SegmentSeparator))
 		}
+		key := strings.ToLower(strings.TrimSpace(lane.Name))
+		if key == "" {
+			if len(lane.FlowNodeRefs) > 0 {
+				errs = AppendErr(errs, domain.BPMNErrInvalidLaneName, lane.ID,
+					"a lane that holds work needs a name, which is its department key")
+			}
+			continue
+		}
+		if first, dup := seen[key]; dup {
+			errs = AppendErr(errs, domain.BPMNErrInvalidLaneName, lane.ID,
+				fmt.Sprintf("lane name %q repeats the name of lane %q (names are compared without case or surrounding space), and one name is one department", lane.Name, first))
+			continue
+		}
+		seen[key] = lane.ID
 	}
 	return errs
 }

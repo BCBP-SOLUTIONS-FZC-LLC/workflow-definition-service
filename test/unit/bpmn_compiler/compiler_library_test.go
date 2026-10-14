@@ -53,6 +53,35 @@ func TestModuleCalls_ListsCallsToProcessesOutsideTheDocument(t *testing.T) {
 	}
 }
 
+func TestModuleCalls_ReportsARejectedElementInTheDocumentThatMakesTheCall(t *testing.T) {
+	bpmnXML := mainWithCalls([]callSite{{ID: "CA_1", Lane: "Engineering", Calls: "Process_Lib"}})
+	bpmnXML = strings.Replace(bpmnXML, "</bpmn:process>", `<bpmn:scriptTask id="Script_1" name="Run"/></bpmn:process>`, 1)
+
+	calls, issues, err := bpmn_compiler.New().ModuleCalls(context.Background(), bpmnXML)
+	if err != nil {
+		t.Fatalf("ModuleCalls: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls = %+v, want the one library call", calls)
+	}
+	var rejected bool
+	for _, issue := range issues {
+		rejected = rejected || (issue.Code == domain.BPMNErrRejectedElement && issue.NodeID == "Script_1")
+	}
+	if !rejected {
+		t.Errorf("issues = %+v, want REJECTED_ELEMENT for Script_1: bundling the module drops the element, so the check has to read the document as authored", issues)
+	}
+}
+
+func TestModuleCalls_ADocumentWithoutCallsIsLeftToValidate(t *testing.T) {
+	bpmnXML := strings.Replace(libraryModule("Process_Lib"), "</bpmn:process>", `<bpmn:scriptTask id="Script_1"/></bpmn:process>`, 1)
+
+	calls, issues, err := bpmn_compiler.New().ModuleCalls(context.Background(), bpmnXML)
+	if err != nil || len(calls) != 0 || len(issues) != 0 {
+		t.Errorf("ModuleCalls = %+v, %+v, %v; want nothing, since Validate already rejects this document", calls, issues, err)
+	}
+}
+
 func TestModuleCalls_FlagsCallsThatCannotNameALibraryModule(t *testing.T) {
 	base := mainWithCalls([]callSite{{ID: "CA_1", Lane: "Engineering", Calls: "Process_Lib"}})
 	cases := map[string]string{

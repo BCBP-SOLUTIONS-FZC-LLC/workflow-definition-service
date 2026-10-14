@@ -40,6 +40,10 @@ func ValidateBoundaryEvents(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backE
 				fmt.Sprintf("boundary event attachedToRef %q does not reference a known node", be.AttachedToRef))
 			continue
 		}
+		if !bpmncore.ValidCancelActivity(be.CancelActivity) {
+			errs = AppendErr(errs, domain.BPMNErrInvalidBoundaryAttachment, be.ID,
+				fmt.Sprintf("boundary event cancelActivity %q must be true, false, 1 or 0", be.CancelActivity))
+		}
 		defErrs, skip := validateBoundaryEventDef(be)
 		errs = append(errs, defErrs...)
 		if skip {

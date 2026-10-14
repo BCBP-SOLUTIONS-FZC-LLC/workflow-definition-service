@@ -1,6 +1,7 @@
 package bpmn_compiler
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -529,6 +530,100 @@ func TestValidateConditionExprs_GatewayWithOneOutflow_IsStillChecked(t *testing.
 	errs := validator.ValidateConditionExprs(proc, g, nil)
 	if !hasCodeIn(errs, domain.BPMNErrInvalidConditionExpression) {
 		t.Errorf("a gateway's only flow still reaches the plan with its condition, so it must be checked; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateLaneNames_NamesAreDepartmentKeys(t *testing.T) {
+	lane := func(id, name string, nodes ...string) bpmncore.BPMNLane {
+		return bpmncore.BPMNLane{ID: id, Name: name, FlowNodeRefs: nodes}
+	}
+	for _, tc := range []struct {
+		name  string
+		lanes []bpmncore.BPMNLane
+		valid bool
+	}{
+		{"named lanes", []bpmncore.BPMNLane{lane("L1", "Engineering", "T1"), lane("L2", "Ops", "T2")}, true},
+		{"an unnamed lane without work", []bpmncore.BPMNLane{lane("L1", "Engineering", "T1"), lane("L2", "")}, true},
+		{"two unnamed lanes without work", []bpmncore.BPMNLane{lane("L1", "Engineering", "T1"), lane("L2", ""), lane("L3", "")}, true},
+		{"an unnamed lane holding a task", []bpmncore.BPMNLane{lane("L1", "", "T1")}, false},
+		{"a blank name holding a task", []bpmncore.BPMNLane{lane("L1", "   ", "T1")}, false},
+		{"two lanes with the same name", []bpmncore.BPMNLane{lane("L1", "Ops", "T1"), lane("L2", "Ops", "T2")}, false},
+		{"two lanes whose names differ in case", []bpmncore.BPMNLane{lane("L1", "Ops", "T1"), lane("L2", "ops", "T2")}, false},
+		{"two lanes whose names differ in surrounding space", []bpmncore.BPMNLane{lane("L1", "Ops", "T1"), lane("L2", " Ops ", "T2")}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proc := &bpmncore.BPMNProcess{}
+			proc.LaneSet.Lanes = tc.lanes
+			errs := validator.ValidateLaneNames(proc)
+			if got := hasCodeIn(errs, domain.BPMNErrInvalidLaneName); got == tc.valid {
+				t.Errorf("INVALID_LANE_NAME reported = %v, want %v; got %v", got, !tc.valid, errCodesOf(errs))
+			}
+		})
+	}
+}
+
+func TestValidateMaxDepth_CountsThePathThroughACrossEdge(t *testing.T) {
+	const chain = 1996
+	g := &bpmncore.Graph{Outgoing: map[string][]string{
+		"S": {"P"},
+		"P": {"B", "A"},
+		"A": {"B"},
+		"B": {"c0"},
+	}}
+	for i := 0; i < chain; i++ {
+		next := "End"
+		if i < chain-1 {
+			next = fmt.Sprintf("c%d", i+1)
+		}
+		g.Outgoing[fmt.Sprintf("c%d", i)] = []string{next}
+	}
+	proc := &bpmncore.BPMNProcess{StartEvents: []bpmncore.BPMNEvent{{ID: "S"}}}
+
+	errs := validator.ValidateMaxDepth(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrMaxDepthExceeded) {
+		t.Errorf("the longest path S, P, A, B, the chain and End holds %d nodes; got %v", chain+5, errCodesOf(errs))
+	}
+}
+
+func TestValidateBoundaryEvents_CancelActivityMustBeABoolean(t *testing.T) {
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"T1": {}, "BE": {}},
+		NodeType: map[string]bpmncore.FlowNodeType{"T1": bpmncore.NodeTypeUserTask},
+		Outgoing: map[string][]string{},
+	}
+	for value, valid := range map[string]bool{"": true, "true": true, "false": true, "1": true, "0": true, "False": false, "no": false, "TRUE": false} {
+		proc := &bpmncore.BPMNProcess{BoundaryEvents: []bpmncore.BPMNBoundaryEvent{
+			{ID: "BE", AttachedToRef: "T1", Timer: &bpmncore.BPMNTimerDef{Duration: "1h"}, CancelActivity: value},
+		}}
+		reported := false
+		for _, e := range validator.ValidateBoundaryEvents(proc, g, nil) {
+			reported = reported || strings.Contains(e.Message, "cancelActivity")
+		}
+		if reported == valid {
+			t.Errorf("cancelActivity=%q: reported = %v, want %v", value, reported, !valid)
+		}
+	}
+}
+
+func TestValidateDuplicateIDs_SubProcessBodiesShareTheProcessNamespace(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		UserTasks: []bpmncore.BPMNUserTask{{ID: "T1"}},
+		SubProcesses: []bpmncore.BPMNSubProcess{{
+			ID:            "SP",
+			UserTasks:     []bpmncore.BPMNUserTask{{ID: "T1"}},
+			SequenceFlows: []bpmncore.BPMNSequenceFlow{{ID: "F1"}},
+		}},
+		SequenceFlows: []bpmncore.BPMNSequenceFlow{{ID: "F1"}},
+	}
+	errs := validator.ValidateDuplicateIDs(proc)
+	ids := map[string]bool{}
+	for _, e := range errs {
+		if e.Code == domain.BPMNErrDuplicateElementID {
+			ids[e.NodeID] = true
+		}
+	}
+	if !ids["T1"] || !ids["F1"] {
+		t.Errorf("duplicate ids reported = %v, want T1 and F1: a sub-process body id equal to a process id shares its state", ids)
 	}
 }
 

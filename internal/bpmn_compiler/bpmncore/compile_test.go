@@ -443,3 +443,19 @@ func TestResolveMessageFlowName_NoneResolved(t *testing.T) {
 		t.Errorf("got %q; want empty", got)
 	}
 }
+
+func TestBuildStageDef_CancelActivityFollowsTheBooleanForms(t *testing.T) {
+	task := &BPMNUserTask{ID: "t1"}
+	for value, interrupting := range map[string]bool{"": true, "true": true, "1": true, "false": false, "0": false} {
+		proc := &BPMNProcess{BoundaryEvents: []BPMNBoundaryEvent{
+			{ID: "be", AttachedToRef: "t1", Timer: &BPMNTimerDef{Duration: "PT1H"}, CancelActivity: value},
+		}}
+		stage, err := BuildStageDef(task, map[string]StageTypeHandler{}, proc, &BPMNDefinitions{})
+		if err != nil {
+			t.Fatalf("cancelActivity=%q: %v", value, err)
+		}
+		if stage.BoundaryTimer == nil || stage.BoundaryTimer.Interrupting != interrupting {
+			t.Errorf("cancelActivity=%q: Interrupting = %v, want %v", value, stage.BoundaryTimer != nil && stage.BoundaryTimer.Interrupting, interrupting)
+		}
+	}
+}

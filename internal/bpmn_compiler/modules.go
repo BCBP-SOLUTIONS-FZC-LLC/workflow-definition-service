@@ -51,6 +51,9 @@ func (c *Compiler) ModuleCalls(ctx context.Context, bpmnXML string) ([]domain.Mo
 			}
 		}
 	}
+	if len(calls) > 0 {
+		issues = append(issues, scanRejected(bpmnXML)...)
+	}
 	return calls, issues, nil
 }
 
