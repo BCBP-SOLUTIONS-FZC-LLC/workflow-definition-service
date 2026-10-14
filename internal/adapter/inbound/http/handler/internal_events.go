@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -47,6 +48,14 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 		return
 	}
 
+	if env.SchemaID != "" {
+		decoded, ok := h.decodeSchemaRegistryPayload(c, env)
+		if !ok {
+			return
+		}
+		env.Payload = decoded
+	}
+
 	switch env.Type {
 	case eventDepartmentMembershipRevoked:
 		h.handleDepartmentMembershipRevoked(c, env)
@@ -55,6 +64,27 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 	default:
 		h.acknowledgeUnknownEventType(c, env.Type)
 	}
+}
+
+func (h *Handler) decodeSchemaRegistryPayload(c *gin.Context, env events.Envelope[json.RawMessage]) (json.RawMessage, bool) {
+	fail := func(detail string) (json.RawMessage, bool) {
+		observability.IncCounterVec(observability.InternalEventsIngestTotal, env.Type, "decode_failed")
+		writeProblem(c, http.StatusBadGateway, CodeEventDecodeFailed, detail, nil)
+		return nil, false
+	}
+	var b64 string
+	if err := json.Unmarshal(env.Payload, &b64); err != nil {
+		return fail("schema-registry payload is not a base64 JSON string")
+	}
+	framed, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return fail("schema-registry payload base64 decode failed")
+	}
+	decoded, err := events.GlueDecodeCodec{}.Decode(c.Request.Context(), env.SchemaID, framed)
+	if err != nil {
+		return fail("schema-registry payload decode failed")
+	}
+	return decoded, true
 }
 
 func (h *Handler) acknowledgeUnknownEventType(c *gin.Context, eventType string) {

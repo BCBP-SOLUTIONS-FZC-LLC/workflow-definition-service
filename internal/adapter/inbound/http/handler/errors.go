@@ -42,6 +42,7 @@ const (
 	CodeUnsupportedMediaType ErrCode = "UNSUPPORTED_MEDIA_TYPE"
 	CodeInternal             ErrCode = "INTERNAL_ERROR"
 	CodeInvalidInput         ErrCode = "INVALID_INPUT"
+	CodeEventDecodeFailed    ErrCode = "EVENT_DECODE_FAILED"
 )
 
 type invalidParam struct {
@@ -73,6 +74,7 @@ var problemTypes = map[int]string{
 	http.StatusUnsupportedMediaType:  errBase + "unsupported-media-type",
 	http.StatusInternalServerError:   errBase + "internal-error",
 	http.StatusServiceUnavailable:    errBase + "service-unavailable",
+	http.StatusBadGateway:            errBase + "bad-gateway",
 	http.StatusNotImplemented:        errBase + "not-implemented",
 }
 
@@ -101,6 +103,7 @@ var codeTitles = map[ErrCode]string{
 	CodeUnsupportedMediaType: "Unsupported Media Type",
 	CodeInternal:             "Internal Server Error",
 	CodeInvalidInput:         "Invalid Input",
+	CodeEventDecodeFailed:    "Event Decode Failed",
 }
 
 func writeProblem(c *gin.Context, status int, code ErrCode, detail string, params []invalidParam) {

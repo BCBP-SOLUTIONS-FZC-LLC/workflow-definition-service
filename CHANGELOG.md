@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+### Fixed
+
+- A membership event published through a schema registry (a `dataschema` on the envelope and a base64 string of a registry-framed payload in `data`) was answered `400` and never reached the revocation handler. The ingest now decodes the frame with `events.GlueDecodeCodec` and answers `502 EVENT_DECODE_FAILED` for a payload it cannot decode. The internal spec declares `dataschema`, the string form of `data` and the `502`.
+
 ### Changed
 
 - Docs follow the code: the internal events path is `/api/v1/internal/events` everywhere, `/metrics` is on the metrics port, the public spec's production server URL has no second `/v1`, `x-tenant-roles` is optional on reads, and the AsyncAPI page says events are received over HTTP, not published to an SNS topic.

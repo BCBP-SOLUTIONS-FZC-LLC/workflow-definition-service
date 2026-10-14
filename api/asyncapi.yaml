@@ -34,8 +34,10 @@ operations:
       A revocation invalidates every workflow version whose default-assignee
       node targets the revoked user, and pauses the user's active tasks in
       Execution. A redelivery reprocesses and converges on the same state.
-      2xx means handled, 400 means malformed (not retried), 500 means
-      transient (retried).
+      2xx means handled, 400 means malformed (not retried), 500 and 502
+      mean transient (retried). A message that carries a dataschema holds a
+      schema-registry framed payload, which the service decodes first; 502
+      means that frame could not be decoded.
 
 components:
   messages:

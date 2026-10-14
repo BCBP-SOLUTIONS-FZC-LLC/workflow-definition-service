@@ -3,6 +3,7 @@ package contract_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -112,6 +113,17 @@ func runExchanges(t *testing.T, spec *contract.Spec, router http.Handler, cases 
 	}
 }
 
+func registryEnvelope(typ, tenant, framed string) string {
+	return `{"id":"` + uuid.NewString() + `","type":"` + typ + `","source":"iam","specversion":"1.0",` +
+		`"tenant_id":"` + tenant + `","time":"` + time.Now().UTC().Format(time.RFC3339) + `",` +
+		`"dataschema":"` + uuid.NewString() + `","data":"` + framed + `"}`
+}
+
+func glueFramed(payload string) string {
+	id := uuid.New()
+	return base64.StdEncoding.EncodeToString(append(append([]byte{0x03, 0x00}, id[:]...), payload...))
+}
+
 func TestInternalContract_Events(t *testing.T) {
 	spec := contract.Load(t, internalSpec)
 	tenant, user, dept := uuid.NewString(), uuid.NewString(), uuid.NewString()
@@ -122,6 +134,8 @@ func TestInternalContract_Events(t *testing.T) {
 	runExchanges(t, spec, ok, []exchange{
 		{"department revoked", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", tenant, user, dept), token, http.StatusOK, true},
 		{"tenant membership revoked", http.MethodPost, eventsPath, envelope("MembershipRevoked", tenant, user, ""), token, http.StatusOK, true},
+		{"schema-registry payload", http.MethodPost, eventsPath, registryEnvelope("MembershipRevoked", tenant, glueFramed(`{"user_id":"`+user+`"}`)), token, http.StatusOK, true},
+		{"undecodable schema-registry payload", http.MethodPost, eventsPath, registryEnvelope("MembershipRevoked", tenant, "bm90LWEtZnJhbWU="), token, http.StatusBadGateway, true},
 		{"unhandled type", http.MethodPost, eventsPath, envelope("UserDeleted", tenant, user, ""), token, http.StatusOK, true},
 		{"not json", http.MethodPost, eventsPath, `{`, token, http.StatusBadRequest, false},
 		{"bad user id", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", tenant, "x", dept), token, http.StatusBadRequest, true},
