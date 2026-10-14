@@ -2161,7 +2161,7 @@ paths:
       summary: List the connector type registry
       description: >
         Static metadata for every registered connector type (currently storage,
-        send-email, rest-call, chat-notify) — field definitions for the modeler
+        send-email, rest-call) — field definitions for the modeler
         UI's connector-task configuration form.
       tags: [Connectors]
       security:

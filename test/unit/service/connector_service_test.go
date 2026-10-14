@@ -283,3 +283,17 @@ func TestConnectorService_Registry(t *testing.T) {
 	defs := svc.Registry(context.Background())
 	assert.NotEmpty(t, defs)
 }
+
+func TestConnectorService_Registry_OmitsChatNotify(t *testing.T) {
+	svc := service.NewConnectorService(service.ConnectorDeps{})
+	assert.NotContains(t, svc.Registry(context.Background()), "chat-notify")
+}
+
+func TestConnectorService_WriteCredential_ChatNotifyIsRefused(t *testing.T) {
+	secrets := &fakeSecretsClient{}
+	svc := service.NewConnectorService(service.ConnectorDeps{Secrets: secrets})
+
+	_, err := svc.WriteCredential(context.Background(), uuid.New(), uuid.New(), "chat-notify", "token", "x")
+	require.ErrorIs(t, err, domain.ErrInvalidConnectorCredentialInput)
+	assert.Empty(t, secrets.written)
+}

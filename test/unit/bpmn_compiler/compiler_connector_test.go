@@ -261,3 +261,26 @@ func TestCompile_ConnectorInputTargetingAnOrdinaryField_Compiles(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 }
+
+func TestValidate_ChatNotifyConnector_WarnsAsUnknown(t *testing.T) {
+	bpmn := compilableBPMN(`
+    <bpmn:startEvent id="StartEvent_1"><bpmn:outgoing>Flow_1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:serviceTask id="Task_1" name="Notify">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="connector:chat-notify"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndEvent_1"><bpmn:incoming>Flow_2</bpmn:incoming></bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Task_1"/>
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_1" targetRef="EndEvent_1"/>`, "")
+
+	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmn)
+	if err != nil {
+		t.Fatalf("Validate() unexpected error: %v", err)
+	}
+	if !hasCode(errs, domain.BPMNWarnUnknownConnectorType) {
+		t.Errorf("expected UNKNOWN_CONNECTOR_TYPE warning; got %v", errCodes(errs))
+	}
+}
