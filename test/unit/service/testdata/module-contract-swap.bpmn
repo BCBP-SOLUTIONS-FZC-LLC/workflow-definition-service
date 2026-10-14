@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A library module that calls Process_Pair with its lanes bound crosswise
+     through Depts, for the module-contract read: see module_contract_test.go. -->
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_Swap" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_Swap" name="Swap" isExecutable="true">
+    <bpmn:laneSet id="Swap_LaneSet">
+      <bpmn:lane id="Lane_First" name="First">
+        <bpmn:flowNodeRef>Swap_Start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Swap_Call</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Swap_End</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Second" name="Second">
+        <bpmn:flowNodeRef>Swap_Task</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Swap_Start"/>
+    <bpmn:userTask id="Swap_Task" name="Prepare">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="L1"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:callActivity id="Swap_Call" name="Hand over crosswise">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="Process_Pair"/>
+        <zeebe:ioMapping><zeebe:input source='{"Sender":"Second","Receiver":"First"}' target="Depts"/></zeebe:ioMapping>
+      </bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:endEvent id="Swap_End"/>
+    <bpmn:sequenceFlow id="Swap_F1" sourceRef="Swap_Start" targetRef="Swap_Task"/>
+    <bpmn:sequenceFlow id="Swap_F2" sourceRef="Swap_Task" targetRef="Swap_Call"/>
+    <bpmn:sequenceFlow id="Swap_F3" sourceRef="Swap_Call" targetRef="Swap_End"/>
+  </bpmn:process>
+</bpmn:definitions>

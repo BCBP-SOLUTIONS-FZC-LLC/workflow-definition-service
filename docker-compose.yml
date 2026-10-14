@@ -1,17 +1,19 @@
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18-alpine
     container_name: wf-definition-postgres
     environment:
-      POSTGRES_USER: wfdef
-      POSTGRES_PASSWORD: wfdef
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
       POSTGRES_DB: workflow_definition
+      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wfdef -d workflow_definition"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d workflow_definition"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -23,6 +25,37 @@ services:
       - "6379:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgbouncer:
+    image: edoburu/pgbouncer:1.17.0
+    container_name: wf-definition-pgbouncer
+    environment:
+      # Local dev values — single service only.
+      # Production: MAX_CLIENT_CONN >= sum(PG_MAX_CONNS * pod_count) across all services;
+      # DEFAULT_POOL_SIZE = total Postgres backend connections budget for this (user, db) pair.
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: workflow_definition
+      DB_USER: workflow_definition_app
+      DB_PASSWORD: devpassword
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "20"
+      DEFAULT_POOL_SIZE: "10"
+      MIN_POOL_SIZE: "1"
+      LISTEN_PORT: "6432"
+      AUTH_TYPE: trust
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits
+      SERVER_RESET_QUERY: ""
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U workflow_definition_app"]
       interval: 5s
       timeout: 5s
       retries: 10

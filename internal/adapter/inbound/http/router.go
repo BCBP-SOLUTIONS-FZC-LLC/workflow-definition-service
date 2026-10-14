@@ -1,0 +1,198 @@
+package http
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
+	httpmiddleware "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/middleware"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+)
+
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
+type DBHealth struct {
+	Healthy       bool
+	Utilization   float64
+	AcquiredConns int32
+	MaxConns      int32
+}
+
+type DBPinger interface {
+	Health(ctx context.Context) DBHealth
+}
+
+type RouterConfig struct {
+	GinConfig        gincommon.Config
+	AppEnv           string
+	InternalAPIToken string
+	Log              port.Logger
+
+	Handler *handler.Handler
+
+	DB    DBPinger
+	Cache Pinger
+}
+
+const RequestTimeout = 30 * time.Second
+
+type Router struct {
+	engine   *gin.Engine
+	draining *atomic.Bool
+}
+
+func (r *Router) BeginDrain() { r.draining.Store(true) }
+
+func (r *Router) Handler() http.Handler { return r.engine }
+
+func NewRouter(cfg RouterConfig) *Router {
+	if cfg.AppEnv != "dev" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	h := cfg.Handler
+
+	r := gin.New()
+	r.MaxMultipartMemory = 10 << 20
+
+	cfg.GinConfig.RequestTimeout = RequestTimeout
+	for _, mw := range gincommon.ObservabilityMiddlewares(cfg.GinConfig) {
+		r.Use(mw)
+	}
+
+	r.GET("/healthz", gincommon.HealthHandler())
+	draining := &atomic.Bool{}
+	r.GET("/readyz", readyzHandler(cfg.DB, cfg.Cache, draining))
+
+	if cfg.AppEnv == "dev" {
+		r.StaticFile("/api/openapi.yaml", "docs/swagger/openapi.yaml")
+		r.StaticFile("/api/internal-openapi.yaml", "api/internal-openapi.yaml")
+		stdSwagger := ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.URL("/api/openapi.yaml"))
+		r.GET("/swagger/*any", func(c *gin.Context) {
+			switch {
+			case strings.HasSuffix(c.Request.URL.Path, "/index.css"):
+				SwaggerThemeHandler(c)
+			case strings.HasSuffix(c.Request.URL.Path, "/swagger-initializer.js"):
+				SwaggerInitializerHandler(c)
+			default:
+				stdSwagger(c)
+			}
+		})
+		r.GET("/asyncapi", AsyncAPIHandler)
+	}
+
+	internal := r.Group("/api/v1/internal")
+	internal.Use(httpmiddleware.RequireInternalToken(cfg.InternalAPIToken))
+	internal.Use(httpmiddleware.LimitRequestBody())
+	RegisterInternalRoutes(internal, h)
+
+	api := r.Group("/api/v1")
+	for _, mw := range gincommon.ProtectedMiddlewares(cfg.GinConfig) {
+		api.Use(mw)
+	}
+	api.Use(httpmiddleware.RequireIdentity(cfg.Log))
+	api.Use(httpmiddleware.LimitRequestBody())
+	api.Use(httpmiddleware.RequireJSONContentType())
+
+	RegisterAPIRoutes(api, h)
+
+	return &Router{engine: r, draining: draining}
+}
+
+func RegisterInternalRoutes(internal gin.IRoutes, h *handler.Handler) {
+	internal.POST("/events", h.HandleInternalEvent)
+	internal.GET("/workflow-versions/:version_id/compiled-plan", h.GetCompiledPlan)
+	internal.GET("/connector-aliases", h.ListConnectorAliases)
+	internal.POST("/connector-aliases/rest", h.WriteConnectorRestAlias)
+	internal.DELETE("/connector-aliases/rest/:alias", h.DeleteConnectorRestAlias)
+}
+
+func RegisterAPIRoutes(api *gin.RouterGroup, h *handler.Handler) {
+	idem := h.Idempotent
+
+	wf := api.Group("/workflows")
+	wf.GET("", h.ListWorkflows)
+	wf.POST("", idem(h.CreateWorkflow))
+	wf.POST("/validate", h.ValidateBPMN)
+	wf.GET("/:id", h.GetWorkflow)
+	wf.POST("/:id/archive", idem(h.ArchiveWorkflow))
+
+	draft := wf.Group("/:id/draft")
+	draft.GET("", h.GetDraft)
+	draft.POST("", idem(h.InitDraft))
+	draft.PUT("", idem(h.UpdateDraft))
+	draft.DELETE("", idem(h.DiscardDraft))
+
+	ver := wf.Group("/:id/versions")
+	ver.GET("", h.ListVersions)
+	ver.GET("/:version_id", h.GetVersion)
+	ver.POST("/:version_id/publish", idem(h.PublishVersion))
+	ver.POST("/:version_id/clone", idem(h.CloneVersion))
+	ver.POST("/:version_id/promote", idem(h.PromoteVersion))
+	ver.GET("/:version_id/validation", h.GetVersionValidation)
+	ver.GET("/:version_id/nodes", h.GetVersionNodes)
+	ver.GET("/:version_id/export", h.ExportBPMN)
+	ver.GET("/:version_id/diff/:target_version_id", h.GetVersionDiff)
+
+	conn := api.Group("/connectors")
+	conn.GET("/registry", h.ListConnectorRegistry)
+	conn.POST("/credentials", idem(h.WriteConnectorCredential))
+	conn.DELETE("/credentials/:connector_type/:field_name", h.RevokeConnectorCredential)
+
+	api.GET("/bpmn/allowed-elements", h.AllowedBPMNElements)
+
+	mod := api.Group("/modules")
+	mod.GET("", h.ListModules)
+	mod.POST("", idem(h.CreateModule))
+	mod.GET("/:id", h.GetModule)
+	mod.GET("/:id/usages", h.ListModuleUsages)
+	mod.GET("/:id/versions", h.ListModuleVersions)
+	mod.GET("/:id/versions/:version_id", h.GetModuleVersion)
+	mod.GET("/:id/versions/:version_id/contract", h.GetModuleContract)
+	mod.POST("/:id/versions", idem(h.AddModuleVersion))
+	mod.POST("/:id/versions/:version_id/publish", idem(h.PublishModuleVersion))
+	mod.DELETE("/:id", idem(h.ArchiveModule))
+
+	starters := api.Group("/starters")
+	starters.GET("", h.ListStarters)
+	starters.POST("", idem(h.CreateStarter))
+	starters.POST("/from-workflow-version/:version_id", idem(h.CreateStarterFromWorkflowVersion))
+	starters.GET("/:id", h.GetStarter)
+	starters.DELETE("/:id", idem(h.DeleteStarter))
+}
+
+func readyzHandler(db DBPinger, cache Pinger, draining *atomic.Bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if draining.Load() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "draining"})
+			return
+		}
+		hs := db.Health(c.Request.Context())
+		if !hs.Healthy {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable", "db": "unreachable"})
+			return
+		}
+		cacheState := "ok"
+		if err := cache.Ping(c.Request.Context()); err != nil {
+			cacheState = "degraded"
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"status":         "OK",
+			"cache":          cacheState,
+			"db_utilization": hs.Utilization,
+			"db_conns":       hs.AcquiredConns,
+			"db_max_conns":   hs.MaxConns,
+		})
+	}
+}

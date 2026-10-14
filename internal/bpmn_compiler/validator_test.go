@@ -1,0 +1,1029 @@
+package bpmn_compiler
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/validator"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+)
+
+func TestValidateCounts_MultipleEndEventsAllowed(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		StartEvents: []bpmncore.BPMNEvent{{ID: "S1"}},
+		EndEvents:   []bpmncore.BPMNEvent{{ID: "E1"}, {ID: "E2"}, {ID: "E3"}},
+	}
+	errs := validator.ValidateCounts(proc, "")
+	if hasCodeIn(errs, domain.BPMNErrMultipleEndEvents) {
+		t.Errorf("multiple end events should be valid; got MULTIPLE_END_EVENTS error")
+	}
+}
+
+func TestValidateCounts_LaneLimitExceeded(t *testing.T) {
+	lanes := make([]bpmncore.BPMNLane, validator.MaxLanes+1)
+	for i := range lanes {
+		lanes[i] = bpmncore.BPMNLane{ID: "lane", Name: "lane"}
+	}
+	proc := &bpmncore.BPMNProcess{
+		StartEvents: []bpmncore.BPMNEvent{{ID: "S1"}},
+		EndEvents:   []bpmncore.BPMNEvent{{ID: "E1"}},
+		LaneSet:     bpmncore.BPMNLaneSet{Lanes: lanes},
+	}
+	errs := validator.ValidateCounts(proc, "")
+	if !hasCodeIn(errs, domain.BPMNErrLaneLimitExceeded) {
+		t.Errorf("expected LANE_LIMIT_EXCEEDED; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateCounts_TaskLimitExceeded(t *testing.T) {
+	tasks := make([]bpmncore.BPMNUserTask, validator.MaxUserTasks+1)
+	proc := &bpmncore.BPMNProcess{
+		StartEvents: []bpmncore.BPMNEvent{{ID: "S1"}},
+		EndEvents:   []bpmncore.BPMNEvent{{ID: "E1"}},
+		UserTasks:   tasks,
+	}
+	errs := validator.ValidateCounts(proc, "")
+	if !hasCodeIn(errs, domain.BPMNErrTaskLimitExceeded) {
+		t.Errorf("expected TASK_LIMIT_EXCEEDED; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateSeqFlowRefs_InvalidSourceRef(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		SequenceFlows: []bpmncore.BPMNSequenceFlow{
+			{ID: "F1", SourceRef: "ghost-node", TargetRef: "S1"},
+		},
+	}
+	g := &bpmncore.Graph{
+		NodeIDs: map[string]struct{}{"S1": {}},
+	}
+	errs := validator.ValidateSeqFlowRefs(proc, g)
+	if !hasCodeIn(errs, domain.BPMNErrInvalidSequenceFlowRef) {
+		t.Errorf("expected INVALID_SEQUENCE_FLOW_REF for invalid sourceRef; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateSeqFlowRefs_InvalidTargetRef(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		SequenceFlows: []bpmncore.BPMNSequenceFlow{
+			{ID: "F1", SourceRef: "S1", TargetRef: "ghost-node"},
+		},
+	}
+	g := &bpmncore.Graph{
+		NodeIDs: map[string]struct{}{"S1": {}},
+	}
+	errs := validator.ValidateSeqFlowRefs(proc, g)
+	if !hasCodeIn(errs, domain.BPMNErrInvalidSequenceFlowRef) {
+		t.Errorf("expected INVALID_SEQUENCE_FLOW_REF for invalid targetRef; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateTaskExtensions_MissingTaskDefinition(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{
+			{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}},
+		}},
+		UserTasks: []bpmncore.BPMNUserTask{
+			{ID: "T1", ExtensionElements: bpmncore.BPMNExtensionElements{
+				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "preparer"},
+			}},
+		},
+	}
+	errs := validator.ValidateTaskExtensions(proc, defaultStageTypes())
+	if !hasCodeIn(errs, domain.BPMNErrMissingTaskDefinition) {
+		t.Errorf("expected MISSING_TASK_DEFINITION; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateTaskExtensions_UnknownStageType(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{
+			{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}},
+		}},
+		UserTasks: []bpmncore.BPMNUserTask{
+			{ID: "T1", ExtensionElements: bpmncore.BPMNExtensionElements{
+				TaskDefinition:       &bpmncore.ZeebeTaskDefinition{Type: "audit"},
+				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "auditor"},
+			}},
+		},
+	}
+	errs := validator.ValidateTaskExtensions(proc, defaultStageTypes())
+	if !hasCodeIn(errs, domain.BPMNWarnUnknownStageType) {
+		t.Errorf("expected UNKNOWN_STAGE_TYPE warning; got %v", errCodesOf(errs))
+	}
+	// Must be a warning, not an error.
+	for _, e := range errs {
+		if e.Code == domain.BPMNWarnUnknownStageType && e.Severity != domain.SeverityWarning {
+			t.Errorf("expected warning severity for UNKNOWN_STAGE_TYPE, got %q", e.Severity)
+		}
+	}
+}
+
+func TestValidateTaskExtensions_MissingAssignmentDefinition(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{
+			{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}},
+		}},
+		UserTasks: []bpmncore.BPMNUserTask{
+			{ID: "T1", ExtensionElements: bpmncore.BPMNExtensionElements{
+				TaskDefinition: &bpmncore.ZeebeTaskDefinition{Type: "prep"},
+			}},
+		},
+	}
+	errs := validator.ValidateTaskExtensions(proc, defaultStageTypes())
+	if !hasCodeIn(errs, domain.BPMNErrMissingAssignmentDefinition) {
+		t.Errorf("expected MISSING_ASSIGNMENT_DEFINITION; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateTaskExtensions_CandidateGroupsTooLong(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{
+			{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}},
+		}},
+		UserTasks: []bpmncore.BPMNUserTask{
+			{ID: "T1", ExtensionElements: bpmncore.BPMNExtensionElements{
+				TaskDefinition: &bpmncore.ZeebeTaskDefinition{Type: "prep"},
+				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{
+					CandidateGroups: strings.Repeat("x", validator.MaxRoleLen+1),
+					CandidateUsers:  aliceUUID,
+				},
+			}},
+		},
+	}
+	errs := validator.ValidateTaskExtensions(proc, defaultStageTypes())
+	if !hasCodeIn(errs, domain.BPMNErrCandidateGroupsEmpty) {
+		t.Errorf("expected CANDIDATE_GROUPS_EMPTY for over-long candidateGroups; got %v", errCodesOf(errs))
+	}
+}
+
+// The end-to-end path is covered by TestValidate_ExtensionElementRules in
+// test/unit/bpmn_compiler; this pins the rule itself.
+func TestValidateDefaultAssignee_CandidateUsersEmpty(t *testing.T) {
+	tests := []struct {
+		name           string
+		candidateUsers string
+	}{
+		{name: "absent", candidateUsers: ""},
+		{name: "whitespace only", candidateUsers: "   "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ext := bpmncore.BPMNExtensionElements{
+				TaskDefinition: &bpmncore.ZeebeTaskDefinition{Type: "prep"},
+				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{
+					CandidateGroups: "preparer",
+					CandidateUsers:  tt.candidateUsers,
+				},
+			}
+			errs := validator.ValidateDefaultAssignee("T1", ext)
+			if !hasCodeIn(errs, domain.BPMNErrCandidateUsersEmpty) {
+				t.Errorf("expected CANDIDATE_USERS_EMPTY for a userTask naming a role but nobody; got %v", errCodesOf(errs))
+			}
+		})
+	}
+}
+
+func TestValidateDefaultAssignee_NamedAssigneePasses(t *testing.T) {
+	ext := bpmncore.BPMNExtensionElements{
+		AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{
+			CandidateGroups: "preparer", CandidateUsers: aliceUUID,
+		},
+	}
+	if errs := validator.ValidateDefaultAssignee("T1", ext); len(errs) != 0 {
+		t.Errorf("a named assignee must pass; got %v", errCodesOf(errs))
+	}
+}
+
+// A message task carrying an assignmentDefinition still needs no default
+// assignee: the interpreter resolves it through the message buffer and creates
+// no task, so requiring one would reject a legal plan.
+func TestValidateOptionalAssignment_NoDefaultAssigneeRequired(t *testing.T) {
+	ext := bpmncore.BPMNExtensionElements{
+		AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "preparer"},
+	}
+	if errs := validator.ValidateOptionalAssignment("T1", ext); hasCodeIn(errs, domain.BPMNErrCandidateUsersEmpty) {
+		t.Errorf("sendTask/receiveTask must not require candidateUsers; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateDefaultAssignee_NoAssignmentDefinitionIsOtherRulesConcern(t *testing.T) {
+	if errs := validator.ValidateDefaultAssignee("T1", bpmncore.BPMNExtensionElements{}); len(errs) != 0 {
+		t.Errorf("a missing assignmentDefinition is MISSING_ASSIGNMENT_DEFINITION's to report; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateTaskExtensions_InvalidCandidateUser(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{
+			{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}},
+		}},
+		UserTasks: []bpmncore.BPMNUserTask{
+			{ID: "T1", ExtensionElements: bpmncore.BPMNExtensionElements{
+				TaskDefinition: &bpmncore.ZeebeTaskDefinition{Type: "prep"},
+				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{
+					CandidateGroups: "preparer",
+					CandidateUsers:  "not-a-uuid",
+				},
+			}},
+		},
+	}
+	errs := validator.ValidateTaskExtensions(proc, defaultStageTypes())
+	if !hasCodeIn(errs, domain.BPMNErrInvalidCandidateUser) {
+		t.Errorf("expected INVALID_CANDIDATE_USER; got %v", errCodesOf(errs))
+	}
+}
+
+// TestValidateTaskExtensions_CandidateUserMustBeAUUIDv7 pins validate to the
+// rule publish enforces: IAM user ids are UUID v7, so a v4 id is refused here
+// rather than at publish as ASSIGNEE_INELIGIBLE.
+func TestValidateTaskExtensions_CandidateUserMustBeAUUIDv7(t *testing.T) {
+	for id, want := range map[string]bool{
+		"9b2e4f1a-3c5d-4e6f-8a7b-1c2d3e4f5a6b": true,
+		"018f2d3c-0000-7000-8000-0000000000b2": false,
+	} {
+		proc := &bpmncore.BPMNProcess{
+			LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}}}},
+			UserTasks: []bpmncore.BPMNUserTask{{ID: "T1", ExtensionElements: bpmncore.BPMNExtensionElements{
+				TaskDefinition:       &bpmncore.ZeebeTaskDefinition{Type: "prep"},
+				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "preparer", CandidateUsers: id},
+			}}},
+		}
+		if got := hasCodeIn(validator.ValidateTaskExtensions(proc, defaultStageTypes()), domain.BPMNErrInvalidCandidateUser); got != want {
+			t.Errorf("candidateUsers %s: INVALID_CANDIDATE_USER = %v, want %v", id, got, want)
+		}
+	}
+}
+
+func TestValidateLaneMembership_TaskNotInLane(t *testing.T) {
+	refs := map[string]struct{}{"T1": {}, "T2": {}}
+	errs := validator.ValidateLaneMembership("T3", refs)
+	if !hasCodeIn(errs, domain.BPMNErrTaskNotInLane) {
+		t.Errorf("expected TASK_NOT_IN_LANE; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateLaneMembership_TaskInLane(t *testing.T) {
+	refs := map[string]struct{}{"T1": {}}
+	if errs := validator.ValidateLaneMembership("T1", refs); len(errs) != 0 {
+		t.Errorf("expected no errors for task in lane; got %v", errs)
+	}
+}
+
+func TestValidateDeptID(t *testing.T) {
+	tests := []struct {
+		name     string
+		lanes    []bpmncore.BPMNLane
+		taskID   string
+		wantCode domain.BPMNErrorCode
+		wantErr  bool
+	}{
+		{
+			name:    "no lane at all — not this validator's concern",
+			lanes:   nil,
+			taskID:  "T1",
+			wantErr: false,
+		},
+		{
+			name: "lane with no dept_id property",
+			lanes: []bpmncore.BPMNLane{
+				{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}},
+			},
+			taskID:   "T1",
+			wantCode: domain.BPMNErrMissingDeptID,
+			wantErr:  true,
+		},
+		{
+			name: "lane with empty-string dept_id property",
+			lanes: []bpmncore.BPMNLane{
+				{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}, ExtensionElements: bpmncore.BPMNExtensionElements{
+					ZeebeProps: bpmncore.BPMNZeebeProperties{Items: []bpmncore.ZeebeProperty{{Name: "dept_id", Value: ""}}},
+				}},
+			},
+			taskID:   "T1",
+			wantCode: domain.BPMNErrMissingDeptID,
+			wantErr:  true,
+		},
+		{
+			name: "lane with invalid-format dept_id",
+			lanes: []bpmncore.BPMNLane{
+				{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}, ExtensionElements: bpmncore.BPMNExtensionElements{
+					ZeebeProps: bpmncore.BPMNZeebeProperties{Items: []bpmncore.ZeebeProperty{{Name: "dept_id", Value: "not-a-uuid"}}},
+				}},
+			},
+			taskID:   "T1",
+			wantCode: domain.BPMNErrInvalidDeptID,
+			wantErr:  true,
+		},
+		{
+			name: "lane with valid dept_id",
+			lanes: []bpmncore.BPMNLane{
+				{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}, ExtensionElements: bpmncore.BPMNExtensionElements{
+					ZeebeProps: bpmncore.BPMNZeebeProperties{Items: []bpmncore.ZeebeProperty{{Name: "dept_id", Value: "018e1f2a-0000-7000-8000-000000000099"}}},
+				}},
+			},
+			taskID:  "T1",
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			proc := &bpmncore.BPMNProcess{LaneSet: bpmncore.BPMNLaneSet{Lanes: tt.lanes}}
+			errs := validator.ValidateDeptID(tt.taskID, proc, nil)
+			if tt.wantErr != (len(errs) != 0) {
+				t.Fatalf("expected error=%v; got %v", tt.wantErr, errs)
+			}
+			if tt.wantErr && !hasCodeIn(errs, tt.wantCode) {
+				t.Errorf("expected %s; got %v", tt.wantCode, errCodesOf(errs))
+			}
+		})
+	}
+}
+
+func TestBuildLaneRefSet(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{
+			{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1", "S1"}},
+			{ID: "L2", Name: "QA", FlowNodeRefs: []string{"T2"}},
+		}},
+	}
+	refs := bpmncore.BuildLaneRefSet(proc)
+	for _, id := range []string{"T1", "S1", "T2"} {
+		if _, ok := refs[id]; !ok {
+			t.Errorf("expected %q in lane ref set", id)
+		}
+	}
+	if _, ok := refs["ghost"]; ok {
+		t.Error("ghost should not be in lane ref set")
+	}
+}
+
+func TestValidateGatewayMatching_ExclusiveAllBranchesTerminate_Valid(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		ExclusiveGateways: []bpmncore.BPMNGateway{{ID: "GW_split"}},
+	}
+	g := &bpmncore.Graph{
+		Outgoing: map[string][]string{
+			"GW_split": {"TaskA", "TaskB"},
+			"TaskA":    {"End1"},
+			"TaskB":    {"End2"},
+		},
+		Incoming: map[string][]string{
+			"TaskA": {"GW_split"},
+			"TaskB": {"GW_split"},
+			"End1":  {"TaskA"},
+			"End2":  {"TaskB"},
+		},
+		NodeType: map[string]bpmncore.FlowNodeType{
+			"GW_split": bpmncore.NodeTypeExclusiveGateway,
+			"TaskA":    bpmncore.NodeTypeUserTask,
+			"TaskB":    bpmncore.NodeTypeUserTask,
+			"End1":     bpmncore.NodeTypeEndEvent,
+			"End2":     bpmncore.NodeTypeEndEvent,
+		},
+	}
+	errs := validator.ValidateGatewayMatching(proc, g, nil)
+	if hasCodeIn(errs, domain.BPMNErrUnmatchedGateway) {
+		t.Errorf("expected no UNMATCHED_GATEWAY when all XOR branches terminate; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateGatewayMatching_ExclusiveNoJoinNonTerminating(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		ExclusiveGateways: []bpmncore.BPMNGateway{{ID: "GW_split"}},
+	}
+	g := &bpmncore.Graph{
+		Outgoing: map[string][]string{
+			"GW_split": {"TaskA", "TaskB"},
+			"TaskA":    {"TaskC"},
+			"TaskB":    {"TaskD"},
+			"TaskC":    {},
+			"TaskD":    {},
+		},
+		Incoming: map[string][]string{
+			"TaskA": {"GW_split"},
+			"TaskB": {"GW_split"},
+			"TaskC": {"TaskA"},
+			"TaskD": {"TaskB"},
+		},
+		NodeType: map[string]bpmncore.FlowNodeType{
+			"GW_split": bpmncore.NodeTypeExclusiveGateway,
+			"TaskA":    bpmncore.NodeTypeUserTask,
+			"TaskB":    bpmncore.NodeTypeUserTask,
+			"TaskC":    bpmncore.NodeTypeUserTask,
+			"TaskD":    bpmncore.NodeTypeUserTask,
+		},
+	}
+	errs := validator.ValidateGatewayMatching(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrUnmatchedGateway) {
+		t.Errorf("expected UNMATCHED_GATEWAY when XOR branches don't terminate or rejoin; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateGatewayMatching_ParallelNoJoin(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		ParallelGateways: []bpmncore.BPMNGateway{{ID: "GW_split"}},
+	}
+	g := &bpmncore.Graph{
+		Outgoing: map[string][]string{
+			"GW_split": {"TaskA", "TaskB"},
+			"TaskA":    {"End1"},
+			"TaskB":    {"End2"},
+		},
+		Incoming: map[string][]string{
+			"TaskA": {"GW_split"},
+			"TaskB": {"GW_split"},
+			"End1":  {"TaskA"},
+			"End2":  {"TaskB"},
+		},
+		NodeType: map[string]bpmncore.FlowNodeType{
+			"GW_split": bpmncore.NodeTypeParallelGateway,
+		},
+	}
+	errs := validator.ValidateGatewayMatching(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrUnmatchedGateway) {
+		t.Errorf("expected UNMATCHED_GATEWAY for parallel split; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateGatewayMatching_BranchBypassesJoin(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		ParallelGateways: []bpmncore.BPMNGateway{{ID: "GW_split"}},
+	}
+	g := &bpmncore.Graph{
+		Outgoing: map[string][]string{
+			"GW_split": {"A", "B"},
+			"A":        {"J1"},
+			"C":        {"J1"},
+			"B":        {"End"},
+		},
+		Incoming: map[string][]string{
+			"A":   {"GW_split"},
+			"B":   {"GW_split"},
+			"J1":  {"A", "C"},
+			"End": {"B"},
+		},
+		NodeType: map[string]bpmncore.FlowNodeType{
+			"GW_split": bpmncore.NodeTypeParallelGateway,
+		},
+	}
+	errs := validator.ValidateGatewayMatching(proc, g, map[[2]string]bool{})
+	if !hasCodeIn(errs, domain.BPMNErrUnmatchedGateway) {
+		t.Errorf("expected UNMATCHED_GATEWAY for non-reconverging branch; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateConditionExprs_TooLong(t *testing.T) {
+	longExpr := strings.Repeat("x", validator.MaxCondExpr+1)
+	proc := &bpmncore.BPMNProcess{
+		SequenceFlows: []bpmncore.BPMNSequenceFlow{
+			{ID: "F1", SourceRef: "GW_split", TargetRef: "TaskA", ConditionExpression: longExpr},
+		},
+	}
+	g := &bpmncore.Graph{
+		Outgoing: map[string][]string{"GW_split": {"TaskA", "TaskB"}},
+	}
+	errs := validator.ValidateConditionExprs(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrInvalidConditionExpression) {
+		t.Errorf("expected INVALID_CONDITION_EXPRESSION for over-long conditionExpression; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateConditionExprs_Grammar(t *testing.T) {
+	g := &bpmncore.Graph{Outgoing: map[string][]string{"GW_split": {"TaskA", "TaskB"}}}
+	for _, tc := range []struct {
+		name, expr string
+		valid      bool
+	}{
+		{"FEEL equality as the designer guide writes it", `= decision = "bid"`, true},
+		{"double equals", `decision == "bid"`, true},
+		{"inequality", `decision != "no-bid"`, true},
+		{"an operator inside the literal", `decision != "x==y"`, true},
+		{"a comparison the Execution Service cannot evaluate", `amount > 5`, false},
+		{"a conjunction", `a == "x" and b == "y"`, false},
+		{"single quotes", `decision == 'bid'`, false},
+		{"whitespace only", "   ", false},
+		{"an unquoted word", `decision == bid`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proc := &bpmncore.BPMNProcess{SequenceFlows: []bpmncore.BPMNSequenceFlow{
+				{ID: "F1", SourceRef: "GW_split", TargetRef: "TaskA", ConditionExpression: tc.expr},
+			}}
+			errs := validator.ValidateConditionExprs(proc, g, nil)
+			if got := hasCodeIn(errs, domain.BPMNErrInvalidConditionExpression); got == tc.valid {
+				t.Errorf("%q: INVALID_CONDITION_EXPRESSION reported = %v, want %v; got %v", tc.expr, got, !tc.valid, errCodesOf(errs))
+			}
+		})
+	}
+}
+
+func TestValidateConditionExprs_GatewayWithOneOutflow_IsStillChecked(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		ExclusiveGateways: []bpmncore.BPMNGateway{{ID: "GW1"}},
+		SequenceFlows: []bpmncore.BPMNSequenceFlow{
+			{ID: "F1", SourceRef: "GW1", TargetRef: "T1", ConditionExpression: `amount > 5`},
+		},
+	}
+	g := &bpmncore.Graph{Outgoing: map[string][]string{"GW1": {"T1"}}}
+	errs := validator.ValidateConditionExprs(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrInvalidConditionExpression) {
+		t.Errorf("a gateway's only flow still reaches the plan with its condition, so it must be checked; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateLaneNames_NamesAreDepartmentKeys(t *testing.T) {
+	lane := func(id, name string, nodes ...string) bpmncore.BPMNLane {
+		return bpmncore.BPMNLane{ID: id, Name: name, FlowNodeRefs: nodes}
+	}
+	for _, tc := range []struct {
+		name  string
+		lanes []bpmncore.BPMNLane
+		valid bool
+	}{
+		{"named lanes", []bpmncore.BPMNLane{lane("L1", "Engineering", "T1"), lane("L2", "Ops", "T2")}, true},
+		{"an unnamed lane without work", []bpmncore.BPMNLane{lane("L1", "Engineering", "T1"), lane("L2", "")}, true},
+		{"two unnamed lanes without work", []bpmncore.BPMNLane{lane("L1", "Engineering", "T1"), lane("L2", ""), lane("L3", "")}, true},
+		{"an unnamed lane holding a task", []bpmncore.BPMNLane{lane("L1", "", "T1")}, false},
+		{"a blank name holding a task", []bpmncore.BPMNLane{lane("L1", "   ", "T1")}, false},
+		{"two lanes with the same name", []bpmncore.BPMNLane{lane("L1", "Ops", "T1"), lane("L2", "Ops", "T2")}, false},
+		{"two lanes whose names differ in case", []bpmncore.BPMNLane{lane("L1", "Ops", "T1"), lane("L2", "ops", "T2")}, false},
+		{"two lanes whose names differ in surrounding space", []bpmncore.BPMNLane{lane("L1", "Ops", "T1"), lane("L2", " Ops ", "T2")}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proc := &bpmncore.BPMNProcess{}
+			proc.LaneSet.Lanes = tc.lanes
+			errs := validator.ValidateLaneNames(proc)
+			if got := hasCodeIn(errs, domain.BPMNErrInvalidLaneName); got == tc.valid {
+				t.Errorf("INVALID_LANE_NAME reported = %v, want %v; got %v", got, !tc.valid, errCodesOf(errs))
+			}
+		})
+	}
+}
+
+func TestValidateMaxDepth_CountsThePathThroughACrossEdge(t *testing.T) {
+	const chain = 1996
+	g := &bpmncore.Graph{Outgoing: map[string][]string{
+		"S": {"P"},
+		"P": {"B", "A"},
+		"A": {"B"},
+		"B": {"c0"},
+	}}
+	for i := 0; i < chain; i++ {
+		next := "End"
+		if i < chain-1 {
+			next = fmt.Sprintf("c%d", i+1)
+		}
+		g.Outgoing[fmt.Sprintf("c%d", i)] = []string{next}
+	}
+	proc := &bpmncore.BPMNProcess{StartEvents: []bpmncore.BPMNEvent{{ID: "S"}}}
+
+	errs := validator.ValidateMaxDepth(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrMaxDepthExceeded) {
+		t.Errorf("the longest path S, P, A, B, the chain and End holds %d nodes; got %v", chain+5, errCodesOf(errs))
+	}
+}
+
+func TestValidateBoundaryEvents_CancelActivityMustBeABoolean(t *testing.T) {
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"T1": {}, "BE": {}},
+		NodeType: map[string]bpmncore.FlowNodeType{"T1": bpmncore.NodeTypeUserTask},
+		Outgoing: map[string][]string{},
+	}
+	for value, valid := range map[string]bool{"": true, "true": true, "false": true, "1": true, "0": true, "False": false, "no": false, "TRUE": false} {
+		proc := &bpmncore.BPMNProcess{BoundaryEvents: []bpmncore.BPMNBoundaryEvent{
+			{ID: "BE", AttachedToRef: "T1", Timer: &bpmncore.BPMNTimerDef{Duration: "1h"}, CancelActivity: value},
+		}}
+		reported := false
+		for _, e := range validator.ValidateBoundaryEvents(proc, g, nil) {
+			reported = reported || strings.Contains(e.Message, "cancelActivity")
+		}
+		if reported == valid {
+			t.Errorf("cancelActivity=%q: reported = %v, want %v", value, reported, !valid)
+		}
+	}
+}
+
+func TestValidateDuplicateIDs_SubProcessBodiesShareTheProcessNamespace(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		UserTasks: []bpmncore.BPMNUserTask{{ID: "T1"}},
+		SubProcesses: []bpmncore.BPMNSubProcess{{
+			ID:            "SP",
+			UserTasks:     []bpmncore.BPMNUserTask{{ID: "T1"}},
+			SequenceFlows: []bpmncore.BPMNSequenceFlow{{ID: "F1"}},
+		}},
+		SequenceFlows: []bpmncore.BPMNSequenceFlow{{ID: "F1"}},
+	}
+	errs := validator.ValidateDuplicateIDs(proc)
+	ids := map[string]bool{}
+	for _, e := range errs {
+		if e.Code == domain.BPMNErrDuplicateElementID {
+			ids[e.NodeID] = true
+		}
+	}
+	if !ids["T1"] || !ids["F1"] {
+		t.Errorf("duplicate ids reported = %v, want T1 and F1: a sub-process body id equal to a process id shares its state", ids)
+	}
+}
+
+// CheckDangling tests
+
+func TestCheckDangling_NoIncoming(t *testing.T) {
+	g := &bpmncore.Graph{
+		Incoming: map[string][]string{},
+		Outgoing: map[string][]string{"T1": {"E1"}},
+	}
+	errs := validator.CheckDangling("T1", g)
+	if !hasCodeIn(errs, domain.BPMNErrDanglingNode) {
+		t.Errorf("expected DANGLING_NODE for no incoming; got %v", errCodesOf(errs))
+	}
+}
+
+func TestCheckDangling_NoOutgoing(t *testing.T) {
+	g := &bpmncore.Graph{
+		Incoming: map[string][]string{"T1": {"S1"}},
+		Outgoing: map[string][]string{},
+	}
+	errs := validator.CheckDangling("T1", g)
+	if !hasCodeIn(errs, domain.BPMNErrDanglingNode) {
+		t.Errorf("expected DANGLING_NODE for no outgoing; got %v", errCodesOf(errs))
+	}
+}
+
+func TestCheckDangling_Connected(t *testing.T) {
+	g := &bpmncore.Graph{
+		Incoming: map[string][]string{"T1": {"S1"}},
+		Outgoing: map[string][]string{"T1": {"E1"}},
+	}
+	if errs := validator.CheckDangling("T1", g); len(errs) != 0 {
+		t.Errorf("expected no errors for connected node; got %v", errs)
+	}
+}
+
+// ValidateDanglingNodes — event-specific branches
+
+func TestValidateDanglingNodes_StartNoOutgoing(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		StartEvents: []bpmncore.BPMNEvent{{ID: "S1"}},
+	}
+	g := &bpmncore.Graph{
+		Outgoing: map[string][]string{},
+		Incoming: map[string][]string{},
+	}
+	errs := validator.ValidateDanglingNodes(proc, g, "")
+	if !hasCodeIn(errs, domain.BPMNErrDanglingNode) {
+		t.Errorf("expected DANGLING_NODE for start event with no outgoing; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateDanglingNodes_EndNoIncoming(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		EndEvents: []bpmncore.BPMNEvent{{ID: "E1"}},
+	}
+	g := &bpmncore.Graph{
+		Outgoing: map[string][]string{},
+		Incoming: map[string][]string{},
+	}
+	errs := validator.ValidateDanglingNodes(proc, g, "")
+	if !hasCodeIn(errs, domain.BPMNErrDanglingNode) {
+		t.Errorf("expected DANGLING_NODE for end event with no incoming; got %v", errCodesOf(errs))
+	}
+}
+
+// ValidateReachability
+
+func TestValidateReachability_NoStartEvent(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{}
+	g := &bpmncore.Graph{NodeIDs: map[string]struct{}{"T1": {}}}
+	errs := validator.ValidateReachability(proc, g, "")
+	if len(errs) != 0 {
+		t.Errorf("expected empty errs when no start event; got %v", errs)
+	}
+}
+
+func TestValidateReachability_UnreachableNode(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{StartEvents: []bpmncore.BPMNEvent{{ID: "S1"}}}
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"S1": {}, "orphan": {}},
+		Outgoing: map[string][]string{"S1": {}},
+	}
+	errs := validator.ValidateReachability(proc, g, "")
+	if !hasCodeIn(errs, domain.BPMNErrUnreachableNode) {
+		t.Errorf("expected UNREACHABLE_NODE; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateReachability_AllReachable(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{StartEvents: []bpmncore.BPMNEvent{{ID: "S1"}}}
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"S1": {}, "T1": {}, "E1": {}},
+		Outgoing: map[string][]string{"S1": {"T1"}, "T1": {"E1"}},
+	}
+	if errs := validator.ValidateReachability(proc, g, ""); len(errs) != 0 {
+		t.Errorf("expected no errors when all nodes reachable; got %v", errs)
+	}
+}
+
+func TestValidateLoops_NoLoop(t *testing.T) {
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"S1": {}, "T1": {}, "E1": {}},
+		Outgoing: map[string][]string{"S1": {"T1"}, "T1": {"E1"}},
+		Incoming: map[string][]string{"T1": {"S1"}, "E1": {"T1"}},
+		NodeType: map[string]bpmncore.FlowNodeType{"S1": bpmncore.NodeTypeStartEvent, "T1": bpmncore.NodeTypeUserTask, "E1": bpmncore.NodeTypeEndEvent},
+	}
+	if errs := validator.ValidateLoops(g, bpmncore.ClassifyBackEdges(g, "S1")); len(errs) != 0 {
+		t.Errorf("expected no errors for acyclic graph; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateLoops_GuardedLoop(t *testing.T) {
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"S1": {}, "T1": {}, "G": {}, "E1": {}},
+		Outgoing: map[string][]string{"S1": {"T1"}, "T1": {"G"}, "G": {"E1", "T1"}},
+		Incoming: map[string][]string{"T1": {"S1", "G"}, "G": {"T1"}, "E1": {"G"}},
+		NodeType: map[string]bpmncore.FlowNodeType{"S1": bpmncore.NodeTypeStartEvent, "T1": bpmncore.NodeTypeUserTask, "G": bpmncore.NodeTypeExclusiveGateway, "E1": bpmncore.NodeTypeEndEvent},
+	}
+	if errs := validator.ValidateLoops(g, bpmncore.ClassifyBackEdges(g, "S1")); len(errs) != 0 {
+		t.Errorf("guarded loop should be valid; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateLoops_UnguardedBackEdgeFromTask(t *testing.T) {
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"T1": {}, "T2": {}},
+		Outgoing: map[string][]string{"T1": {"T2"}, "T2": {"T1"}},
+		Incoming: map[string][]string{"T1": {"T2"}, "T2": {"T1"}},
+		NodeType: map[string]bpmncore.FlowNodeType{"T1": bpmncore.NodeTypeUserTask, "T2": bpmncore.NodeTypeUserTask},
+	}
+	errs := validator.ValidateLoops(g, bpmncore.ClassifyBackEdges(g, "T1"))
+	if !hasCodeIn(errs, domain.BPMNErrUnguardedLoop) {
+		t.Errorf("expected UNGUARDED_LOOP; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateLoops_SelfEdge(t *testing.T) {
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"T1": {}},
+		Outgoing: map[string][]string{"T1": {"T1"}},
+		Incoming: map[string][]string{"T1": {"T1"}},
+		NodeType: map[string]bpmncore.FlowNodeType{"T1": bpmncore.NodeTypeUserTask},
+	}
+	errs := validator.ValidateLoops(g, bpmncore.ClassifyBackEdges(g, "T1"))
+	if !hasCodeIn(errs, domain.BPMNErrUnguardedLoop) {
+		t.Errorf("expected UNGUARDED_LOOP for self-edge; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateGatewayMatching_PassthroughGateway(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		ParallelGateways: []bpmncore.BPMNGateway{{ID: "GW_pass"}},
+	}
+	g := &bpmncore.Graph{
+		Outgoing: map[string][]string{"GW_pass": {"T1"}},
+	}
+	errs := validator.ValidateGatewayMatching(proc, g, nil)
+	if len(errs) != 0 {
+		t.Errorf("passthrough gateway (1 outgoing) should produce no errors; got %v", errs)
+	}
+}
+
+func TestValidateConditionExprs_SingleOutflow_Skipped(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		SequenceFlows: []bpmncore.BPMNSequenceFlow{
+			{ID: "F1", SourceRef: "T1", TargetRef: "E1", ConditionExpression: strings.Repeat("x", validator.MaxCondExpr+1)},
+		},
+	}
+	g := &bpmncore.Graph{Outgoing: map[string][]string{"T1": {"E1"}}}
+	if errs := validator.ValidateConditionExprs(proc, g, nil); len(errs) != 0 {
+		t.Errorf("expected no error for single-outflow source; got %v", errs)
+	}
+}
+
+func TestValidateConditionExprs_NoConditionExpression(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		SequenceFlows: []bpmncore.BPMNSequenceFlow{
+			{ID: "F1", SourceRef: "GW1", TargetRef: "T1"},
+		},
+	}
+	g := &bpmncore.Graph{Outgoing: map[string][]string{"GW1": {"T1", "T2"}}}
+	if errs := validator.ValidateConditionExprs(proc, g, nil); len(errs) != 0 {
+		t.Errorf("expected no error when conditionExpression is absent; got %v", errs)
+	}
+}
+
+// IsValidDuration
+
+func TestIsValidDuration_GoDurationValid(t *testing.T) {
+	for _, s := range []string{"72h", "3h30m", "30m", "1h", "24h", "1h30m45s"} {
+		if !validator.IsValidDuration(s) {
+			t.Errorf("expected %q to be valid", s)
+		}
+	}
+}
+
+func TestIsValidDuration_ISO8601Valid(t *testing.T) {
+	for _, s := range []string{"P3D", "PT72H", "P1DT12H30M", "PT30M", "PT1S", "P7D", "P1DT1H"} {
+		if !validator.IsValidDuration(s) {
+			t.Errorf("expected %q to be valid ISO 8601 duration", s)
+		}
+	}
+}
+
+func TestIsValidDuration_EmptyRejected(t *testing.T) {
+	if validator.IsValidDuration("") {
+		t.Error("expected empty string to be rejected")
+	}
+}
+
+func TestIsValidDuration_MonthsYearsRejected(t *testing.T) {
+	for _, s := range []string{"P1M", "P1Y", "P1Y2M3D", "P2Y6M"} {
+		if validator.IsValidDuration(s) {
+			t.Errorf("expected %q (months/years) to be rejected", s)
+		}
+	}
+}
+
+func TestIsValidDuration_InvalidStringsRejected(t *testing.T) {
+	for _, s := range []string{"not-a-duration", "3 hours", "72", "P", "PT"} {
+		if validator.IsValidDuration(s) {
+			t.Errorf("expected %q to be rejected", s)
+		}
+	}
+}
+
+func TestIsValidDuration_NonPositiveRejected(t *testing.T) {
+	for _, s := range []string{"0", "0s", "-72h", "-1m", "P0D", "P0W", "PT0S", "PT0H0M"} {
+		if validator.IsValidDuration(s) {
+			t.Errorf("expected %q (zero or negative) to be rejected", s)
+		}
+	}
+}
+
+func TestIsValidDuration_TooLongToRunRejected(t *testing.T) {
+	for _, s := range []string{"P106752D", "P99999999999999999999D", "P15251W"} {
+		if validator.IsValidDuration(s) {
+			t.Errorf("expected %q (longer than a timer can run) to be rejected", s)
+		}
+	}
+}
+
+func TestIsValidDuration_SmallestAndLargestRunnableAccepted(t *testing.T) {
+	for _, s := range []string{"1ns", "PT0H0M1S", "P106751D"} {
+		if !validator.IsValidDuration(s) {
+			t.Errorf("expected %q to be valid", s)
+		}
+	}
+}
+
+// ValidateBoundaryEvents
+
+func TestValidateBoundaryEvents_DanglingAttachedToRef(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		BoundaryEvents: []bpmncore.BPMNBoundaryEvent{
+			{ID: "BE_1", AttachedToRef: "ghost_node", Timer: &bpmncore.BPMNTimerDef{Duration: "72h"}},
+		},
+	}
+	g := &bpmncore.Graph{NodeIDs: map[string]struct{}{"Task_1": {}}}
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrDanglingNode) {
+		t.Errorf("expected DANGLING_NODE for unknown attachedToRef; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateBoundaryEvents_NoDefinition(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		BoundaryEvents: []bpmncore.BPMNBoundaryEvent{
+			{ID: "BE_1", AttachedToRef: "Task_1"},
+		},
+	}
+	g := &bpmncore.Graph{NodeIDs: map[string]struct{}{"Task_1": {}}}
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrMissingTaskDefinition) {
+		t.Errorf("expected MISSING_TASK_DEFINITION for boundary event with no definition; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateBoundaryEvents_BothTimerAndError(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		BoundaryEvents: []bpmncore.BPMNBoundaryEvent{
+			{ID: "BE_1", AttachedToRef: "Sub_1", Timer: &bpmncore.BPMNTimerDef{Duration: "72h"}, Error: &bpmncore.BPMNErrorDef{}},
+		},
+	}
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"Sub_1": {}},
+		NodeType: map[string]bpmncore.FlowNodeType{"Sub_1": bpmncore.NodeTypeSubProcess},
+	}
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrInvalidBoundaryAttachment) {
+		t.Errorf("expected INVALID_BOUNDARY_ATTACHMENT for both timer and error; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateBoundaryEvents_InvalidSLADuration(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		BoundaryEvents: []bpmncore.BPMNBoundaryEvent{
+			{ID: "BE_1", AttachedToRef: "Task_1", Timer: &bpmncore.BPMNTimerDef{Duration: "not-a-duration"}},
+		},
+	}
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"Task_1": {}},
+		NodeType: map[string]bpmncore.FlowNodeType{"Task_1": bpmncore.NodeTypeUserTask},
+	}
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrInvalidSLADuration) {
+		t.Errorf("expected INVALID_SLA_DURATION; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateBoundaryEvents_MultipleTimersOnSameHost(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		BoundaryEvents: []bpmncore.BPMNBoundaryEvent{
+			{ID: "BE_1", AttachedToRef: "Task_1", Timer: &bpmncore.BPMNTimerDef{Duration: "72h"}},
+			{ID: "BE_2", AttachedToRef: "Task_1", Timer: &bpmncore.BPMNTimerDef{Duration: "24h"}},
+		},
+	}
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"Task_1": {}},
+		NodeType: map[string]bpmncore.FlowNodeType{"Task_1": bpmncore.NodeTypeUserTask},
+	}
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrInvalidBoundaryAttachment) {
+		t.Errorf("expected INVALID_BOUNDARY_ATTACHMENT for duplicate timer on same host; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateBoundaryEvents_ErrorBoundaryOnUserTask(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		BoundaryEvents: []bpmncore.BPMNBoundaryEvent{
+			{ID: "BE_1", AttachedToRef: "Task_1", Error: &bpmncore.BPMNErrorDef{ErrorRef: "Error_1"}},
+		},
+	}
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"Task_1": {}},
+		NodeType: map[string]bpmncore.FlowNodeType{"Task_1": bpmncore.NodeTypeUserTask},
+	}
+	errs := validator.ValidateBoundaryEvents(proc, g, nil)
+	if !hasCodeIn(errs, domain.BPMNErrInvalidBoundaryAttachment) {
+		t.Errorf("expected INVALID_BOUNDARY_ATTACHMENT for error boundary on userTask; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateBoundaryEvents_ValidTimerOnTask(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		BoundaryEvents: []bpmncore.BPMNBoundaryEvent{
+			{ID: "BE_1", AttachedToRef: "Task_1", Timer: &bpmncore.BPMNTimerDef{Duration: "72h"}},
+		},
+	}
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"Task_1": {}},
+		NodeType: map[string]bpmncore.FlowNodeType{"Task_1": bpmncore.NodeTypeUserTask},
+	}
+	if errs := validator.ValidateBoundaryEvents(proc, g, nil); len(errs) != 0 {
+		t.Errorf("expected no errors for valid timer boundary on task; got %v", errs)
+	}
+}
+
+func TestValidateBoundaryEvents_ValidErrorOnSubProcess(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{
+		BoundaryEvents: []bpmncore.BPMNBoundaryEvent{
+			{ID: "BE_1", AttachedToRef: "Sub_1", Error: &bpmncore.BPMNErrorDef{ErrorRef: "Error_1"}},
+		},
+	}
+	g := &bpmncore.Graph{
+		NodeIDs:  map[string]struct{}{"Sub_1": {}},
+		NodeType: map[string]bpmncore.FlowNodeType{"Sub_1": bpmncore.NodeTypeSubProcess},
+	}
+	if errs := validator.ValidateBoundaryEvents(proc, g, nil); len(errs) != 0 {
+		t.Errorf("expected no errors for valid error boundary on subprocess; got %v", errs)
+	}
+}
+
+func TestValidateDiagramCompleteness_MissingDiagram(t *testing.T) {
+	proc := &bpmncore.BPMNProcess{StartEvents: []bpmncore.BPMNEvent{{ID: "S1"}}}
+	defs := &bpmncore.BPMNDefinitions{} // no Diagrams
+	errs := validator.ValidateDiagramCompleteness(proc, defs)
+	if !hasCodeIn(errs, domain.BPMNErrMissingDiagram) {
+		t.Errorf("expected BPMNErrMissingDiagram when Diagrams is empty; got %v", errCodesOf(errs))
+	}
+	if len(errs) != 1 {
+		t.Errorf("expected exactly 1 error; got %d", len(errs))
+	}
+}
+
+func hasCodeIn(errs []domain.BPMNValidationError, code domain.BPMNErrorCode) bool {
+	for _, e := range errs {
+		if e.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func errCodesOf(errs []domain.BPMNValidationError) []domain.BPMNErrorCode {
+	codes := make([]domain.BPMNErrorCode, len(errs))
+	for i, e := range errs {
+		codes[i] = e.Code
+	}
+	return codes
+}

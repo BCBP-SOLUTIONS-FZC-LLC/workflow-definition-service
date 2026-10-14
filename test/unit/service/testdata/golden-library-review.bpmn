@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Library module Process_Review, version 2, for the golden workflows. It
+     declares its own message, whose id the boundaries workflow also uses for
+     another message, and recalls its review on it. -->
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_Review" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_withdraw" name="review-recalled"/>
+  <bpmn:process id="Process_Review" name="Review" isExecutable="true">
+    <bpmn:startEvent id="Review_Start"/>
+    <bpmn:userTask id="Review_Task" name="Review">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="Review_Recalled" attachedToRef="Review_Task"><bpmn:messageEventDefinition id="Review_MED" messageRef="Msg_withdraw"/></bpmn:boundaryEvent>
+    <bpmn:endEvent id="Review_EndRecalled"/>
+    <bpmn:callActivity id="Review_Check" name="Check">
+      <bpmn:extensionElements><zeebe:calledElement processId="Process_Check"/></bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:endEvent id="Review_End"/>
+    <bpmn:sequenceFlow id="Review_F1" sourceRef="Review_Start" targetRef="Review_Task"/>
+    <bpmn:sequenceFlow id="Review_F2" sourceRef="Review_Task" targetRef="Review_Check"/>
+    <bpmn:sequenceFlow id="Review_F3" sourceRef="Review_Check" targetRef="Review_End"/>
+    <bpmn:sequenceFlow id="Review_F4" sourceRef="Review_Recalled" targetRef="Review_EndRecalled"/>
+  </bpmn:process>
+</bpmn:definitions>

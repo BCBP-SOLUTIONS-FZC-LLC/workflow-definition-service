@@ -1,19 +1,22 @@
 -- name: CreateWorkflow :exec
-INSERT INTO workflow (id, tenant_id, created_by_user_id, business_key, name, description, active_version_id)
+INSERT INTO workflow (id, tenant_id, created_by_user_id, template_key, name, description, active_version_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7);
 
--- name: GetWorkflowByID :one
-SELECT id, tenant_id, created_by_user_id, business_key, name, description, active_version_id, created_at, updated_at
-FROM workflow
-WHERE tenant_id = $1 AND id = $2;
+-- name: GetWorkflowByIDWithVersionNumber :one
+SELECT w.id, w.tenant_id, w.created_by_user_id, w.template_key, w.name,
+       w.description, w.active_version_id, w.created_at, w.updated_at, w.record_version,
+       wv.version_number AS active_version_number
+FROM workflow w
+LEFT JOIN workflow_version wv ON wv.id = w.active_version_id
+WHERE w.tenant_id = $1 AND w.id = $2;
 
--- name: GetWorkflowByBusinessKey :one
-SELECT id, tenant_id, created_by_user_id, business_key, name, description, active_version_id, created_at, updated_at
+-- name: GetWorkflowByTemplateKey :one
+SELECT id, tenant_id, created_by_user_id, template_key, name, description, active_version_id, created_at, updated_at, record_version
 FROM workflow
-WHERE tenant_id = $1 AND business_key = $2;
+WHERE tenant_id = $1 AND template_key = $2;
 
 -- name: ListWorkflows :many
-SELECT id, tenant_id, created_by_user_id, business_key, name, description, active_version_id, created_at, updated_at
+SELECT id, tenant_id, created_by_user_id, template_key, name, description, active_version_id, created_at, updated_at, record_version
 FROM workflow
 WHERE tenant_id = $1
 ORDER BY created_at DESC
@@ -23,7 +26,16 @@ OFFSET $3;
 -- name: CountWorkflowsByTenant :one
 SELECT COUNT(*) FROM workflow WHERE tenant_id = $1;
 
--- name: UpdateActiveVersion :exec
-UPDATE workflow
+-- name: UpdateActiveVersion :execresult
+-- The pointer may only name a PUBLISHED, valid version of this workflow, or be cleared.
+UPDATE workflow AS w
 SET active_version_id = $3, updated_at = now()
+WHERE w.tenant_id = $1 AND w.id = $2
+  AND ($3::uuid IS NULL OR EXISTS (
+        SELECT 1 FROM workflow_version v
+        WHERE v.id = $3 AND v.workflow_id = w.id AND v.tenant_id = w.tenant_id AND v.status = 'PUBLISHED' AND v.is_valid));
+
+-- name: UpdateWorkflowMetadata :execresult
+UPDATE workflow
+SET name = $3, description = $4, updated_at = now()
 WHERE tenant_id = $1 AND id = $2;

@@ -19,9 +19,10 @@ linters:
   settings:
     revive:
       rules:
-        - name: exported
         - name: var-naming
         - name: error-return
+        - name: error-strings
+        - name: error-naming
         - name: if-return
     wrapcheck:
       ignore-package-globs:
@@ -31,9 +32,10 @@ linters:
 
   exclusions:
     paths:
-      - gen/
+      - platform-libs/
       - internal/adapter/outbound/postgres/db/
       - internal/core/port/mocks/
+      - test/integration/
     rules:
       - path: _test\.go
         linters:
@@ -49,6 +51,6 @@ formatters:
     - goimports
   exclusions:
     paths:
-      - gen/
+      - platform-libs/
       - internal/adapter/outbound/postgres/db/
       - internal/core/port/mocks/

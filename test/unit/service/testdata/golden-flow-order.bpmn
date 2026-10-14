@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The golden flow workflow: see golden_test.go. -->
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  id="Def_GoldenFlow" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_GoldenFlow" name="Golden Flow" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_eng" name="Engineering"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="2200a5ae-2466-54f7-a1d8-243106e05705"/></zeebe:properties></bpmn:extensionElements>
+        <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Draft</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Approve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>X_Route</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>CA_Review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>J_Route</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>P_Split</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>P_Join</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Close</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_ops" name="Ops"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="92fd92cf-4b2c-58dc-bf98-f3d0af729876"/></zeebe:properties></bpmn:extensionElements>
+        <bpmn:flowNodeRef>Check</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Fix</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Pack</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Bill</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:userTask id="Draft" name="Draft"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="engineering" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="Check" name="Check"><bpmn:extensionElements><zeebe:taskDefinition type="review"/><zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="Approve" name="Approve"><bpmn:extensionElements><zeebe:taskDefinition type="approve"/><zeebe:assignmentDefinition candidateGroups="engineering" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:exclusiveGateway id="X_Route" name="Route"/>
+    <bpmn:callActivity id="CA_Review" name="Review">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="Process_Review"/>
+        <zeebe:ioMapping><zeebe:input source='{"Review_Check::Check_Task":"018f2d3c-0000-7000-8000-0000000000c1"}' target="Assignees"/></zeebe:ioMapping>
+      </bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:userTask id="Fix" name="Fix"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:exclusiveGateway id="J_Route"/>
+    <bpmn:parallelGateway id="P_Split"/>
+    <bpmn:userTask id="Pack" name="Pack"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="Bill" name="Bill"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:parallelGateway id="P_Join"/>
+    <bpmn:userTask id="Close" name="Close"><bpmn:extensionElements><zeebe:taskDefinition type="approve"/><zeebe:assignmentDefinition candidateGroups="engineering" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:startEvent id="Start_1"/>
+    <bpmn:endEvent id="End_1"/>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_1" targetRef="Draft"/>
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Draft" targetRef="Check"/>
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Check" targetRef="Approve"/>
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="Approve" targetRef="X_Route"/>
+    <bpmn:sequenceFlow id="Flow_Review" sourceRef="X_Route" targetRef="CA_Review"><bpmn:conditionExpression>= decision = "review"</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Fix" sourceRef="X_Route" targetRef="Fix"/>
+    <bpmn:sequenceFlow id="Flow_5" sourceRef="CA_Review" targetRef="J_Route"/>
+    <bpmn:sequenceFlow id="Flow_6" sourceRef="Fix" targetRef="J_Route"/>
+    <bpmn:sequenceFlow id="Flow_7" sourceRef="J_Route" targetRef="P_Split"/>
+    <bpmn:sequenceFlow id="Flow_Pack" sourceRef="P_Split" targetRef="Pack"/>
+    <bpmn:sequenceFlow id="Flow_Bill" sourceRef="P_Split" targetRef="Bill"/>
+    <bpmn:sequenceFlow id="Flow_8" sourceRef="Pack" targetRef="P_Join"/>
+    <bpmn:sequenceFlow id="Flow_9" sourceRef="Bill" targetRef="P_Join"/>
+    <bpmn:sequenceFlow id="Flow_10" sourceRef="P_Join" targetRef="Close"/>
+    <bpmn:sequenceFlow id="Flow_11" sourceRef="Close" targetRef="End_1"/>
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_GoldenFlow">
+      <bpmndi:BPMNShape id="Lane_eng_di" bpmnElement="Lane_eng"/>
+      <bpmndi:BPMNShape id="Lane_ops_di" bpmnElement="Lane_ops"/>
+      <bpmndi:BPMNShape id="Start_1_di" bpmnElement="Start_1"/>
+      <bpmndi:BPMNShape id="Draft_di" bpmnElement="Draft"/>
+      <bpmndi:BPMNShape id="Approve_di" bpmnElement="Approve"/>
+      <bpmndi:BPMNShape id="X_Route_di" bpmnElement="X_Route"/>
+      <bpmndi:BPMNShape id="CA_Review_di" bpmnElement="CA_Review"/>
+      <bpmndi:BPMNShape id="J_Route_di" bpmnElement="J_Route"/>
+      <bpmndi:BPMNShape id="P_Split_di" bpmnElement="P_Split"/>
+      <bpmndi:BPMNShape id="P_Join_di" bpmnElement="P_Join"/>
+      <bpmndi:BPMNShape id="Close_di" bpmnElement="Close"/>
+      <bpmndi:BPMNShape id="End_1_di" bpmnElement="End_1"/>
+      <bpmndi:BPMNShape id="Check_di" bpmnElement="Check"/>
+      <bpmndi:BPMNShape id="Fix_di" bpmnElement="Fix"/>
+      <bpmndi:BPMNShape id="Pack_di" bpmnElement="Pack"/>
+      <bpmndi:BPMNShape id="Bill_di" bpmnElement="Bill"/>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1"/>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2"/>
+      <bpmndi:BPMNEdge id="Flow_3_di" bpmnElement="Flow_3"/>
+      <bpmndi:BPMNEdge id="Flow_4_di" bpmnElement="Flow_4"/>
+      <bpmndi:BPMNEdge id="Flow_Review_di" bpmnElement="Flow_Review"/>
+      <bpmndi:BPMNEdge id="Flow_Fix_di" bpmnElement="Flow_Fix"/>
+      <bpmndi:BPMNEdge id="Flow_5_di" bpmnElement="Flow_5"/>
+      <bpmndi:BPMNEdge id="Flow_6_di" bpmnElement="Flow_6"/>
+      <bpmndi:BPMNEdge id="Flow_7_di" bpmnElement="Flow_7"/>
+      <bpmndi:BPMNEdge id="Flow_Pack_di" bpmnElement="Flow_Pack"/>
+      <bpmndi:BPMNEdge id="Flow_Bill_di" bpmnElement="Flow_Bill"/>
+      <bpmndi:BPMNEdge id="Flow_8_di" bpmnElement="Flow_8"/>
+      <bpmndi:BPMNEdge id="Flow_9_di" bpmnElement="Flow_9"/>
+      <bpmndi:BPMNEdge id="Flow_10_di" bpmnElement="Flow_10"/>
+      <bpmndi:BPMNEdge id="Flow_11_di" bpmnElement="Flow_11"/>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

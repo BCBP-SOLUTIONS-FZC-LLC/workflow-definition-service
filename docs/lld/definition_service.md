@@ -1,0 +1,4976 @@
+# Definition Service Low-Level Design
+
+> This is the in-repo copy of the LLD (`docs/lld/`), kept content-identical to the design repo's published copy. The two are intentionally allowed to differ only on embed-vs-link mechanics (e.g. this copy may link to this repo's own `api/asyncapi.yaml` instead of embedding it) — never on content.
+
+## 1. Service Overview & Responsibilities
+
+The **Workflow Definition Service** acts as the design-time control plane for the BPMN-driven Workflow Engine. It is responsible for parsing, validating, and versioning business processes defined by tenant administrators. Unlike the Execution Service, which handles real-time runtime state, the Definition Service is heavily focused on ensuring the structural integrity, and immutable versioning of workflow templates before they are allowed to execute.
+
+### 1.1 Technical Stack
+
+- **Language**: Go 1.26
+- **HTTP Framework**: Gin (REST APIs)
+- **Shared Middleware Library**: `platform-gincommon v1.6.0` — the only path for logs, metrics and traces: correlation IDs, OTel HTTP/gRPC spans, the `platform_http_*` Prometheus series, structured Zap logging, panic recovery, gateway header authentication, tenant context propagation, per-route RBAC, per-request timeout middleware, and graceful telemetry shutdown. See §1.6 for the full middleware integration.
+- **Database**: PostgreSQL (schema: `workflow_definition`)
+- **Database Driver**: `platform-pgcommon/v2 v2.0.1` — wraps `github.com/jackc/pgx/v5` with RLS GUC injection (`app.tenant_id`, `app.user_id`, `app.tenant_roles`), slow-query logging, OTel tracing, Prometheus pool metrics, transaction helpers, pool health check, and a golang-migrate-based `migrate.Runner`. See §1.7 for the full integration.
+- **Database Tooling**: `sqlc` for type-safe query generation, `platform-pgcommon/v2 migrate.Runner` for schema migrations.
+- **Distributed Cache / Store**: Valkey 8.0 (Redis-compatible), via `github.com/redis/go-redis/v9`. Used for: compiled-plan caching, idempotency key deduplication (`Idempotency-Key` header), and distributed draft-edit locking (prevents concurrent draft overwrites between sessions).
+- **Events**: this service publishes none and keeps no outbox. `platform-events/v2` v2.1.0 supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /api/v1/internal/events`. See §1.8 for the full integration.
+- **Structured Logging**: `go.uber.org/zap` via `platform-gincommon/pkg/logger` — used by middleware chain and all application code. See `coding_style_rules.md §5.1`.
+- **Mocks**: `go.uber.org/mock` (GoMock / `mockgen`) — generates mocks for all `core/port/` interfaces. See §1.5.3.
+
+### 1.2 Key Integration Points
+
+The Definition Service operates within a broader ecosystem and interacts with the following components:
+
+1. **Frontend / UI**: Supplies the raw BPMN 2.0 XML from the canvas modeler for upload and template editing. During node authoring, the modeler calls Org & Membership directly (`GET /tenants/:id/users?department=:dept&level=:level`) to populate filtered user pickers.
+2. **PostgreSQL**: Stores the compiled DSL, draft XMLs, historical versions, and default node assignee mapping records (`workflow_node_assignee`).
+3. **Internal API (HTTP)**: Serves the compiled plan of a workflow version to the Execution Service and its Temporal Worker on the internal route group, `/api/v1/internal`, specified in `api/internal-openapi.yaml` (§3.4.1).
+4. **Org & Membership Service (Outbound REST)**: During publish/execution transactions and validation passes, the Definition Service calls `POST /tenants/:t/users/:u/eligibility?department=:dept&level=:level` as a backend defense-in-depth check to ensure all default assignees are eligible.
+5. **Event Bus (inbound only)**: This service publishes no events and has no outbox (§7.2, §10.7). It does **not** consume SQS: the shared workflow-events consumer subscribes to `membership-workflow-q` (`iam.membership.events`) and forwards `DepartmentMembershipRevoked` events to `POST /api/v1/internal/events` (§7.4), which triggers template invalidation.
+6. **Shared Workflow-Events Consumer (Inbound HTTP)**: A separate engine-wide service consumes the SQS queues and HTTP-routes each envelope to the respective workflow service (Definition or Execution). For the Definition Service it calls the internal `POST /api/v1/internal/events` endpoint.
+7. **Execution Service (Outbound HTTP)**: The Definition Service makes two calls on the Execution Service's internal API (§3.4.2). (a) During archive (`POST /workflows/:id/archive`): the active-instances read refuses the archive with `ACTIVE_INSTANCES_EXIST` (409) if any instance is RUNNING or PAUSED. (b) During membership revocation (`POST /api/v1/internal/events`, §7.4.2): the pause-tasks call has Execution pause the revoked user's active task assignments. Both calls wrap errors as `ErrUpstreamUnavailable` after retries.
+8. **User Profile Service (Display Enrichment)**: The Definition Service stores only UUID references for users (`workflow_node_assignee.user_id`). It does **not** make outbound calls to User Profile — display enrichment (name, email, job title) is performed directly by the frontend calling `POST /api/v1/users:batch` with the UUID list returned by the Definition Service. This keeps the Definition Service identity-agnostic at the service layer.
+
+### 1.3 High-Level Component Diagram
+
+```mermaid
+---
+config:
+  layout: elk
+---
+graph TD
+    %% Actors and Entry
+    UI[Frontend Modeler]
+    Gateway[Envoy API Gateway]
+    ExecSvc[Execution Svc / Workers]
+
+    %% Definition Service Core
+    subgraph Workflow_Definition_Service [Workflow Definition Service]
+        API[Gin HTTP API]
+        Internal[Internal HTTP API]
+        Parser[BPMN Parser]
+        Compiler[DSL Compiler]
+        Validator[Validation Engine]
+        InternalEvents[POST /api/v1/internal/events]
+        
+        API --> Validator
+        API --> Parser
+        Internal --> DB
+        Parser --> Compiler
+    end
+
+    %% External Systems
+    subgraph Persistence [RDS PostgreSQL]
+        DB[(workflow_definition DB)]
+    end
+
+    subgraph External_Integrations [External Services]
+        OrgMembership[Org & Membership Service]
+        EventsConsumer[Shared Workflow-Events Consumer]
+        SQS_Membership[SQS: membership-workflow-q]
+    end
+
+    %% Flows
+    UI -->|1. Get Eligible Users per Node| OrgMembership
+    UI -->|2. Upload BPMN| Gateway
+    Gateway -->|Headers: x-tenant-id, etc.| API
+    ExecSvc -->|HTTP: compiled plan| Internal
+    
+    Compiler -->|3. Validate Assignee Eligibility| OrgMembership
+    Compiler -->|4. Store Draft/Publish| DB
+    SQS_Membership -.->|5. Consume Revocation Events| EventsConsumer
+    EventsConsumer -->|6. POST /api/v1/internal/events| InternalEvents
+    InternalEvents -->|Invalidate Affected Templates| DB
+    
+```
+
+### 1.4 Core Module Responsibilities & I/O Contracts
+
+Below is a detailed breakdown of each internal module within the Workflow Definition Service boundary, detailing its responsibilities and precise Input/Output (I/O) contracts:
+
+- **Gin HTTP API (Handler Layer)**
+  - Implemented using the shared **`platform-gincommon`** library (`pkg/gincommon`, `pkg/logger`).
+  - **Responsibility**: Exposes REST endpoints, validates incoming JSON/XML request schemas, extracts tenant and user context from gateway-injected headers, and formats structured HTTP responses.
+  - **Input**: Raw HTTP request body (JSON/XML) and identity headers (`x-tenant-id`, `x-user-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`).
+  - **Output**: HTTP status codes (200, 201, 4xx, 5xx) and structured response payloads (JSON).
+  - **Context Access**: After the `ContextMiddleware` runs, all handlers call `gincommon.RequestContext(c)` to obtain a fully-populated `*domain.RequestContext` carrying `TenantID`, `UserID`, `Roles`, and `TraceID`.
+  - **RBAC**: Read-only endpoints (`GET`) require a valid `x-tenant-id`; mutating endpoints additionally require `x-tenant-roles` to contain `tenant_admin` or `tenant_owner` and answer `403 FORBIDDEN` otherwise; a write to the global catalogue also requires `platform_operator`.
+  - **Internal routes**: `/api/v1/internal` skips the gateway-identity middleware and is guarded by `RequireInternalToken` instead (§3.4); it shares the HTTP server, its metrics and its tracing.
+
+- **BPMN Parser**
+  - **Responsibility**: Unmarshals raw BPMN 2.0 XML bytes into standard Go memory structures and extracts customized task metadata (`extensionElements`).
+  - **Input**: Raw BPMN XML data (`[]byte`).
+  - **Output**: Go BPMN Graph AST (`bpmn.Definitions` / `bpmn.Process` structs).
+
+- **Validation Engine**
+  - **Responsibility**: Performs comprehensive structural checks, metadata validation, and guarded-loop checks (classifying back-edges via DFS and using Tarjan's SCC to ensure every cycle has a guarded exit. see §4.4) on the parsed BPMN elements.
+  - **Input**: Go BPMN Graph AST (`bpmn.Process` struct).
+  - **Output**: Validation success status (`bool`) and a structured multi-error slice (`[]error`).
+
+- **DSL Compiler**
+  - **Responsibility**: Performs forward/backward adjacency mapping on the parsed node graph, groups sequential tasks, resolves split-to-join gateways, and compiles the result into the hierarchical JSON DSL structure.
+  - **Input**: Validated Go BPMN Graph AST (`bpmn.Process` struct).
+  - **Output**: Orchestration-ready compiled JSON DSL (`domain.WorkflowDef` struct).
+
+- **Internal Event Ingest Handler (`POST /api/v1/internal/events`)**
+  - **Responsibility**: Receives domain-event envelopes forwarded over HTTP by the shared workflow-events consumer, dispatches by `env.Type`, and drives the `HandleDepartmentMembershipRevoked` invalidation logic. Redelivery is absorbed by handler idempotency (§2.3.1, §10.9); injects the RLS GUC from the envelope `tenant_id`, as every internal route does (§3.4, §14).
+  - **Input**: `events.Envelope[json.RawMessage]` JSON body on the internal (non-gateway) route group, authenticated by service-to-service auth.
+  - **Output**: 2xx on success, 4xx on malformed payload, 5xx on transient error (signals the consumer to retry).
+
+### 1.5 Internal Package Layout
+
+The service follows clean architecture: nothing in `core/` imports from `adapter/`. The only place concrete adapters are wired to interfaces is `cmd/server/main.go`.
+
+- **`workflow-definition-service/`** (Project Root)
+  - **`cmd/server/`**
+    - `main.go` — Application bootstrap (concurrently starts the Gin HTTP server and the metrics server) and dependency injection wire-up. Inbound membership events arrive via `POST /api/v1/internal/events`, forwarded by the shared workflow-events consumer.
+  - **`internal/`**
+    - **`core/`** — Core business domain logic, fully decoupled from external libraries.
+      - `domain/` — Core entities, workflow definitions, and compiled DSL models.
+      - `port/` — Inbound and outbound interface contracts (e.g. `WorkflowRepository`).
+      - `port/mocks/` — GoMock-generated mocks for all port interfaces. **Gitignored**; regenerated via `make mock`.
+      - `service/` — Use case services orchestrating operations (e.g. publication).
+    - **`adapter/`** — Outward-facing transport and driver implementations.
+      - `inbound/http/` — Gin HTTP handlers, routes, and custom authentication middleware (using `platform-gincommon` helpers).
+      - `inbound/http/middleware/` — Service-specific middleware: payload size limit, content-type check, idempotency key.
+      - `outbound/http/` — Clients for Org & Membership, OpenBao and the Execution Service's internal API.
+      - `outbound/postgres/` — sqlc-generated DB layer (`db/` sub-package, gitignored) and hand-written repo adapters.
+    - **`bpmn_compiler/`** — Stateless XML parser, structural compilers, and graph cycle validators. Organised as four sub-packages:
+      - `bpmn_compiler/` (root) — `Compiler` struct, `parse`, `securityScan`, `scanRejected`, `stagetype` registry, BPMN hasher.
+      - `bpmn_compiler/bpmncore/` — Shared types (`BPMNDefinitions`, `CompileState`, graph), traversal engine, and the `Compile` entry point.
+      - `bpmn_compiler/validator/` — All structural/semantic/topological validation functions (`Validate`, `ValidateDiagramCompleteness`, etc.).
+      - `bpmn_compiler/element/` — `ElementHandler` implementations for each BPMN node type (start, end, user task, sub-process, gateways, boundary events).
+    - **`config/`** — Env var loading into a typed `Config` struct; fails fast on missing required values.
+  - **`api/`** — Contracts (committed).
+    - `internal-openapi.yaml` — The internal API this service serves (§3.4).
+    - `contracts/` — A byte-identical copy of the Execution Service's internal document, with `SOURCES` naming where it comes from (§3.4).
+    - `asyncapi.yaml` — The inbound event this service consumes (§7).
+  - **`db/`** — Database migrations and schema definitions.
+    - `migrations/` — SQL schema migrations run via Goose. **Committed**.
+    - `queries/` — SQL query definitions consumed by sqlc. **Committed**.
+  - `sqlc.yaml` — Config file mapping schemas and queries to sqlc Go builders.
+  - `.golangci.yml` — Linter configuration.
+  - `docker-compose.yml` — Local infra: PostgreSQL 16, Valkey 8, PgBouncer.
+  - `.env.example` — All required env vars documented with defaults.
+  - `Makefile` — Targets: `tools`, `generate`, `mock`, `migrate-up/down`, `build`, `test`, `test-integration`, `lint`, `contract-check`, `contract-breaking`, `docker-up/down`.
+
+#### 1.5.1 Layer Responsibilities
+
+- **core/domain**: Domain models for Workflow templates and DSL structure.
+- **core/port**: Repository and event publisher interface contracts.
+- **core/service**: Core business logic and use cases (draft, publish, archive).
+- **adapter/inbound/http**: Request handlers, routes, custom Gin middleware.
+- **adapter/outbound/postgres**: Database persistence adapters (sqlc implementations).
+- **bpmn_compiler**: XML parser, graph compiler, and validation rules engine.
+
+#### 1.5.2 Generated File Strategy
+
+All code-generated files are **gitignored** and must never be committed. They are regenerated in CI via `make generate` and `make mock`. Only the source files that drive generation are committed.
+
+| Generated output | Source (committed) | Regenerate via |
+| --- | --- | --- |
+| `internal/adapter/outbound/postgres/db/` (sqlc Go) | `db/queries/*.sql` | `make generate` (sqlc) |
+| `internal/core/port/mocks/` (GoMock) | `internal/core/port/*.go` interfaces | `make mock` (mockgen) |
+
+`.gitignore` entries covering these paths:
+
+```gitignore
+gen/
+internal/adapter/outbound/postgres/db/
+internal/core/port/mocks/
+.env
+bin/
+.tools/
+```
+
+#### 1.5.3 Mock Strategy
+
+GoMock (`go.uber.org/mock`, `mockgen`) is the project's mock framework. A mock is generated for every interface defined in `internal/core/port/`. Mocks live in `internal/core/port/mocks/` and are gitignored.
+
+```text
+make mock
+  └─ mockgen -source=internal/core/port/repository.go   -destination=internal/core/port/mocks/repository_mock.go
+  └─ mockgen -source=internal/core/port/publisher.go    -destination=internal/core/port/mocks/publisher_mock.go
+  └─ mockgen -source=internal/core/port/cache.go        -destination=internal/core/port/mocks/cache_mock.go
+  └─ ... (one invocation per port file)
+```
+
+Test files import the generated mocks directly — no hand-written test doubles.
+
+#### 1.5.4 Docs Infrastructure
+
+Developer docs are served via MkDocs (installed via `brew install mkdocs`). See [Appendix D] for full details.
+
+### 1.6 Middleware Integration (`platform-gincommon`)
+
+The Definition Service wires `platform-gincommon` in two tiers: observability middleware runs globally on every route (including `/healthz`, `/readyz`, and `/metrics`), while authentication and tenant-context middleware are scoped to the protected `/api` group only.
+
+#### 1.6.1 HTTP Middleware Chain
+
+```text
+Incoming HTTP request
+  → r.MaxMultipartMemory = 10 MB (Gin router setting) — caps multipart form in-memory buffer; pairs with
+                                                         LimitRequestBody for large-body protection
+  → PanicRecoveryMiddleware     (gincommon) — catches panics, emits JSON 500 + platform_http_panics_total metric
+  → RequestIDMiddleware         (gincommon) — reads x-request-id or generates UUID; echoes on response
+  → TracingMiddleware           (gincommon) — starts OTel HTTP server span; stores trace_id in Gin context
+  → CorrelationHeadersMiddleware(gincommon) — writes X-Trace-ID and X-Request-ID onto the response
+  → MetricsMiddleware           (gincommon) — records platform_http_requests_total, platform_http_request_duration_seconds
+  → LoggingMiddleware           (gincommon) — emits structured http_request log via Zap on completion
+  → TimeoutMiddleware(30s)      (gincommon, innermost via Config.RequestTimeout) — sets the per-request deadline;
+                                              returns 503 and counts platform_http_request_timeouts_total{method,route}
+  → [/healthz, /readyz — public; no further middleware; /metrics is served on the separate metrics port]
+  → RequireIdentity              (this service) — parses x-tenant-id and x-user-id as UUIDs; returns 401 if missing or
+                                              malformed, 500 if the request has no RequestContext, and sets the RLS GUCs
+  → ContextMiddleware           (gincommon) — builds RequestContext{TenantID, UserID, Roles, TraceID}
+                                              and stores it in the Gin context for handler access
+  → RequireIdentity             (service)   — reads RequestContext from the Gin context, parses the tenant and
+                                              user ids as UUIDs once (401 when either is not one), stores the
+                                              typed identity for the handlers, and sets the validated GUC set
+                                              (pgcommon.WithValidatedGUCSet) so the pgx pool injects
+                                              app.tenant_id / app.user_id on every connection. Without it RLS
+                                              fires against a NULL GUC and returns zero rows, so a request
+                                              that reaches it without a RequestContext is refused with 500
+                                              rather than served. Must follow ContextMiddleware.
+  → LimitRequestBody            (service)   — wraps c.Request.Body with http.MaxBytesReader(10 MB);
+                                              reads exceeding the limit return *http.MaxBytesError →
+                                              errResponse maps to 413 PAYLOAD_TOO_LARGE
+  → [read endpoints — GET /workflows, GET /workflows/:id, ...]
+  → [mutating endpoints — POST / PUT / DELETE]
+  → handler                     — checks x-tenant-roles; returns 403 if the caller lacks
+                                  tenant_admin or tenant_owner, before any work is done
+```
+
+```mermaid
+  flowchart TD
+    A[Incoming HTTP Request]
+        --> B[Core Middleware]
+
+    subgraph B [Core Middleware]
+        B1[Panic Recovery]
+        B2[Request ID]
+        B3[Tracing]
+        B4[Correlation Headers]
+        B5[Metrics]
+        B6[Logging]
+
+        B1 --> B2 --> B3 --> B4 --> B5 --> B6
+    end
+
+    B --> C{Endpoint Type}
+
+    C --> D[Public Endpoints]
+    D --> D1["/healthz<br/>/readyz<br/>/metrics"]
+
+    C --> E[Authenticated Endpoints]
+
+    E --> F[RequireAuth]
+    F --> G[ContextMiddleware]
+    G --> GG[RequireIdentity]
+    GG --> GH[LimitRequestBody]
+
+    GH --> H{Operation Type}
+
+    H --> I[Read Endpoints]
+    I --> J[Handler]
+
+    H --> K[Mutating Endpoints<br/>POST / PUT / DELETE]
+    K --> L["Role check in the handler<br/>(tenant_admin / tenant_owner)"]
+    L --> J
+
+    classDef middleware fill:#eef,stroke:#447;
+    classDef auth fill:#efe,stroke:#474;
+    classDef handler fill:#fee,stroke:#744;
+
+    class B1,B2,B3,B4,B5,B6 middleware;
+    class F,G,GG,GH,L auth;
+    class J handler;
+```
+
+Tracing starts once at startup, before the metrics identity is fixed and before any pool or collector exists. Every span and every metric carries the same service name, domain (`workflow`) and environment (`APP_ENV`). Trace export can be turned off with `OTEL_EXPORTER_OTLP_ENDPOINT=none`; trace and request IDs still work.
+
+**Graceful shutdown sequence** (LIFO):
+
+```text
+1. OS signal received
+2. Readiness fails (`/readyz` answers 503) and the pod waits `SHUTDOWN_DRAIN_DELAY` (default 5 s), so the gateway and the Execution Service drop it from their endpoint lists
+3. HTTP server: stop accepting new connections and finish in-flight requests, bounded by `SHUTDOWN_GRACE` (default 30 s)
+4. gincommon.Shutdown(logger)   — flushes OTel HTTP spans + Zap buffer (platform-gincommon v1.6.0)
+5. DB pools: each drains within its own `SHUTDOWN_POOL_DRAIN_TIMEOUT` (default 10 s), the application pool first, then the system pool
+```
+
+Step 4 must run before pool.Close() to ensure any in-flight DB-related spans are flushed before the pool drains. The drain delay, the grace and two pool drains stay within the pod's termination grace period (5 + 30 + 2 x 10 s against 60 s). A listener that fails to bind or stops with an error starts the same ordered shutdown and the process then exits non-zero; a panic in a long-lived goroutine is recovered and logged, and does not stop the others; the violation exporter is also restarted after a panic. The startup role check tolerates a schema that is not migrated yet.
+
+**Request deadline** (30 s): a request exceeding it is cancelled and returns 503, and `platform_http_request_timeouts_total` counts it separately from other 5xx errors. The deadline runs innermost in the middleware chain, so the metrics, the access log and the server span record the same 503 the client receives.
+
+#### 1.6.1.1 Logger
+
+`logger.NewLogger(cfg.AppEnv)` from `platform-gincommon` builds the one `port.Logger` (`Debug/Info/Warn/Error/Fatal(msg string, fields map[string]any)`). The same instance is the gincommon `Config.Logger` and the logger of every service and adapter, so middleware and application logs share one format and level. No adapter type exists in this service.
+
+#### 1.6.2 gincommon Environment Variables (Definition Service)
+
+| Variable | Value (production) | Purpose |
+| --- | --- | --- |
+| `APP_ENV` | `prod` | Required; one of `local`, `dev`, `test`, `staging`, `prod`, and any other value fails startup. Sets Gin release mode, Zap production format, OTLP TLS, and the metrics `environment` label |
+| `BUILD_VERSION` | Set via `-ldflags` at build | Prometheus `platform_build_info` gauge and OTel `service.version` |
+| `OTEL_SERVICE_NAME` | `workflow-definition-service` | OTel `service.name` attribute on all spans |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `otel-collector:4317` | OTLP/gRPC collector address (in-cluster) |
+| `OTEL_EXPORTER_OTLP_INSECURE` | `false` | TLS required in production (collector uses mutual TLS) |
+| `OTEL_TRACES_SAMPLER_RATIO` | `0.1` | 10 % head sampling; increase to `1.0` for full trace debugging |
+
+**Startup configuration.** `APP_ENV` is required and is one of `local`, `dev`, `test`, `staging`, `prod`; a missing or any other value stops startup. A `.env` file is read in `local` and `dev` only; `local` otherwise carries the requirements of a deployed environment, and only `dev` relaxes them. A setting that does not parse (a port with trailing text, a malformed duration) stops startup, and so does a zero or negative duration for any timeout or TTL; every problem is reported in one error, not the first. Outside `dev` the service also refuses to start without `VALKEY_ADDR`, `INTERNAL_API_TOKEN`, the Org & Membership base URL, the Execution Service URL and token, and the OpenBao address and token; `prod` additionally requires `SYSTEM_DATABASE_URL`. `OTEL_*` settings are read by the platform library alone, not by the service.
+
+#### 1.6.3 Response Headers (gincommon-injected)
+
+Every HTTP response carries:
+
+| Header | Source | Value |
+| --- | --- | --- |
+| `X-Request-ID` | `RequestIDMiddleware` | Echo of `x-request-id` or generated UUID |
+| `X-Trace-ID` | `CorrelationHeadersMiddleware` | OTel trace ID (hex string) |
+
+Handler code retrieves tenant and trace context via:
+
+```go
+reqCtx, ok := gincommon.RequestContext(c)
+if !ok {
+    // This path is unreachable after ContextMiddleware; treat as 500
+}
+// reqCtx.TenantID, reqCtx.UserID, reqCtx.Roles, reqCtx.TraceID available
+```
+
+---
+
+### 1.7 Database Pool Integration (`platform-pgcommon`)
+
+The Definition Service uses `platform-pgcommon` as the single source of truth for PostgreSQL connectivity. A single `*pgcommon.Pool` is created at startup, passed into any component that needs a DB connection, and closed during graceful shutdown.
+
+#### 1.7.1 Pool Construction
+
+`pgcommon.NewPool` is called once in `cmd/server/main.go` after config is loaded. It pings the database at construction — if unreachable, startup fails immediately.
+
+```go
+base, warnings := pgcommon.ConfigFromEnv()   // PG_MAX_CONNS, PG_MIN_CONNS, PG_BOUNCER_MODE, PG_SLOW_QUERY_THRESHOLD,
+                                              // PG_STATEMENT_TIMEOUT, PG_LOCK_TIMEOUT, PG_POOL_NAME
+base.Logger = newPGCommonLogger(log)          // pglogger.go — see below
+base.Tracer = gincommon.NewSpanTracer(cfg.OTELServiceName)
+
+app := base
+app.DSN = cfg.DatabaseURL
+app.GUCProvider = pgcommon.GUCSetFromContext
+
+system := base                                // the BYPASSRLS pool for global-catalog writes and the violation log
+system.DSN = cfg.SystemDSN()
+system.MaxConns, system.MinConns = 3, 0
+system.PoolName = "system"                    // platform_db_* tells the two pools apart
+system.PGBouncerMode = true                   // simple protocol whatever the app pool does
+system.GUCProvider = nil                      // a BYPASSRLS role must see every tenant
+
+pool, err := pgcommon.NewPool(ctx, app)
+```
+
+> The pool settings have one implementation, `pgcommon.ConfigFromEnv`; invalid values are logged as startup warnings. **After both pools exist the service reads each pool's role and refuses to start** when the application role is a superuser or has `BYPASSRLS` (in every environment), or when the system role cannot bypass row-level security or cannot write the module, starter and violation-log tables outside dev, local and test or whenever `SYSTEM_DATABASE_URL` is set; dev without it logs a warning. The local stack (`scripts/init-db.sql`) creates the split roles, so row-level security is exercised locally.
+>
+> **`Config.Logger` is wired** via `cmd/server/pglogger.go`'s `pgCommonLogger`, which adapts this service's own `port.Logger` (`map[string]any` fields) to `platform-pgcommon`'s public `pkg/domain.Logger` interface (`Debug/Info/Warn/Error(msg string, fields ...domain.Field)`), converting the variadic `Field` slice into a map. Wired into every `pgcommon.Config` construction site (`newDBPool`/`newSystemDBPool` both), so slow-query warnings and GUC-injection failures flow through the service's real logger. **`Config.Tracer` is not wired**; per-query OTel spans are not emitted.
+
+`pool.Close()` is deferred in the shutdown hook (step 8 in the shutdown sequence) to drain in-use connections after all servers have stopped.
+
+#### 1.7.2 RLS GUC Injection
+
+`platform-pgcommon` injects PostgreSQL GUC parameters (`app.tenant_id`, `app.user_id`, `app.tenant_roles`) automatically on every connection acquired from the pool, using the value stored in the request context by the GUC middleware.
+
+**Middleware responsibility** (implemented in `internal/adapter/inbound/http/middleware/gucrls.go`):
+
+```go
+// Runs after gincommon.ContextMiddleware in the /api group.
+func GUCMiddleware(pool *pgcommon.Pool) gin.HandlerFunc {
+    return func(c *gin.Context) {
+        reqCtx, _ := gincommon.RequestContext(c)
+        ctx := pgcommon.WithGUCSet(c.Request.Context(), pgcommon.GUCSet{
+            TenantID:    reqCtx.TenantID,
+            UserID:      reqCtx.UserID,
+            TenantRoles: reqCtx.Roles,
+        })
+        c.Request = c.Request.WithContext(ctx)
+        c.Next()
+    }
+}
+```
+
+#### 1.7.3 Readiness Check
+
+`/readyz` checks the database pool and pings Valkey, but only the database decides readiness: it returns `503 Service Unavailable` when the pool is unhealthy, and `200` with `"cache":"degraded"` when Valkey is unreachable. Compiled-plan reads fail open, so a Valkey failover must not take every pod out of rotation and stop plan serving. A pod also starts while Valkey is down, logging a warning, because the client reconnects on its own.
+
+```go
+func readyzHandler(pool *pgcommon.Pool, cache port.CacheStore) gin.HandlerFunc {
+    return func(c *gin.Context) {
+        hs := pool.Health(c.Request.Context())
+        if !hs.Healthy {
+            c.JSON(http.StatusServiceUnavailable, gin.H{
+                "status": "unavailable",
+                "db":     "unreachable",
+            })
+            return
+        }
+        cacheState := "ok"
+        if err := cache.Ping(c.Request.Context()); err != nil {
+            cacheState = "degraded"
+        }
+        c.JSON(http.StatusOK, gin.H{
+            "status":         "OK",
+            "cache":          cacheState,
+            "db_utilization": hs.Utilization,
+            "db_conns":       hs.AcquiredConns,
+            "db_max_conns":   hs.MaxConns,
+        })
+    }
+}
+```
+
+#### 1.7.4 Environment Variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | — | Full pgx DSN (`postgres://user:pass@host:5432/db`) |
+| `PG_MAX_CONNS` | `10` | Pool ceiling (read by `platform-pgcommon`) |
+| `PG_MIN_CONNS` | `2` | Minimum idle connections (`0` under PgBouncer) |
+| `PG_SLOW_QUERY_THRESHOLD` | `200ms` | Slow-query log threshold |
+| `PG_STATEMENT_TIMEOUT` | `0` (server setting) | Per-transaction statement timeout; a cancelled query answers `503` |
+| `PG_LOCK_TIMEOUT` | `0` (server setting) | Per-transaction lock timeout |
+| `PG_POOL_NAME` | `default` | `pool` label of the application pool; the system pool is `system` |
+| `PG_BOUNCER_MODE` | `false` | PgBouncer transaction-pooling mode for the application pool (the system pool always uses it) |
+| `SHUTDOWN_GRACE` | `30s` | Bound on finishing in-flight HTTP requests at shutdown |
+| `SHUTDOWN_POOL_DRAIN_TIMEOUT` | `10s` | Bound on each pool drain |
+
+#### 1.7.5 Prometheus Metrics
+
+The metrics identity is fixed before the pool is created, so the pool registers its collectors under the same `domain`, `service` and `environment` as every other series. Database queries export `db.query` spans through the same pipeline as HTTP spans.
+
+| Metric | Type | Description |
+| --- | --- | --- |
+| `platform_db_queries_total` | Counter | Queries executed, by `pool`, `operation` and `outcome` |
+| `platform_db_query_duration_seconds` | Histogram | Query latency |
+| `platform_db_pool_acquires_total` | Counter | Connection acquires, by `outcome` |
+| `platform_db_pool_acquire_duration_seconds` | Histogram | Time waiting for a connection from the pool |
+| `platform_db_slow_queries_total` | Counter | Queries exceeding `SlowQueryThreshold` |
+| `platform_db_transaction_retries_total` | Counter | Transaction retries |
+| `platform_db_transaction_retries_exhausted_total` | Counter | Retries that exhausted their budget without succeeding |
+
+All of the above, §6.1.1's pool gauges, and this service's own `workflow_definition_service_*` metrics land on the same `gincommon.MetricsRegisterer()`, exposed together on the `/metrics` endpoint.
+
+### 1.8 Events and Startup Migration
+
+The Definition Service publishes no events and keeps no outbox (§7.2). `platform-events` supplies only the typed envelope that inbound events arrive in (§1.8.2).
+
+#### 1.8.1 Schema Migration
+
+The server does not migrate at boot. The chart's pre-install and pre-upgrade hook runs `/server migrate` (`make migrate` locally), which applies the service's domain migrations through `platform-pgcommon`'s `migrate.Runner` before the Deployment rolls out:
+
+```go
+svcRunner := &migrate.Runner{
+    FS:              migrations.FS,
+    DSN:             cfg.MigrationDSN(),
+    MigrationsTable: "wf_definition_migrations",
+}
+if err := svcRunner.Up(ctx); err != nil {
+    return fmt.Errorf("domain migrations: %w", err)
+}
+```
+
+The service's own tracking table, `wf_definition_migrations`, coexists with any `pgcommon_migrations` table, with no version-number collisions.
+
+**Migration file format:** `db/migrations/NNNN_name.up.sql` / `NNNN_name.down.sql` pairs (golang-migrate convention). No goose annotations. The pgx/v5 driver executes each file as a single unit, so PL/pgSQL function bodies with semicolons inside `$$...$$` blocks work without any special delimiters.
+
+On application startup the tracing initialisation runs first, then the pool is built and `observability.Register(cfg.OTELServiceName, cfg.BuildVersion, pool)` registers the metrics. `observability.Register` needs the constructed `*pgcommon.Pool` (for `PoolStatsCollector`), so it runs after `newDBPool` — see §1.7.5.
+
+#### 1.8.2 Inbound Event Ingest (HTTP)
+
+Inbound domain events are consumed by the shared workflow-events consumer service, which forwards each envelope over HTTP to `POST /api/v1/internal/events`. The handler injects the RLS tenant context (`pgcommon.WithGUCSet`) from the envelope `tenant_id` — the same manual-injection pattern every internal route uses (§3.4, §14) — and dispatches by `env.Type` to the existing handler logic (e.g. `HandleDepartmentMembershipRevoked`). Redelivery is absorbed by handler idempotency (§2.3.1, §10.9). See §7.4 for the full flow.
+
+#### 1.8.3 Prometheus Metrics
+
+| Metric | Type | Description |
+| --- | --- | --- |
+| `workflow_definition_service_internal_events_ingest_total` | Counter | Inbound envelopes received at `POST /api/v1/internal/events` (labels: `type`, `result`) |
+
+---
+
+**Import rules enforced by `go-arch-lint`**:
+
+- `core/domain` imports nothing outside stdlib.
+- `core/port` imports only `core/domain`.
+- `core/service` imports only `core/domain` and `core/port`.
+- `adapter/*` imports `core/port` (to implement) and `core/domain` (types).
+- `bpmn_compiler/bpmncore` imports `core/domain` only.
+- `bpmn_compiler/validator` imports `core/domain` and `bpmn_compiler/bpmncore`.
+- `bpmn_compiler/element` imports `core/domain`, `bpmn_compiler/bpmncore`, and `bpmn_compiler/validator`.
+- `bpmn_compiler` (root) imports all three sub-packages plus `core/domain` and `core/port`.
+- Nothing in `core/` or `bpmn_compiler/` imports from `adapter/`.
+
+#### 1.5.5 Dependency Direction and Component Class Diagram
+
+```mermaid
+---
+config:
+  layout: elk
+---
+classDiagram
+    direction LR
+    class HTTPHandler {
+        +CreateWorkflow()
+        +GetWorkflowById()
+        +PublishDraft()
+        +ArchiveWorkflow()
+        +CloneWorkflow()
+        +ValidateWorkflow()
+    }
+
+    class HTTPMiddleware {
+        +TenantContext()
+        +ValidatePlanQuotas()
+    }
+
+    class PublisherService {
+        +PublishDraft()
+        +CreateDraft()
+        +ArchiveWorkflow()
+        -validateAndCompile()
+        -applyStructuralGuard()
+        -validateAssignees()
+    }
+
+    class Validator {
+        +ValidateBPMN()
+        -checkCycles()
+        -validateExtensions()
+    }
+
+    class DraftCompiler {
+        +CompileToDSL()
+        -buildGraph()
+        -resolveSequenceFlows()
+        -processGateways()
+    }
+
+    class PlanService {
+        <<interface>>
+        +EnforcePlanQuotas()
+    }
+
+    class MembershipService {
+        <<interface>>
+        +ValidateAssigneeEligibility()
+    }
+
+    class WorkflowRepository {
+        <<interface>>
+        +CreateWorkflowVersion()
+        +GetWorkflowVersion()
+        +UpdateActiveVersion()
+        +ArchiveVersion()
+    }
+
+    HTTPHandler --> HTTPMiddleware : Uses middleware chain
+    HTTPHandler --> PublisherService : Dispatches requests
+    HTTPHandler --> Validator : Calls stateless validation
+
+    PublisherService --> Validator : Validates BPMN
+    PublisherService --> DraftCompiler : Compiles execution plan
+    PublisherService --> PlanService : Verifies template quotas
+    PublisherService --> MembershipService : Verifies assignee eligibility
+    PublisherService --> WorkflowRepository : Persists workflow and versions
+
+```
+
+##### Core Component Descriptions
+
+- **HTTPHandler (Inbound Adapter)**: Exposes REST APIs, enforces size limits (10MB) on incoming payloads, validates request schemas, and delegates workflow management use cases to core services.
+- **HTTPMiddleware (Inbound Adapter)**: Extracts gateway-injected identity headers (`x-tenant-id`, `x-user-id`, `x-tenant-roles`, etc.) and manages transactional session boundaries (such as configuring the PostgreSQL GUC for RLS).
+- **PublisherService (Core Application Service)**: Orchestrates the draft compilation and publish lifecycle. Initiates database transactions, calls the validation engine and compiler, and verifies assignee eligibility via external ports.
+- **DraftCompiler (Domain Service)**: Traverses the unmarshalled BPMN sequence flows to construct the compiled JSON DSL execution plan for the runtime.
+- **Validator (Domain Service)**: Runs topological correctness rules (back-edge classification, guarded-loop checking, and gateway matching over the forward graph — see §4.4) on the parsed process definition.
+- **Ports (WorkflowRepository, PlanService, MembershipService)**: Explicit interface contracts isolating the core business logic from database schema libraries (`sqlc`) and external HTTP services.
+
+---
+
+#### 1.5.6 Key Component File Mapping
+
+- **publish.go**: Entrypoint orchestrator for publishing a draft workflow version.
+- **validator.go**: Structural, semantic, metadata, and guarded-loop validation (back-edge classification + Tarjan SCC).
+- **compiler.go**: Graph traversal engine mapping BPMN sequence flows to the JSON DSL execution steps.
+
+#### 1.5.7 Interface Contracts (Ports)
+
+To maintain clean architecture, core services rely on explicitly defined port interfaces located in `core/port/`:
+
+- **`WorkflowRepository`**: Handles transaction boundaries and schema interactions (`GetDraft`, `CreateVersion`, `UpdateActiveVersion`).
+- **`Transactor`**: Wraps `pgcommon.RunInTx`. The publish path requires `SERIALIZABLE` isolation with retry on `40001`/`40P01` — the port interface must expose a `RunInTxWithRetry` method (or accept `pgx.TxOptions` + retry config) so `VersionService.Publish` can use `pgcommon.RunInTxWithRetry` without importing pgcommon directly. See §10.8.
+
+---
+
+### 1.9 Valkey Cache Integration
+
+The service uses Valkey 8.0 (Redis-compatible, via `github.com/redis/go-redis/v9`) as an in-process performance layer and distributed coordination store. It is a pure operational dependency — it holds no primary data and is not part of the recovery point objective (RPO).
+
+#### 1.9.1 What IS Cached
+
+| Purpose | Key format | TTL | Invalidated by |
+| --- | --- | --- | --- |
+| Compiled workflow plan | `wf:plan:<tenantID>:<versionID>` | 1 h | Archive, or a membership revocation that marks the version invalid (key deleted); only published versions are cached |
+| Idempotency key | `idem:<tenantID>:<userID>:<method>:<path>:<idempotency-key>` | 24 h | Not invalidated — expires naturally; only 2xx responses are cached |
+| Idempotency pending marker | `idem:<tenantID>:<userID>:<method>:<path>:<idempotency-key>:pending` | 1 min | Taken before the handler runs and released when it finishes; a concurrent request with the same key is refused |
+| Draft-edit lock | `draft-lock:<tenantID>:<workflowID>` | 30 s | Taken for the duration of a save with a per-save token and released only by that token, so a save that outlived the lock cannot delete the next editor's |
+
+The compiled-plan cache is populated lazily: on the first internal compiled-plan read (§3.4.1) after a version is published, the plan is fetched from Postgres and written to Valkey. Subsequent requests on the same version hit the cache without a DB round-trip.
+
+A cached published plan can outlive an archive or a membership revocation, by at most `CACHE_COMPILED_PLAN_TTL`, only when the invalidation fails or races the read that repopulates the entry; the TTL bounds that window.
+
+**Valkey client timeout**: 50 ms. A timeout is treated as a cache miss and the request falls through to Postgres, so Valkey latency can never block the HTTP SLO budget (see §9.3).
+
+#### 1.9.2 What is NOT Cached
+
+- **Workflow list / metadata** — `GET /workflows`, `GET /workflows/:id` always reads from Postgres.
+- **Raw `bpmn_xml`** — stored only in Postgres; never cached.
+- **Workflow version history** — always from Postgres.
+- **Assignee eligibility** — checked live against Org & Membership at publish time; not cached.
+
+#### 1.9.3 Cache Failure Behaviour
+
+| Scenario | Behaviour |
+| --- | --- |
+| Compiled-plan cache miss (normal) | Falls through to Postgres; response is back-filled into Valkey before returning |
+| Idempotency cache set failure | Logged at `WARN`; request continues without caching — duplicate protection is degraded, not lost |
+| Draft-edit lock: Valkey unavailable | Lock acquisition fails; handler returns `503 Service Unavailable` rather than silently proceeding without the lock |
+| Valkey fully down | `/readyz` stays `200` and reports `"cache":"degraded"` (§3.3.16); the pod stays in rotation and serves plans from Postgres |
+
+#### 1.9.4 Environment Variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VALKEY_ADDR` | — | ElastiCache endpoint (host:port) |
+| `CACHE_COMPILED_PLAN_TTL` | `1h` | TTL for compiled-plan cache entries |
+| `CACHE_IDEMPOTENCY_TTL` | `24h` | TTL for idempotency response cache |
+| `CACHE_DRAFT_LOCK_TTL` | `30s` | TTL for distributed draft-edit lock |
+| `VALKEY_CLIENT_TIMEOUT` | `50ms` | Per-command timeout; treat timeout as cache miss |
+
+---
+
+## 2. Database Schema
+
+The database uses PostgreSQL Row-Level Security (RLS) to enforce strict multi-tenant isolation. Under this system, all queries are automatically filtered by `tenant_id` at the database level, preventing cross-tenant data leaks.
+
+### 2.1 Table Schema Definitions
+
+```mermaid
+erDiagram
+    direction LR
+
+    WORKFLOW {
+        UUID id PK
+        UUID tenant_id
+        UUID created_by_user_id
+        VARCHAR template_key
+        VARCHAR name
+        TEXT description
+        UUID active_version_id FK
+        BIGINT record_version
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    WORKFLOW_VERSION {
+        UUID id PK
+        UUID workflow_id FK
+        UUID tenant_id
+        ENUM status
+        TEXT bpmn_xml
+        JSONB compiled_plan_json
+        TEXT artifact_hash
+        INT version_number
+        TIMESTAMPTZ published_at
+        UUID created_by_user_id
+        BOOLEAN is_valid
+        JSONB validation_errors_json
+        JSONB module_refs "library module versions this version resolved"
+        BIGINT record_version
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    WORKFLOW_NODE_ASSIGNEE {
+        UUID id PK
+        UUID tenant_id
+        UUID workflow_version_id FK
+        VARCHAR node_key
+        UUID user_id
+        TEXT department_id
+        VARCHAR role
+        TIMESTAMPTZ created_at
+    }
+
+    WORKFLOW ||--o{ WORKFLOW_VERSION : has_versions
+    WORKFLOW_VERSION ||--o{ WORKFLOW_NODE_ASSIGNEE : defines_assignees
+    WORKFLOW ||--o| WORKFLOW_VERSION : active_version
+```
+
+Reusable modules and starter workflows (§3.3.18/§3.3.19, §10.16):
+
+```mermaid
+erDiagram
+    direction LR
+
+    WORKFLOW_MODULE {
+        UUID id PK
+        UUID tenant_id "NULL iff scope='global'"
+        VARCHAR scope "'global' | 'tenant'"
+        VARCHAR name
+        TEXT description
+        VARCHAR process_id "fixed for every version; what calledElement names"
+        UUID active_version_id FK
+        BIGINT record_version
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    WORKFLOW_MODULE_VERSION {
+        UUID id PK
+        UUID module_id FK
+        UUID tenant_id "denormalized from parent, NULL iff scope='global'"
+        VARCHAR scope
+        ENUM status "DRAFT | PUBLISHED | ARCHIVED"
+        TEXT bpmn_xml
+        VARCHAR process_id "the bpmn:process id callActivity references"
+        INT version_number
+        BOOLEAN is_valid
+        JSONB validation_errors_json
+        TIMESTAMPTZ published_at
+        UUID created_by_user_id
+        BIGINT record_version
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    WORKFLOW_TEMPLATE {
+        UUID id PK
+        UUID tenant_id "NULL iff scope='global'"
+        VARCHAR scope "'global' | 'tenant'"
+        VARCHAR name
+        TEXT description
+        VARCHAR category
+        TEXT bpmn_xml
+        UUID source_workflow_version_id "informational only, no FK cascade"
+        UUID created_by_user_id
+        BIGINT record_version
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    WORKFLOW_MODULE ||--o{ WORKFLOW_MODULE_VERSION : has_versions
+    WORKFLOW_MODULE ||--o| WORKFLOW_MODULE_VERSION : active_version
+```
+
+```mermaid
+erDiagram
+    direction TB
+
+    PROCESSED_EVENT {
+        UUID event_id PK
+        TEXT consumer PK
+        TEXT event_type
+        TIMESTAMP processed_at
+    }
+```
+
+The full database DDL migrations and RLS policies are documented in [Appendix A: Database Migration Scripts](#appendix-a-database-migration-scripts).
+
+---
+
+### 2.1.1 Schema integrity rules
+
+- Every time column is `TIMESTAMPTZ`. `created_at` and `updated_at` are `NOT NULL DEFAULT now()`; `published_at` is null until a publish.
+- A child row names its parent by the pair (parent id, `tenant_id`): a version names its workflow, an assignee names its version, a workflow names its active version and a tenant module version names its module. A row cannot point at another tenant's parent whatever the application sends. Deleting the active version clears only the active pointer, never the workflow's tenant. A module version also names its module together with its scope, so a global version belongs to a global module only and a tenant version to a tenant module only; this is what holds a global version, whose `tenant_id` is NULL, to its module.
+- The parent key of a child (`workflow_version.workflow_id`, `workflow_module_version.module_id`, `workflow_node_assignee.workflow_version_id`) is `NOT NULL`, so a row read back always has a parent.
+- `record_version` is positive on every table that carries it.
+
+### 2.2 Data Model
+
+#### `workflow`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | UUID | Primary key |
+| `tenant_id` | UUID | Tenant isolation key |
+| `created_by_user_id` | UUID | Creator (admin) |
+| `template_key` | VARCHAR(255) | Business identifier (e.g. `tender-review`) |
+| `name` | VARCHAR(255) | Workflow template name |
+| `description` | TEXT | Optional description |
+| `active_version_id` | UUID | Foreign key pointing to the current published version |
+| `record_version` | BIGINT | Monotonic optimistic-lock counter (starts at 1, incremented by trigger on every update) |
+| `created_at` | TIMESTAMPTZ | Creation timestamp |
+| `updated_at` | TIMESTAMPTZ | Last update timestamp |
+
+**Constraints**:
+
+- Unique `(tenant_id, template_key)`
+
+**Rules**:
+
+- **Optimistic locking via `record_version`**: `PATCH /workflows/:id` supplies the token via `If-Match: "<record_version>"` header (preferred) or the `record_version` body field (§10.11). The update query filters on `AND record_version = :client_version`; if another update has been applied in the interim, `RowsAffected = 0` → `WORKFLOW_CONCURRENCY_VIOLATION` (409). Using a monotonic counter rather than `updated_at` avoids false negatives from sub-millisecond concurrent writes.
+
+**Purpose**:
+Stores the logical workflow definition independent of versions.
+
+---
+
+#### `workflow_version`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | UUID | Primary key |
+| `workflow_id` | UUID | Foreign key referencing `workflow(id)` (cascades on delete) |
+| `tenant_id` | UUID | Tenant isolation key |
+| `status` | ENUM | Version status: `DRAFT`, `PUBLISHED`, `ARCHIVED` |
+| `bpmn_xml` | TEXT | Raw BPMN XML source |
+| `compiled_plan_json` | JSONB | Pre-compiled JSON DSL execution plan |
+| `artifact_hash` | TEXT | Normalized SHA-256 hash for change detection |
+| `version_number` | INT | Monotonically increasing version number (NULL on DRAFT rows) |
+| `published_at` | TIMESTAMPTZ | Publish timestamp |
+| `created_by_user_id` | UUID | Version author |
+| `is_valid` | BOOLEAN | Assignee validity flag (default true). Set to `false` when a default assignee loses department membership. Versions with `is_valid = false` cannot start new instances. |
+| `validation_errors_json` | JSONB | Array of `{"node_id", "error"}` objects written when `is_valid` becomes false. Null when valid. |
+| `record_version` | BIGINT | Monotonic optimistic-lock counter (starts at 1, incremented by trigger on every update) |
+| `created_at` | TIMESTAMPTZ | Creation timestamp |
+| `updated_at` | TIMESTAMPTZ | Last update timestamp |
+
+**Rules**:
+
+- **Only one draft per workflow**: A unique index `idx_wv_single_draft` enforces that at most one draft exists per workflow.
+- **Drafts have NULL version numbers**: The version number is assigned atomically at publish time.
+- **Published/archived versions must have a version number**: Enforced by constraint `chk_version_number_on_publish`.
+- **Published versions are immutable to user**: State edits are only permitted on the active draft.
+- **Version numbers are unique per workflow**: Index `uq_workflow_version_published` enforces uniqueness for non-null version numbers.
+- **Optimistic locking via `record_version`**: `PUT /workflows/:id/draft` supplies the token via `If-Match: "<record_version>"` header (preferred) or the `record_version` body field (§10.11). The update query filters on `AND record_version = :client_version`; if the row has been concurrently modified, `RowsAffected = 0` → `DRAFT_CONCURRENCY` (409). Using a monotonic counter rather than `updated_at` avoids false negatives from sub-millisecond concurrent writes.
+
+---
+
+#### `workflow_node_assignee`
+
+A **denormalized reverse index** that inverts the compiled DSL's `default_assignees` lists from "version → assignees" to "assignee → versions". Because a node may have multiple default assignees, **one row is stored per (node, user) pair**. All rows for a version are inserted atomically during the publish transaction from the same data that produces the `compiled_plan_json`, and the two must never diverge.
+
+**Why this table exists**: When a `DepartmentMembershipRevoked` event arrives, the system must answer: *"Which published workflow versions reference user X in department Y?"* Without this table, every event would require scanning the `compiled_plan_json` JSONB of every `workflow_version` row, traversing nested `departments[] → stages[] → default_assignees[]` paths — a query pattern that GIN indexes cannot efficiently support. This table reduces that operation to a single btree index scan on `(user_id, tenant_id)`.
+
+> [!NOTE]
+> This table is **read-only after publish**. It is never updated independently of the compiled DSL. If a default assignee needs to change, a new version must be published, which creates new rows in this table.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | UUID | Primary key |
+| `tenant_id` | UUID | Tenant isolation key |
+| `workflow_version_id` | UUID | Foreign key referencing `workflow_version(id)` (cascades on delete) |
+| `node_key` | VARCHAR(255) | Key of the workflow step |
+| `user_id` | UUID | Assigned user |
+| `department_id` | VARCHAR(255) | Department identifier from the BPMN lane configuration. Format is determined by the workflow admin; current examples (e.g. "design", "qa-hse") are placeholders. Revisit when the Org & Membership service LLD is complete. |
+| `role` | VARCHAR(64) | IAM role level for eligibility validation. Passed as `?level=<role>` to the Org & Membership eligibility endpoint at publish time. Maps to the IAM role tier (e.g. "preparator", "reviewer", "approver"). |
+| `created_at` | TIMESTAMPTZ | Creation timestamp |
+
+---
+
+### 2.2.2 Table and Column Details
+
+1. workflow Table
+
+    id (UUID): Primary key, utilizing globally unique identifiers to prevent ID exhaustion and coordinate seamlessly with multi-tenant data boundaries.
+
+    tenant_id (UUID): Strict tenant identifier. Crucial for the PostgreSQL RLS policy filter.
+
+    created_by_user_id (UUID): The tenant admin who created the root workflow entity. Provides root-level lineage.
+
+    template_key (VARCHAR): The template's key within its tenant (e.g. `tender-review`), a human-readable handle that is unique per tenant. It names the template only: it never reaches the Execution Service, whose instance business key is a different identifier (an instance is addressed by its subject and business key, unique per tenant, subject and key among live instances).
+
+    active_version_id (UUID): A nullable foreign key pointing to the currently active/published workflow_version. It names only a `PUBLISHED` version of the same workflow, or nothing; the database refuses any other value. This allows O(1) reads of the running template schema when spawning new workflow instances, bypassing sequential version scans.
+
+    record_version (BIGINT): Monotonic optimistic-lock counter. Starts at 1, incremented by a `BEFORE UPDATE` trigger on every row change. `PATCH /workflows/:id` supplies the client's last-read value via `If-Match` header or body field; a mismatch returns `409 WORKFLOW_CONCURRENCY_VIOLATION`.
+
+    updated_at (TIMESTAMPTZ): Last modification time, maintained automatically by the same `BEFORE UPDATE` trigger as `record_version`.
+
+    UNIQUE (tenant_id, template_key): Guarantees key uniqueness per tenant, allowing different tenants to declare identical keys without collision.
+
+2. workflow_version Table
+
+    workflow_id (UUID, not null): References the parent root record together with the tenant, so a version cannot name another tenant's workflow. Cascades deletion to prevent orphaned draft/version rows.
+
+    version_number (INT, nullable): Monotonically increasing integer assigned at publishing time, not at draft creation. The column is NULL while the version remains a DRAFT. This avoids conflicts when multiple admins create consecutive drafts before any is published; the next version number is computed as COALESCE (MAX (version_number), 0) + 1 across all non-null published versions for the workflow and written atomically inside the publish transaction. A partial unique index (WHERE version_number IS NOT NULL) enforces uniqueness without blocking drafts.
+
+    status (Enum): DRAFT, PUBLISHED, or ARCHIVED. Ensures draft modifications never leak into production-ready execution environments.
+
+    bpmn_xml (TEXT): Retains the original raw BPMN XML source so the frontend modeller canvas can easily reload and render the graph or copy as a base for new versions.
+
+    compiled_plan_json (JSONB): The compiled, validated JSON DSL, always stored as a `CompiledCollaboration` (§7.5). Pre-compilation avoids XML parsing during runtime workflow starts.
+
+    artifact_hash (TEXT): A canonical SHA-256 hash computed from the normalized BPMN XML elements of every process in the bundled XML, called processes and bundled modules included, and from the document's message and error definitions and message flows. The order of properties inside any element does not change it. Stored at publish and returned with the version. The version diff compares the expanded compiled plans; no code path reads `artifact_hash`.
+
+    created_by_user_id (UUID): The tenant admin who created/updated this specific version. Provides strict revision history auditing.
+
+    is_valid (BOOLEAN): Reflects assignee validity — not BPMN structural validity. Default `true`. Set to `false` by the `DepartmentMembershipRevoked` handler (`POST /api/v1/internal/events`, §7.4) when an assigned user loses the required department role. A version with `is_valid = false` cannot be promoted or used to start new workflow instances; existing running instances are not affected. The version must be updated (re-assign the affected node) and republished to restore validity.
+
+    module_refs (JSONB): The library module versions a published version resolved, one `{module_id, version_id, process_id, version_number}` per module version, written at publish (§3.3.18). The version holds a snapshot of each: a later module version or an archived module never changes it. `GET /modules/:id/usages` reads it. `[]` on drafts.
+
+    validation_errors_json (JSONB): Array of error objects written when `is_valid` is set to `false`. Each element has the shape `{"node_id": "<node_key>", "error": "<reason>"}`. Null when the version is valid. Example: `[{"node_id": "Task_design_prep", "error": "Default assignee is no longer eligible: Department membership revoked"}]`.
+
+    record_version (BIGINT): Monotonic optimistic-lock counter. Starts at 1, incremented by a `BEFORE UPDATE` trigger on every row change. `PUT /workflows/:id/draft` supplies the client's last-read value via `If-Match` header or body field; a mismatch returns `409 DRAFT_CONCURRENCY`.
+
+    updated_at (TIMESTAMPTZ): Last modification time, maintained automatically by the same `BEFORE UPDATE` trigger as `record_version`.
+
+3. workflow_node_assignee Table
+
+    id (UUID): Primary key, utilizing globally unique identifiers to isolate mappings.
+
+    tenant_id (UUID): Tenant identifier to enforce multi-tenant isolation via the PostgreSQL RLS policy.
+
+    workflow_version_id (UUID): References the specific workflow version template. Deletes cascade to clean up mappings when templates are deleted.
+
+    node_key (VARCHAR): Identifies one node of the compiled plan: `dsl.NodeKey` over the expanded plan, `<department id>/<BPMN element id>` (workflow-models LLD §2.3). The Execution Service keys its tasks and `override_map` with the same function, so one node carries one name across both services. The element id rather than the stage type, because a department may hold two stages of the same type and the type alone would name them both.
+
+    user_id (UUID): Represents one of the assigned eligible users for the node. One row per (node_key, user_id) pair. Checked for invalidation when memberships change.
+
+    department_id (VARCHAR): Represents the department context of the assignment (using the string slug identifier, e.g. "design", "qa-hse").
+
+    role (VARCHAR): The functional role level required for the assignment (e.g. preparator, reviewer, approver).
+
+---
+
+### 2.3 Event Publishing
+
+The service has no outbox table: none of its state changes emits an event (§7.2). A future outbound event designs its own contract and consumer first, and brings its own outbox, relay and schema registry client in the same change.
+
+---
+
+### 2.3.1 Consumer Idempotency
+
+The Definition Service keeps no dedup registry. At-least-once delivery is absorbed by the handlers themselves: every inbound type this service consumes converges on the same state when reprocessed, so a redelivered envelope needs no `processed_event` row to detect it (§10.9).
+
+Both consumed types — `DepartmentMembershipRevoked` and `MembershipRevoked` (§7.4.2, §7.4.5) — reduce to two writes:
+
+- `SetVersionInvalid` sets `is_valid` to `false` and adds the revoked user's nodes to `validation_errors_json`: the stored list first, then the new one, without repeating an entry. Two revocations on one version therefore leave both lists, and a redelivery changes nothing. The payload is built from the revoked user's assignee rows and `ListAssigneesByUser` orders by `(workflow_version_id, node_key)`, so each version's new entries follow `node_key` order rather than the heap's.
+- The Execution Service's pause-tasks call (§3.4.2) signals `instance-pause` only for instances it reads as `RUNNING`. The status transition is applied asynchronously by Temporal, so a redelivery arriving inside that window re-sends the signal; the interpreter's own pause handling absorbs the repeat.
+
+**A revocation applies to the assignees that existed when the event was produced.** An assignee row created after the envelope `time` is left alone, so a redelivered or reordered revocation that arrives after the user was added back and a new version was published with them as default assignee does not invalidate that version. The user's open tasks are still paused, since this service cannot tell whether the user was added back. An envelope without `time` applies to every assignee row. The version's compiled-plan cache entry is evicted after the write; if the eviction fails the handler still pauses the tasks and then answers `500`, so the consumer redelivers the event. The compiled-plan read caches only a published, valid version and re-reads it after writing the entry, evicting it when a revocation landed in between.
+
+**A redelivery cannot undo an operator's recovery.** Recovery from an invalidation is a new version (§7.4.3 Flow A), never a revalidation of the invalidated one: no query sets `is_valid = true` on a PUBLISHED row. `UpdateDraftVersion` is guarded on `status = 'DRAFT'`, `CreateWorkflowVersion` inserts only DRAFT rows, and `PublishVersion` does not touch the column.
+
+Reprocessing is not bit-for-bit inert. `SetVersionInvalid` writes `updated_at = now()`, which defeats the update trigger's `OLD.* IS DISTINCT FROM NEW.*` guard and bumps `record_version`. That token is the optimistic-lock guard for **draft** mutations (§9.1), and an invalidated version is PUBLISHED, so no client edit path holds a token against the row — the bump is observable in the row and consequential nowhere.
+
+**This property belongs to these two handlers, not to the endpoint.** A new inbound type whose handler is not idempotent by construction needs the dedup registry introduced with it — tracked in Appendix E.
+
+---
+
+### 2.4 Indexing Strategy
+
+| Table | Index Name | Purpose / Optimized Query |
+| --- | --- | --- |
+| `workflow` | `idx_workflow_tenant_id` | Tenant-scoped list queries (paginated GET `/workflows`) |
+| `workflow` | `idx_workflow_active_version` | Active version lookup joins |
+| `workflow` | `idx_workflow_name_trgm` | Trigram GIN index for fuzzy search on workflow name |
+| `workflow_version` | `idx_wv_workflow_id` | Fetching version history lists |
+| `workflow_version` | `idx_wv_tenant_status` | Status filtering (active drafts, published list) |
+| `workflow_version` | `idx_wv_single_draft` | Partial unique index enforcing single draft per workflow |
+| `workflow_version` | `idx_wv_artifact_hash` | Lookup by hash among published versions; no query uses it today |
+| `workflow_version` | `uq_workflow_version_published` | Unique version numbers per workflow template |
+| `workflow_node_assignee` | `idx_wnas_user_tenant` | Assignee invalidation query on membership revocation |
+| `workflow_node_assignee` | `idx_wnas_version` | Join index for loading node assignees of a version |
+
+### 2.5 Triggers — `updated_at` and `record_version`
+
+`updated_at` and `record_version` are maintained by **database triggers**, not application code. This ensures every write path — application code, platform migrations, and direct operator SQL — keeps the columns correct without relying on the caller to remember.
+
+The triggers are defined in migration `00002_create_tables.sql`:
+
+```sql
+CREATE OR REPLACE FUNCTION update_workflow_meta_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at     = NOW();
+    NEW.record_version = OLD.record_version + 1;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_touch_workflow
+    BEFORE UPDATE ON workflow
+    FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*)
+    EXECUTE FUNCTION update_workflow_meta_column();
+```
+
+(An equivalent `update_workflow_version_meta_column` trigger covers `workflow_version`.)
+
+**Design notes:**
+
+- **`WHEN (OLD.* IS DISTINCT FROM NEW.*)` guard**: the trigger fires only when a row actually changes. If a future SQS replay produces an identical row (same field values, no business change), `record_version` does not increment and a concurrent optimistic-lock holder is not spuriously invalidated.
+- **`BEFORE UPDATE` timing**: the application's `WHERE record_version = :client_version` clause compares against the pre-trigger value. The new incremented value is committed atomically in the same statement — there is no window where the check and the write are inconsistent.
+- **No application-layer `record_version` management**: application SQL never sets `record_version`; the trigger owns it, and it moves only when a row actually changes. A save that changes nothing therefore returns the `record_version` the row already holds, and the next save with that value succeeds. A statement that must mark an otherwise identical row as touched sets `updated_at` itself, which the guard counts as a change (§2.2). See §2.6 for the convention.
+
+Cross-reference: Appendix A contains the full DDL. §10.11 documents how clients supply the optimistic-lock token (`If-Match` header or `record_version` body field).
+
+### 2.6 Migration Practices
+
+- **Tool**: `platform-pgcommon migrate.Runner` (golang-migrate, pgx/v5 driver). Runs as the chart's pre-install and pre-upgrade hook and locally through `make migrate`; the server does not migrate at boot (§1.8.1).
+- **File format**: `db/migrations/NNNN_description.up.sql` + `NNNN_description.down.sql` pairs. No goose annotations. PL/pgSQL function bodies (`$$...$$`) work without special delimiters — the pgx/v5 driver executes each file as a single unit.
+- **`lock_timeout`**: auto-appended (`30s`) by `migrate.Runner` — no manual DSN parameter needed. This prevents a blocked migration from holding the advisory lock across rolling deploys.
+- **Tracking table**: `wf_definition_migrations` (service-specific, set via `MigrationsTable` field). Isolated from any `pgcommon_migrations` table — no version-number collisions.
+- **Forward-only additive**: new columns are added as `NOT NULL DEFAULT x`; column drops are split across two releases (deprecate → stop using → drop) to stay compatible with in-flight pods during rolling deploys.
+- **No `record_version` in UPDATE queries**: the column is trigger-managed (§2.5). A write that returns the row's `record_version` reads it back from the statement, never computes it.
+- **Migrator role**: the DB role used at startup (`definition_svc_migrator`) must have `BYPASSRLS` to avoid being blocked by the service's own RLS policies during data migrations. The application role (`definition_svc_app`) must **not** have `BYPASSRLS`.
+- **CI verification** (run after every migration): `SELECT rolname FROM pg_roles WHERE rolname = 'definition_svc_app' AND rolbypassrls = true` must return 0 rows; `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND (rowsecurity = false OR forcerls = false)` must also return 0 rows.
+
+---
+
+---
+
+## 3. API Contracts
+
+The Workflow Definition Service exposes a set of REST endpoints for design-time operations and an internal HTTP API for service-to-service calls (§3.4).
+
+### 3.1 Global Gateway Headers & Security
+
+The Envoy API Gateway performs JWT verification and injects standardized context headers into all upstream REST requests. These headers are inherited by all endpoints:
+
+- `x-tenant-id` (UUID, Required): Enforces tenant isolation inside the database using RLS. Validated by `gincommon.RequireAuth` — must be non-empty, trimmed, ≤ 256 characters, and contain no control characters. Constant: `gincommon.HeaderTenantID`.
+- `x-user-id` (UUID, Required): Denotes the executing administrative user. Subject to the same validation rules as `x-tenant-id`. Constant: `gincommon.HeaderUserID`. Both must parse as UUIDs; a value that does not is `401 UNAUTHORIZED` before any handler or database work.
+- `x-tenant-roles` (String, Required): Comma-separated roles (e.g. `tenant_admin`, `tenant_owner`). Validated as `[a-zA-Z0-9_-]+` per role token; mutating calls require administrative access. Constant: `gincommon.HeaderTenantRoles`.
+- `x-departments` (String, Optional): Comma-separated `<department-uuid>:<role>` pairs — e.g. `018e1f2a-0000-7000-8000-000000000001:reviewer,018e1f2a-0000-7000-8000-000000000002:approver`. Each pair names one of the user's department memberships and their role level within it. IAM's HLD (`iam_1.41.md` §5.4) now documents this same `<department_id>:<role_level>` format explicitly, confirming `dept_uuid:role` is correct — the earlier cross-team discrepancy is resolved at the HLD level. IAM's own org-membership LLD reportedly still describes a bare-UUID variant; that residual HLD-vs-LLD inconsistency is IAM's own follow-up to reconcile, tracked in `Notes/conf.md`, not this document's concern.
+- `x-plan` (String, Optional): Subscription level (e.g., `enterprise`, `pro`).
+- `x-feature-flags` (String, Optional): Encoded feature flags.
+- `x-request-id` (UUID, Optional): Client-supplied correlation ID. If absent or invalid, `gincommon.RequestIDMiddleware` generates a fresh UUID. Echoed back on the response as `X-Request-ID`. Constant: `gincommon.HeaderRequestID`.
+- `traceparent` (W3C, Optional): Upstream OTel trace context. If present, `gincommon.TracingMiddleware` links the server span to the parent; otherwise a new root span is created. Echoed back as `X-Trace-ID`.
+
+#### Security & Payload Constraints
+
+- **Payload Limits**: Capped at `10MB` for all payload-bearing endpoints using a `MaxBytesReader` middleware.
+- **Entity Expansion**: Disallowed in XML parser to prevent Billion Laughs / XXE attacks.
+- **Rate Limiting**: Enforced at the gateway (Envoy) level per tenant based on plan tier (burst limit `plans.api_rate_limit_rps` and monthly budget `plans.api_request_budget_monthly`).
+- **Plan Quotas & Entitlements**: During workflow creation (`POST /workflows`), the service parses the `x-plan` header and enforces limits on the maximum allowed workflow templates per tenant (e.g. Starter: 5 templates, Pro: 50, Enterprise: Unlimited). Requests exceeding this quota return a `403 Forbidden` with a plan limits block.
+- **Idempotency**: A mutating operation (`POST`, `PUT`) that carries an `Idempotency-Key` header of at most 256 characters (a longer one is `400`) runs once per key. The key is scoped to the tenant, the user, the method and the path, so one user's stored response is never served to another. A request whose key is still running is refused with `409` `IDEMPOTENCY_REQUEST_IN_PROGRESS` instead of running twice; the marker is released when the first request finishes, so a client retry after a failure runs. The key is optional and the cache fails open: an unavailable cache runs the request without the protection and logs a warning that names the key only by its hash.
+
+#### Input Validation Rules
+
+Input validation is enforced at the service layer before any DB write. Violations return `422 UNPROCESSABLE_ENTITY` unless otherwise noted.
+
+**Free-text field length caps** (enforced in service layer; DB column widths are a secondary backstop):
+
+| Field | Max length | Notes |
+| --- | --- | --- |
+| `workflow.name` | 255 chars | Matches VARCHAR(255) column |
+| `workflow.description` | 2 000 chars | TEXT column; cap enforced at service layer only |
+| `workflow.template_key` | 255 chars | Any string up to the column width; unique per tenant (`409 DUPLICATE_TEMPLATE_KEY`); a value over the limit is `422 INVALID_INPUT` |
+| `workflow_version.bpmn_xml` | 10 MB bytes | Governed by `LimitRequestBody` middleware; returns 413 before service layer |
+
+**`template_key` format**: free-form text up to 255 characters, with no slug pattern. It is never parsed or composed into anything else; the Execution Service's instance business key is a separate identifier.
+
+**Concurrency tokens**: `PATCH /workflows/:id` and `PUT /workflows/:id/draft` accept the lock token as `If-Match: "<record_version>"` header (preferred) or `record_version` in the JSON body. Header takes precedence when both are present. Omitting both is last-writer-wins (acceptable for single-admin tenants; the guard matters for concurrent admin edits). See §10.11.
+
+**Pagination params** (every list endpoint): `page` ∈ [1, 100000] (default 1), `limit` ∈ [1, 100] (default 20). `versions_limit` on `GET /workflows/:id` is in [1, 100] (default 20). A value that is not an integer or is out of range is `400 INVALID_INPUT` with every offending parameter named in `invalid_params`; nothing is clamped.
+
+#### Standard Error Patterns (RFC-9457)
+
+All error responses adhere to the RFC-9457 (formerly RFC-7807) Problem Details schema. This standard provides a consistent, machine-readable format for API errors. The base structure is defined as:
+
+```json
+{
+  "type": "https://api.workflow.platform/errors/structural-divergence",
+  "title": "Structural Divergence Detected",
+  "status": 409,
+  "detail": "Topological elements have diverged from the previous version. Publishing this draft may break active execution instances.",
+  "instance": "/workflows/7ca648b2-b432-4744-884c-35fd556a310c/versions/11abcc22-3844-42bc-938b-665cd42c1111/publish",
+  "code": "STRUCTURAL_DIVERGENCE"
+}
+```
+
+For validation and graph errors (`422 Unprocessable Entity`), the response includes an `errors` array detailing each failing element:
+
+```json
+{
+  "type": "https://api.workflow.platform/errors/validation-failed",
+  "title": "BPMN Validation Failed",
+  "status": 422,
+  "detail": "BPMN semantic or structural validation failed.",
+  "instance": "/workflows/validate",
+  "code": "BPMN_VALIDATION_FAILED",
+  "errors": [
+    {
+      "code": "MISSING_TASK_DEFINITION",
+      "node_id": "UserTask_112",
+      "message": "userTask is missing zeebe:taskDefinition"
+    },
+    {
+      "code": "UNMATCHED_GATEWAY",
+      "node_id": "ExclusiveGateway_2",
+      "message": "Unbalanced split gateway: no corresponding join gateway found"
+    }
+  ]
+}
+```
+
+#### Error Catalog
+
+Below is the complete registry of application-specific error codes returned inside the `code` field of the RFC-9457 payload:
+
+| Error Code | HTTP Status | Problem Title | Description & Context |
+| --- | --- | --- | --- |
+| `BAD_REQUEST` | `400 Bad Request` | Bad Request | JSON request body could not be bound — missing required fields or incorrect field types. `invalid_params` names the fields by their JSON names; the response never repeats a submitted value or an internal type name, and the underlying error is logged. |
+| `INVALID_BPMN_XML` | `400 Bad Request` | Invalid BPMN XML | The BPMN document cannot be parsed — not valid XML, a forbidden `DOCTYPE`/entity, or the XML-bomb token cap. (Distinct from `BPMN_VALIDATION_FAILED` 422, which is a parseable-but-invalid document.) |
+| `XXE_ENTITY_DETECTED` | _(internal log signal — not returned)_ | External Entities Prohibited | A forbidden `DOCTYPE`/external-entity or XML-bomb attempt. The client receives the generic `400 INVALID_BPMN_XML` (detection is not disclosed); the service emits an internal security-alert log with the client IP and tenant. |
+| `UNAUTHORIZED` | `401 Unauthorized` | Unauthorized | Missing, expired, or invalid gateway-injected identity headers (`x-tenant-id`, `x-user-id`). |
+| `FORBIDDEN` | `403 Forbidden` | Forbidden | The user lacks the required administrative role (`tenant_admin` or `tenant_owner`) to perform this action. |
+| `PLAN_QUOTA_EXCEEDED` | `403 Forbidden` | Plan Quota Exceeded | The tenant has reached the maximum allowed workflow templates/versions for their plan tier. |
+| `NOT_FOUND` | `404 Not Found` | Resource Not Found | The requested workflow or version ID does not exist or belongs to a different tenant. |
+| `DRAFT_NOT_FOUND` | `404 Not Found` | Draft Not Found | No active DRAFT version exists for this workflow. Returned by `GET /workflows/:id/draft`. |
+| `PAYLOAD_TOO_LARGE` | `413 Payload Too Large` | Request Entity Too Large | The request payload exceeds the configured maximum transfer size limit (10MB). |
+| `UNSUPPORTED_MEDIA_TYPE` | `415 Unsupported Media Type` | Unsupported Media Type | A request carrying a body whose `Content-Type` is not `application/json`. Enforced by the `RequireJSONContentType` middleware on the authenticated API group. |
+| `RATE_LIMIT_EXCEEDED` | `429 Too Many Requests` | Rate Limit Exceeded | The tenant has exceeded their allocated rate limits (requests per second or monthly quota). _(gateway-enforced — not returned by this service) |
+| `DUPLICATE_TEMPLATE_KEY` | `409 Conflict` | Workflow Template Key Conflict | A workflow with the specified `template_key` already exists within the tenant boundary. |
+| `DRAFT_ALREADY_EXISTS` | `409 Conflict` | Draft Already Exists | An active workspace draft already exists for this workflow (must publish or discard it first). |
+| `DRAFT_CONCURRENCY` | `409 Conflict` | Draft Concurrency Violation | Stale draft update — client's `record_version` does not match the current value; another update has been applied since the draft was last read. |
+| `WORKFLOW_CONCURRENCY_VIOLATION` | `409 Conflict` | Workflow Concurrency Violation | Stale workflow metadata update — client's `record_version` on the `workflow` row does not match; another name/description update has been applied since the client last read. _(planned — pending `PATCH /workflows/:id` endpoint) |
+| `IDEMPOTENCY_KEY_REPLAY` | `409 Conflict` | Idempotent Request Replayed | The request was submitted with a previously processed `Idempotency-Key` but different parameters. |
+| `IDEMPOTENCY_REQUEST_IN_PROGRESS` | `409 Conflict` | Idempotency Request In Progress | A request with the same `Idempotency-Key` is still running; retry once it finishes. |
+| `NO_ACTIVE_VERSION` | `409 Conflict` | No Active Version | The operation (e.g. archiving or promoting) requires an active version, but none is set. |
+| `MODULE_PROCESS_ID_CONFLICT` | `409 Conflict` | Module Process Id Conflict | A new module's process id is already used by a module the tenant can call, or a new module version's process id differs from its module's. |
+| `STRUCTURAL_DIVERGENCE` | `409 Conflict` | Structural Divergence Detected | The compiled graph has structural shifts. Blocked unless `force_publish_structural` is `true`. |
+| `ACTIVE_INSTANCES_EXIST` | `409 Conflict` | Active Instances Running | The workflow cannot be archived because there are active running or paused instances. |
+| `INVALID_VERSION_STATUS` | `409 Conflict` | Invalid Version Status | The requested operation is not permitted for the version's current status (e.g. cloning a DRAFT, promoting an ARCHIVED version). |
+| `BPMN_VALIDATION_FAILED` | `422 Unprocessable Entity` | BPMN Validation Failed | BPMN semantic or structural validation failed. The `invalid_params` array carries per-node `BpmnErrorCode` details. |
+| `ASSIGNEE_INELIGIBLE` | `422 Unprocessable Entity` | Ineligible Assignee | A default assignee validation failed eligibility checks against the Org & Membership Service. |
+| `INTERNAL_ERROR` | `500 Internal Server Error` | Internal Server Error | An unexpected server error occurred (e.g., database connection failure or unhandled panic). |
+| `UPSTREAM_UNAVAILABLE` | `503 Service Unavailable` | Upstream Service Unavailable | The Execution Service is unreachable or returned an error during the archive guard call. The archive is not committed while the guard is unresolvable. |
+| `DATABASE_DISCONNECTED` | `503 Service Unavailable` | Database Connection Failed | The readiness probe failed to connect to the database. The pod is removed from load balancer rotation until connectivity is restored. |
+
+#### 3.1.3 Error Code Flow & Trigger Logic
+
+Below is a detailed walkthrough of the endpoints, checks, and flow execution transitions that trigger each specific application error code:
+
+1. **`INVALID_BPMN_XML`** (HTTP 400)
+   - **Endpoints**: `POST /workflows`, `PUT /workflows/:id/draft`, `POST /workflows/validate`
+   - **Trigger Scenario**: A user imports or uploads a corrupted BPMN XML file from their local computer, or makes a manual API call with a malformed XML payload.
+   - **Technical Cause**: The HTTP router passes the request body to Go's `xml.Unmarshal` decoder. If the decoder encounters malformed XML (e.g., tag mismatch, unclosed elements, or invalid characters), it returns a parsing syntax error.
+   - **Step-by-Step Flow**:
+     1. The client submits a REST request containing the raw XML payload.
+     2. The handler reads the request body via a `MaxBytesReader` stream.
+     3. The handler passes the buffer to `xml.Unmarshal` to unmarshal into the internal Go AST struct representation.
+     4. The compiler's parse step (security scan → token cap → `xml.Unmarshal`) returns a non-namespace parse failure, wrapped as `domain.ErrMalformedBPMN`.
+     5. The handler halts execution and returns an RFC-9457 error with `code: INVALID_BPMN_XML` (HTTP 400). A forbidden-construct cause is additionally logged (see `XXE_ENTITY_DETECTED`).
+   - **Database & Transaction Impact**: The request is halted before database access; no SQL transaction is initiated, and database state remains unaffected.
+   - **Resolution**: The client must check the XML file syntax, ensure it complies with valid XML standards, and correct the malformed elements before re-submitting.
+
+2. **`XXE_ENTITY_DETECTED`** (internal security-log signal — the client receives `400 INVALID_BPMN_XML`)
+   - **Endpoints**: `POST /workflows`, `PUT /workflows/:id/draft`, `POST /workflows/validate`
+   - **Trigger Scenario**: An attacker attempts to exploit the parser using an XML External Entity (XXE) injection or a nested entity expansion ("XML Bomb" or "Billion Laughs") to cause denial of service or read arbitrary local files.
+   - **Technical Cause**: `securityScan` rejects a `<!DOCTYPE>`/`<!ENTITY>` declaration anywhere in the document outright, and a token-count cap guards against expansion; both tag the failure with `domain.ErrForbiddenXML`.
+   - **Step-by-Step Flow**:
+     1. The client sends a request with an XML payload that includes a `<!DOCTYPE ...>` block (or a token stream exceeding the cap).
+     2. `securityScan`/`countTokens` reject it before unmarshal, wrapping `domain.ErrForbiddenXML` (which also satisfies `domain.ErrMalformedBPMN`).
+     3. The handler emits an internal security-alert **log** containing the client's IP and tenant context.
+     4. The client receives the **generic** `400 INVALID_BPMN_XML` — detection is **not** disclosed, so a probe is not confirmed to the caller.
+   - **Database & Transaction Impact**: The request is rejected during parsing. No database transaction is started.
+   - **Resolution**: Remove all `<!DOCTYPE>` headers and external entity declarations from the BPMN XML document.
+
+3. **`IDEMPOTENCY_KEY_REPLAY`** (HTTP 409)
+   - **Endpoints**: All mutating REST endpoints (POST / PUT / DELETE).
+   - **Trigger Scenario**: Due to a network retry or client-side bug, a client re-submits a request carrying a previously used `Idempotency-Key` header, but with a different body payload.
+   - **Technical Cause**: The Idempotency Middleware validates the `Idempotency-Key` UUID. If it already exists in the Valkey cache, it compares the SHA-256 checksum of the new request payload with the checksum stored in cache. A mismatch indicates that the same key is being reused for a different operation — a conflict on the idempotency record.
+   - **Step-by-Step Flow**:
+     1. The client sends a mutating request with an `Idempotency-Key` header.
+     2. The Idempotency Middleware reads the header and looks up the key in Valkey: `GET idem:<tenantID>:<method>:<path>:<key>`.
+     3. Valkey returns the cached response details, including the SHA-256 hash of the initial payload.
+     4. The middleware computes the SHA-256 hash of the incoming request body and finds it does not match the cached hash.
+     5. The middleware aborts the request chain immediately and returns `409 Conflict` with `code: IDEMPOTENCY_KEY_REPLAY`.
+   - **Database & Transaction Impact**: Halts execution at the middleware level. No database transaction is created.
+   - **Resolution**: Use a unique, random UUID v7 for each distinct request's `Idempotency-Key`.
+
+4. **`UNAUTHORIZED`** (HTTP 401)
+   - **Endpoints**: All public-facing REST endpoints.
+   - **Trigger Scenario**: A client directly invokes the microservice bypass ports or Keycloak JWT authentication failed, leading to missing identity attributes at the gateway.
+   - **Technical Cause**: The custom authentication middleware parses the gateway-injected headers. If the mandatory headers `x-tenant-id` or `x-user-id` are missing, malformed (non-UUID format), or empty, identity verification fails.
+   - **Step-by-Step Flow**:
+     1. The client sends a REST request to the service.
+     2. The custom identity middleware executes.
+     3. The middleware inspects the request context and headers.
+     4. It determines that `x-tenant-id` is absent, or that its contents fail regex matching for a valid UUID v7.
+     5. The request processing is halted immediately with `code: UNAUTHORIZED`.
+   - **Database & Transaction Impact**: Execution is blocked at the boundary. No database connection is acquired, and no transaction is opened.
+   - **Resolution**: The client must ensure that a valid JWT bearer token is supplied in the `Authorization` header so the Envoy gateway can verify identity and inject headers.
+
+5. **`FORBIDDEN`** (HTTP 403)
+    - **Endpoints**: All REST endpoints.
+    - **Trigger Scenario**: A tenant user with standard credentials (non-admin) attempts to invoke an administrative action (e.g. creating, deleting, or archiving workflows).
+    - **Technical Cause**: Role validation middleware checks the `x-tenant-roles` header for required admin values.
+    - **Step-by-Step Flow**:
+      - *RBAC Failure*:
+        1. The middleware parses `x-tenant-roles`.
+        2. The roles string does not contain `tenant_admin` or `tenant_owner`.
+        3. The middleware aborts execution and returns `code: FORBIDDEN`.
+    - **Database & Transaction Impact**: In the RBAC failure, no transaction is started and no DB context is opened.
+    - **Resolution**: The user must be assigned the appropriate role level (`tenant_admin` or `tenant_owner`) to perform admin actions.
+
+6. **`PLAN_QUOTA_EXCEEDED`** (HTTP 403)
+    - **Endpoints**: `POST /workflows`
+    - **Trigger Scenario**: A tenant on a limited subscription tier (e.g. "Starter", which is capped at 5 workflow templates) attempts to register a new workflow key.
+    - **Technical Cause**: The workflow creation handler counts the active definitions in a database transaction with a serializable isolation level to prevent parallel bypasses. If the count meets or exceeds the limits defined for the tier in the `x-plan` header, the request is blocked.
+    - **Step-by-Step Flow**:
+      1. The admin posts a template creation request.
+      2. The service extracts the `x-plan` tier (e.g. `starter`).
+      3. The handler starts a transaction with `db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})`.
+      4. The handler counts the tenant's definitions: `SELECT COUNT(*) FROM workflow WHERE tenant_id = :tenant_id`.
+      5. The handler determines the count exceeds the threshold (e.g., 5).
+      6. The transaction is rolled back immediately, and the handler returns `code: PLAN_QUOTA_EXCEEDED`.
+    - **Database & Transaction Impact**: A database transaction is opened under `SERIALIZABLE` isolation, reads the count, and is rolled back without modifying any rows.
+    - **Resolution**: The tenant must upgrade their subscription tier (e.g. to "Pro" or "Enterprise") or delete existing, unused workflow templates to free up quota.
+
+7. **`NOT_FOUND`** (HTTP 404)
+    - **Endpoints**: All REST endpoints targeting specific resource IDs.
+    - **Trigger Scenario**: A user requests a workflow, draft version, or history record using an ID that does not exist in the database, or attempts to access a resource belonging to another tenant (cross-tenant RLS breach).
+    - **Technical Cause**: The query executes against the database. Due to the RLS policy filtering or absence of the record, the database driver returns `sql.ErrNoRows`. By silently returning `NOT_FOUND` for RLS breaches, the system prevents leaking whether a resource exists under another tenant (security through obscurity).
+    - **Step-by-Step Flow**:
+      1. The client requests `/workflows/c0a80101-3844-42bc-938b-665cd42c1111`.
+      2. The service starts a transaction and sets the tenant context via the GUC session parameter.
+      3. The query `SELECT * FROM workflow WHERE id = :id` is executed.
+      4. If the resource belongs to another tenant or doesn't exist, RLS filters it out, and the database returns no matches (`sql.ErrNoRows`).
+      5. The application catches this error, rolls back the transaction, and returns `code: NOT_FOUND`.
+    - **Database & Transaction Impact**: A database transaction is opened, performs a lookup, and rolls back cleanly.
+    - **Resolution**: Verify that the requested ID is valid, formatted correctly as a UUID v7, and that the resource has not been permanently deleted or discarded.
+
+8. **`PAYLOAD_TOO_LARGE`** (HTTP 413)
+   - **Endpoints**: `POST /workflows`, `PUT /workflows/:id/draft`, `POST /workflows/validate`
+   - **Trigger Scenario**: An admin uploads a massive BPMN XML process map containing complex layout elements or embedded binary attachments, exceeding the 10MB file transfer limit.
+   - **Technical Cause**: A request body limits middleware restricts the maximum readable bytes of the HTTP request payload stream using `http.MaxBytesReader`.
+   - **Step-by-Step Flow**:
+     1. The client starts sending a POST request with a large request body.
+     2. The service's request wrapper middleware intercepts the HTTP body stream using `http.MaxBytesReader(w, r.Body, 5*1024*1024)`.
+     3. During reading, the stream reader exceeds the 10MB boundary.
+     4. The reader triggers an error (`http: request body too large`).
+     5. The handler halts reading, logs the event, and responds with `code: PAYLOAD_TOO_LARGE`.
+   - **Database & Transaction Impact**: The request is rejected early in the HTTP processing chain. No database connections are utilized.
+   - **Resolution**: Simplify the BPMN model by modularizing large processes into sub-processes, or stripping unused documentation and graphical metadata before upload.
+
+9. **`UNSUPPORTED_MEDIA_TYPE`** (HTTP 415)
+   - **Endpoints**: `POST /workflows`, `PUT /workflows/:id/draft`, `POST /workflows/validate`
+   - **Trigger Scenario**: A client sends a request **with a body** whose `Content-Type` is missing or is something other than `application/json` (e.g. `text/plain`, `application/xml`, `application/x-www-form-urlencoded`).
+   - **Technical Cause**: The `RequireJSONContentType` middleware (authenticated API group) inspects requests that carry a body and requires `application/json` (a `;charset=…` suffix is allowed).
+   - **Step-by-Step Flow**:
+     1. The client sends a request carrying a non-empty body.
+     2. The middleware checks `Content-Length` (body-less GET/DELETE and empty-body POSTs pass through untouched).
+     3. It reads the `Content-Type` header; if (after stripping `;charset`) it is not `application/json`, it aborts.
+     4. The middleware returns an RFC-9457 `415` with `code: UNSUPPORTED_MEDIA_TYPE`.
+   - **Database & Transaction Impact**: Request rejected at boundary. Database is not contacted.
+   - **Resolution**: Send the HTTP header `Content-Type: application/json`.
+
+10. **`RATE_LIMIT_EXCEEDED`** (HTTP 429)
+    - **Endpoints**: All REST endpoints.
+    - **Trigger Scenario**: A tenant runs automated polling scripts or rapid UI interactions that exceed the allowed burst rate limits.
+    - **Technical Cause**: The Envoy gateway or application-level rate limiter checks the request rate using a Token Bucket algorithm tied to the tenant's identifier.
+    - **Step-by-Step Flow**:
+      1. The client fires a burst of requests.
+      2. Envoy gateway (or the service rate-limiting middleware) checks the token bucket in Redis: `rate_limit:tenant:<tenant_id>`.
+      3. The bucket has 0 tokens available.
+      4. The request is rejected at the gateway boundary.
+      5. The gateway responds with HTTP 429 and `code: RATE_LIMIT_EXCEEDED`.
+    - **Database & Transaction Impact**: Blocked at gateway/middleware. Database is unaffected.
+    - **Resolution**: Implement exponential backoff retry logic in client applications, or contact support to upgrade the API rate limit tier.
+
+11. **`DUPLICATE_TEMPLATE_KEY`** (HTTP 409)
+    - **Endpoints**: `POST /workflows`, `POST /workflows/:id/versions/:version_id/clone`
+    - **Trigger Scenario**: An admin tries to register a new workflow using a key (e.g., `tender-review`) that is already assigned to an existing workflow in the same tenant.
+    - **Technical Cause**: The database enforces a unique constraint on `(tenant_id, template_key)`. If an insert violates this constraint, PostgreSQL returns error code `23505` (unique violation).
+    - **Step-by-Step Flow**:
+      1. The admin submits a creation request with `template_key = 'procurement-check'`.
+      2. The service starts a transaction.
+      3. The repository attempts to execute: `INSERT INTO workflow (tenant_id, template_key, ...) VALUES (:tenant, 'procurement-check', ...)`.
+      4. PostgreSQL detects a collision on the unique key constraint `uq_workflow_template_key`.
+      5. The database aborts the execution and returns code `23505`.
+      6. The transaction is rolled back, the handler catches the unique constraint violation, and maps it to `code: DUPLICATE_TEMPLATE_KEY`.
+    - **Database & Transaction Impact**: A transaction is opened, executes an insert, collides, aborts the insert statement, and is rolled back.
+    - **Resolution**: Choose a unique `template_key` or update the existing workflow using the `/draft` updates instead.
+
+12. **`DRAFT_ALREADY_EXISTS`** (HTTP 409)
+    - **Endpoints**: `POST /workflows/:id/draft`
+    - **Trigger Scenario**: An admin attempts to initialize a new workspace draft for a workflow that already has an active, un-published draft.
+    - **Technical Cause**: The database partial unique index `idx_wv_single_draft` enforces that a workflow can have only one version row in `DRAFT` status at any time.
+    - **Step-by-Step Flow**:
+      1. The admin clicks "Edit Workflow" which triggers a POST to `/workflows/:id/draft`.
+      2. The service starts a transaction.
+      3. It checks for active drafts, or tries to execute: `INSERT INTO workflow_version (workflow_id, status, ...) VALUES (:id, 'DRAFT', ...)`.
+      4. The index `idx_wv_single_draft` (defined as `UNIQUE(workflow_id) WHERE status = 'DRAFT'`) blocks the write and throws a unique violation.
+      5. The database aborts the statement, the transaction rolls back, and the handler returns `code: DRAFT_ALREADY_EXISTS`.
+    - **Database & Transaction Impact**: Opened transaction is aborted on constraint violation and rolled back.
+    - **Resolution**: Discard the existing draft (`DELETE /draft`) or publish it (`POST /publish`) before attempting to start a new draft.
+
+13. **`DRAFT_CONCURRENCY`** (HTTP 409)
+    - **Endpoints**: `PUT /workflows/:id/draft`
+    - **Trigger Scenario**: Two administrators are concurrently editing the same draft in the Modeler UI. Admin A saves their work, then Admin B attempts to save their work, which would overwrite Admin A's changes.
+    - **Technical Cause**: Optimistic concurrency control via `record_version` (a monotonic BIGINT counter). The update query filters on `AND record_version = :client_version`. If another update has incremented `record_version` in the database, the query matches 0 rows.
+    - **Step-by-Step Flow**:
+      1. Admin B clicks "Save" sending a PUT request with `If-Match: "3"` (or body field `record_version: 3`).
+      2. The service starts a transaction.
+      3. The repository executes: `UPDATE workflow_version SET bpmn_xml = :xml WHERE workflow_id = :id AND status = 'DRAFT' AND record_version = 3`. The `record_version` increment and `updated_at` refresh are applied automatically by the `BEFORE UPDATE` trigger.
+      4. Because Admin A already saved, the database row's `record_version` is now `4`. The query updates `0` rows.
+      5. The repository detects `0` rows affected, rolls back the transaction, and returns `code: DRAFT_CONCURRENCY`.
+    - **Database & Transaction Impact**: A transaction is opened, executes an update that matches 0 rows, determines optimistic locking failure, and rolls back.
+    - **Resolution**: The client UI must prompt the user that the draft has changed, fetch the latest draft version (which includes the new `record_version`), display a merge/overwrite diff, and retry with the updated `record_version`.
+
+14. **`NO_ACTIVE_VERSION`** (HTTP 409)
+    - **Endpoints**: `POST /workflows/:id/draft`, `POST /workflows/:id/archive`, `POST /workflows/:id/versions/:version_id/promote`
+    - **Trigger Scenario**: An admin tries to archive a workflow, promote a version, or initialize a draft, but the parent workflow has never had an active published version (e.g. it was just created and only exists as a draft).
+    - **Technical Cause**: The workflow root database record has `active_version_id` set to `NULL`. The application verifies this pointer before executing the requested transition.
+    - **Step-by-Step Flow**:
+      1. The client requests a draft initialization from the active version.
+      2. The service starts a transaction and fetches the parent workflow record: `SELECT * FROM workflow WHERE id = :id`.
+      3. The service checks `active_version_id`. It is `NULL`.
+      4. The service aborts the flow, rolls back the transaction, and returns `code: NO_ACTIVE_VERSION`.
+    - **Database & Transaction Impact**: Transaction opens, reads the null pointer, and rolls back cleanly.
+    - **Resolution**: Publish the initial draft first using `/publish` before attempting version promotion, archiving, or active-version based cloning.
+
+15. **`STRUCTURAL_DIVERGENCE`** (HTTP 409)
+    - **Endpoints**: `POST /workflows/:id/versions/:version_id/publish`
+    - **Trigger Scenario**: An admin edits a draft, deleting a user task or changing split/join gateway structures, and clicks "Publish" with `force_publish_structural = false`.
+    - **Technical Cause**: The compiler compares the topological execution plan of the active version with the new draft version. If it detects added/removed nodes or rewritten path sequence flows, it flags a structural divergence that could break active runtime instances.
+    - **Step-by-Step Flow**:
+      1. The admin requests publishing for version `v2`.
+      2. The service retrieves both `v1` (active) and `v2` (draft) process definitions.
+      3. The compiler runs a structural diff check and determines topological elements have diverged.
+      4. The request payload carries `force_publish_structural = false`.
+      5. The compiler returns a structural divergence warning.
+      6. The handler rolls back the transaction and returns `code: STRUCTURAL_DIVERGENCE` with a suggested action to register a new workflow key.
+    - **Database & Transaction Impact**: Transaction opens, reads data, runs compilation checks, aborts, and rolls back.
+    - **Resolution**: Set `force_publish_structural = true` in the publish request to override and deploy, or create a brand new workflow using a different key.
+
+16. **`BPMN_VALIDATION_FAILED`** (HTTP 422)
+    - **Endpoints**: `POST /workflows/:id/versions/:version_id/publish`, `POST /workflows/validate`
+    - **Trigger Scenario**: An admin designs a workflow process that contains an unguarded loop (a cycle with no guarded exit, or a back-edge not originating from an exclusive gateway), unconnected task nodes, or multiple start events.
+    - **Technical Cause**: The validation engine runs graph traversal and semantic check rules on the parsed BPMN AST. If any structural validation rules fail, it yields a list of failures.
+    - **Step-by-Step Flow**:
+      1. The admin clicks publish or runs validation check.
+      2. The service parses the BPMN XML to Go structs.
+      3. The validation engine classifies back-edges (DFS), runs Tarjan's SCC guarded-loop detection, and performs start/end node counts and sequence flow checks.
+      4. One or more validation rules are violated (e.g. an unguarded loop).
+      5. The engine halts processing, rolls back the transaction (if publishing), and returns `code: BPMN_VALIDATION_FAILED` with an `errors` array of specific validation codes.
+    - **Database & Transaction Impact**: Transaction is opened (for publish), validation fails, and the transaction rolls back. For validate endpoint, no database transaction is opened.
+    - **Resolution**: Edit the workflow canvas to make loops guarded (route the back-edge through an exclusive gateway that has a forward exit), connect orphan nodes, or remove duplicate start/end elements.
+
+17. **`ASSIGNEE_INELIGIBLE`** (HTTP 422)
+    - **Endpoints**: `POST /workflows/:id/versions/:version_id/publish`
+    - **Trigger Scenario**: An admin sets a default assignee user or department on a task, but the user does not belong to that department or lacks the required role level in the Organization registry.
+    - **Technical Cause**: The validation engine extracts default assignee attributes and makes an outbound REST check to the Org & Membership Service. If the target service returns that the user is ineligible, validation fails.
+    - **Step-by-Step Flow**:
+      1. The client requests publishing.
+      2. The service extracts assignee ID `user-123` and department ID `dept-456` from task `Task_1`.
+      3. The service calls the Org Service: `POST /tenants/tenant-id/users/user-123/eligibility?department=dept-456`.
+      4. The Org Service responds that the user is not in department `dept-456`.
+      5. The validation pass fails, the transaction rolls back, and the service returns `code: ASSIGNEE_INELIGIBLE` detailing the node ID and error message.
+    - **Database & Transaction Impact**: Opened transaction is aborted and rolled back.
+    - **Resolution**: Assign an eligible user who belongs to the department and holds the correct role clearance.
+
+18. **`INTERNAL_ERROR`** (HTTP 500)
+    - **Endpoints**: All endpoints.
+    - **Trigger Scenario**: The PostgreSQL server crashes, a network partition isolates Redis, or the application code triggers a null pointer panic.
+    - **Technical Cause**: Handlers catch database driver connection errors, service broker timeouts, or catch panics via recovery middleware.
+    - **Step-by-Step Flow**:
+      1. The client invokes an API endpoint.
+      2. During execution, the PostgreSQL driver fails to acquire a connection from the pool.
+      3. The repository returns `driver.ErrBadConn`.
+      4. The handler logs the precise error details using `Zap` with a trace correlation ID.
+      5. The handler rolls back the transaction and returns a sanitized HTTP 500 payload with `code: INTERNAL_ERROR`.
+    - **Database & Transaction Impact**: The transaction is automatically rolled back by the database connection or the defer block.
+    - **Resolution**: Infrastructure operators must investigate service logs, monitor DB health, check network stability, or review code stack traces.
+
+19. **`INVALID_VERSION_STATUS`** (HTTP 409)
+    - **Endpoints**: `POST /workflows/:id/versions/:version_id/promote`, `POST /workflows/:id/versions/:version_id/clone`
+    - **Trigger Scenario**: An admin attempts to promote a version that is in `DRAFT` or `ARCHIVED` status, or attempts to clone a version that is in `DRAFT` status.
+    - **Technical Cause**: The promotion endpoint requires the target version status to be `PUBLISHED`. The cloning endpoint requires the target version status to be `PUBLISHED` or `ARCHIVED`.
+    - **Step-by-Step Flow**:
+      1. Admin requests promotion for version `v2` (which is a draft).
+      2. Service queries the target version status.
+      3. Service checks the status. Since it is `DRAFT` (not `PUBLISHED`), the promotion is rejected.
+      4. The handler rolls back the transaction and returns `code: INVALID_VERSION_STATUS` with details on the illegal transition.
+    - **Database & Transaction Impact**: Clean rollback.
+    - **Resolution**: Target a version with a valid status.
+
+---
+
+20. **`MODULE_PROCESS_ID_CONFLICT`** (HTTP 409)
+    - **Endpoints**: `POST /modules`, `POST /modules/:id/versions`
+    - **Trigger Scenario**: A new module's `<bpmn:process>` id is already the `process_id` of a module the caller can call — the tenant's own or a global one; for a global module, any module. Or a new version's process id differs from its module's.
+    - **Technical Cause**: a call names a module by process id (§3.3.18), so the id must identify one module and stay the same across its versions. A partial unique index per scope backs the check; module create checks the other scope.
+    - **Resolution**: give the module's process a different id, or keep the module's own id in the new version.
+
+### 3.1.4 BPMN Semantic & Structural Validation Sub-Errors
+
+When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), the response payload contains an `errors` list. Each item in this list carries a specific sub-validation code from the `BpmnErrorCode` registry. Below is the detailed trigger logic for each validation rule:
+
+1. **`REJECTED_ELEMENT`**
+   - **Trigger Scenario**: The uploaded XML contains a Tier 3 element that will never be supported (§4.1.2 / §4.1.4). Examples: `<bpmn:serviceTask>`, `<bpmn:scriptTask>`, `<bpmn:complexGateway>`, data elements.
+   - **Trigger Logic**: The parser scans the raw XML token stream for tag names in the `rejectedElements` map (§4.1.4). One error per offending node ID is emitted. The scan runs before `encoding/xml` unmarshal so that elements the decoder silently drops are still surfaced. A workflow that calls library modules is scanned as authored, before the modules are bundled into it, so a rejected element beside a call is reported the same as one in a workflow with no call.
+
+2. **`MISSING_NAMESPACE`**
+   - **Trigger Scenario**: The uploaded XML lacks standard BPMN 2.0 namespaces or the Zeebe custom modeler extension namespaces in the root `<bpmn:definitions>` tag.
+   - **Trigger Logic**: The parser checks for attributes `xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"` and `xmlns:zeebe="http://camunda.org/schema/1.0/zeebe"`. If absent, compiling Zeebe properties is impossible, triggering this error.
+
+3. **`MISSING_TASK_DEFINITION`**
+   - **Trigger Scenario**: A `<bpmn:userTask>` lacks a `<zeebe:taskDefinition>` extension element.
+   - **Trigger Logic**: The validator checks each `userTask` for a `zeebe:taskDefinition` child inside `extensionElements`. If absent, validation fails with this code against the task node ID.
+
+4. **`TASK_NOT_IN_LANE`**
+   - **Trigger Scenario**: A `<bpmn:userTask>` is not listed under any lane via `<bpmn:flowNodeRef>`.
+   - **Trigger Logic**: The validator builds a `nodeID → laneID` map from all `flowNodeRef` entries. Any `userTask` whose ID is absent from this map — or appears in more than one lane — triggers this error. Department is derived solely from lane membership; no `dept_id` property is read.
+
+5. **`UNKNOWN_STAGE_TYPE`** *(warning severity)*
+   - **Trigger Scenario**: The `type` attribute of `<zeebe:taskDefinition>` does not match any registered `StageTypeHandler` ID (e.g. `prep`, `review`, `approve`).
+   - **Trigger Logic**: The validator looks up `taskDefinition.type` in the `StageTypeHandler` registry. If no handler is registered for that value, a **warning** (not an error) is emitted with code `UNKNOWN_STAGE_TYPE`. Compilation proceeds: the task compiles to a passthrough `StageDef` whose `type` and `activity` fields equal the raw string and whose `engine_note` field reads `"stage type '<type>' is not a defined class in the workflow engine"`. This behaviour exists because IAM is the authoritative owner of role/department definitions and may introduce stage types unknown to this service at design time.
+   - **Note**: `INVALID_TASK_DEFINITION_TYPE` remains a registered error code but is never emitted; `UNKNOWN_STAGE_TYPE` is the only code used for this condition.
+
+6. **`CANDIDATE_GROUPS_EMPTY`**
+   - **Trigger Scenario**: A user task has a `<zeebe:assignmentDefinition>` but `candidateGroups` is absent or empty, or exceeds 256 characters.
+   - **Trigger Logic**: The validator reads `assignmentDefinition.candidateGroups`. If the value is missing, empty after trimming, or longer than 256 characters, this error is emitted.
+
+7. **`INVALID_CANDIDATE_USER`**
+   - **Trigger Scenario**: The `candidateUsers` attribute on `<zeebe:assignmentDefinition>` is present but is not a single valid UUID v7. In a global module (§3.3.18), also any `candidateUsers` at all, and any call's `Assignees` input.
+   - **Trigger Logic**: A dedicated validator function (`validateCandidateUser`) requires a UUID v7 (`IsUserID`), the form of every IAM user id, so a value publish's eligibility check would refuse is refused here first. A value that is not one, including a comma-separated list, emits this error. The named function is the single change point for multi-user support.
+
+8. **`CANDIDATE_USERS_EMPTY`**
+   - **Trigger Scenario**: A user task that names a role but nobody. It is judged on a document alone, and again on a workflow's plan with its calls expanded.
+   - **Trigger Logic**:
+     - *On a document, warning severity.* `ValidateDefaultAssignee` emits it for a user task whose `candidateUsers` is empty after trimming. A module may leave its users to the workflows that call it, and a global module must (code 7), so this blocks neither a module nor a workflow draft.
+     - *For publish, error severity.* `CompileForPublish` expands the plan (`dsl.ExpandCalls`) and emits it for every human stage that still has no default user: every stage but connector, send and receive stages, the Execution Service's own rule for which stages become tasks. A task inside a module takes its default from the `Assignees` of a call that runs it (§4.1.2), which can name a task in a nested module by the path of calls to it, else from its own `candidateUsers`. The error is on the task, or, for a task inside a module, on the workflow's top-level call that runs it, and names the node key. `POST /workflows/validate` and the stored-version validation read judge the same (§3.3.12), in place of the document warnings.
+   - **Why**: a published workflow gives every task a default assignee. The start request's `override_map` replaces a default per node, and the Execution Service refuses a start whose task resolves to nobody or to someone ineligible (422 `ASSIGNEE_INELIGIBLE`, execution LLD §5.5).
+   - **Scope**: user tasks only. `sendTask`/`receiveTask` keep an optional `assignmentDefinition` — the interpreter resolves them through the message buffer and creates no task, so they need no assignee.
+
+9. **`TASK_LIMIT_EXCEEDED`**
+   - **Trigger Scenario**: The process model contains more than 1000 user task nodes, its compile makes more than 1000 stages or visits more than 10000 nodes, or its plan does once its calls are expanded. Exclusive splits whose branches merge only in part compile the merged tail once per branch, so a chain of them can pass 1000 stages with few tasks; the compile stops there (`bpmncore.StageBudget`, and a node budget for a tail of gateways alone).
+   - **Trigger Logic**: `ValidateCounts` counts the process's task nodes: `<bpmn:userTask>`, `<bpmn:task>` and connector `<bpmn:serviceTask>`. Above 1000 the model is rejected. A called process runs once at every call site, so `ValidateCallGraph` also counts, for each process that makes calls and that no other process calls, its own task nodes plus, for every call site, one plus the called process's count. Above 1000 the error names that process. Without it, a chain of small modules that each call the next twice stays under the per-process count while the plan doubles at every level. At publish, `CompileForPublish` also expands the compiled collaboration (`dsl.ExpandCalls`, `workflow_models_lib.md` §2.6) with a budget of 1000 stages, subprocess bodies included, and refuses a plan over it with this code. `POST /workflows/validate` expands the same way; the module gates run the static counts only.
+
+10. **`LANE_LIMIT_EXCEEDED`**
+   - **Trigger Scenario**: The process contains more than 100 lanes.
+   - **Trigger Logic**: The parser counts `<bpmn:lane>` elements. If `len(lanes) > 100`, it fails validation.
+
+11. **`MULTIPLE_START_EVENTS`**
+    - **Trigger Scenario**: The XML defines more than one `<bpmn:startEvent>` in the process flow.
+    - **Trigger Logic**: The process structure validator counts start event nodes. If `count > 1`, validation fails because execution cannot have ambiguous entry points.
+
+12. **`MULTIPLE_END_EVENTS`**
+    - **Deprecated**: the validator does not raise it. A process with more than one `<bpmn:endEvent>` is valid; the code is kept only so stored validation results that carry it still decode.
+13. **`NO_START_EVENT`**
+    - **Trigger Scenario**: There is no `<bpmn:startEvent>` in the process.
+    - **Trigger Logic**: The validator checks if a start event exists. If `count == 0`, the model is rejected.
+
+14. **`NO_END_EVENT`**
+    - **Trigger Scenario**: There is no `<bpmn:endEvent>` in the process.
+    - **Trigger Logic**: The validator checks if an end event exists. If `count == 0`, the model is rejected.
+
+15. **`DANGLING_NODE`**
+    - **Trigger Scenario**: A task, gateway, or start/end event has no sequence flow connections.
+    - **Trigger Logic**: The validator checks if each node ID has at least one incoming sequence flow and at least one outgoing sequence flow (except start/end events). If a node has no sequence flows associated with it, it is marked as dangling.
+
+16. **`UNREACHABLE_NODE`**
+    - **Trigger Scenario**: A node exists in the model but is unreachable from the Start Event.
+    - **Trigger Logic**: The validator runs a Depth-First Search (DFS) traversal starting from the single `<bpmn:startEvent>`. Any node that is not visited in the traversal is flagged as unreachable.
+
+17. **`CYCLE_DETECTED` / `UNGUARDED_LOOP`** *(redefined — see §4.4 Guarded-Loop Enforcement)*
+    - **Trigger Scenario**: The sequence flows create an **unguarded** cyclic loop — a cycle that cannot be exited. Guarded rework loops (a back-edge from a diverging exclusive gateway that also has a forward exit branch) are **valid** and no longer trigger this error.
+    - **Trigger Logic** (`CYCLE_DETECTED`): The compiler classifies back-edges via DFS and runs Tarjan's SCC over the graph to enumerate loops. A loop (SCC with more than one node) is rejected when it has no guarded exit; i.e. it contains no exclusive gateway with an outgoing edge leaving the SCC.
+    - **`UNGUARDED_LOOP`**: A separate code emitted when a back-edge is structurally illegal; its source is not a diverging exclusive gateway, an exclusive gateway's outgoing edges are all back-edges (no forward exit), or a node has a self-edge (`u → u`). The validator checks each back-edge's source node type and confirms its originating exclusive gateway retains at least one forward branch. (A self-edge forms an SCC of size 1, so it is caught here rather than by SCC size.) A receive task is never the source of a revert flow: the compiler follows forward flows only, so a revert out of a receive task would be dropped; a receive task may be the place a revert returns to.
+
+18. **`UNMATCHED_GATEWAY`**
+    - **Trigger Scenario**: A split gateway (e.g. Exclusive, Parallel) does not have a corresponding join gateway to merge the execution branches.
+    - **Trigger Logic**: The compiler maps split-to-join routing blocks. It traces all path permutations from a split gateway. If any branch terminates or merges at an mismatched gateway type, the gateway is flagged.
+
+19. **`INVALID_SEQUENCE_FLOW_REF`**
+    - **Trigger Scenario**: A `<bpmn:sequenceFlow>` references a non-existent `sourceRef` or `targetRef` ID.
+    - **Trigger Logic**: The parser parses sequence flows and builds an adjacency list. If `sourceRef` or `targetRef` does not correspond to a parsed element ID, the reference is invalid.
+
+20. **`MULTIPLE_PROCESSES`**
+    - **Trigger Scenario**: More than one process would run: two or more processes are executable, not marked ignore and not called by another process.
+    - **Trigger Logic**: A workflow runs exactly one process (§4.1.2, pools), so every outside party's pool must carry the zeebe property `ignore=true`. Calls drawn in an outside pool do not count.
+
+21. **`INVALID_SLA_DURATION`**
+    - **Trigger Scenario**: A timer boundary event or intermediate timer catch event declares a duration in an invalid format, or one the Execution Service cannot run: it fires a zero timer at once and disables one it cannot parse.
+    - **Trigger Logic**: The unified duration converter (`parseDuration`) is applied to the `timeDuration` value. Accepted formats: ISO 8601 (`P3D`, `PT72H`) or Go duration (`72h`, `3h30m`), and the duration must be positive and short enough for the Execution Service to run as a timer (about 292 years at most). Any other format, a zero or negative duration, or one too long emits this error against the boundary event or intermediate catch event node ID. The legacy `sla_duration` Zeebe property is not read; SLA is modelled exclusively via timer boundary events.
+
+22. **`INVALID_BOUNDARY_ATTACHMENT`**
+    - **Trigger Scenario**: A boundary event is attached to a node that does not legally host that boundary type, or its `cancelActivity` is not `true`, `false`, `1` or `0` (`1` and `0` mean the same as `true` and `false`). Specifically: an error boundary event attached to anything other than `bpmn:subProcess` or `bpmn:callActivity`, or a timer boundary event whose host is anything other than `bpmn:userTask` or `bpmn:subProcess`. Message boundary events may attach to `bpmn:userTask`, `bpmn:subProcess`, or `bpmn:callActivity`. A timer boundary event may also attach to `bpmn:callActivity`. A node has at most one timer boundary and at most one message boundary, and an error boundary's `errorRef` names a `bpmn:error` of the document.
+    - **Trigger Logic**: `ValidateBoundaryEvents` in `bpmn_compiler/validator/boundary.go` iterates all boundary events. If `attachedToRef` resolves to an unsupported host element, a second timer or message boundary repeats a host, or an `errorRef` names no error, this error is emitted against the boundary event node ID.
+
+23. **`UNSUPPORTED_ELEMENT`**
+    - **Trigger Scenario**: The uploaded XML contains a Tier 2 element that is on the roadmap but not yet supported (§4.1.2 / §4.1.4). Examples: `<bpmn:intermediateCatchEvent>` with a message or signal definition.
+    - **Trigger Logic**: `parser.go` checks each scoped element against an `unsupportedElements` map. If a match is found, this error is emitted against the element ID. A `callActivity` inside a `subProcess` is refused with it too: a call is made from the main flow. Distinct from `REJECTED_ELEMENT` — signals "this will be supported in a future version" rather than "permanently rejected".
+
+22a. **`MISSING_DIAGRAM`**
+    - **Trigger Scenario**: The uploaded BPMN document has no `<bpmndi:BPMNDiagram>` element.
+    - **Trigger Logic**: `ValidateDiagramCompleteness` (in `bpmn_compiler/validator/diagram.go`) returns this error immediately when `len(defs.Diagrams) == 0`. A BPMN document without diagram interchange data cannot be displayed or edited in a visual modeler, so the service rejects it during both validation and compilation.
+
+22b. **`MISSING_DIAGRAM_SHAPE`**
+    - **Trigger Scenario**: A node or sequence flow in the process has no corresponding `<bpmndi:BPMNShape>` or `<bpmndi:BPMNEdge>` entry in the diagram interchange section.
+    - **Trigger Logic**: `ValidateDiagramCompleteness` builds a set of all shape/edge `bpmnElement` refs in the `BPMNDiagram`. For each activity, gateway, event, and sequence flow it checks that a corresponding shape/edge exists; any missing shape or edge emits this error with the missing element ID as the node ID.
+
+24. **`MISSING_ASSIGNMENT_DEFINITION`**
+    - **Trigger Scenario**: A `<bpmn:userTask>` lacks a `<zeebe:assignmentDefinition>` extension element.
+    - **Trigger Logic**: The validator checks each `userTask` for a `zeebe:assignmentDefinition` child inside `extensionElements`. If absent, this error is emitted against the task node ID.
+
+25. **`INVALID_ZEEBE_PROPERTY`**
+    - **Trigger Scenario**: A `<zeebe:property>` element carries an unrecognized name or a structurally invalid value for a property the compiler actively validates.
+    - **Trigger Logic**: *Error severity* — on a `callActivity`, emitted on the call:
+      - a `target="Depts"` or `target="Assignees"` input whose source is not a JSON object of strings, written plain or with a leading `=`;
+      - a `Depts` key naming a lane the called process does not have or that holds no work, a lane fixed by its own `dept_id`, or one lane twice; or a value naming a lane the calling process does not have;
+      - an `Assignees` key that names no task under the call — a key is a task id of the called process, or the ids of the called process's calls leading to a task further down, then that task's id, joined by `::` — or a value that is not a UUID v7;
+      - a `target="dept_id"` input, which is not used: a laneless module takes the call's lane.
+
+      Every `zeebe:property` on a userTask is forwarded verbatim into `StageDef.Extras` without validation; the compiler does not special-case any property name.
+
+26. **`MISSING_MESSAGE_DEFINITION`** *(warning severity)*
+    - **Trigger Scenario**: A `<bpmn:messageFlow>`, `<bpmn:receiveTask>`, or `<bpmn:sendTask>` references a message ID that is not declared as a `<bpmn:message>` in the root `<bpmn:definitions>`; or a message boundary event's name cannot be resolved from `<bpmn:message>` definitions or collaboration message flows.
+    - **Trigger Logic**: Two cases emit this code as a **warning** (compilation proceeds). (a) *Collaboration-level*: the validator builds a set of all declared message IDs; if any `messageRef` attribute on a `messageFlow`, `receiveTask`, or `sendTask` points to an undeclared ID, this warning is emitted. (b) *Boundary event*: the validator calls `ResolveMessageName` (by `messageRef`) and falls back to `resolveMessageNameFromFlows` (by element ID in collaboration message flows); if the name cannot be resolved by either path, this warning is emitted against the boundary event node ID in `bpmn_compiler/validator/boundary.go`.
+
+27. **`UNMATCHED_MESSAGE_FLOW`**
+    - **Trigger Scenario**: A `<bpmn:messageFlow>` references a source or target node that does not exist in the collaboration.
+    - **Trigger Logic**: The validator resolves `messageFlow.sourceRef` and `messageFlow.targetRef` against all known element IDs. Any dangling reference triggers this error.
+
+28. **`MAX_DEPTH_EXCEEDED`**
+    - **Trigger Scenario**: The longest forward path from the start event to the end event exceeds the maximum node depth (2000), guarding against stack exhaustion / DoS during recursive graph compilation (§4.4). Subprocess paths are counted independently.
+    - **Trigger Logic**: After back-edges are stripped, the validator computes the longest forward path (memoised DFS). If it exceeds `maxPathDepth` (2000), this error is emitted against the start event.
+
+29. **`UNRESOLVED_CALLED_ELEMENT`**
+    - **Trigger Scenario**: A `<bpmn:callActivity>` is missing its `<zeebe:calledElement processId="...">`, or names something that cannot be called: a `processId` that is neither a process in the document nor a library module the tenant can call (§3.3.18); a pinned version that does not exist or was never published; an archived module; an expression `processId` (a call must name a module); a `versionTag` that is not a positive integer or is missing with `bindingType="versionTag"`; a `versionTag` pinning a library version of a process id the document itself defines, which would leave the local process uncalled; or `bindingType="deployment"` without the process in the document.
+    - **Trigger Logic**: at `/validate` and at publish, the library calls are resolved first (`ModuleCalls`, then the module version repository), and each unresolvable one is reported on its call, naming the module and version. `ValidateCallActivity` in `bpmn_compiler/validator/call_activity.go` then checks every call against the bundled document.
+
+30. **`NESTED_SUBPROCESS_NOT_SUPPORTED`**
+    - **Trigger Scenario**: A `<bpmn:subProcess>` element contains another `<bpmn:subProcess>` directly.
+    - **Trigger Logic**: `ValidateProcess` in `bpmn_compiler/validator/validator.go` checks each subProcess for nested child subProcess elements. Only one level of subprocess nesting is supported.
+
+31. **`MISSING_DEPT_INPUT_FOR_MODULE`**
+    - **Trigger Scenario**: A `<bpmn:callActivity>` leaves a lane of the called process without a department: the called process has two or more open lanes (lanes with no `dept_id` property) and the call's `Depts` input does not map every one of them.
+    - **Trigger Logic**: `ValidateCallActivity` in `bpmn_compiler/validator/call_activity.go` lists the called process's open lanes: lanes that hold work (a task, a callActivity or a subProcess) and no `dept_id`; a laneless process counts as one open lane. A single open lane left unmapped takes the call's own lane. With two or more, each must be mapped, and the error, on the call, names the unmapped lanes. Every open lane has a department in the called plan, even one whose only work is a call that binds nothing in it.
+
+32. **`CALLED_ELEMENT_CYCLE`**
+    - **Trigger Scenario**: A chain of `<bpmn:callActivity>` calls returns to a process already on it: a process that calls itself, or A calls B and B calls A.
+    - **Trigger Logic**: `ValidateCallGraph` in `bpmn_compiler/validator/call_graph.go` walks the calls of every process in the bundled document. The error is emitted on the callActivity that closes the cycle. A called process runs inside its caller, so a cycle has no finite plan. When a module is saved or published, the library resolution also emits it for a call that reaches the module itself at its latest version (§3.3.18), which would be a cycle once that version is published.
+
+33. **`DUPLICATE_PROCESS_ID`**
+    - **Trigger Scenario**: Two `<bpmn:process>` elements in the document share an `id`, or the main process is named like another process of the document: the main plan is named by the process name and a called plan by its id, so the two would share a plan name.
+    - **Trigger Logic**: `ValidateCallGraph` in `bpmn_compiler/validator/call_graph.go` emits one error per repeated id. A `calledElement` must resolve to exactly one process. Library modules are bundled under their plan names, so only the author's own file can repeat an id.
+
+34. **`UNSUPPORTED_BOUNDARY_TARGET`**
+    - **Trigger Scenario**: A boundary event whose path reaches a `callActivity`, `sendTask` or `receiveTask` before any `userTask`, `subProcess` or end event, or reaches a `subProcess` whose body does not start with a `userTask`.
+    - **Trigger Logic**: `ValidateBoundaryEvents` in `bpmn_compiler/validator/boundary.go` follows the boundary's first outgoing flow. A compiled boundary either moves to the department of the first task or subProcess on its path, or terminates when the path reaches an end event first or the boundary has no outgoing flow (workflow-models LLD §2.3). A path that starts with a call or a message task has neither, so it is refused on the boundary event; putting a userTask before the call or message task gives it one.
+
+35. **`MISSING_DEPT_ID`**
+    - **Trigger Scenario**: A task in a workflow lane that has no `dept_id` property; a `callActivity` that binds a module lane to such a lane, through `Depts` or by running a module with one open lane in the call's own lane; or, at publish and `/validate`, any work in a workflow with no lanes at all, and any human task of the expanded plan that runs in no IAM department.
+    - **Trigger Logic**: `ValidateDeptID` checks each task's lane, and `ValidateCallActivity` each binding, on the call. A module's own open lanes are exempt: the workflow that calls it binds them. `CompileForPublish` refuses every task, call and subProcess of a workflow with no lanes, on the document before expansion, and then every human task of the expanded plan in no IAM department, on the task or the top-level call that runs it. Work with no IAM department has nobody who could be checked eligible for it.
+
+36. **`INVALID_DEPT_ID`**
+    - **Trigger Scenario**: A lane's `dept_id` property is not a UUID.
+    - **Trigger Logic**: `ValidateDeptID` parses the value; it is the IAM department every task in the lane runs in.
+
+37. **`INVALID_LANE_NAME`**
+    - **Trigger Scenario**: A lane's `name` contains `/`, `::` or `~`; a lane that holds work has no name or a blank one; or two lanes have the same name, compared without case or surrounding space. A lane with no work may stay unnamed.
+    - **Trigger Logic**: `ValidateLaneNames` in `bpmn_compiler/validator/process.go` checks every lane of every process in the document. A lane's name is the first part of its tasks' node keys, which consumers split at the first `/`; `::` separates the calls in a scoped key; `~` numbers a lane's later segments (§4.2). A lane name is also its department key, so one name is one department: a blank name would key a task to no department, and a repeated name would merge two lanes into one.
+
+38. **`NO_RUNNABLE_PROCESS`**
+    - **Trigger Scenario**: No process would run: every process is marked ignore, not executable, or called by another.
+    - **Trigger Logic**: A workflow runs exactly one process (§4.1.2, pools); the pool it runs must not carry `ignore=true`.
+
+39. **`IGNORED_LANE_WORK`**
+    - **Trigger Scenario**: A lane marked ignore holds a `callActivity`, a `subProcess` or a connector task; a boundary event is attached to a task in such a lane; or a loop's way back holds only such tasks.
+    - **Trigger Logic**: An ignored lane's tasks are skipped (§4.1.2, lanes). A call, subprocess or connector there would drop a module or work of the workflow's own, a boundary would wait on a task that never runs, and such a loop would run nothing again.
+
+40. **`CONNECTOR_SECRET_AUTHORED`**
+    - **Trigger Scenario**: A connector `serviceTask`'s `<zeebe:ioMapping>` has an input whose `target` is a secret field of its connector type (`storage`'s `accessKey`, `send-email`'s `apiKey`, and so on).
+    - **Trigger Logic**: `ValidateConnectorNoAuthoredSecret` in `bpmn_compiler/validator/connector_task.go` compares each input's `target` with the secret fields in `workflow-connectors`' `pkg/registry`. A connector always uses the tenant's stored credential, at `connectors/<tenant>/<type>/<field>`; a diagram never names one, so a secret never appears in a stored plan or a diagram.
+
+
+41. **`SPLIT_WITHOUT_GATEWAY`**
+    - **Trigger Scenario**: A start event, a task, a send or receive task, a `subProcess`, a `callActivity` or a boundary event has more than one outgoing sequence flow.
+    - **Trigger Logic**: A flow splits only at a gateway. The error is emitted on the node with the extra flows, inside sub-process bodies as well, and counts forward flows only: the flow of a revert loop back to an earlier node is not a split. A second flow out of an activity cannot be run as a parallel branch, because every activity continues along one flow; a workflow that needs parallel or alternative branches places a parallel, exclusive or inclusive gateway after the activity.
+
+
+42. **`END_EVENT_WITH_OUTGOING_FLOW`**
+    - **Trigger Scenario**: An end event has an outgoing sequence flow.
+    - **Trigger Logic**: An end event ends the path it is on, so the compiler stops there and drops whatever the flow leads to. The error is emitted on the end event, in sub-process bodies as well.
+
+43. **`DUPLICATE_ELEMENT_ID`**
+    - **Trigger Scenario**: Two elements of one process, flow nodes or sequence flows, share an `id`, a sub-process body included: its elements share the process's id space.
+    - **Trigger Logic**: The compiler identifies a node by its id, so a repeated id merges two elements into one stage. One error is emitted per repeated id.
+
+44. **`GATEWAY_BRANCH_WITHOUT_CONDITION`** *(warning)*
+    - **Trigger Scenario**: An exclusive gateway has more than one forward flow without a `conditionExpression`.
+    - **Trigger Logic**: The Execution Service takes the first flow whose condition holds, or else the first flow with no condition, so at most one flow of a split is the default and a second flow without a condition can never run. The warning is emitted on the gateway and does not block publishing. Revert flows are not counted.
+
+45. **`INVALID_TASK_SCHEDULE`**
+    - **Trigger Scenario**: A task's `zeebe:taskSchedule` carries a `dueDate` or `followUpDate` that is not an RFC 3339 date-time.
+    - **Trigger Logic**: The Execution Service reads both dates as RFC 3339 and ignores any other value, so a duration such as `P3D` or a plain date would silently remove the task's SLA timers. An empty attribute is allowed. One error is emitted per invalid attribute, on the task.
+
+46. **`INVALID_CONDITION_EXPRESSION`**
+    - **Trigger Scenario**: A `conditionExpression` on a flow that leaves a split is longer than 4096 characters, or is not one comparison of a result field with a literal (`[= ] field (=|==|!=) literal`).
+    - **Trigger Logic**: The Execution Service evaluates branch conditions with the same shared condition parser of `workflow-models` and fails the gateway at run time on any other form, so a condition it cannot evaluate is refused at validation. A whitespace-only expression is refused too, since it would count as conditional.
+
+---
+
+### 3.2 Endpoint Registry
+
+Complete JSON schemas, parameter rules, and data structures are maintained in the [OpenAPI Specification](definition_openapi.yaml).
+
+| Endpoint | Method | Required Roles | Description |
+| --- | --- | --- | --- |
+| `/workflows` | `GET` | Any | List tenant workflows (paginated, with search, key, is_valid, status, & has_draft filters) |
+| `/workflows` | `POST` | Admin | Register new workflow key and create its initial DRAFT workspace |
+| `/workflows/:id` | `GET` | Any | Get root workflow metadata and inline version history list (capped by versions_limit) |
+| `/workflows/:id/versions` | `GET` | Any | Get paginated list of all versions for a workflow |
+| `/workflows/:id/versions/:version_id` | `GET` | Any | Retrieve raw BPMN XML and compiled JSON plan for a version |
+| `/workflows/:id/draft` | `GET` | Any | Retrieve detail of the active DRAFT version (XML & compiled plan if valid) |
+| `/workflows/:id/draft` | `POST` | Admin | Initialize a new active workspace DRAFT from the current active version |
+| `/workflows/:id/draft` | `PUT` | Admin | Update active workspace DRAFT XML/name/description |
+| `/workflows/:id/draft` | `DELETE` | Admin | Discard/delete the active workspace DRAFT |
+| `/workflows/:id/versions/:version_id/publish` | `POST` | Admin | Compile and publish DRAFT, promoting it to active status |
+| `/workflows/:id/archive` | `POST` | Admin | Archive the workflow and set active version to NULL |
+| `/workflows/:id/versions/:version_id/clone` | `POST` | Admin | Clone a published/archived version into a new workflow key (as a new draft) |
+| `/workflows/:id/versions/:version_id/promote` | `POST` | Admin | Promote an older published version to active (rollback/rollforward) |
+| `/workflows/validate` | `POST` | Any | Validate raw BPMN XML on-the-fly (stateless validation) |
+| `/workflows/:id/versions/:version_id/validation` | `GET` | Any | Re-run the structural validator against a stored version's own BPMN, read-only (§3.3.12.1) |
+| `/workflows/:id/versions/:version_id/nodes` | `GET` | Any | List a published version's human tasks, module tasks included, with each one's node key, department, role level and default users (§3.3.12.2) |
+| `/workflows/:id/versions/:version_id/export` | `GET` | Any | Export raw BPMN XML file attachment (supports DRAFT & published versions) |
+| `/workflows/:id/versions/:version_id/diff/:target_version_id` | `GET` | Any | Get structural and metadata diff between two versions |
+| `/connectors/registry` | `GET` | Any | Serve the modeler-facing element-template (authoring form) list/detail for each registered connector type, generated from `pkg/registry` (§10.14/§10.15) |
+| `/connectors/credentials` | `POST` | Admin | Accept a provider credential for a connector task at authoring time (`storage`/`send-email`), write it to OpenBao, and return the resulting secret path for use in the task's compiled `IOMapping` (§10.15) |
+| `/bpmn/allowed-elements` | `GET` | Any | Serve the modeler-facing BPMN element allowlist (§4.1.2's enforcement list, mirrored) so the frontend's Camunda-based canvas can restrict its palette to what this service will actually accept. UX convenience only — this service's own §4.1.2 422 rejection remains the authoritative enforcement, not the palette (§10.17) |
+| `/modules` | `GET` | Any | List reusable BPMN modules visible to the caller (global + their own tenant's), `?scope=`/`?q=` filters (§3.3.18) |
+| `/modules` | `POST` | Admin | Create a new module (tenant-scoped; `platform_operator` role required for `scope=global`, §10.16) |
+| `/modules/:id` | `GET` | Any | Get a module's metadata + its latest published version's BPMN XML |
+| `/modules/:id/versions` | `GET` | Any | List a module's version history, `page`/`limit` (§3.3.18) |
+| `/modules/:id/versions/:version_id` | `GET` | Any | Get a specific module version, including a pending DRAFT (§3.3.18) |
+| `/modules/:id/versions/:version_id/contract` | `GET` | Any | Get what a caller of the module version binds and names: its slots, its human tasks by `Assignees` key, its messages and error codes, and whether it names users (§3.3.18) |
+| `/modules/:id/versions` | `POST` | Admin | Add a new draft version to an existing module; `bpmn_xml` optional, copies the active version forward when omitted (§3.3.18) |
+| `/modules/:id/versions/:version_id/publish` | `POST` | Admin | Publish a module draft version, promoting it to active |
+| `/modules/:id/usages` | `GET` | Any | List the caller's workflow versions that hold a snapshot of the module, with the module version each uses and whether it is behind (§3.3.18) |
+| `/modules/:id` | `DELETE` | Admin | Archive a module (soft delete — published workflow versions keep their snapshot; new publishes can no longer reference it) |
+| `/starters` | `GET` | Any | List starter workflows visible to the caller (global + their own tenant's), `?scope=`/`?category=`/`?q=` filters (§3.3.19) |
+| `/starters` | `POST` | Admin | Create a starter directly from a raw BPMN XML payload (tenant-scoped; `platform_operator` role required for `scope=global`) |
+| `/starters/from-workflow-version/:version_id` | `POST` | Admin | Snapshot one of the caller's own published workflow versions into a new tenant-scoped starter ("save as reusable") |
+| `/starters/:id` | `GET` | Any | Get a starter's metadata + its BPMN XML, ready to submit via `POST /workflows` |
+| `/starters/:id` | `DELETE` | Admin | Delete a starter (tenant-scoped rows only, or `platform_operator` for `scope=global`) |
+| `/healthz` | `GET` | Any | Liveness probe (returns 200 OK) |
+| `/readyz` | `GET` | Any | Readiness probe (performs database dependency connection checks, returns 200/503) |
+| `/api/v1/internal/events` | `POST` | Internal (service-to-service) | Ingest a domain-event envelope forwarded by the shared workflow-events consumer (e.g. `DepartmentMembershipRevoked`). Not exposed on the public gateway. |
+| `/internal/workflow-versions/:version_id/compiled-plan` | `GET` | Internal (service-to-service) | A workflow version and its stored compiled plan, read by the Execution Service (§3.4.1) |
+
+---
+
+### 3.3 Endpoint Specifications
+
+#### 3.3.1 List Tenant Workflows
+
+- **GET** `/workflows`
+- **Query Params**:
+  - `page` (default 1): Pagination page number.
+  - `limit` (default 20): Page size (max 100).
+  - `search` (optional): Fuzzy search on `name`.
+  - `key` (optional): Exact template key match (`template_key = :key`). Used by downstream services (e.g. Execution Service) to bootstrap a workflow start.
+  - `is_valid` (optional): Filters on `workflow_version.is_valid` of the workflow's active version (`workflow.active_version_id → workflow_version.id`). `true` returns workflows whose active version has all assignees valid; `false` returns those invalidated by a `DepartmentMembershipRevoked` event. Workflows with no active version (`active_version_id IS NULL`) are excluded when this filter is set because there is no active version to evaluate.
+  - `status` (optional): Filters by workflow active-version state. `active` → `active_version_id IS NOT NULL` (has a published active version). `archived` → `active_version_id IS NULL` (no active published version — either the active version was archived via §3.3.8, or the workflow was never published and only has drafts). The `workflow` table has no status column; this filter is derived entirely from the presence or absence of `active_version_id`.
+  - `has_draft` (optional, boolean): Filters workflows that have an active draft. Implemented as `EXISTS (SELECT 1 FROM workflow_version WHERE workflow_id = w.id AND status = 'DRAFT')`.
+- **Response (`200 OK`)**: List of workflows with metadata, current active version pointer, and status:
+
+  ```json
+  {
+    "workflows": [{
+      "id": "7ca648b2-b432-4744-884c-35fd556a310c",
+      "key": "tender-review",
+      "name": "Tender Document Review Process",
+      "active_version_id": "8fa88cde-824c-47bc-836b-665cd42c2222",
+      "active_version_number": 3,
+      "has_draft": true
+    }],
+    "pagination": { "total_count": 1, "page": 1, "limit": 20 }
+  }
+  ```
+
+#### 3.3.2 Create Workflow Definition
+
+- **POST** `/workflows`
+- **Request Body**: `key` (business identifier), `name`, `description`, `bpmn_xml` (BPMN 2.0 source).
+- **Response (`201 Created`)**:
+
+  ```json
+  {
+    "workflow_id": "7ca648b2-b432-4744-884c-35fd556a310c",
+    "version_id": "11abcc22-3844-42bc-938b-665cd42c1111",
+    "status": "DRAFT",
+    "version_number": null
+  }
+  ```
+
+#### 3.3.3 Get Workflow Root Details
+
+- **GET** `/workflows/:id`
+- **Query Params**:
+  - `versions_limit` (default 20, max 100): Caps the inline `versions` history array returned.
+- **Response (`200 OK`)**: Retrieves the root details along with a simplified array of all version history entries (draft, published, or archived) up to `versions_limit`:
+
+  ```json
+  {
+    "id": "7ca648b2-b432-4744-884c-35fd556a310c",
+    "key": "tender-review",
+    "name": "Tender Document Review Process",
+    "description": "Standard review process for tender proposal documents",
+    "active_version_id": "8fa88cde-824c-47bc-836b-665cd42c2222",
+    "created_at": "2026-05-10T08:00:00Z",
+    "versions": [
+      {
+        "id": "8fa88cde-824c-47bc-836b-665cd42c2222",
+        "version_number": 2,
+        "status": "PUBLISHED",
+        "is_valid": true,
+        "created_by_user_id": "4da18bde-7244-47ac-986c-665cd42caaaa",
+        "published_at": "2026-05-14T09:00:00Z"
+      }
+    ]
+  }
+  ```
+
+#### 3.3.3.1 Get Paginated Workflow Versions
+
+- **GET** `/workflows/:id/versions`
+- **Query Params**:
+  - `page` (default 1): Pagination page index.
+  - `limit` (default 20, max 100): Page size.
+- **Response (`200 OK`)**: Retrieves a page of the workflow's version history. Each item is a summary; the BPMN, the compiled plan and the module references come from the single-version read (§3.3.4), so a page stays small however large the plans are:
+
+  ```json
+  {
+    "versions": [
+      {
+        "id": "8fa88cde-824c-47bc-836b-665cd42c2222",
+        "version_number": 2,
+        "status": "PUBLISHED",
+        "is_valid": true,
+        "created_by_user_id": "4da18bde-7244-47ac-986c-665cd42caaaa",
+        "published_at": "2026-05-14T09:00:00Z"
+      }
+    ],
+    "pagination": { "total_count": 1, "page": 1, "limit": 20 }
+  }
+  ```
+
+#### 3.3.4 Get Workflow Version Details
+
+- **GET** `/workflows/:id/versions/:version_id`
+- **Response (`200 OK`)**: Returns the detailed version metadata, validation flags, the raw `bpmn_xml` payload, and the pre-compiled `compiled_plan_json` block.
+
+#### 3.3.4.1 Get Active Workflow Draft
+
+- **GET** `/workflows/:id/draft`
+- **Response (`200 OK`)**: Returns the active draft version details. Has the exact same response schema as `GET /workflows/:id/versions/:version_id` (but status is guaranteed to be `DRAFT`).
+- **Response (`404 Not Found`)**: If no active draft workspace exists for this workflow.
+
+#### 3.3.5 Initialize Workflow Draft
+
+- **POST** `/workflows/:id/draft`
+- **Invariant**: A workflow may hold at most one `DRAFT` version at any time. If a draft already exists, returns a `409 Conflict` (`DRAFT_ALREADY_EXISTS`).
+- **Response (`201 Created`)**: Copies the current active version into a new version block with `DRAFT` status.
+- **Edge Case (No Active Version)**: If the workflow has never been published (i.e., it only had an initial draft) and the draft was discarded using `DELETE /workflows/:id/draft`, the workflow has no active version pointer (`active_version_id = NULL`). In this state, calling `POST /workflows/:id/draft` has no base version to copy from and returns `409 Conflict` with code `NO_ACTIVE_VERSION`. The admin must delete and recreate the workflow definition or upload a brand new XML via `POST /workflows` to start again.
+
+#### 3.3.6 Update Workflow Draft
+
+- **PUT** `/workflows/:id/draft`
+- **Request Body**:
+
+  ```json
+  {
+    "name": "Tender Document Review Process (Updated)",
+    "description": "Updated review process with additional stages",
+    "bpmn_xml": "<bpmn:definitions ...>...</bpmn:definitions>",
+    "record_version": 3
+  }
+  ```
+
+- **Semantics**: Updates the active workspace draft. Implements optimistic concurrency control via `record_version` (a monotonic counter): the caller supplies the token via `If-Match: "<record_version>"` header (preferred) or the `record_version` body field — header takes precedence when both are present (§10.11). The update query filters on `AND record_version = :client_version`; if another update has been applied in the interim, `RowsAffected = 0` → `409 Conflict` (`DRAFT_CONCURRENCY`). The response includes the new `record_version` value. Using a monotonic counter rather than `last_updated_at` avoids false conflicts from sub-millisecond concurrent clock resolution. Validates that the input is well-formed XML on save, but defers semantic graph validation and compilation to the explicit **publish** or **validate** actions.
+
+#### 3.3.7 Publish Workflow Version
+
+- **POST** `/workflows/:id/versions/:version_id/publish`
+- **Request Body**: `{"force_publish_structural": false}`
+- **Semantics**: Computes structural diff compared to the previous version. If structural elements changed (e.g. split/join gateways, routing steps) and `force_publish_structural` is `false`, returns `409 Conflict` (recommending a new workflow key).
+- **Overriding**: If `force_publish_structural` is `true`, the publish transaction overrides the warning and registers the new version under the existing key.
+- **Consistency**: The plan, hash, assignees and module references a publish stores always come from the BPMN as it was when the publish compiled it. If the draft is saved after the publish read it and before the publish commits, the publish is refused with `409 Conflict` (`DRAFT_CONCURRENCY`) and the draft stays as saved; the client publishes again.
+  A membership revocation that lands between a publish's eligibility check and its commit is not seen by that publish, because the version's assignee rows do not exist yet; the version publishes valid and the next revocation or publish corrects it.
+
+#### 3.3.8 Archive Workflow
+
+- **POST** `/workflows/:id/archive`
+- **Semantics**: Sets the active published version status to `ARCHIVED` and clears the active pointer on the root record (`active_version_id = NULL`). Physical SQL deletion of workflows/versions is strictly prohibited due to audit trail requirements.
+- **Precondition**: Before archiving, the Definition Service reads the workflow's active instances from the Execution Service's internal API (§3.4.2) to verify that no instances are in `RUNNING` or `PAUSED` state for this workflow definition. If any active instances are detected, the request immediately terminates and returns `409 Conflict` (`ACTIVE_INSTANCES_EXIST`). See §3.4.2 for the contract.
+- **Archive semantics**: Archive is non-destructive to in-flight instances. Running instances hold their compiled plan from the moment they started — they never re-fetch it, so archiving the template version has no effect on them. Archive only blocks *new* instance starts. The active-instances guard is an operational safety net to prevent accidental archiving while work is actively in progress; it does not protect running instances from being broken by archive (they cannot be).
+- **Concurrency**: Archive acts on the version that is active when it commits, in a serializable transaction that retries. A publish or promote landing at the same moment cannot leave a published version the workflow no longer points to. Archiving a module follows the same rule.
+
+#### 3.3.9 Discard Workspace Draft
+
+- **DELETE** `/workflows/:id/draft`
+- **Response (`204 No Content`)**: No response body — the draft is gone.
+- **Semantics**: Deletes the un-published `DRAFT` record. Physical deletion is safe here as no runtime instances have been spawned from this draft.
+
+#### 3.3.10 Clone Workflow Version
+
+- **POST** `/workflows/:id/versions/:version_id/clone`
+- **Request Body**: `{"new_key": "tender-review-copy", "new_name": "...", "new_description": "..."}`
+- **Semantics**: Registers a new root workflow and initializes its first draft using the source version's XML.
+  - **Status Constraint**: Only `PUBLISHED` or `ARCHIVED` versions are cloneable. Attempting to clone a `DRAFT` version returns `409 Conflict` (`INVALID_VERSION_STATUS`).
+  - **Plan Quota Checking**: Because cloning registers a new root workflow definition, it must check the tenant's plan quota. If the workflow template limit has been reached, the transaction fails with `403 Forbidden` (`PLAN_QUOTA_EXCEEDED`).
+  - **Event Emission**: None. A clone creates a DRAFT — no downstream service needs to react until the draft is published, and publish itself emits no event either (§7.2, §10.7).
+- **Response (`201 Created`)**: Registers a new root workflow and draft version.
+
+#### 3.3.11 Promote Version to Active (Rollback/Rollforward)
+
+- **POST** `/workflows/:id/versions/:version_id/promote`
+- **Semantics**: Atomic pointer swap to select an older published version as the active pointer (`active_version_id`).
+  - **Status Constraint**: Only `PUBLISHED` versions can be promoted. Attempting to promote a version in `DRAFT` or `ARCHIVED` status returns `409 Conflict` (`INVALID_VERSION_STATUS`).
+  - **Validity Constraint**: A version with `is_valid = false`, one whose assignees lost a required department role, cannot be promoted and returns `409 Conflict` (`INVALID_VERSION_STATUS`). The database enforces it with the status rule, so a revocation that lands after the check and before the write still cannot activate the version.
+  - **No Active Version**: Promote is a pointer swap, so it also makes a published version active on a workflow with no active version, for example one that was archived.
+  - **Already Active Pointer (Early Exit / Silent No-Op)**: If the target version is already set as the `active_version_id` for the workflow, the API returns a silent `200 OK` early exit without creating a new audit record.
+  - **Event Emission**: None. Promote's own state transition (the atomic `active_version_id` pointer swap) commits without enqueueing any outbound event (§7.2, §10.7).
+
+#### 3.3.12 Raw BPMN Validation
+
+- **POST** `/workflows/validate`
+- **Request Body**: `{"bpmn_xml": "..."}`
+- **Semantics**: Judges the document as publish does. Besides the structural rules, a single-root workflow's plan is compiled and its calls expanded, so the task limit and a task with no default user (codes 8 and 9) are reported here as at publish. `POST /workflows` runs the structural rules only, so a draft can be saved before every task has its user.
+- **Response (`200 OK` or `422 Unprocessable Entity`)**: Returns stateless validation results on-the-fly to support real-time builder linting:
+
+  ```json
+  {
+    "is_valid": false,
+    "errors": [
+      {
+        "code": "MISSING_TASK_DEFINITION",
+        "node_id": "UserTask_112",
+        "message": "userTask is missing zeebe:taskDefinition"
+      }
+    ]
+  }
+  ```
+
+#### 3.3.12.1 Stored Version Validation
+
+- **GET** `/workflows/:id/versions/:version_id/validation`
+- **Semantics**: Re-runs `POST /workflows/validate`'s checks against a stored version's own BPMN, in any status. A draft's library calls resolve against the library as it is now; any other version's resolve to the module versions in its `module_refs`, archived or not, so a later module version or an archived module does not change its result (§3.3.18). Read-only — nothing is written, and a version already `PUBLISHED` keeps its status and its `is_valid` flag.
+- **Why it exists**: a validator rule added after a version was published does not retroactively invalidate it, so a template published under the older rules can still hold a defect that only surfaces when the Execution Service refuses to instantiate it. This endpoint lets an operator find those templates first, one version at a time, and the fix is an ordinary new version (§7.4.3 Flow A).
+- **Response (`200 OK`)**: `{"version_id", "status", "is_valid", "issues"}`. The `issues` array carries the same element shape §3.3.12 returns, so one renderer serves both lists; `version_id` and `status` identify which stored version the result describes, which the stateless endpoint has no need of.
+- **Implementation**: the version read, then the validation service's `ValidateVersion`, which picks the live library or the version's snapshot by its status.
+
+#### 3.3.12.2 Published Version Nodes
+
+- **GET** `/workflows/:id/versions/:version_id/nodes`
+- **Semantics**: Lists the nodes of a `PUBLISHED` or `ARCHIVED` version, read from its stored compiled plan with its calls expanded (`dsl.ExpandCalls`, workflow-models LLD §2.6). A node is a stage of the expanded main plan for which `StageDef.CreatesHumanTask()` holds, in a department that is not ignored: the stages the Execution Service checks for eligibility at instance start and keys in `override_map` (`execution_service.md` §5.5). Nodes come in plan order: department by department, a workflow's own lane segments first, then each call's departments in the order the calls are expanded. A department is a lane segment (§4.2): a task where the flow returns to a lane has the key `<lane>~<n>/<task id>`. Segments are numbered in compile order, so a version that adds a task earlier in a lane, or a branch, can renumber an unchanged task's key: node keys are read per version, never carried from one version to the next.
+  The same read lists the version's **waits**: the receive tasks and message boundaries of the expanded main plan that no send task of the plan feeds (`dsl.ExternalWaits`, workflow-models LLD §2.6). Only an outside party's answer completes such a wait, and the Execution Service takes that answer by the wait's key (`execution_service.md` §5.11). Waits come in plan order.
+- **Who reads it**: the Tender Service maps a Deliverable's Sections to a workflow's nodes and may name a different assignee per node when it starts the workflow (Tender HLD §6.3, §12.4), and reads the waits to know which instance steps an outside party's answer completes; the workflow UI renders the start-time assignee form from it.
+- **Response (`200 OK`)**:
+
+  ```json
+  {
+    "workflow_id": "…", "version_id": "…", "version_number": 3,
+    "nodes": [
+      {
+        "node_key": "CA_Eng::Process_Review/Review_Task",
+        "node_id": "Review_Task",
+        "name": "Review",
+        "stage_type": "review",
+        "role_level": "reviewer",
+        "department": { "id": "CA_Eng::Process_Review", "label": "Engineering", "iam_department_id": "2200a5ae-…" },
+        "default_user_ids": ["018f2d3c-…"]
+      }
+    ],
+    "waits": [
+      { "key": "Ops/Receive_Bid", "kind": "receive_task", "message": "bid-received" },
+      { "key": "Ops/Prepare#Boundary_Withdraw", "kind": "message_boundary", "message": "withdraw" }
+    ]
+  }
+  ```
+
+  A wait's `key` is the receive task's node key, or, for a message boundary, `dsl.BoundaryWaitKey(host, boundary id)`: the host stage's node key, or the id of the subprocess or call the boundary is attached to, then `#` and the boundary's BPMN id. `kind` is `receive_task` or `message_boundary`; `message` is the BPMN message name, for display. `waits` is an empty list when the plan has none.
+
+  `node_key` is `dsl.NodeKey(department.id, stage)` (workflow-models LLD §2.3), the key the Execution Service accepts in `override_map`. A module task's `department.id` is call-scoped (`<call id>::<department>`), and its `label` and `iam_department_id` are those of the lane the call binds it to. `default_user_ids` are the users the published version assigns when the start request names none for the node.
+- **Response (`409 Conflict`, `INVALID_VERSION_STATUS`)**: the version is a `DRAFT`, which has no stored plan.
+- **Response (`404 Not Found`)**: no such version under this workflow.
+- **Implementation**: the version read, then the stored plan's expanded main plan (§7.5), a walk of its departments, and `dsl.ExternalWaits` over the expanded collaboration. Nothing is written.
+
+#### 3.3.13 Export Workflow BPMN
+
+- **GET** `/workflows/:id/versions/:version_id/export`
+- **Semantics**: Exports the raw BPMN XML file for any version. `DRAFT` versions are fully exportable, allowing administrators/designers to export work-in-progress XML structures.
+- **Response (`200 OK`)**: File download attachment with content type `application/xml`.
+
+#### 3.3.14 Get Version Diff
+
+- **GET** `/workflows/:id/versions/:version_id/diff/:target_version_id`
+- **Response (`200 OK`)**: Structured JSON payload highlighting added/removed departments, step-level structural alterations and `stage_changes`. A stage whose timer boundary, message boundary or connector type differs is a structural change, so `metadata_only` is false and a publish needs `force_publish_structural`; role, assignee, due date and input mapping changes are metadata.
+
+#### 3.3.15 Liveness Probe
+
+- **GET** `/healthz`
+- **Response (`200 OK`)**: Standard service health probe returning `{"status": "OK"}` in JSON format.
+
+#### 3.3.16 Readiness Probe
+
+- **GET** `/readyz`
+- **Semantics**: Readiness depends on the database only; the cache is reported, not required.
+- **Response (`200 OK`)**: The database is healthy. `cache` is `ok`, or `degraded` when Valkey is unreachable. Returns:
+
+  ```json
+  {
+    "status": "OK",
+    "cache": "ok",
+    "db_utilization": 0.3,
+    "db_conns": 3,
+    "db_max_conns": 10
+  }
+  ```
+
+- **Response (`503 Service Unavailable`)**: The database pool health check failed → `{"status":"unavailable","db":"unreachable"}`; or the pod is draining → `{"status":"draining"}`.
+
+---
+
+#### 3.3.17 Internal Event Ingest
+
+- **POST** `/api/v1/internal/events`
+- **Caller**: The shared workflow-events consumer (service-to-service). Mounted on an internal route group — **not** behind `ProtectedMiddlewares` and **not** exposed through the Envoy gateway. Authenticated by service-to-service auth (shared-secret header / mTLS / network policy).
+- **Semantics**: Accepts a single `events.Envelope[json.RawMessage]`, injects the RLS GUC from the envelope `tenant_id` (`pgcommon.WithGUCSet`, §14), and dispatches on `type`. Today it handles `DepartmentMembershipRevoked` → `HandleDepartmentMembershipRevoked` (the full flow is in §7.4.2). Redelivery is absorbed by handler idempotency (§2.3.1, §10.9).
+- **Request body**:
+
+  ```json
+  {
+    "id": "f0a11222-3844-42bc-938b-665cd42c9999",
+    "type": "DepartmentMembershipRevoked",
+    "tenant_id": "7ca648b2-b432-4744-884c-35fd556a310c",
+    "data": { "user_id": "3fa1...", "department_id": "...", "role": "reviewer" }
+  }
+  ```
+
+- **Responses**:
+  - `200 OK` / `204 No Content` — processed. A redelivered `id` is reprocessed and converges on the same state (§2.3.1). The consumer marks the message handled.
+  - `400 Bad Request` — malformed envelope/payload or unknown required field. Non-retryable; the consumer routes the message to its DLQ.
+  - `500 Internal Server Error` — transient failure (DB/transaction). The consumer retries and eventually DLQs per its `maxReceiveCount`.
+- **Note**: Unknown `type` values are accepted and ignored (logged, `2xx`) so adding new event types upstream does not break delivery.
+
+---
+
+#### 3.3.18 Reusable BPMN Modules
+
+Modules are tenant-authored (or platform-authored, `scope=global`) BPMN processes that a workflow's `<bpmn:callActivity>` calls. They are the one source of module content: a workflow never carries module XML of its own.
+
+- **Identity.** A module's `process_id` is its `<bpmn:process>` id, set when the module is created and kept by every version. It is unique among a tenant's own modules and the global ones: a tenant module cannot take a global module's process id, nor a global module any tenant's (`409 MODULE_PROCESS_ID_CONFLICT`, also returned for a new version whose process id differs).
+- **Resolution.** A call names a module by `<zeebe:calledElement processId="<process_id>">` and pins a version with `bindingType="versionTag" versionTag="<version_number>"`. With `bindingType` `latest` or absent it takes the module's active version. A tenant's calls see its own modules and the global ones; a global module's calls see global modules only. A `versionTag` names a library module. Pinning a process id the file also defines is refused (`UNRESOLVED_CALLED_ELEMENT`), except for a module's call to an earlier version of itself. Whether a call is a library call is judged in the document it was written in, so a module's call never takes over a workflow's local process of the same id. Resolution happens when a workflow or starter is created, at `/workflows/validate`, at publish and for a draft's diff, never at runtime, and walks each module's own calls the same way. A problem inside a module (a call there that does not resolve) is reported on the workflow's call that reached it, its message naming the chain of modules. In the rare case a tenant module and a global one share a process id (only a race between two creates allows it), the tenant's own resolves.
+- **Snapshot.** A published workflow version records the versions it resolved in `module_refs` and compiles each into its own plan, named `<process_id>@v<version_number>`, so two versions of one module can coexist in a workflow (§4.1.2, §7.5). A later module version, or archiving the module, never changes a published workflow or a running instance; a workflow picks up a new module version when it is republished with the new pin or with `latest`.
+- **Rules for module content.** A module is validated with its own process as the root and its open lanes allowed (§4.1.2). Only errors block; warnings such as `CANDIDATE_USERS_EMPTY` do not. A global module names no user (`INVALID_CANDIDATE_USER`), neither in a task's `candidateUsers` nor in a call's `Assignees`, because user ids are per tenant; its fixed lanes use catalogue departments, which every tenant shares. A call from a module to itself at its latest version, directly or through other modules, is `CALLED_ELEMENT_CYCLE` when the module is saved or published: once published, latest would be that very version. A call to an earlier pinned version of itself is allowed.
+
+- **GET** `/modules`
+  - **Query Params**: `scope` (`global`|`tenant`, optional — omitted returns both), `q` (name substring search), `page`/`limit` (pagination, same defaults as §3.3.3.1).
+  - **Response (`200 OK`)**:
+
+    ```json
+    {
+      "modules": [
+        {
+          "id": "9b2e1a10-...",
+          "scope": "tenant",
+          "name": "Standard Two-Level Approval",
+          "description": "Manager approval followed by finance sign-off.",
+          "process_id": "Process_TwoLevelApproval",
+          "active_version_id": "c1d2e3f4-...",
+          "created_at": "2026-08-10T12:00:00Z"
+        }
+      ],
+      "pagination": { "total_count": 1, "page": 1, "limit": 20 }
+    }
+    ```
+
+- **POST** `/modules`
+  - **Request Body**: `name`, `description`, `bpmn_xml` (must contain exactly one top-level `<bpmn:process>`, whose id becomes the module's fixed `process_id`, the value a calling `callActivity`'s `calledElement` names), `scope` (`tenant`, the default; `global` requires the caller to hold `platform_operator`, returning `403` otherwise — mirrors Org & Membership's own `platform_operator`-only gate on its global department catalog, §10.16).
+  - **Response (`201 Created`)**: same shape as §3.3.2's create-workflow response (`module_id`, `version_id`, `status: "DRAFT"`, `version_number: null`) — the first version is always a draft, publish it via the next endpoint before it's usable in a compile.
+  - The submitted `bpmn_xml` runs through the same parser and element allowlist as a workflow (§4.1), with the module rules above, before being stored.
+
+- **POST** `/modules/:id/versions` — add a new draft version to an existing module. `bpmn_xml` is optional: supplied, it's validated and stored as the new draft's content (same validation as create); omitted, the new draft copies the current active version's content forward instead (mirrors `/workflows/:id/draft`'s copy-forward semantics). The single-DRAFT-per-module invariant is a DB partial unique index, not an app-level pre-check.
+- **POST** `/modules/:id/versions/:version_id/publish` — publishes a draft version (validates it with the module rules above, its own calls resolved, as a gate only — no compiled plan or hash is stored, since a module runs only as part of a workflow — `status → PUBLISHED`, updates the module's `active_version_id`). Mirrors §3.3.7 exactly; a module version follows the identical DRAFT → PUBLISHED → ARCHIVED lifecycle a workflow version does (§2.1).
+- **GET** `/modules/:id` — module metadata, including `process_id`, and its active (published) version's `bpmn_xml`.
+- **GET** `/modules/:id/versions` — a module's version history (`page`/`limit` pagination), so the frontend can review non-active versions, including a pending DRAFT before it's published.
+- **GET** `/modules/:id/versions/:version_id` — a specific module version's metadata + `bpmn_xml`, including a pending DRAFT.
+- **GET** `/modules/:id/versions/:version_id/contract` — what a workflow calling this module version binds and names, for the call's `Depts` and `Assignees` forms. Any status, a DRAFT included. The module's own library calls resolve against the library as it is now, as when the version is saved, and the module is compiled with its own process as the root and its open lanes allowed.
+  - `slots`: the module's own lanes, in plan order, each `{id, label, open}`, one per lane however many segments it has (§4.2). A slot's `id` is its lane's name, the key a call's `Depts` maps, which binds every segment of the lane. An open slot has no `dept_id` and a call binds it (§4.1.2); a fixed slot carries its `iam_department_id`. A laneless module has one open slot, named by its process id. The module is compiled as a call compiles it, so an open lane that holds only a call is a slot too.
+  - `tasks`: every human task the module runs, its called modules' included, each `{assignee_key, node_id, name, slot, stage_type, role_level, default_user_ids}`. `assignee_key` is the key a call's `Assignees` takes: the task's id, or the ids of the calls leading to it and then its own, joined by `::`. `slot` is the module's own slot the task runs in, found by following each call's `Departments` binding back up; a task in a called module's fixed lane has no `slot` and carries that lane's `iam_department_id`. The module's own tasks come first, department by department, then each call's tasks in the order the calls run.
+  - `messages` and `error_codes`: the names of the `<bpmn:message>` elements and the codes of the `<bpmn:error>` elements in the module's document and its called modules', deduplicated and sorted.
+  - `names_users`: whether any task has a default user. A global module never names one.
+  - **Response (`422`, `BPMN_VALIDATION_FAILED`)**: the version no longer compiles, for example a `latest` call whose module was archived; `invalid_params` names each problem.
+- **GET** `/modules/:id/usages` — the caller's workflow versions whose `module_refs` include the module: `workflow_id`, `workflow_key`, `workflow_name`, `version_id`, `version_number`, `status`, `module_version_number`, and `behind` (true when the module's active version is newer). The basis for "update available" in a UI.
+- **DELETE** `/modules/:id` — archives the module (`active_version_id → NULL`, and the archived version's own `status → ARCHIVED`, mirroring §3.3.8). New publishes can no longer reference any of its versions; published workflow versions keep their snapshot.
+
+#### 3.3.19 Starter Workflows
+
+Starters are complete, ready-to-use BPMN diagrams a tenant can start authoring from — a point-in-time snapshot, not a live link to any workflow. "Using" a starter is nothing more than handing its `bpmn_xml` to the ordinary `POST /workflows` (§3.3.2) a human pasting hand-authored XML would use — this service gains no new compile-time or publish-time behavior for starters at all.
+
+- **GET** `/starters`
+  - **Query Params**: `scope` (`global`|`tenant`, optional — omitted returns both), `category` (free-text filter, e.g. `approval`, `onboarding`), `q` (name search), `page`/`limit`.
+  - **Response (`200 OK`)**:
+
+    ```json
+    {
+      "starters": [
+        {
+          "id": "4f5e6d7c-...",
+          "scope": "global",
+          "name": "Standard Purchase Approval",
+          "description": "Two-step manager + finance approval for purchase requests.",
+          "category": "approval",
+          "created_at": "2026-08-01T09:00:00Z"
+        }
+      ],
+      "pagination": { "total_count": 1, "page": 1, "limit": 20 }
+    }
+    ```
+
+- **GET** `/starters/:id` — returns the starter's full `bpmn_xml` alongside its metadata. The frontend submits that `bpmn_xml` unmodified as the `bpmn_xml` field of a `POST /workflows` call to actually create a new tenant workflow from it — this endpoint does not itself create anything.
+- **POST** `/starters` — `name`, `description`, `category`, `bpmn_xml`, `scope` (same `tenant`-default/`platform_operator`-for-`global` rule as modules). Runs through the same parser/element-allowlist validation as any BPMN upload before being stored.
+- **POST** `/starters/from-workflow-version/:version_id` — convenience endpoint: reads the caller's own `workflow_version` row (must belong to their tenant, RLS-enforced; must be `PUBLISHED` or `ARCHIVED`, same status constraint as `/clone`, §3.3.10) and snapshots its `bpmn_xml` into a new `scope=tenant` starter — the "save one of my own workflows as a reusable starter" action. Request body: `{"name": ..., "description": ..., "category": ...}`. `source_workflow_version_id` is recorded for traceability only (informational; the starter's content is copied, not linked, so a later edit to the source workflow never changes an already-created starter).
+- **DELETE** `/starters/:id` — deletes the row (tenant-scoped rows only via the normal RLS-bound role; `platform_operator` required for `scope=global`, same as creation).
+
+#### 3.3.20 BPMN Element Allowlist Discovery
+
+- **GET** `/bpmn/allowed-elements`
+- **Response (`200 OK`)**: the same allowlist `pkg/enums.AllowedBPMNElements` (`workflow-models`, §10.17) that §4.1.2's compiler enforcement already reads — one shared source, no separate maintenance:
+
+  ```json
+  {
+    "elements": [
+      "startEvent", "endEvent", "userTask", "exclusiveGateway",
+      "parallelGateway", "inclusiveGateway", "sequenceFlow",
+      "callActivity", "subProcess", "sendTask", "receiveTask",
+      "boundaryEvent", "serviceTask"
+    ]
+  }
+  ```
+
+  `serviceTask`'s presence in this list is unconditional — the `connector:`-prefix scoping (§4.1.2, §10.13) is a compile-time attribute check this endpoint does not attempt to encode; a modeler UI restricting its palette to this list still relies on the compiler's own 422 to catch a `serviceTask` with no valid `connector:` type. This endpoint is a UX convenience for configuring the palette, never the enforcement boundary (§10.17) — a bug or bypass in the frontend's palette restriction cannot let an actually-disallowed element through; §4.1.2's server-side rejection is unconditional and doesn't consult this endpoint or trust anything the client sends.
+
+---
+
+### 3.4 Internal HTTP API
+
+The Definition Service and the Execution Service call each other over HTTP, on each service's internal route group, `/api/v1/internal`. The public gateway does not route that group, and requests on it carry no gateway identity headers.
+
+**Contracts.** Each service owns an OpenAPI document for the internal endpoints it serves, `api/internal-openapi.yaml`, with a design-repo copy (`definition_internal_openapi.yaml`, `execution_internal_openapi.yaml`). A service that calls another keeps a byte-identical copy of the callee's document in `api/contracts/`. `api/contracts/SOURCES` names the commit it was taken from, and `make contract-check` fails when the copy differs from the callee's file at that commit. Each side tests against the document:
+
+- the server sends requests through its real router and validates each response against its own document;
+- the client validates each request it sends, and parses the document's response examples, against its copy.
+
+Swagger UI (`/swagger/`, dev only) offers the internal document beside the public one.
+
+**Authentication.** A caller sends the callee's token in `x-internal-token`. The callee compares it with its own `INTERNAL_API_TOKEN` in constant time and answers a missing or wrong token with `401` and a ProblemDetails body. Each caller holds the token under the callee's name:
+
+| Caller | Variable |
+|---|---|
+| this service, calling the Execution Service | `EXECUTION_SERVICE_TOKEN` |
+| the Execution Service and `event_consumer`, calling this service | `DEFINITION_SERVICE_TOKEN` |
+
+Kubernetes NetworkPolicy admits only those callers: the Execution Service and the shared events consumer. The service refuses to start without `INTERNAL_API_TOKEN` when `APP_ENV` is not `dev`; with none set in dev the check is off.
+
+**Tenant scope.** The tenant travels in the request, as a `tenant_id` query parameter or body field, or in the event envelope. The handler sets the `app.tenant_id` GUC from it before any database access.
+
+---
+
+#### 3.4.1 Served — compiled plan
+
+- **GET** `/api/v1/internal/workflow-versions/{version_id}/compiled-plan?tenant_id={uuid}`
+- **Callers**: the Execution Service, at instance start, from its compiled-plan cache, and from the Temporal `GetCompiledPlan` activity in `cmd/worker`.
+- **Response (`200 OK`)**: `{workflow_id, version_id, version_number, status, is_valid, compiled_plan}`.
+  - `compiled_plan` is the stored `dsl.CompiledCollaboration` as a JSON object, its calls not expanded, or `null` for a version with none. Its own `schema_version` is the DSL schema major version.
+  - `version_number` is `null` for a `DRAFT`.
+  - Every status is returned; the caller refuses a version that is not `PUBLISHED` or not valid.
+- **Errors**: `400` for a malformed `version_id` or `tenant_id`; `401`; `404` when the tenant has no such version; `500`.
+- **Cache**: a fail-open Valkey entry under `wf:plan:<tenant_id>:<version_id>` (TTL `CACHE_COMPILED_PLAN_TTL`), written on a miss for a published version only; a draft or archived version is read from Postgres and never cached, so publish and archive leave no stale entry. A cache error falls through to Postgres.
+
+The other served endpoints, `POST /events` (§7.4) and the connector-alias registry (§10.15), are in the same document.
+
+#### 3.4.2 Called — the Execution Service
+
+From the Execution Service's internal document (`execution_service.md` §5.3):
+
+| Endpoint | Called from | Result |
+|---|---|---|
+| `GET /api/v1/internal/workflows/{workflow_id}/active-instances?tenant_id=` | the archive guard (§3.3.8) | `{has_active, count}`; `has_active` refuses the archive with `409 ACTIVE_INSTANCES_EXIST` |
+| `POST /api/v1/internal/users/{user_id}/pause-tasks`, body `{tenant_id}` | membership-revoked events (§7.4.2, §7.4.5) | `204` |
+
+- **Retries**: the client (`internal/adapter/outbound/http/execution_client.go`) makes 3 attempts, each bounded by `EXECUTION_CLIENT_TIMEOUT`. It retries a transport error or a `5xx` after 50ms, then 100ms, capped at 500ms.
+- **Errors**: any failure is `UPSTREAM_UNAVAILABLE` (`503`), and the archive is never committed while the guard is unresolved.
+- **Address**: `EXECUTION_SERVICE_URL`. With it empty (local dev only) no client is built: the archive guard is skipped and no tasks are paused.
+
+## 4. Core Modules: Parser, Compiler & Validation
+
+This section details the internal mechanics of the BPMN Parser, the Graph Compilation Engine, and the Validation Rules.
+
+### 4.1 BPMN Parser Internals
+
+The Parser maps raw BPMN 2.0 XML using Go's standard `encoding/xml` package. It extracts workflow structure from standard BPMN elements and runtime configuration from Zeebe extension properties inside `<bpmn:extensionElements>`. Only the elements and properties listed below are recognized; anything outside this allowlist is silently ignored during parsing and flagged during validation.
+
+---
+
+#### 4.1.1 Required XML Namespace Declarations
+
+A valid BPMN file submitted to this service **must** declare the following namespaces on the root `<bpmn:definitions>` element. The parser validates namespace presence before attempting any structural parsing.
+
+| Prefix | Namespace URI | Required | Purpose |
+| --- | --- | --- | --- |
+| `bpmn` | `http://www.omg.org/spec/BPMN/20100524/MODEL` | Yes (Enforced) | Core BPMN 2.0 model elements |
+| `zeebe` | `http://camunda.org/schema/zeebe/1.0` | Yes (Enforced) | Zeebe extension properties (custom metadata) |
+| `bpmndi` | `http://www.omg.org/spec/BPMN/20100524/DI` | Expected (Not Enforced) | Diagram interchange (layout) |
+| `dc` | `http://www.omg.org/spec/DD/20100524/DC` | Expected (Not Enforced) | Diagram common (bounds) |
+| `di` | `http://www.omg.org/spec/DD/20100524/DI` | Expected (Not Enforced) | Diagram interchange (edges) |
+
+Missing `bpmn` or `zeebe` namespaces cause an immediate `400 Bad Request` before full parsing begins. The diagram interchange namespaces (`bpmndi`, `dc`, `di`) contain layout bounds and coordinates used by visual canvas modeling tools, but are not strictly enforced during execution plan compilation.
+
+---
+
+#### 4.1.2 Supported BPMN Elements
+
+Elements are classified into three tiers. The raw-XML denylist scan (`rejectedElements` / `unsupportedElements` in `parser.go`) covers all Tier 2 and Tier 3 tag names explicitly, because `encoding/xml` silently drops unknown elements rather than surfacing errors. The Tier 1 allowlist this section documents is sourced from `workflow-models`' shared `pkg/enums.AllowedBPMNElements` (§10.17) — this compiler's own enforcement, not just a description of it; a modeler UI's palette-configuration copy comes from the same source via `GET /bpmn/allowed-elements` (§3.3.20), but that endpoint is never the enforcement boundary — a bug or bypass there cannot let a disallowed element through this parser.
+
+##### Tier 1: Fully Supported
+
+> Root Structure
+
+- `<bpmn:definitions>` — attrs: `id`, `targetNamespace`. Exactly 1.
+- `<bpmn:collaboration>` — optional wrapper for multi-pool models. **One pool runs.** The workflow is the one process that is executable, not called by another process, and not marked ignore. Every other pool is an outside party, drawn for context: it produces nothing. Two runnable processes are `MULTIPLE_PROCESSES`; none is `NO_RUNNABLE_PROCESS`.
+- `<bpmn:participant>` — attrs: `id`, `name`, `processRef`.
+
+  **Ignored pool** — a process carrying `<zeebe:property name="ignore" value="true"/>` in its process-level `<zeebe:properties>` is an outside party's pool. It is never run, and no plan is compiled for it. Its tasks and sequence flows are not checked, and the calls drawn in it are never made: they run no module, and do not make the process they name a called one. The document as a whole still uses only recognized elements. A pool that is not executable and that nothing calls is treated the same way. The pool that runs talks to an outside pool only through message flows: its receive tasks and message boundaries wait for a message the Tender Service delivers into the instance, and its send tasks have no effect outside the instance. A real outward action is a connector task.
+
+  **Modules always run.** A process that another process calls runs as a module (`callActivity` below), whether or not it is executable. A call to a process marked ignore is `UNRESOLVED_CALLED_ELEMENT`: a process cannot be both an outside party and a module.
+
+- `<bpmn:process>` — attrs: `id`, `name`. The one that runs, its modules, and any outside parties' pools.
+- `<bpmn:laneSet>` — attr: `id`. Exactly 1 per process.
+- `<bpmn:lane>` — attrs: `id`, `name`. 1–100 per laneSet. Its stretches on each path become `DepartmentDef`s (§4.2). Lane `name` is the authoritative department identifier; the Profile Service owns the format.
+
+  **Ignored lane** — a lane carrying `<zeebe:property name="ignore" value="true"/>` stands for an outside party inside a process that runs, as an ignored pool does outside it. Its user, send and receive tasks are skipped: they compile to no stage and no department, and need no task type, user or `dept_id`. Its events and gateways still apply, and the flow runs on to the next task outside the lane; a boundary's path runs on past skipped tasks the same way. A gateway after a skipped task decides on the result of the last task that ran: the person doing that task waits for the outside party and records its answer. A message flow into a skipped task names nothing to wait for. A `callActivity`, `subProcess` or connector task in an ignored lane, a boundary event on a skipped task, and a loop whose way back to its gateway holds only skipped tasks are `IGNORED_LANE_WORK`; a loop that also passes a task of the workflow's own returns to that task. A module's ignored lane is not one of its slots, and a call's `Depts` cannot map a module lane to an ignored lane of the caller (`INVALID_ZEEBE_PROPERTY`).
+- `<bpmn:flowNodeRef>` — text content is a node ID. Associates flow elements to a lane. Determines task department.
+- `<bpmn:error>` — root-level named error definition; `id` and `errorCode` attrs. Referenced by error end events and error boundary events.
+- `<bpmn:message>` — root-level message definition; `id` and `name` attrs. Referenced by `messageFlow`, `receiveTask`, and message start events.
+
+> Flow Nodes
+
+- `<bpmn:startEvent>` — Exactly 1 per process. Supported definitions: blank (manual trigger), `<bpmn:messageEventDefinition>` (correlated start from a messageFlow), `<bpmn:timerEventDefinition>` (scheduled start), `<bpmn:signalEventDefinition>` (broadcast signal start). No incoming flows.
+- `<bpmn:endEvent>` — At least 1 per process. Named end events compile to outcome labels. Inside a subprocess, `<bpmn:errorEventDefinition errorRef="..."/>` declares a rejection throw.
+- `<bpmn:userTask>` — 1–1000 per process. Must carry `zeebe:taskDefinition` and `zeebe:assignmentDefinition` (§4.1.3). Belongs to exactly one lane.
+- `<bpmn:sendTask>` — Outbound message to another participant. Must carry `<zeebe:taskDefinition type="..."/>` identifying the message worker.
+- `<bpmn:receiveTask>` — Waits for an inbound message, named, in order, by its `messageRef`'s `<bpmn:message>`, by the message flow into it (Message Flow Name Resolution below), or by its own `id`. The name is `StageDef.Extras["message"]`.
+- `<bpmn:serviceTask>` — **Scoped exception to the Tier 3 rejection below.** Recognized only when `<zeebe:taskDefinition type="connector:<name>"/>` carries the `connector:` prefix — an automatic task, run without a human. Compiles to `StageDef.Type = enums.StageTypeConnector` (`"connector"`) plus `StageDef.ConnectorType = "<name>"` (the prefix is stripped once, at compile time — Execution Service never re-parses it), and `StageDef.IOMapping` from the element's `<zeebe:ioMapping>` (`workflow_models_lib.md` §2.3). Dispatch of the actual connector call happens outside this service entirely — see `workflow_connectors.md` (worker placement is decided there, a `cmd/connector-worker` binary inside `execution_service`'s own repo; this compiler's output was written placement-agnostic and needed no change either way). A `serviceTask` with any other `type`, or none, is still `REJECTED_ELEMENT` exactly as before; this is not a general un-rejection of `serviceTask`. Input mapping via `<zeebe:ioMapping>`, same as `callActivity` (§4.1.2 above). See §4.1.3.3 for the full extension contract.
+- `<bpmn:parallelGateway>` — 0–N. Concurrent department execution. Split/join pairs required.
+- `<bpmn:exclusiveGateway>` — 0–N. Routing-only branching + guarded rework loops. Every outgoing flow of a split carries `<bpmn:conditionExpression>` except at most one default flow, which the Execution Service takes when no condition holds (code 44). Split/join pairs required.
+- `<bpmn:inclusiveGateway>` — 0–N. OR-split/join: one or more branches fire based on `conditionExpression` evaluation. All outgoing flows from a split must carry `<bpmn:conditionExpression>`. Split/join pairs required.
+- `<bpmn:eventBasedGateway>` — 0–N. Exclusive wait for the first of N events (timer or signal). All outgoing flows must target an `intermediateCatchEvent`. At least one timer branch required. Not permitted inside a subprocess.
+- `<bpmn:subProcess>` (embedded, non-event, non-ad-hoc) — 0–N. Grouped sub-flow with its own start/end events, userTasks, and gateways. Must **not** contain an internal `<bpmn:laneSet>` — tasks inside a subprocess belong to the department of the subprocess's containing lane in the parent process. If a subprocess logically spans multiple departments, those tasks must be modelled as separate activities in the parent process lanes connected via parallel gateways. Must use `<bpmn:userTask>` (not plain `<bpmn:task>`) for all internal activities.
+- `<bpmn:callActivity>` — 0–N. References a named reusable sub-process via `<zeebe:calledElement processId="..."/>`. The called process runs as a module whether or not it is executable, and must not be marked ignore. It is either a process in the same file, private to the workflow, or a library module resolved by `processId` and version (§3.3.18). Each called process is **compiled once, into its own plan** in `CompiledCollaboration.Plans`, named by its process id — `<process_id>@v<version_number>` for a library module version — and each call site compiles to one `ExecutionStep.CallPlan` naming that plan (`workflow_models_lib.md` §2.5). Consumers expand calls with `dsl.ExpandCalls` (§2.6 there), so the same module called from two places gives two separate sets of tasks, each in the department its call binds.
+  - **Departments.** A lane of the called process that holds work (a task, a callActivity or a subProcess) becomes one of its plan's departments. With a `dept_id` property it is *fixed* to that department, and no call can remap it. Without one it is *open*, and each call binds it to one of the caller's lanes: through the `Depts` input, or, when the called process has exactly one open lane (a laneless process counts as one), by default to the lane the callActivity itself sits in. A bound lane takes the caller lane's department and IAM id. Open lanes are the one place a lane may lack `dept_id`. See the **Depts dict-injection** pattern below and codes 25 and 31.
+  - **A laneless called process** has one department, named by its process id without the version, so a module task's node key, `<call id>::<process_id>/<task id>`, stays the same when a call moves to another version of the module.
+  - **Call-site assignees.** An optional `target="Assignees"` input maps a task to a user id, a default for this call only (code 8). The key is a called task's id, or, for a task in a nested module, the ids of the calls leading to it, then its id, joined by `::` (`Review_Check::Check_Task`). The outermost call's entry wins over an inner call's own, so a workflow can name the user of any task it runs.
+  - **Messages and errors.** A library module's `<bpmn:message>` and `<bpmn:error>` definitions come with it into the bundle, their ids prefixed with its plan name and its references renamed to match, so its message names and error codes are the ones it declared and cannot collide with the workflow's or another module's. The message names themselves are shared across the instance (execution LLD §2.4).
+  - **Boundaries.** Message, timer and error boundary events attach to a callActivity as they do to a subProcess, and compile to the call step's `MessagePaths`, `TimerPaths` and `ErrorPaths`. Each boundary moves to the department of the first task or subProcess on its path (in a laneless process, its own department), or terminates when the path reaches an end event first (`Terminates`, workflow-models LLD §2.3); a path starting with a call or a message task is refused (code 34).
+  - **Mappings.** The call's other `zeebe:ioMapping` inputs and outputs compile to the call step's `IOMapping`, and its `zeebe:properties` to its `Extras`.
+
+  In a single-root BPMN, every called process reachable from the root is validated once, with the root's rules and without the diagram check (module diagrams are not bundled). An error inside a module names the module's own node. An error about the whole process, such as `NO_END_EVENT`, names the called process id. A called process with no start event is reported only at its call site. A call cycle is `CALLED_ELEMENT_CYCLE`, and two processes sharing an `id` is `DUPLICATE_PROCESS_ID`.
+
+  **`target="Depts"` dict-injection** — the `Depts` input lets one module with generic lane names (such as "Sender" / "Receiver") serve many call sites, each binding those lanes to its own departments. The `source` is a JSON object of strings, written plain or with a leading `=`, mapping a module lane name to a lane name of the calling process, both matched case-insensitively — e.g. `{"sender":"Consultant","receiver":"Tender"}`. It compiles to the call step's `Departments`, keyed by the module's lane names and valued by the caller's, and never reaches `IOMapping`. A UI is expected to render it as a form rather than ask for JSON.
+
+> Events (boundary / intermediate)
+
+- `<bpmn:boundaryEvent>` with `<bpmn:timerEventDefinition>` — 0–N. Attached to a `userTask`, `subProcess` or `callActivity`. `cancelActivity="true"` (interrupting) or `"false"` (non-interrupting escalation). Duration: ISO 8601 or Go duration string. Compiles to `StageDef.BoundaryTimer` (userTask), `SubWorkflowStep.TimerPaths` (subProcess) or `CallPlanStep.TimerPaths` (callActivity).
+- `<bpmn:boundaryEvent>` with `<bpmn:errorEventDefinition>` — 0–N. Attached to a `subProcess` or `callActivity`; always interrupting. Catches named errors (or any error when `errorRef` is empty). Compiles to `SubWorkflowStep.ErrorPaths` (subProcess) or `CallPlanStep.ErrorPaths` (callActivity).
+- `<bpmn:boundaryEvent>` with `<bpmn:messageEventDefinition>` — 0–N. Attached to a `userTask`, `subProcess`, or `callActivity`. Interrupting or non-interrupting per `cancelActivity`. Zero outgoing sequence flows is valid — a terminal interrupt notification. Compiles to `StageDef.BoundaryMessage` (userTask), `SubWorkflowStep.MessagePaths` (subProcess), or `CallPlanStep.MessagePaths` (callActivity). Message name resolution: the boundary event's own `messageEventDefinition messageRef` first, falling back to any collaboration `messageFlow` targeting the boundary event's node ID (see §Message Flow Name Resolution).
+- `<bpmn:intermediateCatchEvent>` with `<bpmn:timerEventDefinition>` — 0–N. Standalone timer step; must immediately follow an `eventBasedGateway` outgoing flow.
+
+> Connectivity & Zeebe Extensions
+
+- `<bpmn:sequenceFlow>` — 1–N. Both endpoints must resolve to known nodes.
+- `<bpmn:messageFlow>` — Cross-pool connectors within a `<bpmn:collaboration>`. `sourceRef`/`targetRef` must resolve to known participant elements; `messageRef`, if present, must reference a declared `<bpmn:message>`.
+
+  **Message Flow Name Resolution**: `name`/`messageRef` on the flow element itself are optional and rarely set in practice — real diagrams almost always put the `messageRef` on the *connected node* instead. `ResolveMessageFlowName` (`bpmncore/compile.go`) resolves a flow's message name in this order: (1) the flow's own `name` attribute; (2) the flow's own `messageRef`, resolved against a root `<bpmn:message>`; (3) the target node's own `messageRef` (a `sendTask`/`receiveTask` attribute, or a boundary event's `messageEventDefinition messageRef`, via `nodeMessageRef`); (4) the same lookup on the source node. `ResolveMessageFlowTarget` provides the inverse (node ID → name), for a receive task or a message boundary whose own `messageRef` does not resolve. A flow with no name into a receive task or message boundary that runs, in the pool that runs or a module it calls, is `MISSING_MESSAGE_DEFINITION` as a **warning**; a flow into anything else needs none, since nothing waits for it.
+- `<bpmn:extensionElements>` — 0–1 per `userTask`, `sendTask`, `receiveTask`, or `sequenceFlow`.
+- `<zeebe:taskDefinition type="...">` — Required on `userTask` and `sendTask`. `type` identifies the stage handler (e.g. `prep`, `review`, `approve`) from the `StageTypeHandler` registry.
+- `<zeebe:assignmentDefinition candidateGroups="..." candidateUsers="...">` — Required on `userTask`. `candidateGroups` → role (validated against Membership at publish); `candidateUsers` → optional single UUID v7 default assignee (code 8).
+- `<zeebe:subscription messageCorrelationKey="...">` — Required on `receiveTask`. Key used at runtime to correlate incoming messages to the correct process instance.
+- `<zeebe:properties>` / `<zeebe:property>` — Optional domain flags. Every property is forwarded verbatim into `StageDef.Extras`; the compiler does not special-case any property name (`requires_comment` is just one convention the Execution Service happens to interpret).
+- `<bpmn:conditionExpression>` (child of `sequenceFlow`) — a single comparison of one result field with one literal: `[= ] field (=|==|!=) literal`, where the literal is a double-quoted string, a number, or `true` or `false`; the optional leading `=` is the designer's expression marker. The Execution Service evaluates exactly this form, so the validator refuses anything else with `INVALID_CONDITION_EXPRESSION`. Required on all outgoing flows of an exclusive or inclusive gateway split except one default flow. Max 4096 chars. Stored verbatim; evaluated by Execution Service at runtime.
+
+##### Tier 2: Unsupported (Planned — `UNSUPPORTED_ELEMENT`)
+
+These elements are recognized but not yet compiled. They return a structured `UNSUPPORTED_ELEMENT` error (not `REJECTED_ELEMENT`) to distinguish "planned" from "never".
+
+- `<bpmn:intermediateCatchEvent>` with `<bpmn:messageEventDefinition>` — external signal branch from event-based gateway.
+- `<bpmn:intermediateCatchEvent>` with `<bpmn:signalEventDefinition>` — broadcast signal catch.
+- `<bpmn:intermediateThrowEvent>` with `<bpmn:messageEventDefinition>` — outbound notification.
+- `<bpmn:multiInstanceLoopCharacteristics>` on `userTask` — panel voting (all-must-complete with N independent instances).
+
+##### Tier 3: Rejected (`REJECTED_ELEMENT`)
+
+> Tasks / Activities
+
+`bpmn:serviceTask` (except a `connector:`-prefixed `zeebe:taskDefinition type` — see Tier 1 above and §4.1.3.3), `bpmn:scriptTask`, `bpmn:businessRuleTask`, `bpmn:transaction`, `bpmn:adHocSubProcess`
+
+> Gateways
+
+`bpmn:complexGateway`
+
+> Event Definitions
+
+`bpmn:terminateEventDefinition`, `bpmn:compensateEventDefinition`, `bpmn:cancelEventDefinition`, `bpmn:escalationEventDefinition`, `bpmn:conditionalEventDefinition`, `bpmn:linkEventDefinition`, `bpmn:standardLoopCharacteristics`
+
+> Collaboration
+
+`bpmn:conversation`, `bpmn:choreography`
+
+> Data / Object elements (see also §Visual Annotations below)
+
+`bpmn:dataObject`, `bpmn:dataObjectReference`
+
+> Boundary events with rejected definitions
+
+`bpmn:boundaryEvent` with `cancelEventDefinition`, `compensateEventDefinition`, `conditionalEventDefinition`, `escalationEventDefinition`, or `signalEventDefinition`
+
+
+
+##### Visual Annotations (Ignored — no execution semantics)
+
+These elements are explicitly **ignored** by the workflow engine. They carry no execution semantics and are treated as diagram-only decorations. They are parsed and collected into `CompiledPlan.visual_elements` for informational output but do not affect compilation or validation.
+
+- `bpmn:dataStore` — logical data store symbol.
+- `bpmn:dataStoreReference` — visual reference to a data store; commonly used to annotate that a task writes to an external store.
+- `bpmn:dataOutputAssociation`, `bpmn:dataInputAssociation`, with their `sourceRef`/`targetRef` children — connecting arrows between tasks and data store references. Silently dropped by the XML decoder; no action is taken.
+- `bpmn:textAnnotation` with its `text`, and the `bpmn:association` linking it to a node — comments a modeler draws on the diagram. Dropped by the decoder.
+- `bpmn:documentation`, and the `bpmn:property` placeholder a modeler writes on a task a data input association targets. Dropped by the decoder.
+
+---
+
+#### 4.1.3 User Task Extension Contract
+
+Every `<bpmn:userTask>` **must** carry a `<bpmn:extensionElements>` block with the following Zeebe standard extension elements. The parser reads these to construct the `StageDef` struct.
+
+**`<zeebe:taskDefinition type="...">` *(required)***
+
+Stage type — identifies the job worker that handles the task. The default registered set is `prep`, `review`, `approve`, but IAM is the authoritative owner of role/department definitions and may introduce additional types. If `type` is not in the `StageTypeHandler` registry, the task compiles as a passthrough stage (see `UNKNOWN_STAGE_TYPE` warning) — it is **not rejected**. Compiles to `StageDef.Type`, `StageDef.Activity`, and (for unknown types) `StageDef.engine_note`. Example: `<zeebe:taskDefinition type="prep"/>`.
+
+**`<zeebe:assignmentDefinition candidateGroups="..." candidateUsers="...">` *(required)***
+
+- `candidateGroups` — IAM role level name; passed as `?level=<role>` to Membership at publish; max 256 chars. Compiles to `StageDef.Role`.
+- `candidateUsers` — single UUID v7 (current limit; enforced via a named validation function for easy relaxation later). Compiles to `StageDef.DefaultAssignees`.
+
+**`<zeebe:properties>` / `<zeebe:property name="..." value="...">` *(optional, any number)***
+
+Every `<zeebe:property>` is forwarded verbatim into `StageDef.Extras` (`map[string]string`) — the compiler does not special-case any property name; the Execution Service and job workers own interpretation. For example, `<zeebe:property name="requires_comment" value="true"/>` appears as `extras["requires_comment"] = "true"` (the Execution Service reads this to require a non-empty comment before task completion), and `<zeebe:property name="sla_category" value="high"/>` appears as `extras["sla_category"] = "high"`.
+
+**Department** — derived from lane membership via `<bpmn:flowNodeRef>`. No `dept_id` property needed. Lane `name` → `DepartmentDef.ID` + `DepartmentDef.Label`. Format is owned by the Profile Service and trusted as-is.
+
+**Condition expressions** — use standard `<bpmn:conditionExpression>` as a direct child of `<bpmn:sequenceFlow>` (not a Zeebe property). one comparison of a result field with a literal (`= decision = "bid"`, `decision != "no-bid"`, `amount == 5`, `approved == true`); max 4096 chars. For routing decisions only — not for approval state (use error events for rejection/rework; see §4.1.3.1).
+
+**Example XML block** — user task with all required extensions and a non-interrupting SLA timer:
+
+```xml
+<bpmn:userTask id="Task_tender_prep_bnb" name="Prepare Bid-No-Bid">
+  <bpmn:extensionElements>
+    <zeebe:taskDefinition type="prep"/>
+    <zeebe:assignmentDefinition
+      candidateGroups="bd-agent"
+      candidateUsers="018e1f2a-0000-7000-8000-000000000001"/>
+    <zeebe:properties>
+      <zeebe:property name="requires_comment" value="false"/>
+    </zeebe:properties>
+  </bpmn:extensionElements>
+</bpmn:userTask>
+<!-- Non-interrupting timer: escalation path fires concurrently if not completed in 48h -->
+<bpmn:boundaryEvent id="Timer_bnb_prep" attachedToRef="Task_tender_prep_bnb" cancelActivity="false">
+  <bpmn:timerEventDefinition>
+    <bpmn:timeDuration>PT48H</bpmn:timeDuration>
+  </bpmn:timerEventDefinition>
+</bpmn:boundaryEvent>
+```
+
+#### 4.1.3.1 Routing vs Rejection Semantics
+
+**XOR + `<bpmn:conditionExpression>`** = process routing. Use when a human or system makes an explicit choice that determines the execution path. Examples: bid decision (proceed/decline), tender value routing (standard vs legal review).
+
+**Error events** = rejection / rework. Use when a stage rejects and the work must loop back. The approve-stage worker throws an error code; an error boundary event on the enclosing subprocess catches it and routes the rework path.
+
+```xml
+<!-- Inside a subProcess "Strategy Approval" -->
+<bpmn:endEvent id="End_strategy_rejected" name="Strategy Rejected">
+  <bpmn:errorEventDefinition errorRef="Err_strategy_rejected"/>
+</bpmn:endEvent>
+<!-- Error boundary on the subProcess itself -->
+<bpmn:boundaryEvent id="Catch_strategy_rejected" attachedToRef="SubProcess_strategy">
+  <bpmn:errorEventDefinition errorRef="Err_strategy_rejected"/>
+</bpmn:boundaryEvent>
+```
+
+#### 4.1.3.2 Task SLA / Deadline Modeling
+
+Attach a `<bpmn:boundaryEvent>` with a `<bpmn:timerEventDefinition>` to the user task (see §4.1.2 Tier 1). Duration is expressed in ISO 8601 (`PT24H`, `P3D`) or Go duration syntax (`72h`, `3h30m`). The compiler stores the duration in `StageDef.BoundaryTimer`. The Execution Service creates a Temporal timer that fires at the deadline.
+
+- `cancelActivity="false"` (non-interrupting): task continues; escalation path runs concurrently.
+- `cancelActivity="true"` (interrupting): task is cancelled; only the escalation path continues.
+
+**Order follows the flows**: tasks run in the order the sequence flows reach them, **not** in XML document order and not grouped by lane. A lane says who does a task, never when. A department is one stretch of a lane on one path (a *segment*, §4.2): consecutive tasks in one lane form its stage sequence, and a flow that returns to a lane later starts another segment of that lane.
+
+#### 4.1.3.3 Service Task / Connector Extension Contract
+
+Full design in `workflow_connectors.md`; this is the parser-facing contract only.
+
+**`<zeebe:taskDefinition type="connector:<name>">` *(required)***
+
+`<name>` names a connector from the v1 catalogue (`workflow_connectors.md` §6.4 — the registry lists storage, send-email and rest-call) — a plain string, not a fixed enum, checked against `workflow-connectors`' lightweight `pkg/registry` package, imported at compile time (deliberately not `pkg/connectors`, the heavier package holding the actual `Execute()` implementations and their AWS/OpenAI/DB-driver SDK dependencies — this service only ever needs the name+schema lookup `pkg/registry` provides; see §10.14). An unrecognized `<name>` (`chat-notify` included, which has no provider and no per-tenant credential and is no longer in the registry) warns (`UNKNOWN_CONNECTOR_TYPE`) rather than failing the publish, the same treatment an unrecognized `userTask` type already gets (§4.1.3) — the named connector might still be registered before the workflow is ever instantiated, so hard-failing the publish over it would only block authors prematurely. Whether it's actually registered is a runtime question now, and runtime treats it as a real, visible workflow failure if it isn't (`workflow_connectors.md` §2/§6.5) — not a silently-tolerated gap. A `type` with no `connector:` prefix at all is not a warning — it's `REJECTED_ELEMENT`, per §4.1.4. Compiles to `StageDef.Type`/`StageDef.ConnectorType` as described in §4.1.2 above.
+
+**`<zeebe:ioMapping>` *(required)*** — the connector's declared inputs, in the exact same `<zeebe:input source="..." target="..."/>` shape `callActivity` already uses (§4.1.2). No new XML element or parsing code; only a new element handler feeding the already-parsed `ZeebeIOMapping` into `StageDef.IOMapping` (`workflow_models_lib.md` §2.3) instead of `callActivity`'s department-remap shape. For the `rest-call`/`sql-query` connector types, one input entry is a pre-registered alias name (e.g. `target="endpointAlias"`/`target="queryAlias"`) rather than a raw URL or SQL string — the compiler does not validate the alias itself (that resolution happens at runtime against `cmd/connector-worker`'s own internal-service registry, `workflow_connectors.md` §6.2); a dangling alias fails the workflow the same way an unrecognized connector type does. An input's `source` is `=name`, which reads the instance variable `name` when the task is created, or any other text, which is a literal (workflow-models LLD §2.5); an output's `source` names a key of the connector's result, and its `target` is the instance variable the key becomes. **A secret field is never authored:** the worker reads each of the connector's secret fields from the tenant's stored credential, `connectors/<tenant>/<type>/<field>`, so an input whose `target` is a secret field is refused (`CONNECTOR_SECRET_AUTHORED`, §3.1.4).
+
+**No `<zeebe:assignmentDefinition>`** — a connector task has no human assignee at compile time, and none is ever assigned at runtime either: it completes or fails entirely on its own (`workflow_connectors.md` §5.3/§10 Decision #9), never something authored in the diagram.
+
+**Department** — same as `userTask`: derived from lane membership via `<bpmn:flowNodeRef>`, no separate property needed.
+
+---
+
+#### 4.1.4 Rejected and Unsupported Elements
+
+Two distinct error codes distinguish "never" from "planned":
+
+- **`REJECTED_ELEMENT`** — the element will never be supported in this service.
+- **`UNSUPPORTED_ELEMENT`** — the element is on the roadmap but not yet implemented. When implemented, it is removed from the unsupported set and handled by its registered `ElementHandler`; no other parser change is needed.
+
+See §4.1.2 Tier 2 / Tier 3 for the full classification. The code-level lists in `parser.go`:
+
+```go
+// rejectedElements — REJECTED_ELEMENT (never)
+var rejectedElements = map[string]bool{
+    // serviceTask is deliberately NOT in this flat denylist — unlike every other
+    // entry here, it needs a conditional check, not a blanket rejection (see below).
+    "scriptTask": true, "businessRuleTask": true,
+    "transaction": true, "adHocSubProcess": true,
+    "complexGateway": true,
+    "terminateEventDefinition": true, "compensateEventDefinition": true,
+    "cancelEventDefinition": true, "escalationEventDefinition": true,
+    "conditionalEventDefinition": true, "linkEventDefinition": true,
+    "standardLoopCharacteristics": true,
+    "conversation": true, "choreography": true,
+    "dataObject": true, "dataObjectReference": true,
+    // dataStore and dataStoreReference are NOT rejected — they are visual annotations
+    // collected into CompiledPlan.visual_elements (see §Visual Annotations).
+}
+
+// unsupportedElements — UNSUPPORTED_ELEMENT (planned; remove when handler is registered)
+var unsupportedElements = map[string]bool{
+    "inclusiveGateway": true, // parsed and graph-validated but no compile handler yet
+}
+```
+
+Note: `messageEventDefinition` and `signalEventDefinition` on `intermediateCatchEvent` are NOT in `rejectedElements` (that would block Tier 2 implementation). They are handled at the `TimerCatchHandler` level: if the catch event's definition is not `timerEventDefinition`, the handler emits `UNSUPPORTED_ELEMENT`.
+
+**`serviceTask` is handled the same way, at the element level, not the flat denylist scan.** Every other Tier 3 entry above is rejected outright regardless of its content; `serviceTask` is the one exception with a real, registered Tier 1 handler (§4.1.2) that inspects its `zeebe:taskDefinition type` first: a `connector:`-prefixed value compiles (`workflow_connectors.md`); anything else — including no `type` at all — still emits `REJECTED_ELEMENT`, with a message naming the actual reason (`"serviceTask is only supported with a connector: type"`) rather than the generic Tier-3 message the flat-denylist scan produces for every other entry.
+
+---
+
+#### 4.1.5 XML Security & Upload Hardening
+
+Before any XML parsing begins, the service enforces the following hard limits to prevent XML-based attacks:
+
+| Rule | Limit | Error |
+| --- | --- | --- |
+| Max upload size | 10 MB | `413 Request Entity Too Large` |
+| XXE protection | `xml.Decoder` with `Strict: true`; external entity resolution disabled | `400 Bad Request` |
+| XML Bomb (entity expansion) | Custom `TokenReader` wrapper; token count limit of 1,000,000 | `400 Bad Request` |
+| Max task nodes (`userTask`, `task`, connector `serviceTask`) | 1000 per process, and 1000 stages and calls once its calls are expanded | `422 Unprocessable Entity` |
+| Max `<bpmn:lane>` count | 100 lanes per process | `422 Unprocessable Entity` |
+
+---
+
+#### 4.1.6 Go Struct Mapping (Parser Internal Types)
+
+The parser unmarshals BPMN XML into the following internal Go types before the Compiler converts them to the DSL:
+
+```go
+
+type bpmnDefinitions struct {
+    XMLName      xml.Name           `xml:"definitions"`
+    Processes    []bpmnProcess      `xml:"process"`
+    Collaboration *bpmnCollaboration `xml:"collaboration"` // nil for single-process BPMN
+    Messages     []bpmnMessage      `xml:"message"` // root-level <bpmn:message> declarations
+    Errors       []bpmnError        `xml:"error"` // root-level error definitions (boundary events)
+}
+type bpmnMessage struct {
+    ID   string `xml:"id,attr"`
+    Name string `xml:"name,attr"`
+}
+type bpmnCollaboration struct {
+    ID           string            `xml:"id,attr"`
+    Participants []bpmnParticipant `xml:"participant"`
+    MessageFlows []bpmnMessageFlow `xml:"messageFlow"`
+}
+type bpmnParticipant struct {
+    ID         string `xml:"id,attr"`
+    Name       string `xml:"name,attr"`
+    ProcessRef string `xml:"processRef,attr"`
+}
+type bpmnMessageFlow struct {
+    ID         string `xml:"id,attr"`
+    Name       string `xml:"name,attr"`
+    SourceRef  string `xml:"sourceRef,attr"`
+    TargetRef  string `xml:"targetRef,attr"`
+    MessageRef string `xml:"messageRef,attr"`
+}
+type bpmnProcess struct {
+    ID      string      `xml:"id,attr"`
+    Name    string      `xml:"name,attr"`
+    LaneSet bpmnLaneSet `xml:"laneSet"`
+
+    UserTasks              []bpmnUserTask              `xml:"userTask"`
+    SubProcesses           []bpmnSubProcess            `xml:"subProcess"`
+    StartEvents            []bpmnStartOrEndEvent       `xml:"startEvent"`
+    EndEvents              []bpmnStartOrEndEvent       `xml:"endEvent"`
+    IntermediateCatchEvents []bpmnIntermediateCatchEvent `xml:"intermediateCatchEvent"`
+    BoundaryEvents         []bpmnBoundaryEvent         `xml:"boundaryEvent"`
+    ParallelGateways       []bpmnGateway               `xml:"parallelGateway"`
+    ExclusiveGateways      []bpmnGateway               `xml:"exclusiveGateway"`
+    EventBasedGateways     []bpmnGateway               `xml:"eventBasedGateway"`
+    CallActivities         []bpmnCallActivity          `xml:"callActivity"`
+    SequenceFlows          []bpmnSequenceFlow          `xml:"sequenceFlow"`
+}
+type bpmnCallActivity struct {
+    ID                string                `xml:"id,attr"`
+    Name              string                `xml:"name,attr"`
+    ExtensionElements bpmnExtensionElements `xml:"extensionElements"`
+}
+type bpmnLaneSet struct {
+    Lanes []bpmnLane `xml:"lane"`
+}
+type bpmnLane struct {
+    ID           string   `xml:"id,attr"`
+    Name         string   `xml:"name,attr"`
+    FlowNodeRefs []string `xml:"flowNodeRef"`
+}
+type bpmnUserTask struct {
+    ID                string                `xml:"id,attr"`
+    Name              string                `xml:"name,attr"`
+    ExtensionElements bpmnExtensionElements `xml:"extensionElements"`
+}
+type bpmnSubProcess struct {
+    ID                string                `xml:"id,attr"`
+    Name              string                `xml:"name,attr"`
+    ExtensionElements bpmnExtensionElements `xml:"extensionElements"`
+    // Embedded process graph
+    LaneSet            bpmnLaneSet                  `xml:"laneSet"`
+    UserTasks          []bpmnUserTask               `xml:"userTask"`
+    StartEvents        []bpmnStartOrEndEvent        `xml:"startEvent"`
+    EndEvents          []bpmnStartOrEndEvent        `xml:"endEvent"`
+    BoundaryEvents     []bpmnBoundaryEvent          `xml:"boundaryEvent"`
+    ParallelGateways   []bpmnGateway                `xml:"parallelGateway"`
+    ExclusiveGateways  []bpmnGateway                `xml:"exclusiveGateway"`
+    SequenceFlows      []bpmnSequenceFlow           `xml:"sequenceFlow"`
+}
+type bpmnBoundaryEvent struct {
+    ID             string               `xml:"id,attr"`
+    Name           string               `xml:"name,attr"`
+    AttachedToRef  string               `xml:"attachedToRef,attr"`
+    CancelActivity bool                 `xml:"cancelActivity,attr"` // default true if absent
+    Timer          *bpmnTimerDef        `xml:"timerEventDefinition"`
+    Error          *bpmnErrorRef        `xml:"errorEventDefinition"`
+    Message        *bpmnMessageEventDef `xml:"messageEventDefinition"`
+}
+type bpmnMessageEventDef struct {
+    MessageRef string `xml:"messageRef,attr"`
+}
+type bpmnIntermediateCatchEvent struct {
+    ID    string        `xml:"id,attr"`
+    Name  string        `xml:"name,attr"`
+    Timer *bpmnTimerDef `xml:"timerEventDefinition"`
+}
+type bpmnTimerDef struct {
+    Duration string `xml:"timeDuration"`
+}
+type bpmnErrorRef struct {
+    ErrorRef string `xml:"errorRef,attr"` // empty = catch any error
+}
+type bpmnError struct {
+    ID        string `xml:"id,attr"`
+    Name      string `xml:"name,attr"`
+    ErrorCode string `xml:"errorCode,attr"`
+}
+type bpmnStartOrEndEvent struct {
+    ID   string        `xml:"id,attr"`
+    Name string        `xml:"name,attr"`
+    Error *bpmnErrorRef `xml:"errorEventDefinition"` // end events only (inside subprocess)
+}
+type bpmnExtensionElements struct {
+    TaskDefinition       *bpmnTaskDefinition       `xml:"taskDefinition"`
+    AssignmentDefinition *bpmnAssignmentDefinition `xml:"assignmentDefinition"`
+    CalledElement        *bpmnCalledElement        `xml:"calledElement"` // callActivity only
+    ZeebeProperties      []zeebeProperty           `xml:"properties>property"`
+}
+type bpmnTaskDefinition struct {
+    Type string `xml:"type,attr"`
+}
+type bpmnAssignmentDefinition struct {
+    CandidateGroups string `xml:"candidateGroups,attr"`
+    CandidateUsers  string `xml:"candidateUsers,attr"`
+}
+type bpmnCalledElement struct {
+    ProcessID string `xml:"processId,attr"`
+}
+type zeebeProperty struct {
+    Name  string `xml:"name,attr"`
+    Value string `xml:"value,attr"`
+}
+type bpmnGateway struct {
+    ID   string `xml:"id,attr"`
+    Name string `xml:"name,attr"`
+}
+type bpmnSequenceFlow struct {
+    ID                   string                `xml:"id,attr"`
+    SourceRef            string                `xml:"sourceRef,attr"`
+    TargetRef            string                `xml:"targetRef,attr"`
+    ExtensionElements    bpmnExtensionElements `xml:"extensionElements"`
+}
+```
+
+---
+
+#### 4.1.7 Temporal Naming Contract
+
+This subsection defines the canonical names that the compiled DSL writes into `activity` fields and that the Temporal Workers **must** register under. These names form the contract between the Definition Service (which writes the DSL) and the Workers LLD (which implements the handlers). Any mismatch causes a Temporal `ActivityNotRegistered` panic at runtime.
+
+##### Workflow Type Name
+
+| Workflow | Temporal Type Name |
+| --- | --- |
+| Main DSL orchestrator | `DSLWorkflow` |
+
+##### Task Queue Names
+
+| Scope | Queue Name Format | Example |
+| --- | --- | --- |
+| Default (shared, non-isolated) | `wf-queue-default` | `wf-queue-default` |
+| Tenant-isolated (enterprise tier) | `wf-queue-<tenant_uuid>` | `wf-queue-7ca648b2-b432-4744-884c-35fd556a310c` |
+
+The `task_queue` field in the compiled DSL carries the resolved queue name. The Definition Service computes this at compile/publish time based on the tenant's plan tier (e.g. from the `x-plan` header). If the tenant is on the `enterprise` tier, it resolves to the tenant-isolated queue (`wf-queue-<tenant_uuid>`); otherwise (for `starter` or `pro` tiers), it defaults to the shared default queue (`wf-queue-default`).
+
+##### Activity Names (DSL `activity` Field)
+
+The `activity` field in each `StageDef` is written by the Compiler based on the `zeebe:taskDefinition type` attribute. The `StageTypeHandler` registry maps each `type` value to a Temporal activity name. Workers must register exactly these names:
+
+| `zeebe:taskDefinition type` | DSL `activity` value | Worker Handler |
+| --- | --- | --- |
+| `prep` | `PrepActivity` | Starts a Prep task; creates `workflow_task` row via Temporal Local Activity |
+| `review` | `ReviewActivity` | Starts a Review task; awaits signal before progressing |
+| `approve` | `ApproveActivity` | Starts an Approve task; requires MFA assertion in signal payload |
+
+##### Signal Channel Names (Temporal Signal Types)
+
+Temporal Workers listen on these signal channel names. Defined here so the Definition Service's DSL is the authoritative source; the Execution Service and Workers must use these exact strings when calling `SignalWorkflow`.
+
+| Channel Name | Direction | Payload Type | Purpose |
+| --- | --- | --- | --- |
+| `stage-transition` | Execution Svc → Worker | `StageTransitionSignal{dept_id, to_stage, user_id, mfa_token?}` | Advance a stage to the next step |
+| `stage-defer` | Execution Svc → Worker | `StageDeferSignal{dept_id, from_stage, reason, user_id}` | Defer back to previous stage or preparator |
+| `admin-route` | Execution Svc → Worker | `AdminRouteSignal{action: "goto"\|"terminate", dept_id?, stage_type?}` | Admin override of routing |
+| `assignee-override` | Execution Svc → Worker | `AssigneeOverrideSignal{dept_id, stage_type, old_user_id, new_user_id}` | Runtime reassignment. `old_user_id` identifies which specific slot is being replaced; required for multi-assignee nodes. |
+
+A **structural revert branch** authored in the BPMN (a back-edge from an exclusive gateway — see §4.4) compiles to a revert target on the `exclusive` DSL step keyed by `(dept_id, stage_type)`. At runtime the Execution Service realises it with `stage-defer` (revert to an earlier stage/department) or `stage-transition` (advance on the forward branch). Because a guarded exit only makes termination *possible*, the Execution Service bounds the loop itself: it re-enters the gateway after each revert resolves and fails the instance after 50 cycles rather than taking the forward branch the condition did not select (`execution_service.md` §2.6). Nothing in the compiled plan carries or configures that bound.
+
+##### Query Handler Names
+
+| Query Name | Returns | Purpose |
+| --- | --- | --- |
+| `get-workflow-status` | `WorkflowStatusResult` (full state) | Dashboard polling / SSE pre-flight |
+
+---
+
+### 4.2 Graph Compilation Engine & DSL Generation
+
+The Graph Compiler translates the raw, flat BPMN elements into a structured, hierarchical `ExecutionPlan` JSON DSL that can be cleanly orchestrated.
+
+```mermaid
+    graph TD
+    Start --> Parse
+    Parse --> Context
+    Context --> DepMap
+    Context --> Traversal
+    Traversal --> Assembler
+```
+
+#### Graph Context Generation & Adjacency Mapping
+
+1. **Adjacency Mapping**: The compiler parses sequence flows to generate explicit forward and backward lookup tables:
+   - `outgoing`: `Map<SourceRef, []TargetRef>`
+   - `incoming`: `Map<TargetRef, []SourceRef>`
+2. **Gateway Type Categorization**:
+   - Gateways with multiple outgoing flows (`len(outgoing) > 1`) are flagged as **Split Gateways** (`splitGWs`).
+   - Gateways with multiple incoming flows (`len(incoming) > 1`) are flagged as **Join Gateways** (`joinGWs`).
+3. **Back-edge Classification**: A DFS from the Start Event, then from each boundary event, labels each
+   sequence flow as a forward edge or a **back-edge** (target is an ancestor on the DFS stack — a
+   revert/loop flow; see §4.4), so a loop reached only through a boundary is classified too. The set
+   of back-edges is computed once and shared by validation and compilation. The **forward graph**
+   (all edges minus back-edges) is a DAG; split→join matching and traversal run over it, so they always
+   terminate.
+
+#### Graph Traversal & Parsing Engine
+
+Starting at the primary `StartEvent`'s ID, the compiler traverses the graph node-by-node over the forward graph:
+
+1. **Task Nodes and lane segments**: a task's stage is appended to the department of its lane *segment*, a stretch of one lane on one path. The traversal keeps the segment it is filling open while consecutive tasks stay in that lane. It starts the lane's next segment when a task's lane differs from the open one, and every step other than `Sequential` (a gateway, a subprocess, a call) closes the open segment. A lane's first segment is keyed by the lane's `name`, and its n-th by `<name>~<n>`. Every segment carries the lane's `name` as `Label` and its `dept_id` as `IAMDepartmentID`. Each segment opened is appended to a running sequential buffer (`seqBuf`), so the Execution Service, which runs a department's stages in order (`execution_service.md` §2.5), runs the tasks in the order the flows give. A subprocess body shares its parent's segments, and a body task outside every lane takes the subprocess's lane. A called process numbers its own segments in its own plan, and a laneless one names its segments by its process id.
+2. **Split Gateways (Parallel/Exclusive)**:
+   - Flushes any pending `seqBuf` to a `Sequential` execution step.
+   - Finds the join: the split's immediate post-dominator in the forward graph, the nearest node every forward path from the split passes through. A merge inside one branch, or a loop head reached again by a back-edge, is never taken for the join.
+   - Compiles each forward branch with its own state, from the branch's first node up to the join, into that branch's `Steps`: tasks in their own segments, nested gateways, subprocesses and calls alike. A parallel branch's `DeptID` is the first department its steps run, found through a leading gateway or subprocess, or empty when its first step is a call. Each branch stops at the join, so a region is compiled once whatever the order of the flows. A node that two exclusive branches pass through before the join is compiled into each, since only one branch runs; a revert to it names the copy on the revert's own path, and a boundary to it names the first copy, which starts a segment of its own.
+   - Emits a `Parallel` step, or an `Exclusive` step whose forward branches carry their `Steps`, `ConditionExpression` and, for display, `Target`/`TargetNodeID`/`TargetName` of the branch's first department and node. A branch that goes straight to the join has no `Steps` and no `Target`.
+   - Continues traversal from the join.
+3. **Revert / Loop Branches (Exclusive Gateways)**: When an exclusive gateway has an outgoing
+   **back-edge** (a revert/loop flow), that branch is not traversed forward; instead it is emitted on
+   the `exclusive` step as a revert branch naming the segment and node of the first task on the
+   back-edge's path, **(dept_id, node_id)**, never a `user_id`, plus its `condition_expression`. Forward
+   branches of the same gateway compile as normal. The Execution Service maps the revert branch onto its
+   `stage-defer` / `stage-transition` signals (§4.1.7) and enforces a loop-iteration bound at runtime.
+
+#### Parser-to-DSL Mapping Example
+
+Below is an abstract example of how a parsed process with sequential and parallel nodes maps directly into the JSON DSL structure.
+
+**Input Flow Representation**:
+
+```plantuml
+@startuml
+' œBPMN-style swimlane workflow
+
+|Design / Engineering|
+start
+:StageStartedActivity;
+note right
+Role: engineer
+Default Assignee: user-uuid-alice
+Type: prep
+end note
+
+fork
+
+|Contract Management|
+:StageStartedActivity;
+note right
+Role: legal
+Type: prep
+end note
+
+fork again
+
+|Planning|
+:StageStartedActivity;
+note right
+Role: planner
+Type: prep
+end note
+
+end fork
+
+|Procurement|
+:StageStartedActivity;
+note right
+Role: officer
+Type: review
+Requires Comment: true
+end note
+
+stop
+
+@enduml
+```
+
+**Compiled DSL Output**:
+
+> [!IMPORTANT]
+> **`default_assignees` is a publish-time snapshot.** These fields are the authoritative source of the default assignees for this specific version. They are baked into the immutable compiled DSL at publish time and are never mutated after publication. The `workflow_node_assignee` table is a denormalized copy of this data (one row per user per node), populated in the same transaction, used exclusively as a reverse index for invalidation queries. If any referenced user later becomes ineligible, the version's `is_valid` flag is set to `false` — the DSL itself remains unchanged to preserve audit integrity. Changing default assignees requires publishing a new version.
+
+```json
+{
+  "name": "Project Initiation Workflow",
+  "task_queue": "workflow-engine-queue",
+  "departments": [
+    {
+      "id": "design",
+      "label": "Design / Engineering",
+      "stages": [
+        {
+          "type": "prep",
+          "activity": "PrepActivity",
+          "role": "engineer",
+          "default_assignees": ["user-uuid-alice"],
+          "boundary_timer": { "duration": "24h", "interrupting": false }
+        }
+      ]
+    },
+    {
+      "id": "contracts",
+      "label": "Contract Management",
+      "stages": [
+        {
+          "type": "prep",
+          "activity": "PrepActivity",
+          "role": "legal",
+          "default_assignees": ["user-uuid-bob"],
+          "boundary_timer": { "duration": "48h", "interrupting": false }
+        }
+      ]
+    },
+    {
+      "id": "planning",
+      "label": "Planning",
+      "stages": [
+        {
+          "type": "prep",
+          "activity": "PrepActivity",
+          "role": "planner",
+          "default_assignees": ["user-uuid-charlie"]
+        }
+      ]
+    },
+    {
+      "id": "procurement",
+      "label": "Procurement",
+      "stages": [
+        {
+          "type": "review",
+          "activity": "ReviewActivity",
+          "role": "officer",
+          "default_assignees": ["user-uuid-david", "user-uuid-eve"],
+          "extras": { "requires_comment": "true" }
+        }
+      ]
+    }
+  ],
+  "execution": {
+    "steps": [
+      {
+        "sequential": ["design"]
+      },
+      {
+        "parallel": ["contracts", "planning"]
+      },
+      {
+        "sequential": ["procurement"]
+      },
+      {
+        "exclusive": [
+          { "target": "construction", "condition_expression": "$.approved == true" },
+          { "target": "", "revert_to_dept": "procurement", "revert_to_stage": "review", "condition_expression": "$.approved == false" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+> **Exclusive Gateway condition expressions**: When the compiler encounters a `<bpmn:exclusiveGateway>` split, it reads the `<bpmn:conditionExpression>` child element from each outgoing `<bpmn:sequenceFlow>` and populates a `condition_expression` field on the outgoing `exclusive` `ExecutionStep` entry. When an outgoing flow is a **back-edge** (revert/loop), the entry additionally carries a revert target keyed by `(dept, stage_type)` (an additive field, e.g. `revert_to_dept` / `revert_to_stage`) instead of advancing to a forward department. Runtime evaluation of the expression — and realisation of the revert via `stage-defer` / `stage-transition` — is the responsibility of the Temporal Worker (Workers LLD §Exclusive Routing). The worker evaluates the conditions in order and takes the first branch whose condition holds, or else the first branch without a condition.
+
+#### Per-Element Plugin Architecture
+
+The `Compiler` struct holds two registries: one for BPMN flow-node handlers (`ElementHandler`) and one for stage type handlers (`StageTypeHandler`). Adding a new element means implementing the appropriate sub-interface and registering it — nothing else changes.
+
+```go
+// ElementHandler is the base interface for all BPMN flow-node handlers.
+type ElementHandler interface {
+    NodeType() nodeType
+    Validate(nodeID string, proc *bpmnProcess, g *graph) []domain.BPMNValidationError
+    Compile(nodeID string, cs *compileState) error
+}
+
+// EventHandler extends ElementHandler for BPMN event nodes.
+type EventHandler interface {
+    ElementHandler
+    EventKind() string // "start" | "end" | "boundary" | "intermediateCatch"
+}
+
+// ActivityHandler extends ElementHandler for BPMN activity nodes.
+type ActivityHandler interface {
+    ElementHandler
+    ActivityKind() string // "userTask" | "subProcess"
+}
+
+// GatewayHandler extends ElementHandler for BPMN gateway nodes.
+type GatewayHandler interface {
+    ElementHandler
+    GatewayKind() string // "exclusive" | "parallel" | "eventBased" | "inclusive"
+}
+
+// StageTypeHandler encapsulates a single stage-type concept (prep/review/approve).
+// Custom stage types are registered via WithStageType.
+type StageTypeHandler interface {
+    ID() string           // Zeebe value: "prep", "review", "approve"
+    ActivityName() string // Temporal worker activity name
+    ValidateProps(taskID string, props map[string]string) []domain.BPMNValidationError
+}
+
+type Compiler struct {
+    stageTypes map[string]StageTypeHandler
+    elements   map[nodeType]ElementHandler
+}
+
+func NewCompiler(opts ...CompilerOption) *Compiler
+func WithStageType(h StageTypeHandler) CompilerOption
+func WithElementHandler(h ElementHandler) CompilerOption
+```
+
+**Built-in handler implementations:**
+
+| Category | Handler | Tier |
+| --- | --- | --- |
+| Events | `StartEventHandler`, `EndEventHandler` | 1 (existing) |
+| Events | `TimerBoundaryHandler`, `ErrorBoundaryHandler` | 1 (new) |
+| Events | `TimerCatchHandler` | 1 (new) |
+| Activities | `UserTaskHandler` | 1 (existing) |
+| Activities | `SubProcessHandler` | 1 (new) |
+| Gateways | `ExclusiveGatewayHandler`, `ParallelGatewayHandler` | 1 (existing) |
+| Gateways | `EventBasedGatewayHandler` | 1 (new) |
+| Stage types | `PrepStage`, `ReviewStage`, `ApproveStage` | built-in |
+
+#### DSL Types
+
+These types are not defined in `internal/core/domain/`. `CompiledPlan`, `CompiledCollaboration`, `DepartmentDef`, `StageDef`, `BoundaryTimer`, `ExecutionPlan`/`ExecutionStep` and its branch/step variants (`ParallelBranch`, `ExclusiveBranch`, `SubWorkflowStep`, `ErrorPath`, `TimerPath`, `MessagePath`, `IOMapping`/`IOVar`, `VisualElementDef`) are all imported directly from the shared `workflow-models` Go module's (`github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models`, pre-release `v0.1.0-beta.1`) `pkg/dsl` package — every compiler/service call site references `dsl.CompiledPlan` etc., not `domain.CompiledPlan`. `StageDef.Type`/`ExclusiveBranch.TargetStage` discriminator values live in the module's `pkg/enums`.
+
+The authoritative field-by-field reference for every type above is `workflow_models_lib.md` §2. Two facts worth keeping here since they're compiler-behavior notes, not type-shape ones:
+
+- `schema_version` is an integer field of the stored `CompiledCollaboration` JSON, not of `CompiledPlan` and not a `workflow_version` column. The compiled-plan read (§3.4.1) returns the blob as it is, so the Execution Service reads the schema version from the plan itself.
+- `EventBasedStep`/`EventBranch` are Tier-2 design reservations for event-based gateway compilation, not implemented on `pkg/dsl.ExecutionStep` (confirmed absent from the module as of `v0.1.0-beta.1`) or in this repo. Event-based gateways are parsed/graph-validated today but have no compile handler (`UNSUPPORTED_ELEMENT`) — forward design intent only.
+
+**New DSL example — subprocess with timer + error boundary, followed by event-based gateway:**
+
+```json
+{
+  "steps": [
+    {
+      "sub_workflow": {
+        "name": "ITB Preparation",
+        "plan": {
+          "steps": [
+            { "sequential": ["engineering"] },
+            { "parallel": ["contracts", "procurement"] }
+          ]
+        },
+        "error_paths": [
+          { "error_code": "BUDGET_EXCEEDED", "short_circuit": true, "target_dept": "finance" }
+        ],
+        "timer_paths": [
+          { "duration": "72h", "interrupting": false, "target_dept": "project management" }
+        ]
+      }
+    },
+    {
+      "event_based": {
+        "branches": [
+          { "type": "timer", "duration": "5d", "target_dept": "project management" },
+          { "type": "signal", "signal": "review-complete", "target_dept": "procurement" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+#### All-Branches-Terminate Exclusive Gateway
+
+When an exclusive gateway's forward paths share no node (each ends at its own end event), it has no join. Each forward branch is compiled with its own state into its `Steps`, through to its end event, and carries `Terminates: true`: the Execution Service runs the chosen branch's `Steps` and then ends the path. A branch whose first node is an end event has no `Steps`. Revert back-edges on the same gateway are appended as revert branches.
+
+#### Single-Forward Exclusive Gateway With Revert Back-Edges
+
+A gateway with exactly one forward exit and one or more revert back-edges compiles to an `exclusive` step whose forward branch carries **only its condition** — no `Target`, `TargetStage`, `TargetNodeID` or `TargetName` — followed by the forward path's own steps, appended by continuing traversal from the forward node. The branch exists to let the Execution Service tell "go forward" apart from "send back"; the forward path *is* the following steps, so naming a target on the branch as well makes that department run twice, once from the branch and once from the continuation. The split shapes above carry their branches' work as `Steps` instead, because their branches diverge and their continuation begins at the join. `execution_service.md` §2.6 step 4 carries the runtime half of this contract.
+
+This pattern is needed for bid/no-bid style decisions where one branch exits early and the other continues through a complex subprocess and parallel section.
+
+#### Boundary Continuation Paths
+
+A boundary's path, timer, message or error, can lead to tasks the main path never reaches (`Task_escalate_...`). After the main traversal, in a process and in each subprocess body or called process, each such path not yet compiled is compiled with its own state: its tasks go into their own segments, it stops where it meets a node already compiled, and its steps never join the main steps. A boundary names, as its `TargetDept`, the segment of the first task or subprocess on its path, or terminates when an end event comes first (boundary event rules below). Each node a boundary leads to starts a segment of its own, so the boundary runs from that task and never re-runs the tasks before it. The boundary also carries the whole path as `Steps`, in the order the flows give, with the boundary event's ID as `BoundaryID`: when it fires, the Execution Service runs those steps, and an interrupting boundary then ends its path, so nothing the host would have gone on to runs. A path that meets a node the main flow already compiled, so that it continues into the main flow, carries no `Steps`; it names only its `TargetDept`, whose department runs alone.
+
+#### Implicit Process Root (No Explicit Start Event)
+
+The pool that runs in a collaboration may have no explicit `<bpmn:startEvent>`, as when an outside party's message starts it. The compiler then takes as its root the **single node with no incoming sequence flow and at least one outgoing sequence flow**. If no such unique node exists, the process is `NO_START_EVENT`. A document without a collaboration always needs a start event.
+
+The implicit root is exempt from the `DANGLING_NODE` no-incoming check: a node elected as the implicit root has no incoming edges by definition, so the check would otherwise produce a false positive.
+
+In the BNB example, the contractor pool's root is the call to Docs prep, with a message boundary on it for the consultant's RFQ. The consultant's pool is marked ignore and produces nothing. Department IDs are lane segment keys (§4.2) in every plan: only one pool compiles, so no pool prefix is needed.
+
+---
+
+### 4.3 Versioning Strategy & Diff Engine
+
+When publishing an updated draft, the compiler calculates a canonical SHA-256 hash of the normalized XML.
+
+#### Canonical Hash Generation
+
+1. Strip leading and trailing whitespaces from XML elements.
+2. Sort all Zeebe properties alphabetically by name.
+3. Compute the SHA-256 checksum of the normalized string.
+
+#### Diff & Versioning Suggestions (Integer-Based Versioning)
+
+Because the Workflow Engine maintains strict execution history, the system operates on **monotonically increasing integer versions** (e.g. `1`, `2`, `3`). The Suggestion Engine calculates diffs and prompts the administrator accordingly:
+
+| Detected Difference | Severity | Action & Suggestion |
+| :--- | :--- | :--- |
+| Only metadata changes (task names, assignees, roles, default users, or comment requirements changed) | **Minor** | **Suggest Version Upgrade**: Increment the integer version of the existing workflow (e.g., Version `1` ➔ Version `2`). Existing active instances remain on their original version; new instances use the new version. |
+| Structural alterations (split/join gateways added, sequence flows changed, new departments introduced) | **Critical** | **Suggest New Workflow**: Prompts the user to register a brand-new workflow entity with a different key. This prevents run-time divergence and database record mismatch in running historical execution instances. |
+
+---
+
+### 4.4 Validation Engine
+
+Prior to saving drafts or completing publishing transactions, the compiler runs validation passes. It returns a **structured multi-error slice** if any rules are violated.
+
+#### Structural Rules
+
+- **Single Start Event**: Verify `len(StartEvents) == 1`.
+- **Reachability Pass**: A Depth-First Search (DFS) is run from the start event to ensure all declared user tasks and gateways are reachable.
+- **Dangling Nodes**: Every node (except start/end events) must have at least one incoming and one outgoing sequence flow.
+- **Closed Gateways**: Each parallel split, and each exclusive split whose branches do not all end at an end event, must have a join: its immediate post-dominator in the forward graph (§4.2).
+
+#### Metadata Rules
+
+- **Required Extensions**: Every `<bpmn:userTask>` must declare a `<zeebe:taskDefinition>` and a `<zeebe:assignmentDefinition>` inside its `extensionElements`.
+- **Valid Stage Type**: `taskDefinition.type` must match a registered `StageTypeHandler` ID. The deployment default set is `prep`, `review`, `approve`; the registry is not hardcoded.
+- **Lane Membership**: Every `userTask` must appear in exactly one lane via `<bpmn:flowNodeRef>`. Department is derived from the lane `name`; no `dept_id` property is used.
+- **Valid Timer Duration**: Timer boundary events and intermediate timer catch events must declare durations in ISO 8601 (`PT24H`, `P3D`) or Go duration syntax (`72h`, `3h30m`).
+
+#### Guarded-Loop Enforcement (Revert / Loopback Flows)
+
+Revert/loopback flows (e.g. an approver sending a task back to the reviewer or preparator)
+**may be authored explicitly in the BPMN** as structural cycles, provided each cycle is *guarded*
+so that termination is always possible. Uncontrolled cycles are rejected.
+
+- **Back-edge classification**: The compiler classifies sequence flows via a depth-first traversal
+  from the Start Event. An edge `(u → v)` is a **back-edge** (loop/revert edge) when `v` is an ancestor
+  of `u` on the active DFS stack. Removing the back-edges yields the **forward graph**, which must be a
+  DAG — all existing structural checks (reachability, dangling nodes, split→join matching, traversal,
+  compilation) operate on this forward graph.
+- **Guarded-exit rule**: A loop is valid only when **every back-edge originates at a diverging
+  exclusive gateway** that also has at least one forward (non-back-edge) outgoing branch — i.e. the
+  gateway can choose to exit the loop. This is the standard BPMN way to express a rework loop. The
+  following are rejected (see `CYCLE_DETECTED` / `UNGUARDED_LOOP` in §3.1.4):
+  - a back-edge whose source is **not** an exclusive gateway (a task, parallel/AND gateway, or event);
+  - an exclusive gateway whose outgoing edges are **all** back-edges (no forward exit);
+  - a **self-edge** (`u → u`) — non-standard in BPMN; loops must route through a gateway. (Note a
+    self-edge forms an SCC of size 1, so SCC size alone is not a sufficient check.)
+- **Tarjan's SCC** is retained, but its role changes: it is used to **enumerate** the loops (strongly
+  connected components with more than one node) so each can be checked for a guarded exit, rather than
+  to reject any cycle outright.
+- **Revert-target identity**: A back-edge's target is identified structurally by its node — i.e. by
+  **(dept, stage_type)** / node key — **never** by `user_id`. The same user may belong to multiple
+  departments, so default assignees are not a valid routing target. The compiled DSL records the revert
+  target as a dept/stage reference on the originating exclusive branch.
+- **Cross-department reverts** are permitted: a revert may target a stage in an earlier department, as
+  long as that target **precedes** the back-edge's source in the forward graph (it must be an ancestor
+  — guaranteed by the back-edge definition above).
+- **Runtime execution**: The structural revert branches are executed by the Execution Service via the
+  existing Temporal signals (`stage-defer` / `stage-transition` / `admin-route`, §4.1.7). The guarded
+  exit only makes termination *possible*, not guaranteed, so the Execution Service **must enforce a
+  loop-iteration bound** at runtime to protect against an indefinitely repeating revert cycle.
+
+#### Semantic Rules
+
+- **Orphan Nodes/Lanes**: All defined elements (lanes, gateways, tasks) must be part of a continuous reachable sequence from the Start Event. Isolated or disconnected nodes trigger a validation failure.
+- **Max Depth**: The length of any forward path from start to end cannot exceed 2000 consecutive nodes to prevent stack overflow/DOS during recursive graph compilation (`MAX_DEPTH_EXCEEDED`). Subprocess internal paths are counted independently.
+- **Identity-Agnostic Metadata Check**: Validates that `zeebe:taskDefinition`, `zeebe:assignmentDefinition`, and lane membership are present and structurally well-formed, but intentionally does **not** verify UUIDs or role names against the IAM directory during stateless parsing (the Definition Service remains identity-agnostic). Eligibility is checked only at publish time via the Org & Membership Service call.
+
+#### Subprocess Validation Rules
+
+- **Internal completeness**: A `bpmn:subProcess` must contain exactly one start event, at least one end event, at least one user task, and all standard structural rules (dangling nodes, reachability, etc.) apply recursively to the embedded process graph.
+- **Single incoming / single outgoing**: The subprocess element in the parent flow must have exactly one incoming and one outgoing sequence flow.
+- **No nested subprocesses in v1**: A `bpmn:subProcess` inside a `bpmn:subProcess` is rejected with `REJECTED_ELEMENT`.
+- **No event-based gateway inside subprocess in v1**: An `bpmn:eventBasedGateway` inside a subprocess is rejected with `UNSUPPORTED_ELEMENT`.
+- **`bpmn:task` without required extensions**: A plain `bpmn:task` inside a subprocess that lacks `zeebe:taskDefinition` emits `MISSING_TASK_DEFINITION`.
+
+#### Boundary Event Validation Rules
+
+- **Valid attachment**: `attachedToRef` must reference a `bpmn:userTask`, `bpmn:subProcess` or `bpmn:callActivity`; an error boundary attaches only to a `subProcess` or `callActivity`.
+- **Timer boundary on userTask**: Generates `BoundaryTimer` on the referenced `StageDef`. Multiple timer boundary events on the same task are rejected (emit first error, stop).
+- **Error boundary attachment**: Error boundary events may be attached to `bpmn:subProcess` or `bpmn:callActivity` elements (not individual user tasks). Attachment to a user task emits `INVALID_BOUNDARY_ATTACHMENT`. On a callActivity it compiles to `CallPlanStep.ErrorPaths`.
+- **Message boundary attachment**: Message boundary events may be attached to `bpmn:userTask`, `bpmn:subProcess`, or `bpmn:callActivity`. Generates `StageDef.BoundaryMessage`, `SubWorkflowStep.MessagePaths`, or `CallPlanStep.MessagePaths` respectively.
+- **Where a boundary leads**: to the department segment of the first task or subProcess on its path, found by following the path's forward flows, or nowhere when the path reaches an end event first or the boundary has no outgoing flow, in which case it compiles with `Terminates` and ends its path when it fires. A path that starts with a callActivity, sendTask or receiveTask, or with a subProcess whose body does not start with a userTask, is `UNSUPPORTED_BOUNDARY_TARGET`: the boundary names the department of its first task, so that task must be one.
+- **Duration format**: `timeDuration` inside a timer event definition must be parseable ISO 8601 (`P3D`, `PT72H`) or Go duration syntax (`72h`, `3h30m`). Invalid format emits `INVALID_SLA_DURATION`.
+- **Boundary event outgoing flow**: A boundary event must have exactly one outgoing sequence flow into the parent flow, **with one exception**: a **message boundary event with no outgoing sequence flow** is valid — it models a terminal interrupt (the message fires, the host activity is cancelled, and execution does not continue on that path). No `DANGLING_NODE` error is emitted for such a boundary event. Timer and error boundary events still require at least one outgoing sequence flow. For all other boundary events with outgoing flows, the target must be reachable from the parent start event (after stripping boundary flows from the reachability check to avoid false cycles).
+
+#### Event-Based Gateway Validation Rules
+
+- **Minimum branches**: Must have 2+ outgoing flows.
+- **All targets are catch events**: Every outgoing flow's immediate target must be a `bpmn:intermediateCatchEvent`.
+- **At least one timer**: At least one branch must target an intermediate catch event with a `bpmn:timerEventDefinition` (prevents infinite blocking).
+- **No back-edges**: An event-based gateway may not be the source of a back-edge (loop via event-based gateway not supported in v1).
+- **Not inside subprocess in v1**: An event-based gateway inside a subprocess emits `UNSUPPORTED_ELEMENT`.
+- **Catch event types**: A `bpmn:intermediateCatchEvent` whose definition is not `timerEventDefinition` emits `UNSUPPORTED_ELEMENT` (Tier 2 — message/signal catch events are planned but not yet compiled).
+
+#### Department & Stage Structural Flexibilities
+
+- **Partial Stage Declarations**: A single department does not need to define all three stage types (`prep`, `review`, `approve`). Any subset of stages is valid based on the BPMN tasks parsed (e.g. a department might only declare `prep` or `review`).
+- **Decoupled Progression Verification**: The strict ordering and progression flow rules of department-level stages (e.g. verifying transitions and loopback re-execution routes) are entirely decoupled from definition-time XML compilation. These runtime sequence rules are delegated to external downstream/runtime orchestrators rather than structural definition-time validation.
+
+---
+
+## 4.5 Multi-Assignee Support
+
+This section defines how multiple users are assigned to a single task node at the definition layer — covering BPMN authoring, compiled DSL representation, database storage, and the concurrency semantics the Execution Service and Temporal Workers must enforce at runtime.
+
+### 4.5.1 BPMN Authoring
+
+Default assignee(s) for a `<bpmn:userTask>` are set via `<zeebe:assignmentDefinition>`:
+
+| Attribute | Type | Required | Values |
+| --- | --- | --- | --- |
+| `candidateGroups` | string | Yes | IAM role level name (e.g. `"preparator"`); max 256 chars |
+| `candidateUsers` | UUID v7 | Current: single | Single UUID v7; multi-user support will be added via a named validator function |
+
+**BPMN XML examples**:
+
+```xml
+<!-- Prep task with single default assignee -->
+<bpmn:userTask id="Task_legal_prep" name="Legal Prep">
+  <bpmn:extensionElements>
+    <zeebe:taskDefinition type="prep"/>
+    <zeebe:assignmentDefinition
+      candidateGroups="preparator"
+      candidateUsers="018e1f2a-0000-7000-8000-000000000001"/>
+  </bpmn:extensionElements>
+</bpmn:userTask>
+
+<!-- Review task with comment required -->
+<bpmn:userTask id="Task_design_review" name="Design Review">
+  <bpmn:extensionElements>
+    <zeebe:taskDefinition type="review"/>
+    <zeebe:assignmentDefinition
+      candidateGroups="reviewer"
+      candidateUsers="018e1f2a-0000-7000-8000-000000000002"/>
+    <zeebe:properties>
+      <zeebe:property name="requires_comment" value="true"/>
+    </zeebe:properties>
+  </bpmn:extensionElements>
+</bpmn:userTask>
+```
+
+The UI modeler calls `GET /tenants/:id/users?department=:dept&level=:level` to populate a user picker per node. The selected user UUID is placed in `candidateUsers`.
+
+### 4.5.2 Compiled DSL Representation
+
+The Graph Compiler reads `candidateUsers` from `<zeebe:assignmentDefinition>` and emits a `default_assignees` string array (currently one element). Multi-assignee support (multiple `candidateUsers`) is planned; when implemented it will be enforced by relaxing the `validateCandidateUser` function without a DSL break, since `default_assignees` is already an array.
+
+```json
+{
+  "id": "design",
+  "label": "Design",
+  "stages": [
+    {
+      "type": "review",
+      "activity": "ReviewActivity",
+      "role": "reviewer",
+      "default_assignees": ["uuid-alice", "uuid-bob", "uuid-charlie"],
+      "extras": { "requires_comment": "true" },
+      "boundary_timer": { "duration": "24h", "interrupting": false }
+    }
+  ]
+}
+```
+
+`default_assignees` is always a JSON array, even for single-assignee nodes.
+
+### 4.5.3 Database Storage
+
+The `workflow_node_assignee` table stores one row per `(workflow_version_id, node_key, user_id)` tuple. For a node with three default assignees, three rows are inserted atomically inside the publish transaction. No schema change is required — the existing design already supports this natively.
+
+**Publish-time insert (per assignee)**:
+
+```sql
+INSERT INTO workflow_node_assignee
+    (id, tenant_id, workflow_version_id, node_key, user_id, department_id, role)
+VALUES
+    (gen_random_uuid(), :tenant_id, :version_id, :node_key, :user_id, :dept_id, :role);
+-- Repeated for each user_id in the node's default_assignees list
+```
+
+**Invalidation read** — the query selects the revoked user's rows within the tenant, ordered so a redelivery rebuilds a byte-identical payload (§2.3.1). A `DepartmentMembershipRevoked` event is scoped to one department, and that narrowing is applied in the service rather than the query, because the tenant-level handler (§7.4.5) shares this read and passes no department. Narrowing matters: revoking a user from Engineering must not flag their assignments in Design.
+
+```sql
+SELECT id, tenant_id, workflow_version_id, node_key, user_id, department_id, role, created_at
+FROM workflow_node_assignee
+WHERE tenant_id = :tenant_id AND user_id = :revoked_user_id
+ORDER BY workflow_version_id, node_key;
+```
+
+### 4.5.4 Concurrency Semantics
+
+The Definition Service defines the mode; the **Execution Service and Temporal Workers enforce it at runtime**. The two modes and their runtime implications:
+
+| Mode | Trigger to advance workflow | Effect on other assignees |
+| --- | --- | --- |
+| `any` | First assignee to complete (or claim, in claim-required flows) | Remaining open task records for that node are cancelled / closed by the Temporal activity |
+| `all` | Last assignee completes — workflow advances only when all `workflow_task` records for the node reach `COMPLETED` | No cancellation; each assignee works their own copy independently |
+
+**Race condition under `any` mode**: Two assignees may attempt to complete simultaneously. The Execution Service uses the optimistic locking `version` column on `workflow_task` to ensure only the first completion signal is accepted; subsequent completions are rejected with a `409 Conflict` (stale version) and the UI rolls back optimistically. Full implementation is in the Execution Service LLD §4.5.
+
+**Assignee override (current: single-assignee)**: An admin override via `POST /tasks/{id}/reassign` (Execution Service) replaces the sole assignee. Temporal receives `AssigneeOverrideSignal{dept_id, stage_type, old_user_id, new_user_id}` (canonical definition in §4.1.7); the workflow continues uninterrupted.
+
+**Assignee override (planned: multi-assignee)**: When multi-assignee support lands, override semantics will depend on the concurrency mode:
+
+- *First-to-complete*: targeted slot is swapped; remaining assignees continue uninterrupted.
+- *All-must-complete*: workflow is **paused** first; admin must resume after resolving the replacement, since removing any participant breaks the "all must complete" contract.
+
+The Definition Service is only responsible for defining the signal contract. The branching logic above is implemented in the Execution Service (LLD §3.2.5 and §4.5.4 S4).
+
+### 4.5.5 Validation Rules
+
+The following rules apply specifically to multi-assignee nodes. The first three are structural and run in the validator, so they surface on `POST /workflows/validate` and on the version-validation read (§3.3) as well as at publish, which recompiles. The eligibility rule needs Org & Membership and runs at publish only.
+
+| Rule | Error Code |
+| --- | --- |
+| `zeebe:assignmentDefinition` must be present | `MISSING_ASSIGNMENT_DEFINITION` |
+| `candidateGroups` must be non-empty and ≤ 256 chars | `CANDIDATE_GROUPS_EMPTY` |
+| `candidateUsers` should be present (warning on a document; an error at publish and `/validate` when the expanded plan leaves the task with no default, §3.1.4 code 8) | `CANDIDATE_USERS_EMPTY` |
+| `candidateUsers` must be a single valid UUID v7 | `INVALID_CANDIDATE_USER` |
+| UUID in `candidateUsers` must pass Org & Membership eligibility check | `ASSIGNEE_INELIGIBLE` |
+
+---
+
+## 5. Publish Transaction Flow
+
+The transition of a workflow `DRAFT` into an active, immutable `PUBLISHED` version is a critical process. It must be executed with strict atomic consistency to prevent partial updates, and it must validate the structural and metadata rules of the BPMN diagram before any database mutations are committed.
+
+### 5.1 Step-by-Step Execution Sequence
+
+When the tenant administrator triggers a publish operation via `POST /workflows/:id/versions/:version_id/publish`, the compilation engine and the persistence layer execute the following steps in sequence:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as Tenant Admin
+    participant API as Handler / Middleware
+    participant Val as Validation Engine
+    participant Comp as Graph Compiler
+    participant IAM as Org & Membership Service
+    participant DB as Postgres Database
+    
+    Admin->>API: POST /workflows/:id/versions/:version_id/publish
+    API->>DB: Fetch Draft XML & Check Existence
+    DB-->>API: Draft BPMN XML
+    
+    API->>Val: Run Validation Pass (DFS, Metadata, Guarded-Loop)
+    alt Validation Fails
+        Val-->>API: Structured Multi-Error Slice ([]error)
+        API-->>Admin: 422 Unprocessable Entity
+    end
+    
+    API->>Comp: Compile BPMN to Execution Plan (DSL)
+    Comp-->>API: compiled_plan_json
+    
+    API->>API: Extract Default Assignees from Plan (default_assignees[] per node)
+    loop For each user_id in default_assignees across all nodes
+        API->>IAM: POST /tenants/:t/users/:u/eligibility?department=:dept&level=:level
+        IAM-->>API: Response { eligible: true/false }
+        alt User not eligible
+            API-->>Admin: 422 Unprocessable Entity (Assignee Ineligible)
+        end
+    end
+    
+    API->>Comp: Compute SHA-256 Canonical Hash
+    Comp-->>API: artifact_hash
+    
+    API->>DB: Check Structural Diff (Compare with previous version)
+    alt Structural Divergence & force_publish_structural = false
+        DB-->>API: Flag: Structural Change Detected
+        API-->>Admin: 409 Conflict (Suggest new workflow key)
+    end
+    
+    Note over API,DB: Begin SQL Transaction (Serializable Isolation)
+    API->>DB: BEGIN TRANSACTION
+    
+    API->>DB: Lock Root Workflow Record (SELECT FOR UPDATE)
+    API->>DB: Calculate Next version_number (Max + 1)
+    
+    API->>DB: UPDATE workflow_version SET status='PUBLISHED', compiled_plan_json, artifact_hash, version_number, published_at=NOW() WHERE id=:version_id
+    loop For each default assignee mapping
+        API->>DB: INSERT INTO workflow_node_assignee (id, tenant_id, workflow_version_id, node_key, user_id, department_id, role) VALUES (...)
+    end
+    API->>DB: UPDATE workflow SET active_version_id=:version_id WHERE id=:id
+    
+    API->>DB: COMMIT TRANSACTION
+    DB-->>API: Transaction Committed Successfully
+    API-->>Admin: 200 OK (Published version details)
+```
+
+### 5.2 Transactional Integrity and Locking Strategy
+
+To avoid race conditions where multiple admins attempt to concurrently publish the same draft (only one DRAFT per workflow is permitted — §10.1), the database operations are wrapped inside a single **PostgreSQL Transaction** under `SERIALIZABLE` isolation using the following constraints:
+
+1. **Root Record Locking**:
+   The transaction starts by selecting the root workflow record with an explicit row lock:
+
+   ```sql
+   SELECT id, active_version_id 
+   FROM workflow 
+   WHERE id = :workflow_id AND tenant_id = :tenant_id 
+   FOR UPDATE;
+   ```
+
+   This prevents any concurrent transactions from acquiring version updates or altering the workflow's state while this publish cycle is active.
+
+2. **Atomic Upgrades**:
+   To avoid "split-brain" or half-published states:
+   - The draft's status is changed from `DRAFT` to `PUBLISHED` in the `workflow_version` table.
+   - The computed `version_number` is written (retrieved by selecting `COALESCE(MAX(version_number), 0) + 1` for published versions under that workflow).
+   - The parent `workflow.active_version_id` is updated to point directly to the newly published version.
+
+3. **Draft Concurrency (Optimistic Locking)**:
+   Because only one active `DRAFT` is allowed per workflow, multiple admins modifying the same draft could trigger lost updates (e.g., two admins saving the canvas simultaneously). The draft update endpoint uses an **Optimistic Locking** strategy via the `record_version` column (§10.11), supplied via `If-Match`/the `record_version` body field, per §5.1's `PUT /workflows/:id/draft` semantics. If the client submits a draft save with a stale `record_version`, the update affects 0 rows, and the API returns a `409 Conflict`.
+
+### 5.3 Structural Diff Resolution
+
+To protect active running execution instances from breaking due to structural updates in the workflow graph, the publishing endpoint checks structural changes before executing the transaction:
+
+- **Structural Check**:
+  The system compares the compiled execution plan's `steps` list of the draft against the currently active published version's `steps` list.
+- **Assignee/Metadata Changes**:
+  If the diff only contains changes to stage roles, default assignees, requires comment flags, or labels, it is considered **Minor**. The publication proceeds directly, and a new version is created.
+- **Structural Divergence**:
+  If there are additions/deletions of execution steps, gate transformations (e.g. converting a sequential flow to parallel splits), or new department insertions, it is considered **Critical**.
+  - If `force_publish_structural` in the request is `false`, the publish request is aborted, returning a `409 Conflict` containing a warning and a recommendation to register a new workflow key (`CREATE_NEW_WORKFLOW`).
+  - If `force_publish_structural` is `true`, the administrator explicitly acknowledges the risk, and the system proceeds to publish the draft as a new version under the existing key.
+
+---
+
+### 5.4 Draft Save (Update) Flow
+
+When the admin saves progress in the BPMN modeler canvas without publishing, the following lightweight flow executes. No compilation or validation occurs — the raw BPMN XML is stored as-is.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as Tenant Admin
+    participant API as Handler / Middleware
+    participant DB as Postgres Database
+
+    Admin->>API: PUT /workflows/:id/draft
+    Note over API: Extract x-tenant-id, x-user-id from headers
+    API->>DB: SELECT id, status FROM workflow_version WHERE workflow_id=:id AND status='DRAFT' AND tenant_id=:tid
+    alt Version not found or not DRAFT
+        DB-->>API: 0 rows
+        API-->>Admin: 404 Not Found / 409 Conflict
+    end
+    DB-->>API: DRAFT row confirmed
+    API->>DB: UPDATE workflow_version SET bpmn_xml=:xml, updated_at=NOW() WHERE workflow_id=:id AND status='DRAFT'
+    DB-->>API: 1 row updated
+    API-->>Admin: 200 OK (version_id, updated_at)
+```
+
+> No compile or validate occurs during a draft save. Those are deferred to the explicit publish or validate actions — only well-formed XML is checked here.
+
+#### 5.4.1 Concurrent Draft Initialization Race Condition
+
+When two admins attempt to call `POST /workflows/:id/draft` simultaneously to initialize a draft from the active version, a database race condition can occur. The database partial unique index `idx_wv_single_draft` prevents more than one `DRAFT` status version from coexisting for a given workflow.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor AdminA as Admin A (Tenant 1)
+    actor AdminB as Admin B (Tenant 1)
+    participant API as Gin Handler
+    participant DB as Postgres Database
+
+    AdminA->>API: POST /workflows/:id/draft
+    AdminB->>API: POST /workflows/:id/draft
+    
+    Note over API,DB: Concurrent Execution starts
+    API->>DB: INSERT INTO workflow_version (status='DRAFT', ...) (Admin A)
+    API->>DB: INSERT INTO workflow_version (status='DRAFT', ...) (Admin B)
+    
+    alt Admin A Transaction commits first
+        DB-->>API: 1 Row Inserted (Admin A success)
+        API-->>AdminA: 201 Created
+    else Admin B Transaction attempts commit
+        Note over DB: Unique Index Collision on status='DRAFT'
+        DB-->>API: PG Error 23505 (Unique Violation)
+        Note over API: Handler maps PG 23505 to RFC-9457 Problem Details
+        API-->>AdminB: 409 Conflict (DRAFT_ALREADY_EXISTS)
+    end
+```
+
+---
+
+### 5.5 Validation-Only Flow (§3.3.12)
+
+The `POST /validate` endpoint runs the full parser + validation pass on an uploaded BPMN file without persisting anything. Used by the modeler to provide real-time feedback before the admin uploads to a draft.
+
+```mermaid
+sequenceDiagram
+   autonumber
+   actor Admin as Tenant Admin
+   participant API as Handler / Middleware
+   participant Parser as BPMN Parser
+   participant Val as Validation Engine
+
+   Admin->>API: POST /validate (multipart or JSON with bpmn_xml)
+   API->>API: Enforce 10 MB size limit&#59; XXE token-bomb guard
+   alt Oversized or malformed XML
+       API-->>Admin: 400 Bad Request
+   end
+   API->>Parser: ParseXML([]byte)
+   alt Parse fails (namespace missing, unrecognized root)
+       Parser-->>API: parse error
+       API-->>Admin: 400 Bad Request (structured errors)
+   end
+   Parser-->>API: BPMNProcess AST
+   API->>Val: Validate(BPMNProcess)
+   Val-->>API: []ValidationError (may be empty)
+   alt Errors present
+       API-->>Admin: 422 Unprocessable Entity (errors array)
+   end
+   API-->>Admin: 200 OK { valid: true, warnings: [] }
+```
+
+> Nothing is written to the database. This endpoint is stateless and safe to call on every canvas save.
+
+---
+
+### 5.6 Plan Quota Verification and Enforcement Logic
+
+To enforce platform monetization and subscription tiers, the Definition Service implements strict plan quota checks during the creation of new workflow templates.
+
+#### 5.6.1 Subscription Tiers and Constraints
+
+The system maps the plan information received in the `x-plan` header to specific operational quotas:
+
+| Plan Tier (`x-plan`) | Maximum Workflow Definitions | Enforced Limit Type |
+| --- | --- | --- |
+| `starter` (Default) | 5 | Hard limit (Template count) |
+| `pro` | 50 | Hard limit (Template count) |
+| `enterprise` | Unlimited | No limit enforced |
+
+*Note: If the `x-plan` header is missing or unrecognized, the system automatically falls back to the `starter` tier quotas.*
+
+#### 5.6.2 Verification Flow & Database Concurrency Safety
+
+The quota verification is performed synchronously during `POST /workflows`. To prevent race conditions where a tenant administrator submits multiple template creation requests concurrently in parallel to bypass the quota, the check and insertion occur within a single serializable SQL transaction:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as Tenant Administrator
+    participant API as Gin Handler / Middleware
+    participant Core as PublisherService
+    participant DB as Postgres (workflow)
+
+    Admin->>API: POST /workflows {key, name, xml} (Header: x-plan)
+    API->>API: Extract x-plan & x-tenant-id
+    API->>Core: CreateWorkflow(ctx, plan, tenantID, xml)
+    
+    Core->>DB: BEGIN TRANSACTION (Serializable Isolation)
+    
+    Note over Core,DB: Row Count & Lock Check
+    Core->>DB: SELECT COUNT(*) FROM workflow w WHERE w.tenant_id = :tenant_id AND EXISTS (SELECT 1 FROM workflow_version wv WHERE wv.workflow_id = w.id AND wv.status IN ('DRAFT', 'PUBLISHED'))
+    DB-->>Core: CurrentCount (e.g. 5)
+    
+    alt CurrentCount >= PlanLimit
+        Core->>DB: ROLLBACK
+        DB-->>Core: Rolled Back
+        Core-->>API: Error: PLAN_QUOTA_EXCEEDED (403 Forbidden)
+        API-->>Admin: 403 Forbidden (Problem Details JSON)
+    else CurrentCount < PlanLimit
+        Core->>DB: INSERT INTO workflow (id, tenant_id, template_key, name) VALUES (...)
+        Core->>DB: INSERT INTO workflow_version (id, workflow_id, status, status='DRAFT', ...)
+        Core->>DB: COMMIT
+        DB-->>Core: Transaction Committed
+        Core-->>API: Success (Workflow & Version IDs)
+        API-->>Admin: 201 Created
+    end
+```
+
+#### 5.6.3 Quota Exceeded Response (RFC-9457)
+
+If the count check fails, the API immediately aborts and returns an HTTP `403 Forbidden` response utilizing the RFC-9457 Problem Details schema, carrying the `PLAN_QUOTA_EXCEEDED` error code:
+
+```json
+{
+  "type": "https://api.workflow.platform/errors/plan-quota-exceeded",
+  "title": "Plan Quota Exceeded",
+  "status": 403,
+  "detail": "The tenant has reached the maximum allowed limit of x workflow templates/versions for the 'abc' plan tier. Please upgrade to a higher tier to create additional workflows.",
+  "instance": "/workflows",
+  "code": "PLAN_QUOTA_EXCEEDED",
+  "invalid_params": [
+    {
+      "name": "x-plan",
+      "reason": "abc plan is capped at x templates. Currently utilizing x templates."
+    }
+  ]
+}
+```
+
+---
+
+### 5.7 Version Cloning Flow (§3.3.10)
+
+The cloning endpoint creates a brand new root workflow and initializes its draft using the source version's XML in a transactional execution block.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as Tenant Admin
+    participant API as Gin Handler
+    participant DB as Postgres Database
+
+    Admin->>API: POST /workflows/:id/versions/:version_id/clone {new_key, new_name}
+    Note over API: Verify tenant admin role and extract tenant ID
+    API->>DB: BEGIN TRANSACTION (Read Committed)
+    API->>DB: SELECT status, bpmn_xml FROM workflow_version WHERE id = :version_id AND tenant_id = :tid
+    DB-->>API: Source version details
+    Note over API: Verify status is PUBLISHED or ARCHIVED.<br/>If status is DRAFT, rollback and return 409 (INVALID_VERSION_STATUS)
+
+    Note over API: Plan Quota Check
+    API->>DB: SELECT COUNT(*) FROM workflow WHERE tenant_id = :tid
+    DB-->>API: Total active workflows
+    Note over API: Compare count against plan template limit.<br/>If exceeded, rollback and return 403 (PLAN_QUOTA_EXCEEDED)
+    
+    API->>DB: INSERT INTO workflow (id, tenant_id, template_key, name, created_by_user_id) VALUES (...)
+    API->>DB: INSERT INTO workflow_version (id, workflow_id, status='DRAFT', bpmn_xml, created_by_user_id) VALUES (...)
+    API->>DB: COMMIT
+    DB-->>API: Transaction Committed
+    API-->>Admin: 201 Created (workflow_id, version_id)
+```
+
+---
+
+### 5.8 Version Promotion / Rollback Flow (§3.3.11)
+
+Promoting a previously published version is an atomic pointer swap on the root workflow record. It emits no outbound event (§7.2, §10.7). The rest of the transaction — locking, status/version checks, the early-exit no-op, and the pointer swap itself — proceeds as shown below.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as Tenant Admin
+    participant API as Gin Handler
+    participant DB as Postgres Database
+
+    Admin->>API: POST /workflows/:id/versions/:version_id/promote
+    Note over API: Verify tenant admin role and extract tenant ID
+    API->>DB: BEGIN TRANSACTION (Serializable)
+    API->>DB: SELECT id, active_version_id FROM workflow WHERE id = :id AND tenant_id = :tid FOR UPDATE
+    DB-->>API: Workflow record details
+    API->>DB: SELECT status, version_number FROM workflow_version WHERE id = :version_id AND workflow_id = :id
+    DB-->>API: Target version details (verify status = 'PUBLISHED')
+
+    Note over API: If active_version_id == version_id
+    API->>DB: COMMIT (or ROLLBACK)
+    DB-->>API: Transaction Finished
+    API-->>Admin: 200 OK (Early exit / No-op)
+    
+    Note over API: If active_version_id != version_id
+    API->>DB: UPDATE workflow SET active_version_id = :version_id WHERE id = :id
+    API->>DB: COMMIT
+    DB-->>API: Transaction Committed
+    API-->>Admin: 200 OK (active_version_id promoted)
+```
+
+---
+
+## 6. Observability
+
+To ensure high operational reliability, fast debugging, and multi-tenant performance tracking, the Definition Service implements a comprehensive observability framework using **Prometheus** for metrics collection, **OpenTelemetry** for distributed tracing, and **Structured Logging (Zap)** with correlated context.
+
+### 6.1 Metrics Strategy (Prometheus)
+
+All metrics are exposed via a standard HTTP `/metrics` endpoint scraped by Prometheus, unauthenticated (access control is enforced by network policy/ingress at the infra layer, not the app — same reasoning as `/api/v1/internal/events`'s reliance on Kubernetes `NetworkPolicy`). None of the service-specific business metrics below carry a `tenant_id` label today — cross-tenant noisy-neighbor attribution for these particular counters/histograms is not currently possible; `wf_*` metrics are process-wide only.
+
+**Platform HTTP metrics** are emitted for every route without service code:
+
+| Metric | Type | Description |
+| --- | --- | --- |
+| `platform_http_requests_total` | Counter | Requests by `method`, `route`, `status_class` and `error_class` |
+| `platform_http_request_duration_seconds` | Histogram | Request latency |
+| `platform_http_panics_total` | Counter | Handler panics recovered by the middleware stack |
+| `platform_http_rate_limited_requests_total` | Counter | HTTP 429 responses |
+| `platform_http_request_timeouts_total` | Counter | Requests cancelled by the request deadline |
+| `platform_build_info` | Gauge | `version` label from `BUILD_VERSION` |
+
+Every series carries the constant `domain`, `service` and `environment` labels. The platform registry has three tiers: platform-shared `platform_*` series emitted by the platform libraries in every service, workflow domain-shared `workflow_*` series (none defined yet), and service-specific `workflow_definition_service_<metric>` series. A test validates every series of the service against the registry, and `docs/observability/metric-registry.md` lists them all. `platform_library_info` identifies the platform library version in each scrape.
+
+
+The following **service-specific metrics** supplement the platform series:
+
+#### 6.1.1 Core Metrics Catalog
+
+- **`workflow_definition_service_submissions_total`** (CounterVec)
+  - **Description**: Total workflow creation attempts.
+  - **Labels**: `status` (`ok`, `err` — via the `outcomeLabel(err)` helper)
+- **`workflow_definition_service_archive_total`** (CounterVec)
+  - **Description**: Total workflow archive attempts.
+  - **Labels**: `status` (`ok`, `err`)
+- **`workflow_definition_service_publish_total`** (CounterVec)
+  - **Description**: Total version publish attempts.
+  - **Labels**: `status` (`ok`, `err`)
+- **`workflow_definition_service_publish_latency_seconds`** (Histogram)
+  - **Description**: End-to-end latency of `PublishVersion` (compile + DB tx combined). Serves as the primary SLI for publish performance.
+  - **Labels**: none
+- **`workflow_definition_service_clone_total`** (CounterVec)
+  - **Description**: Total version clone attempts.
+  - **Labels**: `status` (`ok`, `err`)
+- **`workflow_definition_service_promote_total`** (CounterVec)
+  - **Description**: Total version promote attempts.
+  - **Labels**: `status` (`ok`, `err`)
+- **`workflow_definition_service_compile_duration_seconds`** (Histogram)
+  - **Description**: Duration of `compiler.Compile` calls only (BPMN XML → JSON DSL), isolated from DB-transaction time. Observed at both real call sites: `VersionService.Publish` (via `publishPreFlight`) and the `Diff`/`Export` fallback-recompile path (`resolvePlan`, used when no cached `CompiledPlanJSON` exists). `Promote` never compiles (reactivates an already-published, already-compiled version); `ValidationService.Validate` calls the separate, cheaper `compiler.Validate` structural check, not `Compile`.
+  - **Labels**: none
+- **`workflow_definition_service_validation_failures_total`** (Counter)
+  - **Description**: Total BPMN validation calls (`ValidationService.Validate`) that returned at least one blocking validation error.
+  - **Labels**: none
+- **`workflow_definition_service_internal_events_ingest_total`** (CounterVec)
+  - **Description**: Inbound events received at `POST /api/v1/internal/events` from the shared consumer.
+  - **Labels**: `event_type` (e.g. `DepartmentMembershipRevoked`), `result`
+  - **Note**: `sqs_queue_depth` / `sqs_dlq_depth` for `membership-workflow-q` are emitted by the shared workflow-events consumer, not the Definition Service.
+- **`workflow_definition_service_cache_hits_total`** (Counter)
+  - **Description**: Total compiled-plan cache hits on the internal compiled-plan read (§3.4.1).
+  - **Labels**: none
+- **`workflow_definition_service_cache_misses_total`** (Counter)
+  - **Description**: Total compiled-plan cache misses on the internal compiled-plan read (fetched from the DB instead).
+  - **Labels**: none
+- **`workflow_definition_service_rls_violations_total`** (CounterVec)
+  - **Description**: Sampled row-level-security violations recorded in `rls_violation_log` (§10.6).
+  - **Labels**: `violation_type` (`missing_or_invalid_guc`, `cross_tenant_access`)
+
+**DB connection-pool gauges** (`platform-pgcommon/v2`, registered by `pgcommon.NewPool` once `pgmetrics.InitWithIdentity` has run):
+
+| Metric | Type | Description |
+| --- | --- | --- |
+| `platform_db_pool_connections` | Gauge | Connections by `pool` and `state` (`total`, `idle`, `acquired`, `constructing`) |
+| `platform_db_pool_max_connections` | Gauge | Configured connection limit |
+| `platform_db_pool_empty_acquires_total` | Counter | Cumulative acquires that waited because the pool was exhausted — a rising value indicates the pool is undersized |
+
+All carry the constant `domain`, `service` and `environment` labels.
+
+#### 6.1.2 Recommended Prometheus Alerting Rules
+
+```yaml
+groups:
+  - name: definition_service_alerts
+    rules:
+      - alert: HighValidationFailureRate
+        expr: rate(workflow_definition_service_validation_failures_total[5m]) / rate(workflow_definition_service_submissions_total[5m]) > 0.3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High XML validation failure rate"
+          description: "Over 30% of BPMN submissions are failing validation checks in the last 10 minutes. Process-wide only — neither metric carries a tenant_id label today, so per-tenant breakdown is not available from this alert alone."
+
+      - alert: PublishTransactionLatencyDegraded
+        expr: histogram_quantile(0.95, rate(workflow_definition_service_publish_latency_seconds_bucket[5m])) > 2.0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Slow publish execution"
+          description: "95th percentile of PublishVersion (compile + DB tx combined) is exceeding 2.0 seconds. If workflow_definition_service_compile_duration_seconds is also elevated, the regression is in BPMN compilation rather than the DB transaction."
+
+      - alert: RLSMissingGUC
+        expr: increase(workflow_definition_service_rls_violations_total{violation_type="missing_or_invalid_guc"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RLS GUC not set or malformed on a pool connection"
+          description: "app.tenant_id was missing or invalid — likely a pool misconfiguration or raw admin session without the GUC set. rls_violation_log captures 1% of violations; one alert event ≈ 100 actual attempts (see §10.6)."
+
+      - alert: RLSCrossTenantAccess
+        expr: increase(workflow_definition_service_rls_violations_total{violation_type="cross_tenant_access"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cross-tenant row access blocked by RLS"
+          description: "A correctly-authenticated session attempted to read another tenant's rows. Possible service bug or active attack. One alert event ≈ 100 actual attempts (§10.6). Page immediately."
+
+```
+
+### 6.2 Distributed Tracing (OpenTelemetry)
+
+The service utilizes OpenTelemetry (OTel) to trace execution paths across decoupled services. The trace context is propagated inbound from Envoy API Gateway and outbound over HTTP.
+
+**Base HTTP server spans** are created automatically by `gincommon.TracingMiddleware` (part of `ObservabilityMiddlewares`). Each incoming HTTP request produces a root span named after its route; the OTel trace ID is stored in the Gin context under the key `trace_id` and echoed on the response as `X-Trace-ID`. OTLP/gRPC export is initialized via `gincommon.InitTracingFromEnv()` in `main.go`.
+
+The service adds the following **additional child spans** on top of the gincommon baseline:
+
+#### 6.2.1 Critical Trace Spans
+
+1. **`HTTP POST /workflows/:id/versions/:version_id/publish` (Root Span)**:
+   - Captures the entire publish request lifecycle.
+   - Traces identity verification, context extraction, and structural diff checks.
+2. **`BPMN_Compilation` (Child Span)**:
+   - Measures raw XML parsing, graph traversal, split-join pairing, and JSON DSL generation.
+3. **`DB_Publish_Transaction` (Child Span)**:
+   - Measures database row locking (`SELECT FOR UPDATE`), and workflow/version schema writes.
+
+#### 6.2.2 Context Propagation
+
+Distributed tracing context is propagated across network boundaries as follows:
+
+1. **Outbound HTTP Calls**: For outbound HTTP requests (such as calling the Org & Membership Service `POST /tenants/:t/users/:u/eligibility`), the client uses OpenTelemetry transport wrappers that start a client span and inject its W3C context into the `traceparent` header. Every outbound client (Org & Membership, the Execution Service, OpenBao) shares one construction: that transport, a 1 MiB cap on a decoded response body, a 1 KiB cap on an error body kept for logging, and one `platform_dependency_request_seconds` observation per call by `dependency` (`membership`, `execution`, `openbao`), `operation` and `outcome`.
+2. **Inbound Internal Calls**: The internal routes (§3.4) run behind the same `gincommon.TracingMiddleware`, which extracts the W3C `traceparent` header, so a compiled-plan read joins the Execution Service's span for the call.
+
+### 6.3 Structured Logging and Auditing
+
+The service implements structured logging in JSON format using **Zap** via the `pkg/logger` package from `platform-gincommon`. The logger is instantiated once in `main.go` via `logger.NewLogger(appEnv)` and passed to `gincommon.Config{Logger: log}`.
+
+`gincommon.LoggingMiddleware` (part of `ObservabilityMiddlewares`) automatically emits a structured `http_request` log on every request completion. Sensitive fields are redacted by `service.Sanitize` before logging. Business-logic code uses the same Zap logger instance obtained from the config to emit additional log lines at the appropriate level.
+
+#### 6.3.1 Correlated Context Fields
+
+Every log statement within the request path automatically injects the following fields:
+
+- `tenant_id`: Strict tenant isolation context.
+- `user_id`: Identity of the performing administrator.
+- `correlation_id` / `trace_id`: The distributed tracing reference.
+- `workflow_id` & `version_id`: Target entity markers.
+
+#### 6.3.2 Audit Log for Denied Actions & Security Events
+
+To satisfy strict regulatory audit compliance and maintain debugging visibility, all denied operations, validation failures, or unauthorized access attempts are explicitly captured in structured security logs. These log events do not simply trigger silent HTTP error returns; they generate structured `TaskActionDenied` and `UnauthorizedAccessAttempt` warnings containing full audit lineage:
+
+```json
+{
+  "level": "warn",
+  "ts": "2026-05-18T16:40:00.123Z",
+  "logger": "security.audit",
+  "msg": "TaskActionDenied",
+  "correlation_id": "c7a88192-3c22-4412-a128-665cd42c8888",
+  "tenant_id": "7ca648b2-b432-4744-884c-35fd556a310c",
+  "user_id": "4da18bde-7244-47ac-986c-665cd42caaaa",
+  "action": "PUBLISH_WORKFLOW",
+  "target_workflow_id": "8bb759c8-cd99-4aac-bfcc-448dd66fffff",
+  "reason": "TOPOLOGICAL_DIVERGENCE",
+  "details": {
+    "force_publish_structural": false,
+    "divergent_step_index": 2,
+    "validation_error": "Structural elements have diverged. Draft contains new parallel splits not present in published template."
+  }
+}
+```
+
+This structured security logging ensures that compliance teams can trace exactly who attempted an operation, when they attempted it, what boundaries were violated, and the technical rationale for the system rejection.
+
+---
+
+## 7. Eventing & Integration
+
+This service publishes no events. It has no transactional outbox, relay worker, SNS publisher or Glue schema registry client. Inbound events arrive over HTTP (§7.4).
+
+### 7.1 No Outbox
+
+Nothing in the service writes an event inside a transaction, so there is no outbox table, no relay and no dead-letter table. A future outbound event designs its contract and names a consumer first, and brings its own outbox, relay and schema registry client in the same change.
+
+### 7.2 Event Payload Schemas
+
+The Definition Service emits **no outbound event** today (§10.7). None of its state-changing operations require one:
+
+- **Archive** — the archive guard (the active-instances read, §3.4.2) ensures no instances are running before archive completes. No downstream consumer starts new instances on an archived key; if a stale client attempts it, the compiled-plan read returns `status=ARCHIVED` and the caller rejects. No proactive push is required.
+- **Eligibility invalidation** — handled by a direct internal HTTP call from Definition to Execution (pause-tasks, §3.4.2). Execution pauses task assignments by `user_id` from its own runtime data — no SNS fan-out or separate SQS subscription is needed on the Execution side. See §7.4.2 step 5.
+- **Clone** — a clone creates a DRAFT. No downstream service has anything to do with a DRAFT.
+- **Publish / Promote** — emit no event (§10.7).
+
+`api/asyncapi.yaml` documents the one inbound message.
+
+### 7.3 Decoupled Service Integrations
+
+This service has no outbound event and therefore no downstream consumers today (§7.2). Execution Service reads a compiled plan from this service when it starts an instance and keeps no `workflow_key → version_id` mapping (a workflow's key never reaches it); archive is guarded directly by the synchronous active-instances read (§3.3.8), and eligibility invalidation is delivered by a direct pause-tasks call (§7.4.2 step 5) — none of these depend on an outbound event from this service. Whether Audit & Compliance or Notification need a replacement signal for publish/promote is an open product question, not resolved here; structured logs (§8.5) are the audit trail for these operations regardless.
+
+### 7.4 Inbound Event Ingest (`POST /api/v1/internal/events`)
+
+The Definition Service does **not** consume SQS directly. The shared workflow-events consumer subscribes to `membership-workflow-q` (itself subscribed to the `iam.membership.events` SNS topic) and forwards each envelope to the Definition Service's internal HTTP endpoint `POST /api/v1/internal/events`, which applies the invalidation logic described in §7.4.2.
+
+#### 7.4.1 Transport & Delivery Contract
+
+The queue topology (`membership-workflow-q`, its `membership-workflow-q-dlq` DLQ, visibility timeout `30s`, max receive count `5`) is owned by the **shared consumer's** infrastructure, not the Definition Service. Between the consumer and this endpoint:
+
+- The consumer POSTs the full `events.Envelope[json.RawMessage]` (carrying `id`, `type`, `tenant_id`, `data`) to `/api/v1/internal/events`.
+- The endpoint is on an **internal route group** (service-to-service auth — shared-secret header / mTLS / network policy), **not** the gateway-authenticated public API. It is never exposed through the Envoy gateway.
+- **Unknown types are acknowledged with `200` and ignored**, counted against the ingest metric with the received type as its label. A producer adding an event type this service has no handler for never breaks delivery.
+- **Schema-registry payloads.** A producer that encodes through a schema registry (IAM's Org & Membership does when a registry is configured) puts a `dataschema` on the envelope and a base64 string of the registry-framed JSON in `data`. The endpoint decodes that frame with the platform library's decode-only Glue codec, which needs no registry access, before it reads the payload. A payload that is not a base64 string, an unreadable frame, a compressed frame and a non-JSON frame each answer `502 EVENT_DECODE_FAILED`, counted with the result `decode_failed`. An envelope without `dataschema` is read as plain JSON, as before.
+- **Retry contract**: `2xx` marks the message handled; `4xx` (malformed payload) is treated as non-retryable by the consumer and routed to its DLQ; `5xx`/timeouts cause the consumer to retry and eventually DLQ per its `maxReceiveCount`. A `502` is retried and is not a malformed event, as in the Execution Service's ingest.
+
+#### 7.4.2 Handling `DepartmentMembershipRevoked` Event
+
+- **Event Type**: `DepartmentMembershipRevoked`
+- **JSON Payload Schema**:
+
+  ```json
+  {
+    "event_id": "f0a11222-3844-42bc-938b-665cd42c9999",
+    "event_type": "DepartmentMembershipRevoked",
+    "timestamp": "2026-05-25T13:51:06.000Z",
+    "tenant_id": "7ca648b2-b432-4744-884c-35fd556a310c",
+    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    "data": {
+      "user_id": "3fa18cde-7244-47ac-986c-665cd42caaaa",
+      "department_id": "0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a10",
+      "role": "reviewer"
+    }
+  }
+  ```
+
+  > **`department_id` format**: The department's UUID, the `dept_id` of the lane it names. A value that is not a UUID is answered `400 Bad Request` and is not retried, since a redelivery would fail the same way.
+
+- **AsyncAPI documentation**: also documented as a `receive` operation in `api/asyncapi.yaml` (messages `DepartmentMembershipRevoked` and `MembershipRevoked`, schemas `DepartmentMembershipRevokedInbound` and `MembershipRevokedInbound`) — non-`Payload`-suffixed so `schema-gov`'s extractor skips it, since this event is owned/registered by the Org & Membership service, not Definition. Mirrors `execution_service`'s own convention for its inbound events.
+
+- **What and How Happens** (executed by the `POST /api/v1/internal/events` handler after dispatching on `env.Type`):
+
+  1. **Set Tenant Context**: The handler injects the RLS GUC from the envelope `tenant_id` via `pgcommon.WithGUCSet` (`SET LOCAL app.tenant_id = :tenant_id`) — the manual-injection pattern every internal route uses (§3.4, §14), since this is a service-to-service call without gateway identity headers.
+
+  2. **Find Affected Versions**: Read the revoked user's assignee rows, ordered so the invalidation payload is deterministic across a redelivery (§2.3.1):
+
+     ```sql
+     SELECT id, tenant_id, workflow_version_id, node_key, user_id, department_id, role, created_at
+     FROM workflow_node_assignee
+     WHERE tenant_id = :tenant_id AND user_id = :user_id
+     ORDER BY workflow_version_id, node_key;
+     ```
+
+     The department narrowing is applied in the service, not the query: the tenant-level handler (§7.4.5) shares this read and passes no department.
+
+  3. **Invalidate Versions**: For each identified `workflow_version_id`:
+
+     - Set `is_valid = false` on `workflow_version`.
+     - Replace the version's `validation_errors_json` with one structured error object per affected node:
+
+        ```json
+        {
+          "node_id": :node_key,
+          "error": "Default assignee is no longer eligible: Department membership revoked"
+        }
+        ```
+
+  4. **Notify Execution Service**: After the DB transaction commits, call `ExecutionClient.PauseUserTasks(ctx, tenantID, userID)`, the pause-tasks endpoint of the Execution Service's internal API (§3.4.2). Execution queries its own runtime task records for active assignments where `assignee_user_id = revoked_user_id` and pauses them. This is a synchronous call with retries (3 attempts, bounded backoff); if Execution is unreachable after retries, the handler returns `5xx` so the shared consumer retries the full event and Execution is notified on the next attempt. **Why a direct call instead of SNS:** avoids requiring Execution to maintain a separate SQS subscription to `wf.template.events`; Execution targets by `user_id` (runtime assignment data it owns) rather than `version_id` (a template-design-time concept), so the derived event carried no useful extra information.
+
+  5. **User Deletion Safety Net Handling**: When a user is deleted from the platform, the Org & Membership Service automatically revokes all of their department memberships, emitting individual `DepartmentMembershipRevoked` events. As a result, the Definition Service does not need to consume `UserDeleted` events directly; any template containing the deleted user as a default assignee will be transitively invalidated via the membership revocation flow.
+
+  6. **Impact on Running Instances (Execution Service cross-reference)**: Step 4 instructs Execution to pause active task assignments for the revoked user. Execution uses `user_id` to locate affected tasks in its own runtime store — this is more precise than a version-scoped pause, which would over-pause tasks that had already been reassigned to a different user. An admin must use `POST /tasks/{id}/reassign` on the Execution Service to assign a new eligible user and unblock paused tasks. See Execution Service LLD §4.5 (Task Assignee Lifecycle) for the full reassignment flow.
+
+  7. **Admin Recovery Path**: To restore the ability to start new instances:
+     1. Admin creates a new draft from the invalidated version (inheriting the BPMN XML).
+     2. Admin updates the default assignee in the BPMN XML to a new eligible user.
+     3. Admin publishes the new version — this triggers a fresh eligibility check and creates new `workflow_node_assignee` rows (publish itself emits no event, §7.2).
+     4. Running instances on the old (invalidated) version are **not migrated**. They continue with their runtime-reassigned users until completion. Only new instances use the new version.
+
+### 7.4.3 Default Assignee Change Flows
+
+The Definition Service is exclusively responsible for **template-level default assignees** — the `default_assignees` values baked into published versions. There are two distinct paths through which a default assignment can be changed or invalidated at this layer.
+
+#### Flow A: Manual Admin Update (New Version Publish)
+
+This is the standard path when an admin intentionally wants to change who gets assigned by default on future instances.
+
+1. Admin creates a new draft from the existing published version (inheriting the BPMN XML).
+2. Admin updates the `candidateUsers` in `<zeebe:assignmentDefinition>` for the relevant node in the BPMN XML.
+3. Admin calls `POST /workflows/:id/versions/:versionId/publish`.
+4. The publish handler validates the new assignee's eligibility via `POST /tenants/:t/users/:u/eligibility?department=:dept&level=:level` on the Org & Membership Service.
+5. On success, the new `compiled_plan_json` is written and new rows are inserted into `workflow_node_assignee` in the same transaction. No event is emitted (§7.2, §10.7).
+
+**Scope**: affects only **new** workflow instances started from this point forward. All running instances retain the `assignee_user_id` that was resolved when they were started — they are never retroactively re-pointed.
+
+#### Flow B: Membership Revocation Event (`DepartmentMembershipRevoked`)
+
+This is the automated path triggered when an assignee loses their department membership via an IAM event. The full processing steps are documented in §7.4.2. In summary:
+
+1. The shared workflow-events consumer receives the event from `membership-workflow-q` and forwards it to `POST /api/v1/internal/events`; the handler queries `workflow_node_assignee` to find all versions (any status) referencing the revoked user.
+2. Affected versions are marked `is_valid = false` with a structured validation error appended to `validation_errors_json`.
+3. Definition calls `ExecutionClient.PauseUserTasks(tenantID, userID)` — Execution pauses active task assignments for that user from its own runtime data.
+
+4. The admin recovery path is identical to Flow A: create a new draft, assign an eligible user, publish.
+
+#### Out of Scope for the Definition Service — Runtime Reassignment
+
+The following IAM events from the HLD event catalog affect **live task assignments on running instances**. These events are not consumed by the Definition Service. They reach the Execution Service through `event_consumer`, which polls `membership-workflow-q` and `user-wf-q`:
+
+| Event | Source | Runtime Effect |
+| --- | --- | --- |
+| `UserAvailabilityChanged` | User Profile | Reroutes pending tasks based on OOO status |
+| `DelegationStarted` / `DelegationEnded` | Org & Membership | Temporarily reassigns pending activities to the delegate and back |
+| `UserDeleted` | User Profile | Triggers membership revocations (handled transitively via `DepartmentMembershipRevoked`) and pauses affected live instances |
+
+`TenderAssigneeOverridden` reaches no consumer in the Workflow Engine. The Execution Service applies an assignee override synchronously through its own node-override endpoint, so `event_consumer`'s routing table declares the type with an empty target list, dropping it rather than letting it fall through to the broadcast default. Its consumers elsewhere on the platform are Audit and Notification (`event_consumer`'s routing table records this). The event is owned by IAM's Org & Membership service and published on `iam.membership.events` (confirmed with IAM's Tender question set, item 17).
+
+Runtime reassignment flows — including the `POST /tasks/{id}/reassign` admin endpoint, the `AssigneeOverrideSignal` to Temporal, and the `workflow_task_assignment` audit trail — will be documented in the Execution Service LLD §4.5 (Task Assignee Lifecycle).
+
+#### 7.4.4 Exclusion of Tenant Lifecycle Events
+
+The Definition Service consumes no tenant lifecycle event. `event_consumer`'s routing table sends `TenantStateChanged` and `TenantMembershipsPurged` to the Execution Service alone, and any other tenant-lifecycle type delivered to this service's `/api/v1/internal/events` endpoint is acknowledged and ignored by the unknown-type default (§7.4.1). Because the Definition Service only handles design-time template compilation and version drafts, active tenant locks are instead enforced upstream at the API Gateway (which rejects incoming user requests for suspended tenants) and downstream in the Execution Service (which handles pausing in-flight Temporal workflow executions).
+
+---
+
+#### 7.4.5 Handling `MembershipRevoked` Event
+
+- **Event Type**: `MembershipRevoked` — Org & Membership emits it unconditionally whenever a user is removed from a tenant. Its payload carries `user_id` and no `department_id`: the removal is tenant-wide, not scoped to one department.
+- **Effect**: every published version in that tenant where the user is a default assignee is marked `is_valid=false`, with no department filter, followed by the same pause-tasks call the department-scoped handler makes. `HandleDepartmentMembershipRevoked`'s department filter is optional for exactly this reason — the two events share one implementation, differing only in whether a department narrows the invalidation set.
+- **Redelivery**: absorbed by the same handler-idempotency argument as `DepartmentMembershipRevoked` (§2.3.1) — this handler shares that one's implementation.
+- **Why both handlers exist**: `DepartmentMembershipRevoked` is one department losing one member; `MembershipRevoked` is the user leaving the tenant entirely. A removal that emitted only the tenant-level event would otherwise leave every affected template valid and every live task assigned.
+
+### 7.5 Contract with Execution Service (DSL Schema)
+
+The Definition Service owns the compilation of the `compiled_plan_json` (DSL). This structure forms a strict API contract with the downstream Execution Service and Temporal Workers:
+
+- **Stored shape**: publish always stores a `dsl.CompiledCollaboration`, the shape the Execution Service decodes. It is built by one compiler entry point, `CompileForPublish`, which also stamps `schema_version = dsl.CurrentSchemaVersion`. A BPMN with one root process becomes a collaboration of one plan, with `main_plan` set to that plan's name. The name is the process `name`, or its `id` when the process has none. Each called process, a library module version or a process in the same file, compiles once into its own plan beside it, named `<process_id>@v<version_number>` or by its process id. A BPMN with a `<bpmn:collaboration>` publishes its one runnable pool (§4.1.2, pools) in the same way, with its modules; outside parties' pools produce nothing.
+- **Readers**: the structural-divergence check (§5.3) and the version diff (§3.3.14) compare the expanded main plan (`dsl.ExpandCalls`) of each stored collaboration. A version whose stored plan cannot be read, and a draft, which stores none, is compiled again from its BPMN with its structural rules only (`CompileDraft`), so a draft not yet publishable still compares: a draft against the library as it is now, any other version against the module versions in its `module_refs`. When the active version does not compile under the current rules, nothing proves the draft keeps its structure, so it counts as divergent (`STRUCTURAL_DIVERGENCE`, which `force_publish_structural` accepts); a failure to read it is returned as that failure. Assignee eligibility and `workflow_node_assignee` rows come from the expanded main plan, so a task inside a call has the node key `<call id>::<lane>/<task id>` and its call's department, as in the Execution Service. The node read (§3.3.12.2) reads the same expanded main plan; it reads only the stored plan, so a version whose stored plan cannot be read is an internal error there.
+
+- **Backward Compatibility**: The DSL schema is strictly additive. No existing keys (e.g., `sequential`, `parallel`, `subworkflow`) can be removed or renamed without a major version upgrade of the Execution Service workers.
+- **Runtime Interpretation**: The Definition Service provides the *structure*. It does not evaluate runtime conditions (e.g. `condition_expression` on exclusive gateways). The Execution Service is exclusively responsible for interpreting these conditions using runtime instance data payload.
+
+---
+
+## 8. Security
+
+This section consolidates all security controls enforced by the Definition Service. Controls are split into three layers: transport, application, and data.
+
+### 8.1 Transport Security
+
+- **mTLS between all pods**: Enforced by Envoy service mesh. No service can be called without a valid client certificate; the Definition Service trusts that headers were injected by Envoy and cannot be spoofed by arbitrary callers.
+- **TLS termination**: All external traffic terminates at the Envoy API Gateway. The service never directly handles raw TLS.
+- **Header validation**: The handler middleware validates the presence of Envoy-injected gateway headers (`x-tenant-id`, `x-user-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, and `traceparent` for distributed tracing). Mutating endpoints require `x-tenant-id`, `x-user-id`, and `x-tenant-roles`. _Note: `traceparent` is proxied by Envoy from upstream; if not present, tracecontext is generated at the boundary via OpenTelemetry (OTel) HTTP middleware.
+
+### 8.2 Authentication & Authorisation
+
+- **Identity**: Authentication is handled entirely upstream by Keycloak + the ext_authz service. The Definition Service does not validate JWTs; it trusts the injected headers. The `gincommon.RequireAuth` middleware (part of `ProtectedMiddlewares`) enforces that `x-user-id` and `x-tenant-id` are both present, non-empty, trimmed, ≤ 256 characters, and free of control characters. Any request failing these checks receives an immediate `401 Unauthorized` before the handler is reached.
+- **Tenant context propagation**: `gincommon.ContextMiddleware` (also part of `ProtectedMiddlewares`) reads the validated headers and constructs a `*domain.RequestContext` stored in the Gin context. All handlers call `gincommon.RequestContext(c)` to access `TenantID`, `UserID`, `Roles`, and `TraceID` — no direct header parsing occurs in handler code.
+- **Role enforcement**: Every mutating endpoint (`POST`, `PUT`, `PATCH`, `DELETE`) checks the `x-tenant-roles` header before doing any work and rejects callers whose roles do not include `tenant_admin` or `tenant_owner` with `403 Forbidden`; writes to the global catalogue also require `platform_operator`. Read endpoints (`GET`) require only a valid `x-tenant-id` (enforced by `RequireAuth`).
+- **Department/role header**: `x-departments` (§3.1) is gateway-injected to this service like every other header, as comma-separated `dept_uuid:role` pairs — this service doesn't currently gate any authorization decision on it (role enforcement above uses `x-tenant-roles` only), but it's documented here for completeness since a future department-scoped endpoint would read it the same way `execution_service.md` §9.2 already does.
+- **Audit of credential and alias writes**: a credential write or revoke logs one Info line with the tenant, the user, the connector type, the field name and the trace id, and an alias write or delete logs the alias and the trace id. No line carries a credential value. A vault that refuses this service's own token is reported as `503`, since the caller's login is not at fault, and the vault's error body is logged only up to 1 KiB.
+- **Tenant boundary**: Every database query sets the `app.tenant_id` GUC via `pgcommon.WithGUCSet` before any DB access. The `tenant_id` is always sourced from the validated `x-tenant-id` gateway header — never from the request body. This prevents callers from self-selecting a different tenant's data. Cross-tenant data access is impossible regardless of application-layer checks because RLS enforces it at the DB layer.
+- **Connection Role Restrictions**:
+  - **The API, internal routes included,** connects to PostgreSQL using a dedicated application role (e.g. `definition_svc_app`) that has `BYPASSRLS=false` explicitly set. This role cannot bypass row-level security, ensuring that missing `app.tenant_id` configurations result in no rows returned rather than cross-tenant leaks.
+  - **Global-catalog writes** (`scope=global`, §10.16) connect through `SYSTEM_DATABASE_URL`, a separate system role with `BYPASSRLS=true`; no other process bypasses RLS.
+
+#### Trust Boundary
+
+The service trusts `x-*` identity headers because mTLS in the service mesh guarantees they originate from Envoy after `jwt_authn` validates the Bearer token and `ext_authz` injects the enriched headers. The service performs no JWT validation itself — that responsibility sits entirely upstream. `RequireAuth` (from `gincommon.ProtectedMiddlewares`) rejects any request whose `x-user-id` or `x-tenant-id` header is missing, empty, longer than 256 bytes, or contains control characters, returning `401 Unauthorized` before the handler is reached. Requests that pass `RequireAuth` are therefore guaranteed to carry a Keycloak-validated identity; the service treats them as trusted.
+
+Internal routes are further isolated. The gateway routes only the public path prefixes, never `/api/v1/internal`; Kubernetes `NetworkPolicy` admits only the named callers; and every internal route requires `x-internal-token`, compared in constant time (§3.4). They receive no gateway-injected headers: each handler takes `tenant_id` from its request (the query, or the forwarded envelope) and calls `pgcommon.WithGUCSet` directly to set the RLS GUC (design decision 14, §14).
+
+### 8.3 Input Validation & XML Security
+
+All BPMN uploads pass through a hardening pipeline before any parsing occurs (cross-reference §4.1.5):
+
+- **Size cap**: 10 MB hard limit enforced by the Gin body limit middleware before the handler reads any bytes.
+- **XXE prevention**: The XML decoder runs with external entity resolution disabled. The service does not follow `DOCTYPE` declarations or `SYSTEM` entity references.
+- **XML bomb guard**: A custom `TokenReader` wrapper counts XML tokens and aborts if the count exceeds 1,000,000.
+- **Element allowlist**: Only elements in §4.1.2 are accepted. All other BPMN elements are rejected with a structured 422 error.
+- **Zeebe property validation**: All five Zeebe properties are validated for type, value range, and cross-referential consistency before compilation proceeds.
+
+### 8.4 Data Security
+
+- **No plaintext secrets**: Database credentials and the internal API tokens are injected via AWS Secrets Manager at pod startup. They are never in environment variables in plaintext.
+- **BPMN XML at rest**: Stored in `workflow_version.bpmn_xml` (TEXT). No field-level encryption is applied; the column is protected by RLS and database-level encryption at rest (AWS RDS encryption).
+- **Compiled DSL**: Stored as JSONB in `workflow_version.compiled_plan_json`. Same protections as above.
+
+### 8.5 Audit Trail
+
+All state-changing operations (create, publish, archive, discard, clone, promote) write a structured log entry at `INFO` level with the following fields: `tenant_id`, `user_id`, `workflow_id`, `version_id`, `action`, `timestamp`, `trace_id`. These fields are indexed and queryable (cross-reference §6.3.2). Structured logs are the sole audit trail for every state-changing operation (§7.2, §10.7), the same as archive already relies on.
+
+### 8.6 PII and Data Classification
+
+The Definition Service stores **no PII**. All user references are stored as opaque UUIDs (`created_by_user_id`, `workflow_node_assignee.user_id`). No display names, email addresses, phone numbers, or any other personal data are stored or cached. As a result:
+
+- GDPR soft-delete and field-scrubbing obligations do not apply to this service.
+- Logs and audit trails reference `user_id` (UUID) only. The User Profile Service is the authoritative store for resolving UUIDs to display names.
+
+If a future change introduces a cached display name or any other personal field, this section must be revisited and GDPR obligations assessed before merging.
+
+### 8.7 PgBouncer & Connection Pools
+
+To ensure optimal connection management, the service connects to PostgreSQL through PgBouncer.
+
+- **Pool Size**: The connection pool is strictly capped at **10 connections** for the service instance, aligning with the target specified in HLD §7.1.
+- **Role Isolation & Configuration**:
+  - **API Handler Role**: Connects using a role lacking the `BYPASSRLS` attribute. Session variables are set dynamically using `SET LOCAL app.tenant_id = :tenant_id` at transaction initialization.
+  - **System Role**: The global-catalog pool (`SYSTEM_DATABASE_URL`, §10.16) connects using a database role with `BYPASSRLS = true`, for `scope=global` writes only.
+- **PgBouncer Pool Mapping**: PgBouncer is configured in Transaction Mode to allow sharing server connections, ensuring efficient scalability of connection slots.
+
+---
+
+## 9. Non-Functional Requirements
+
+### 9.1 Performance Targets
+
+- **BPMN upload & parse**: p99 ≤ 300 ms for files up to 10 MB on a `t3.medium` equivalent instance.
+- **Draft save** (`PUT /draft`): p99 ≤ 50 ms — single UPDATE with no compilation.
+- **Publish** (full flow): p99 ≤ 800 ms — includes parse, validate, compile, hash, diff check, and the serializable transaction (publish emits no event, §7.2).
+- **List workflows** (`GET /workflows`): p99 ≤ 100 ms — tenant-indexed paginated query.
+- **Validation-only** (`POST /validate`): p99 ≤ 200 ms — stateless, no DB writes.
+
+### 9.2 Dependency Failure Matrix
+
+| Dependency | Failure mode | Service behaviour | Data loss risk |
+| --- | --- | --- | --- |
+| **PostgreSQL** | Down / unreachable | Connection failures, exhausted connections, an administrator shutdown, a closed pool and a statement cancelled by `PG_STATEMENT_TIMEOUT` answer `503 UPSTREAM_UNAVAILABLE`, not `500`, so clients know to retry. `/readyz` fails → pod removed from load balancer rotation. | None — no write is acknowledged without a successful DB commit. |
+| **Valkey (cache)** | Down / unreachable | Three effects: (1) compiled-plan cache miss falls through to Postgres transparently (no caller-visible impact); (2) idempotency middleware — cache miss → request passes through uncached (duplicate protection degraded, not lost); (3) draft-edit lock acquisition fails → handler returns `503`. `/readyz` stays `200` with `"cache":"degraded"` — the pod stays in rotation. | None for business data. Duplicate-mutation window open for the outage duration. |
+| **Execution Service internal API** | Down / timeout | `ArchiveWorkflow` reads the workflow's active instances before archiving (§3.4.2). On timeout (default 5 s), the handler returns `503 UPSTREAM_UNAVAILABLE`. No archive proceeds. The workflow remains in its current state. | None. |
+| **Inbound event ingest** (`POST /api/v1/internal/events`) | Definition pod down, or shared consumer down | The shared consumer holds `DepartmentMembershipRevoked` messages on `membership-workflow-q` (SQS retention: 14 days) and retries the HTTP POST until the Definition Service is healthy. On recovery, events are reprocessed; the handlers converge on the same state either way (§2.3.1). `is_valid` flags may be stale for the duration of the outage. | None — SQS retains the messages and the consumer retries. |
+| **Org & Membership eligibility endpoint** | Down at publish time | Publish calls the membership eligibility check once for each distinct (user, department, role), at most eight at a time, and reports the first failure in plan order. On timeout/5xx, publish returns `503 UPSTREAM_UNAVAILABLE`. The draft is not promoted. | None. |
+
+### 9.3 Service-Level Objectives
+
+The following SLOs are the implementation targets for this service. They are referenced by alerting thresholds in §6.1.2.
+
+#### Per-endpoint p99 latency
+
+| Endpoint | p99 Target | Scenario |
+| --- | --- | --- |
+| `GET /workflows` (list) | 30 ms | Filtered DB query; no cache |
+| `GET /workflows/:id` (single + version list) | 20 ms | DB read; no compiled-plan fetch |
+| `GET /workflows/:id/draft`, `GET /versions/:id` | 20 ms | Valkey compiled-plan hit |
+| `GET /workflows/:id/draft`, `GET /versions/:id` | 50 ms | Cache miss → DB fallback + back-fill |
+| `PUT /draft`, `POST /discard`, `POST /promote`, `POST /clone` | 100 ms | Single `RunInTx` (none of these emit an event, §7.2) |
+| `POST /versions/:id/publish` | 500 ms | BPMN compile + assignee eligibility check + SERIALIZABLE tx |
+| `POST /workflows/validate` | 300 ms | Stateless compile; no DB write |
+| Internal compiled-plan read | 10 ms | Valkey hit |
+| Internal compiled-plan read | 40 ms | Cache miss → DB read + back-fill |
+| Availability | 99.9% monthly | Per HLD |
+
+#### Cache targets
+
+| Target | Value | Alert threshold |
+| --- | --- | --- |
+| Compiled-plan cache hit ratio (steady state) | ≥ 90% | Alert `workflow_definition_service_cache_misses_total / (workflow_definition_service_cache_hits_total + workflow_definition_service_cache_misses_total) > 0.1` sustained for 5 m |
+| Valkey client timeout | 50 ms | Timeout treated as cache miss; falls through to Postgres. Never blocks the SLO budget. |
+
+---
+
+## 10. Design Decisions
+
+This section captures the key architectural and design decisions made for the Workflow Definition Service along with their technical rationales.
+
+### 10.1 Single Draft Limitation per Workflow
+
+- **Decision**: Enforce a strict database and logic constraint that a workflow definition can have at most one active workspace in `DRAFT` status at any given time.
+- **Rationale**: Simplifies the state model and canvas editing interface. It forces a git-like branch-and-merge flow, preventing concurrent conflicts where multiple administrators override each other's work in separate draft branches for the same workflow.
+
+### 10.2 ~~Transactional Outbox Pattern for Event Publishing~~ — Removed
+
+- **Removed.** This decision adopted a transactional outbox with a background relay in place of direct SNS writes. The service publishes no events (§7.2, §10.7), so the outbox table, relay, SNS publisher and Glue codec are gone; an outbound event added later designs its own.
+
+### 10.3 Row-Level Security (RLS) for Multi-Tenant Isolation
+
+- **Decision**: Leverage native PostgreSQL Row-Level Security (RLS) driven by connection GUC settings (`app.tenant_id`) to enforce data isolation instead of relying solely on application-layer `WHERE tenant_id = ...` clauses.
+
+- **Rationale**: Provides database-level defense-in-depth. RLS policies act as an absolute barrier at the database driver layer, ensuring that even if a developer makes a coding error (e.g., omitting a tenant filter in sqlc queries), the database will not leak data across tenants.
+
+- **Required RLS policy properties** (see Appendix A for DDL):
+  - `FORCE ROW LEVEL SECURITY` — prevents the table owner role from bypassing RLS.
+  - `REVOKE ALL ON <table> FROM PUBLIC` — strips default PUBLIC privileges.
+  - `USING (tenant_id = current_setting('app.tenant_id', true)::uuid)` — `missing_ok=true` returns NULL instead of raising an error when the GUC is unset, producing zero rows (fail-closed).
+  - `WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid)` — constrains INSERTs and UPDATEs to the caller's tenant, not just reads.
+
+- **Required integration test coverage** (three canonical cases in `test/integration/postgres/`):
+  1. **Correct GUC**: query with `app.tenant_id = <tenant_A_id>` → rows for tenant A returned, tenant B rows invisible.
+  2. **Wrong GUC**: query with `app.tenant_id = <tenant_B_id>` → zero rows for tenant A data (no error).
+  3. **Missing GUC** (`missing_ok=true`): query without setting `app.tenant_id` → zero rows for any data (no error, fails closed).
+
+### 10.4 Separation of Database Connection Roles (API vs. System)
+
+- **Decision**: Force the API handlers to connect to PostgreSQL using a role configured with `BYPASSRLS=false`, while `scope=global` catalog writes (§10.16) use a system role configured with `BYPASSRLS=true`.
+
+- **Rationale**: Adheres to the principle of least privilege. The API handler's database role is strictly isolated and can never bypass RLS, reducing the impact of potential API security vulnerabilities. Only the global-catalog writes, which have no single tenant, need to bypass RLS.
+
+### 10.5 Stateless Guarded-Loop and Topological Validation
+
+- **Decision**: Perform graph validation statelessly during parser/compiler execution rather than relying on runtime interpretation failures. Back-edges are classified via DFS, and Tarjan's SCC enumerates loops so each can be checked for a guarded exit; the forward graph (edges minus back-edges) must remain a DAG.
+
+- **Rationale**: Fail-fast validation. Catching unguarded loops, disconnected nodes, and malformed gateways during parsing or draft save stages prevents invalid configurations from entering the system, ensuring runtime engines (the Execution Service and Temporal) never encounter unexecutable topologies. Guarded rework loops are permitted because they always retain a structural exit; runtime termination is additionally protected by the Execution Service's loop-iteration bound.
+
+### 10.6 RLS Violation Logging via `rls_check_tenant()`
+
+- **Decision**: Every tenant-scoped table forces row-level security with a policy that calls a `SECURITY DEFINER` function, `rls_check_tenant(row_tenant_id, table_name)`, or `rls_check_tenant_or_global(row_tenant_id, row_scope, table_name)` for the global-catalog tables. A row that fails the check is filtered, and a 1% sample of such rows is written to `rls_violation_log` with the violation type (`missing_or_invalid_guc` when the tenant GUC is absent or malformed, `cross_tenant_access` otherwise), the tenant GUC, the row's tenant, the table, the session role and the query.
+
+- **Rationale**: PostgreSQL RLS has no native violation callback — a row that fails the `USING` clause is silently filtered, indistinguishable from an empty result set. Without the log, a misconfigured pool connection (GUC not set), a cross-tenant bug, or a deliberate probe produces no observable signal. The 1% sampling rate prevents log flooding under high-volume scans while still making systematic issues visible.
+
+- **Export**: the service reads the log through the system pool every `RLS_VIOLATION_EXPORT_INTERVAL` and adds the new rows to `workflow_definition_service_rls_violations_total{violation_type}`; rows older than `RLS_VIOLATION_RETENTION` are deleted by the same loop. Rows present at startup are not counted. The system role holds `SELECT` and `DELETE` on the log. The exporter retries its first read until it succeeds, so a pod that started while the database was unavailable still exports. Each replica counts the rows it sees, so the alerts use `increase(...) > 0` and a sum across replicas overcounts; one replica prunes per tick, chosen by a transaction-scoped advisory lock. The policy functions read the caller's tenant through a regex-guarded helper that returns no tenant for an unset or malformed value, so no row check opens a subtransaction. §6.1.2 lists the alerts. See Appendix A for the DDL.
+
+### 10.7 ~~`workflow.template.published` Reference-Only Payload~~ — Removed
+
+- **Removed.** This decision fixed a payload-shape rule for the `workflow.template.published` SNS event — reference-only (`workflow_id`, `version_id`, `version_number`, `artifact_hash`), never embedding the compiled plan JSON, to stay under SNS's 256 KB message limit. That event has since been retired platform-wide: this service no longer builds or enqueues it from `Publish()`/`Promote()` (§5.1, §5.8, §7.2), and Execution Service's corresponding consumer, route, and schema are gone too (`execution_service.md` §6.1/§6.2, Appendix A.5 decision 19 — the cache-warm behavior the event existed to drive had itself already become redundant once Execution's cache-aside read was fixed to write through on a miss). With no event left to carry a payload, the reference-only-vs-embedded-plan question this decision answered no longer applies.
+- **Numbering note**: this decision slot is left in place rather than renumbered, since decisions 10.8–10.17 are cited by number from other documents (`execution_service.md`, `workflow_connectors.md`, `workflow_management_service.md`) that this task does not touch — renumbering here would silently break those citations.
+
+### 10.8 SERIALIZABLE Publish Transaction — `RunInTxWithRetry`
+
+- **Decision**: The publish transaction (`PublishVersion`) runs under `SERIALIZABLE` isolation and uses `pgcommon.RunInTxWithRetry` (or `RunInTxWithRetryOpts` with exponential backoff) to automatically retry on serialization failures (`SQLSTATE 40001`) and deadlocks (`SQLSTATE 40P01`).
+
+- **Rationale**: `platform-pgcommon/v2` v2.0.1 includes `RunInTxWithRetry` and `RunInTxWithRetryOpts` in `retry.go` — both retry automatically on `40001`/`40P01`. The service layer uses the `Transactor` port (`internal/core/port/transactor.go`) which exposes `RunInTx` and `RunInTxWithRetry`. The publish path is the only transaction in this service that warrants it — all other transactions do not use `SERIALIZABLE` isolation. In practice, concurrent publishes on the same version are rare (only one DRAFT per workflow), but SERIALIZABLE failures are non-deterministic and should not surface as 500 errors to the caller.
+
+### 10.9 No Dedup Registry — Inbound Handlers Absorb Redelivery
+
+- **Decision**: This service keeps no `processed_event` table. At-least-once delivery on `POST /api/v1/internal/events` is absorbed by handler idempotency (§2.3.1). The Execution Service, whose inbound surface includes types that are not idempotent by construction, carries the registry instead.
+
+- **Rationale**: Both consumed types are revocations that converge on the same terminal state (§2.3.1). `SetVersionInvalid` replaces `is_valid` and `validation_errors_json` with the same values, and no query sets `is_valid = true` on a PUBLISHED row, so a redelivery cannot undo an operator's recovery — recovery is a new version (§7.4.3 Flow A). The pause-tasks call signals only instances Execution reads as `RUNNING`. A registry would add a table, an index, a daily pruner and a write on the hot path of every inbound event to detect a duplicate whose only trace is a bumped `record_version` on a row no client edit path locks against.
+
+- **Constraint this places on future work**: the property belongs to these two handlers, not to the endpoint. Adding an inbound type whose handler is not idempotent by construction means introducing the registry alongside it (Appendix E).
+
+### 10.10 `workflow_node_assignee` — Single-Column FK, No Composite Tenant Guard
+
+- **Decision**: `workflow_node_assignee.workflow_version_id` references `workflow_version(id)` with a single-column foreign key. There is no `(workflow_version_id, tenant_id)` composite FK.
+
+- **Rationale**: PostgreSQL composite FKs require both columns to be in the referenced table's unique constraint. Adding `(id, tenant_id)` as a unique constraint on `workflow_version` purely to enable a composite FK on the child table is mechanical overhead with marginal benefit — tenant isolation is already enforced by RLS (`WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid)`). An `INSERT` into `workflow_node_assignee` with a mismatched `tenant_id` is blocked by the RLS `WITH CHECK` before it could reference a row belonging to another tenant. A composite FK would add a second guard, but the primary risk vector (a service-layer bug passing the wrong tenant_id) is already closed by RLS.
+
+### 10.11 Optimistic Lock Token — `If-Match` Header or `record_version` Body Field
+
+- **Decision**: Mutating endpoints that enforce optimistic concurrency accept the lock token via either the `If-Match: "<record_version>"` HTTP header or the `record_version` field in the JSON body. The header takes precedence if both are present. Consistent with `user_service.md` §9.1.
+
+- **Rationale**: The `If-Match` header is the RFC 7232 standard for conditional updates and is idiomatic REST — it keeps the concurrency token out of the business payload and is compatible with HTTP caches and standards-compliant clients. Supporting both the header and the body field matches the user_service pattern and avoids breaking existing clients that pass the token in the body. Handler extraction is a one-liner (`c.GetHeader("If-Match")`) before DTO binding; if non-empty and parseable as an integer, it overrides the body field value. Clients that omit both get last-writer-wins semantics (acceptable for single-admin tenants).
+
+### 10.12 ~~AWS Glue Schema Registry for Event Contracts~~ — Removed
+
+- **Removed.** This decision adopted the Glue Schema Registry to encode outbound event payloads. The service publishes no events (§7.2), so it has no registry client; an outbound event added later chooses its own contract mechanism.
+
+### 10.13 Scoped Tier-3 Amendment: `connector:`-Prefixed Service Tasks
+
+- **Decision**: Allow `<bpmn:serviceTask>` to compile, but only when its `zeebe:taskDefinition type` carries a `connector:` prefix naming a connector the shared connector library implements (`workflow_connectors.md`). Every other `serviceTask` — any other `type`, or none — remains `REJECTED_ELEMENT`, unchanged. `scriptTask`/`businessRuleTask`/`transaction`/`adHocSubProcess` are untouched by this decision.
+
+- **Rationale**: A small, fixed, developer-registered catalogue of automatic tasks (fetch-from-storage, LLM-verify, send-email, more later) needs a real BPMN element, not properties bolted onto `sendTask`/`receiveTask`, which were never designed to carry this meaning. `serviceTask` is the correct BPMN element for an automatic, non-human step; scoping the exception to a `connector:` prefix keeps the original Tier-3 rationale intact for what it was actually protecting against — arbitrary, end-user-authored scripts or business rules, which stay rejected. This is not a general reversal of the Tier-3 boundary, only a named, narrow hole in it. Camunda's own connector type identifiers and element templates are deliberately not adopted for this — their out-of-the-box connectors and engine require a paid Enterprise license for commercial/production use (`workflow_connectors.md` §7); this uses an original `connector:` naming convention and original template content instead.
+
+### 10.14 Connector Registry Import Scope: `pkg/registry` vs `pkg/connectors`
+
+- **Decision**: This service imports only `workflow-connectors`' `pkg/registry` package (connector type names, display metadata, JSON-schema-shaped input/output descriptions) for §4.1.3.3's compile-time `UNKNOWN_CONNECTOR_TYPE` check and for this service's own authoring-template generator (§10.15). It never imports `pkg/connectors` — the package holding the actual `Execute()` implementations and their AWS SDK / OpenAI client / DB driver dependencies.
+- **Rationale**: This service's only real need is a name+schema lookup; pulling in every connector's runtime SDK dependency transitively for that would bloat this service's build/dependency graph and its blast radius for a lookup it could get from a package a fraction of the size. Full package layout in `workflow_connectors.md` §6.3.
+
+### 10.15 Connector Authoring UI + Credential Custody Absorbed Into This Service
+
+- **Decision**: This service owns the modeler-facing connector authoring experience end to end — serving the element-template form for each registered connector type (generated from `pkg/registry`, §10.14) and, at form-submission time, writing any provider credential (`storage`/`send-email`) to OpenBao and returning only the resulting secret path for the compiled task's `IOMapping` (`workflow_connectors.md` §4.3/§6.2). BE-for-UI, the service this responsibility would otherwise have belonged to, does not exist (`execution_service.md` Appendix A.2 #31); the module/starter library (§10.16) is likewise modeled into this service's own schema rather than a separate service's.
+- **Credential lifecycle**: *write* is the authoring-form submission above. *Rotation* needs no separate operation — OpenBao KV-v2 versions on overwrite, so re-calling `WriteCredential` on the same path rotates the value, and the read side (`execution_service`'s `openbao.Reader`, at dispatch time) always resolves the latest version; no version is ever pinned. *Revocation* is `DELETE /api/v1/connectors/credentials/{connector_type}/{field_name}`, which calls OpenBao's **metadata** endpoint so every version is destroyed outright rather than soft-deleted. There is deliberately **no** credential table in Postgres: a secret is addressed purely by its deterministic path, so there is no `created_at`/`rotated_at`/`expires_at` to drift out of sync with OpenBao's own. The consequence, tracked in `workflow_connectors.md` §9, is that nothing sweeps a secret whose owning connector task or workflow version is gone — cleanup is on-demand only.
+- **Path-injection control**: both `connector_type` and `field_name` are interpolated into the OpenBao path, so both are bounded before they touch it — `^[a-zA-Z0-9_-]+$`, plus a `registry.All()` membership check on `connector_type` against the closed set of real connector types. `execution_service` re-declares equivalent regexes independently on the read side rather than importing these, because there the path arrives inside untrusted event-payload data.
+- **Alias `BaseURL` host allowlist**: a `rest-call` alias write is rejected unless the URL's host appears in `CONNECTOR_ALIAS_ALLOWED_HOSTS` — exact hosts, or a leading-dot suffix rule such as `.svc.cluster.local` — and unless its scheme is `http`/`https` with no embedded userinfo; an entry that names a port (`host:8443`) matches that port only, a URL without a port counting as the scheme's default (80 or 443), and an entry without a port matches any port. The alias name is 1 to 64 characters of `[a-zA-Z0-9_-]`, the path template starts with `/` and holds no `//` prefix, `..`, `@`, backslash, whitespace or control character (at most 2048 characters), and the timeout is at most 60 seconds. The check **fails closed**: an empty allowlist rejects every alias write, so an unconfigured deployment cannot silently accept any host. `restcall.Execute` attaches the caller's real `x-internal-token` and `x-departments` headers to whatever host an alias names, and the alias registry is org-wide with no RLS, so an outward-pointing alias hands that host a valid internal credential ("never a raw URL, always an internal service", `workflow_connectors.md` §6.4.4). Enforcement lives on this write path rather than in the connector library because the allowlist is deployment configuration and the library takes none.
+- **Rationale**: Connector-authoring templates are fixed, code-generated catalogue metadata with no tenant-stored content of their own — not a new stored-entity type — so there's no data-ownership reason to keep them in a separate, undesigned service rather than the service that already owns design-time workflow authoring/compilation and already imports `pkg/registry` for a closely related compile-time check (§10.14). The module/starter library (§10.16) is modeled into this service's schema for the same reason. A workflow's calls resolve against the module store (§10.16, §3.3.18) at validate and publish.
+
+### 10.16 Reusable Module & Starter-Workflow Library Absorbed Into This Service
+
+- **Decision**: The "custom BPMN module"/"reusable authoring component" library, and a new "starter/predesigned workflow" library, are both modeled into this service's own schema (`workflow_module`/`workflow_module_version`/`workflow_template`, §2.1, Appendix A) rather than a separate service's database. Both support a `scope` dimension — `global` (platform-authored, `tenant_id NULL`, visible to every tenant) and `tenant` (that tenant's own saved-for-reuse content, RLS-scoped) — per an explicit product requirement that tenants can maintain their own reusable modules/starters alongside platform-provided ones. Global-row writes are gated by the `platform_operator` role at the handler layer (mirroring Org & Membership's identical pattern for its own global department catalog, OP-1) and go through the `BYPASSRLS` system-role connection (§10.4) — the ordinary RLS-bound API role's `WITH CHECK` clause structurally cannot write a `scope='global'` row (§2.1's RLS DDL).
+- **Rationale**: This service already owns the entire versioned-BPMN-content lifecycle a module/starter library needs — draft → publish → version → clone (§3.3.10), `record_version` optimistic locking, RLS — and is the *only* consumer of module content, through `<bpmn:callActivity>` (§3.3.18). Colocating storage with its only consumer lets a workflow's calls resolve against it directly, and reuses infrastructure (this service's Postgres instance, already shared with Execution Service via separate schemas per §4.1/§5.1's database-per-service exception) instead of standing up a new deployable, database, and RLS/migration/CI surface for what is structurally more of the same kind of content this service already stores. A starter is deliberately **not** given the same DRAFT/PUBLISHED/ARCHIVED version history a module gets (§2.1) — "using" a starter is nothing more than submitting its `bpmn_xml` to the ordinary `POST /workflows` a hand-authored upload would use (§3.3.19), so it needs no lifecycle machinery of its own beyond simple CRUD.
+- **Open item, not resolved by this decision:** if the intended UI for browsing this content turns out to be CMS-like (cross-tenant search, tagging, thumbnails, marketplace-style discovery) rather than "just another versioned BPMN entity," that product shape could still justify pulling this back into a dedicated service later. Not pre-built for here — see Appendix E.
+- **Implementation note**: `scope=global` writes go through a dedicated second database pool (`SYSTEM_DATABASE_URL`), distinct from the primary pool the API uses (§1.7.1), gated at the handler layer by the `platform_operator` role check. The RLS policies on `workflow_module`/`workflow_module_version`/`workflow_template` use the same inline-policy style as every other table in this service (Appendix A). The `platform_operator` role/claim itself is provisional — no code confirms how a cross-tenant claim would reach `x-tenant-roles`, which is otherwise populated per-tenant (tracked in Appendix E).
+
+### 10.17 BPMN Element Allowlist Sourced From `workflow-models`
+
+- **Decision**: The BPMN element allowlist this service's compiler enforces (§4.1.2) is sourced from a new shared export in `workflow-models` (`pkg/enums.AllowedBPMNElements`) rather than being defined only as inline Go logic in this service's own `bpmn_compiler` package. `GET /bpmn/allowed-elements` (§3.3.20) serves the same list to the frontend for palette configuration.
+- **Rationale**: `workflow-models` (`platform-workflow-models`) is the shared module whose stated purpose is keeping concepts like this in sync across Definition and Execution — it did not yet carry the element allowlist (verified: as of this decision it only exported `pkg/dsl`/`pkg/enums`/`pkg/events`, no element-allowlist content), which is a gap relative to that stated purpose, not evidence the allowlist belongs somewhere else. Sourcing both this service's own enforcement and the new discovery endpoint from one shared, versioned list removes any drift risk between "what the compiler actually accepts" and "what the modeler UI's palette claims is allowed," without needing a new HTTP round-trip between the two backend services. Client-side palette restriction remains UX only — §4.1.2's server-side 422 rejection is the actual enforcement boundary regardless of what this endpoint reports (§3.3.20).
+
+---
+
+## 11. Deployment, Scaling & DR
+
+### 11.1 Deployment & Scaling Configuration
+
+- **Namespace**: `workflow-app`
+- **Container ports**: `8080` (HTTP — the public REST API, the internal API at `/api/v1/internal`, `/healthz`, `/readyz`) and `9091` (`/metrics`).
+- **Replica Configuration**: Base deployment of 2 replicas to ensure high availability across availability zones.
+- **Horizontal Pod Autoscaling (HPA)**:
+  - Target CPU utilization: 70%
+  - Target Memory utilization: 80%
+- **Resource Limits**:
+  - Request: CPU 250m, Memory 512Mi
+  - Limit: CPU 500m, Memory 1024Mi
+- **Deployment mechanism**: `deploy/helm/` (Helm chart) is the source of truth for the values above — do not let this section drift out of sync with the chart. Includes NetworkPolicy, ServiceMonitor, and PrometheusRule (domain alerts sourced from §6.1.2) alongside the Deployment/Service/HPA/PDB.
+- **Migrations**: there is no auto-migration at server boot (`cmd/server/main.go` special-cases a `migrate` subcommand). The chart runs `/server migrate` as a `pre-install,pre-upgrade` Helm hook Job before the main Deployment rolls out, so every `helm upgrade --install` applies pending migrations first.
+- **Release pipeline**: `release.yml`'s `deploy-gate` job runs `helm upgrade --install --wait --atomic`, verifies the deployed image digest against the signed/published digest, waits for rollout, and gates on a 2-minute Prometheus error-rate check (`platform_http_requests_total` 5xx ratio > 1%) — auto-rolling back via `helm rollback` on failure. A GitHub Release is only published if this gate passes.
+
+### 11.2 Disaster Recovery Specifications
+
+- **RTO (Recovery Time Objective)**: 15 minutes for Multi-AZ automatic failover; less than 1 hour for Cross-Region database recovery.
+- **RPO (Recovery Point Objective)**: Less than 5 minutes for database backup transactions.
+- **Database Backup & PITR**: RDS automated snapshots taken daily with a 30-day retention window, supporting Point-in-Time Recovery.
+
+#### Per-Component DR Posture
+
+##### Valkey (ElastiCache)
+
+Valkey is a pure operational cache — it holds no primary data and contributes nothing to the RPO. The service uses it for three purposes (§1.9):
+
+- Compiled plan cache_ (`wf:plan:<tenantID>:<versionID>`, 1 h TTL): On failover or cold-start, the cache is empty. The first compiled-plan read for each version triggers a DB fallback and repopulates the entry; subsequent calls are served from cache. No data is lost — the compiled plan is always re-derivable from `compiled_plan_json` in `workflow_version`.
+- Idempotency keys_ (`idem:<tenantID>:<method>:<path>:<key>`, 24 h TTL): A cache outage opens a window where duplicate HTTP mutations from the same `Idempotency-Key` may be re-applied. The window is bounded by the cache downtime. SQS-delivered events are unaffected: their redelivery safety is a property of the handlers themselves (§2.3.1), not of the cache.
+- Draft-edit locks_ (`draft-lock:<tenantID>:<workflowID>`, 30 s TTL): The lock is taken for the duration of a save. While the cache is unreachable a draft save fails, since the lock cannot be taken; the `record_version` optimistic-lock check in Postgres remains the hard guarantee that only one of two saves commits. Readiness reports not ready while the cache is unreachable.
+
+ElastiCache Multi-AZ replication (with automatic failover) is the primary mitigation. RTO for the cache tier matches ElastiCache's automatic replica promotion, typically under 60 seconds.
+
+##### No Stored Object URLs
+
+`workflow_version.compiled_plan_json` is stored as JSONB directly in Postgres — there are no S3 presigned URL references embedded in any column. A region migration or cross-region recovery requires no rewrite of stored data; only the service configuration (`DATABASE_URL`, `VALKEY_ADDR`) needs updating.
+
+---
+
+## 12. Testing Strategy
+
+All automated tests live under `test/` (black-box) or co-located `_test.go` files (white-box). The CI gate requires ≥ 95% unit coverage against business logic packages (see Makefile `COVER_EXCLUDE_PKG`). The `Iint` job covers repository adapters and integration scenarios with real containers; it runs in parallel with the unit-test gate on every PR.
+
+| Layer | Approach | Key scenarios |
+| --- | --- | --- |
+| Unit — `core/service`, `core/domain` | Pure Go; ports mocked with GoMock (`make mock`) | BPMN sub-error codes fire on correct invalid input; plan quota enforcement (Starter 5, Pro 50, Enterprise unlimited — skips DB count); optimistic `record_version` conflict → `ErrDraftConcurrency`; `template_key` pattern `^[a-z0-9]+(-[a-z0-9]+)*$`; `buildEnvelope` attaches `WithTraceID` only when OTel span is valid |
+| Unit — BPMN compiler (`internal/bpmn_compiler`) | Pure Go; no DB or network | All 24 sub-error codes fire; cycle detection (SCC); split/join gateway pairing; well-formed BPMN produces expected DSL shape; XXE entity and XML token bomb rejected; empty process → `NO_START_EVENT` |
+| Unit — HTTP handlers (`test/unit/handler`) | Hand-rolled fakes; `gincommon.ProtectedMiddlewares` for request context | Each handler maps domain errors to correct HTTP status + RFC-9457 code; missing `x-tenant-id` → 401; non-admin role → 403; idempotency header absent → passes through; `record_version` absent on PUT /draft → 400 |
+| Unit — inbound event handler (`test/unit/handler`) | Hand-rolled `fakeMembershipRevoker` + `fakeLogger` | `HandleDepartmentMembershipRevoked` marks affected versions `is_valid=false`; silently skips version on `GetByID` error; a redelivered envelope reprocesses to the same result |
+| Unit — outbound clients | `httptest.NewServer` | `ExecutionClient` reads active instances and pauses tasks, every request held to the copy of the Execution Service's spec (`test/contract`); `MembershipClient` returns eligibility; both return `ErrUpstreamUnavailable` on connection failure |
+| Integration — repository (`test/integration/postgres`) | testcontainers real Postgres; `migrate.Runner` applied | RLS: cross-tenant read with foreign GUC returns zero rows; `WITH CHECK` rejects INSERT with foreign `tenant_id`; single-draft partial-unique index blocks second DRAFT row; `record_version` trigger increments on every UPDATE; `statusOrNotFound` returns correct sentinel (absent vs wrong-status) |
+| Integration — idempotency middleware | Real Valkey container | Cache hit replays stored response; body-hash mismatch → 409 `IDEMPOTENCY_KEY_REPLAY`; absent header passes through transparently; nil cache passes through transparently |
+| Integration — draft concurrency | testcontainers Postgres | Two concurrent PUT /draft with same `record_version` → one wins 200, one gets `DRAFT_CONCURRENCY` 409 |
+| Contract — internal API | The real router (`test/contract`) | Every response of the compiled-plan read is one `api/internal-openapi.yaml` declares; both documents are valid OpenAPI 3; `make contract-breaking` refuses a breaking change against `main` and `make contract-check` a stale copy |
+| Event correctness | Unit (`core/service`) | No event is emitted by Publish, Promote, Clone, or Archive — this service has no outbound event of any kind (§7.2); the pause-tasks call made with the correct `tenantID`/`userID` on membership revocation |
+| Security | Integration | DB role has `BYPASSRLS=false`; BPMN with XXE → 422; BPMN token bomb → 422; missing `x-tenant-id` → 401; cross-tenant GUC → zero rows; `RLSCrossTenantAccess` alert rule fires when counter increments |
+| Smoke (post-deploy) | Scripted | `/healthz` 200; `/readyz` 200 with `db_utilization`; one `GET /workflows`; one internal compiled-plan read for a known PUBLISHED version |
+
+### 12.1 CI Gates
+
+| Gate | Job | Pass criterion |
+| --- | --- | --- |
+| Unit coverage | `coverage` | ≥ 95% line coverage against `./internal/...` excluding `postgres/`, `postgres/db/`, `port/mocks/` |
+| Unit tests | `Test` | All `./internal/...` and `./test/unit/...` tests pass with `-race` |
+| Integration tests | `Iint` | All `./test/integration/...` tests pass against a fresh testcontainers Postgres |
+| RLS isolation | `Iint` | Cross-tenant read returns zero rows; `WITH CHECK` rejects foreign `tenant_id` |
+
+---
+
+## Appendix A: Database Migration Scripts
+
+The database schema and policies are defined in SQL migration files using golang-migrate format (e.g., `db/migrations/0001_create_schema.up.sql`). Below is the combined DDL for all tables, constraints, indexes, and RLS policies.
+
+```sql
+CREATE TYPE workflow_version_status AS ENUM ('DRAFT', 'PUBLISHED', 'ARCHIVED');
+
+-- Root table representing a unique workflow template type
+CREATE TABLE workflow (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    created_by_user_id UUID NOT NULL,
+    template_key VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    active_version_id UUID,
+    record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),  -- optimistic-lock counter
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, template_key),
+    UNIQUE (id, tenant_id)
+);
+
+ALTER TABLE workflow ADD CONSTRAINT fk_active_version
+    FOREIGN KEY (active_version_id, tenant_id) REFERENCES workflow_version(id, tenant_id)
+    ON DELETE SET NULL (active_version_id) DEFERRABLE INITIALLY DEFERRED;
+
+-- Version table representing drafts and published immutable iterations
+CREATE TABLE workflow_version (
+    id UUID PRIMARY KEY,
+    workflow_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    status workflow_version_status NOT NULL,
+    bpmn_xml TEXT NOT NULL,
+    compiled_plan_json JSONB,
+    artifact_hash TEXT,
+    version_number INT,   -- NULL on DRAFT rows; assigned atomically at publish time only
+    published_at TIMESTAMPTZ,
+    created_by_user_id UUID NOT NULL,
+    is_valid BOOLEAN NOT NULL DEFAULT true,
+    validation_errors_json JSONB,
+    module_refs JSONB NOT NULL DEFAULT '[]',  -- library module versions resolved at publish (§3.3.18)
+    record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),  -- monotonic optimistic-lock counter; incremented on every update
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- Drafts have no version number; only PUBLISHED/ARCHIVED rows must have one
+    CONSTRAINT chk_version_number_on_publish
+        CHECK (status = 'DRAFT' OR version_number IS NOT NULL),
+    UNIQUE (id, tenant_id),
+    FOREIGN KEY (workflow_id, tenant_id) REFERENCES workflow(id, tenant_id) ON DELETE CASCADE
+);
+
+-- Unique version numbers per workflow, only among published/archived rows
+CREATE UNIQUE INDEX uq_workflow_version_published
+    ON workflow_version(workflow_id, version_number)
+    WHERE version_number IS NOT NULL;
+
+-- Maps default user assignments of templates and drafts to support fast invalidation/reassignment lookup
+CREATE TABLE workflow_node_assignee (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    workflow_version_id UUID NOT NULL,
+    node_key VARCHAR(255) NOT NULL,
+    user_id UUID NOT NULL,
+    department_id UUID NOT NULL,
+    role VARCHAR(64) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (workflow_version_id, tenant_id) REFERENCES workflow_version(id, tenant_id) ON DELETE CASCADE
+);
+
+-- Reusable BPMN modules (§3.3.18, §10.16). scope='global' rows are
+-- platform-authored and have tenant_id NULL; scope='tenant' rows are
+-- tenant-authored and RLS-scoped normally. A workflow's calls resolve against
+-- these tables at validate and publish; the published version keeps a snapshot
+-- (workflow_version.module_refs).
+CREATE TYPE catalog_scope AS ENUM ('global', 'tenant');
+
+CREATE TABLE workflow_module (
+    id UUID PRIMARY KEY,
+    tenant_id UUID,  -- NULL iff scope = 'global'
+    scope catalog_scope NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    process_id VARCHAR(255) NOT NULL,  -- fixed for every version; what a callActivity's calledElement names
+    active_version_id UUID,
+    created_by_user_id UUID,  -- NULL for platform-authored global modules
+    record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT chk_module_scope_tenant CHECK (
+        (scope = 'global' AND tenant_id IS NULL) OR
+        (scope = 'tenant' AND tenant_id IS NOT NULL)
+    ),
+    UNIQUE (id, tenant_id),
+    UNIQUE (id, scope)
+);
+
+CREATE TABLE workflow_module_version (
+    id UUID PRIMARY KEY,
+    module_id UUID NOT NULL,
+    tenant_id UUID,  -- denormalized from workflow_module, NULL iff scope = 'global'
+    scope catalog_scope NOT NULL,
+    status workflow_version_status NOT NULL,
+    bpmn_xml TEXT NOT NULL,
+    process_id VARCHAR(255) NOT NULL,  -- the bpmn:process id inside bpmn_xml; always its module's process_id
+    version_number INT,  -- NULL on DRAFT rows, same convention as workflow_version
+    is_valid BOOLEAN NOT NULL DEFAULT true,
+    validation_errors_json JSONB,
+    published_at TIMESTAMPTZ,
+    created_by_user_id UUID,
+    record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT chk_module_version_number_on_publish
+        CHECK (status = 'DRAFT' OR version_number IS NOT NULL),
+    UNIQUE (id, tenant_id),
+    FOREIGN KEY (module_id, tenant_id) REFERENCES workflow_module(id, tenant_id) ON DELETE CASCADE,
+    FOREIGN KEY (module_id, scope) REFERENCES workflow_module(id, scope) ON DELETE CASCADE
+);
+
+ALTER TABLE workflow_module ADD CONSTRAINT fk_module_active_version
+    FOREIGN KEY (active_version_id) REFERENCES workflow_module_version(id)
+    ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+
+-- A module's process_id is unique within its scope; module create also checks
+-- the other scope, since a tenant sees global modules.
+CREATE UNIQUE INDEX uq_module_process_id_global ON workflow_module(process_id) WHERE scope = 'global';
+CREATE UNIQUE INDEX uq_module_process_id_tenant ON workflow_module(tenant_id, process_id) WHERE scope = 'tenant';
+CREATE INDEX idx_workflow_version_module_refs ON workflow_version USING gin (module_refs jsonb_path_ops);
+
+CREATE UNIQUE INDEX uq_module_version_published
+    ON workflow_module_version(module_id, version_number)
+    WHERE version_number IS NOT NULL;
+
+-- Starter workflows (§3.3.19, §10.16) — a point-in-time BPMN XML snapshot, not
+-- versioned and not compiled by this service; "using" one is nothing more than
+-- submitting its bpmn_xml to the ordinary POST /workflows a hand-authored
+-- upload would use, so no lifecycle machinery beyond simple CRUD is needed here.
+CREATE TABLE workflow_template (
+    id UUID PRIMARY KEY,
+    tenant_id UUID,  -- NULL iff scope = 'global'
+    scope catalog_scope NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    category VARCHAR(64),
+    bpmn_xml TEXT NOT NULL,
+    source_workflow_version_id UUID,  -- informational only; no FK — the content is copied, not linked, so a later edit to the source workflow never changes an already-created starter
+    created_by_user_id UUID,
+    record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT chk_starter_scope_tenant CHECK (
+        (scope = 'global' AND tenant_id IS NULL) OR
+        (scope = 'tenant' AND tenant_id IS NOT NULL)
+    )
+);
+
+-- BEFORE UPDATE Trigger: manages updated_at and increments record_version
+-- The WHEN guard skips no-op updates (no WAL write, no spurious record_version bump)
+CREATE OR REPLACE FUNCTION update_workflow_meta_column()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.updated_at = NOW();
+   NEW.record_version = OLD.record_version + 1;
+   RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION update_workflow_version_meta_column()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.updated_at = NOW();
+   NEW.record_version = OLD.record_version + 1;
+   RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_workflow_updated_at
+BEFORE UPDATE ON workflow FOR EACH ROW
+WHEN (OLD.* IS DISTINCT FROM NEW.*)
+EXECUTE FUNCTION update_workflow_meta_column();
+
+CREATE TRIGGER update_workflow_version_updated_at
+BEFORE UPDATE ON workflow_version FOR EACH ROW
+WHEN (OLD.* IS DISTINCT FROM NEW.*)
+EXECUTE FUNCTION update_workflow_version_meta_column();
+
+-- workflow_module and workflow_module_version were missing their own triggers
+-- in this Appendix's first draft — without one, record_version/updated_at
+-- would never move, breaking the optimistic-lock story those columns exist
+-- for. As shipped, both reuse one shared function (identical body to the two
+-- above) rather than adding two more near-duplicate per-table functions —
+-- the two functions above predate this generalization and were left as-is.
+CREATE OR REPLACE FUNCTION update_meta_columns()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.updated_at = NOW();
+   NEW.record_version = OLD.record_version + 1;
+   RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_workflow_module_updated_at
+BEFORE UPDATE ON workflow_module FOR EACH ROW
+WHEN (OLD.* IS DISTINCT FROM NEW.*)
+EXECUTE FUNCTION update_meta_columns();
+
+CREATE TRIGGER update_workflow_module_version_updated_at
+BEFORE UPDATE ON workflow_module_version FOR EACH ROW
+WHEN (OLD.* IS DISTINCT FROM NEW.*)
+EXECUTE FUNCTION update_meta_columns();
+
+-- PostgreSQL Row-Level Security (RLS) Policies
+-- Notes:
+--   FORCE ROW LEVEL SECURITY: prevents table owner from bypassing RLS
+--   REVOKE ALL FROM PUBLIC:   strips default public access
+--   current_setting(..., true): missing_ok=true — unset GUC returns NULL instead of raising ERROR (fail-closed)
+--   WITH CHECK:               constrains INSERTs and UPDATEs, not only SELECTs and DELETEs
+
+REVOKE ALL ON workflow FROM PUBLIC;
+ALTER TABLE workflow ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_policy ON workflow
+    FOR ALL
+    USING      (rls_check_tenant(tenant_id, 'workflow'))
+    WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+REVOKE ALL ON workflow_version FROM PUBLIC;
+ALTER TABLE workflow_version ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_version FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_policy ON workflow_version
+    FOR ALL
+    USING      (rls_check_tenant(tenant_id, 'workflow_version'))
+    WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+REVOKE ALL ON workflow_node_assignee FROM PUBLIC;
+ALTER TABLE workflow_node_assignee ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_node_assignee FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_policy ON workflow_node_assignee
+    FOR ALL
+    USING      (rls_check_tenant(tenant_id, 'workflow_node_assignee'))
+    WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+-- workflow_module / workflow_module_version / workflow_template use
+-- rls_check_tenant_or_global (below), NOT the plain rls_check_tenant used
+-- above — rls_check_tenant is declared STRICT, so passing it a NULL
+-- tenant_id (every scope='global' row) would short-circuit to NULL, which a
+-- USING clause treats as false, silently hiding every global row from every
+-- tenant. This is exactly the kind of bug the STRICT/NULL interaction can
+-- cause if the plain function is reused unmodified on a nullable-tenant-id
+-- table — do not do that.
+REVOKE ALL ON workflow_module FROM PUBLIC;
+ALTER TABLE workflow_module ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_module FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_policy ON workflow_module
+    FOR ALL
+    USING      (rls_check_tenant_or_global(tenant_id, scope, 'workflow_module'))
+    WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
+    -- WITH CHECK intentionally excludes scope='global': the RLS-bound API role can
+    -- never write a global row through this policy. Global catalog writes go
+    -- through the BYPASSRLS system role
+    -- (§10.4), gated at the handler layer by the platform_operator role check
+    -- (§10.16) — mirrors Org & Membership's identical global-department-catalog
+    -- pattern (OP-1: "only platform_operator may create/modify global-catalog
+    -- rows, enforced at the handler layer before any DB write").
+
+REVOKE ALL ON workflow_module_version FROM PUBLIC;
+ALTER TABLE workflow_module_version ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_module_version FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_policy ON workflow_module_version
+    FOR ALL
+    USING      (rls_check_tenant_or_global(tenant_id, scope, 'workflow_module_version'))
+    WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+REVOKE ALL ON workflow_template FROM PUBLIC;
+ALTER TABLE workflow_template ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_template FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_policy ON workflow_template
+    FOR ALL
+    USING      (rls_check_tenant_or_global(tenant_id, scope, 'workflow_template'))
+    WITH CHECK (scope = 'tenant' AND tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+-- Schema Indexes (Created Concurrently)
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX idx_workflow_name_trgm ON workflow USING gin (name gin_trgm_ops);
+CREATE INDEX idx_workflow_tenant_id ON workflow(tenant_id);
+CREATE INDEX idx_workflow_active_version ON workflow(active_version_id) WHERE active_version_id IS NOT NULL;
+CREATE INDEX idx_wv_workflow_id ON workflow_version(workflow_id);
+CREATE INDEX idx_wv_tenant_status ON workflow_version(tenant_id, status);
+CREATE UNIQUE INDEX idx_wv_single_draft ON workflow_version(workflow_id) WHERE status = 'DRAFT';
+CREATE INDEX idx_wv_artifact_hash ON workflow_version(workflow_id, artifact_hash) WHERE status = 'PUBLISHED';
+CREATE INDEX idx_wnas_user_tenant ON workflow_node_assignee(user_id, tenant_id);
+CREATE INDEX idx_wnas_version ON workflow_node_assignee(workflow_version_id);
+CREATE INDEX idx_module_name_trgm ON workflow_module USING gin (name gin_trgm_ops);
+CREATE INDEX idx_module_scope_tenant ON workflow_module(scope, tenant_id);
+CREATE INDEX idx_module_active_version ON workflow_module(active_version_id) WHERE active_version_id IS NOT NULL;
+CREATE INDEX idx_mv_module_id ON workflow_module_version(module_id);
+CREATE UNIQUE INDEX idx_mv_single_draft ON workflow_module_version(module_id) WHERE status = 'DRAFT';
+CREATE INDEX idx_starter_name_trgm ON workflow_template USING gin (name gin_trgm_ops);
+CREATE INDEX idx_starter_scope_tenant_category ON workflow_template(scope, tenant_id, category);
+
+-- Sampled RLS violations written by rls_check_tenant() and
+-- rls_check_tenant_or_global() (000004). RLS stays disabled on this table: the
+-- functions are SECURITY DEFINER and write here, so a policy would recurse.
+CREATE TABLE rls_violation_log (
+    id               BIGSERIAL   PRIMARY KEY,
+    occurred_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    session_role     TEXT        NOT NULL DEFAULT session_user,
+    violation_type   TEXT        NOT NULL CHECK (violation_type IN ('missing_or_invalid_guc', 'cross_tenant_access')),
+    app_tenant_id    UUID,
+    row_tenant_id    UUID        NOT NULL,
+    table_name       TEXT        NOT NULL,
+    client_addr      INET        DEFAULT inet_client_addr(),
+    application_name TEXT        DEFAULT current_setting('application_name', true),
+    query_text       TEXT
+);
+
+REVOKE ALL ON rls_violation_log FROM PUBLIC;
+
+CREATE INDEX idx_rls_violation_log_time ON rls_violation_log (occurred_at);
+
+-- The caller's tenant, or NULL when app.tenant_id is unset or not a UUID. A
+-- regex guard replaces a cast inside an exception block: that block opens a
+-- subtransaction for every row a policy checks, and past 64 of them in one
+-- transaction every concurrent reader slows down.
+CREATE OR REPLACE FUNCTION rls_app_tenant()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+SET search_path = public
+AS $$
+    SELECT CASE
+        WHEN current_setting('app.tenant_id', true) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        THEN current_setting('app.tenant_id', true)::uuid
+    END
+$$;
+
+-- Tenant checks with sampled violation logging. A row that fails a plain USING
+-- clause is silently filtered; these functions record 1% of such rows so a pool
+-- connection with no tenant GUC, a cross-tenant bug or a probe leaves a signal.
+CREATE OR REPLACE FUNCTION rls_check_tenant(row_tenant_id uuid, tbl text)
+RETURNS boolean
+LANGUAGE plpgsql
+STRICT
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    app_tenant uuid;
+BEGIN
+    app_tenant := rls_app_tenant();
+
+    IF row_tenant_id = app_tenant THEN
+        RETURN true;
+    END IF;
+
+    IF random() < 0.01 THEN
+        INSERT INTO rls_violation_log (violation_type, app_tenant_id, row_tenant_id, table_name, query_text)
+        VALUES (
+            CASE WHEN app_tenant IS NULL THEN 'missing_or_invalid_guc' ELSE 'cross_tenant_access' END,
+            app_tenant,
+            row_tenant_id,
+            tbl,
+            current_query()
+        );
+    END IF;
+
+    RETURN false;
+END;
+$$;
+
+-- Not STRICT: a scope='global' row has a NULL tenant_id, and a STRICT function
+-- would return NULL (false in a USING clause) for it, hiding every global row.
+CREATE OR REPLACE FUNCTION rls_check_tenant_or_global(row_tenant_id uuid, row_scope catalog_scope, tbl text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    app_tenant uuid;
+BEGIN
+    IF row_scope = 'global' THEN
+        RETURN true;
+    END IF;
+
+    app_tenant := rls_app_tenant();
+
+    IF row_tenant_id = app_tenant THEN
+        RETURN true;
+    END IF;
+
+    IF random() < 0.01 THEN
+        INSERT INTO rls_violation_log (violation_type, app_tenant_id, row_tenant_id, table_name, query_text)
+        VALUES (
+            CASE WHEN app_tenant IS NULL THEN 'missing_or_invalid_guc' ELSE 'cross_tenant_access' END,
+            app_tenant,
+            row_tenant_id,
+            tbl,
+            current_query()
+        );
+    END IF;
+
+    RETURN false;
+END;
+$$;
+```
+
+---
+
+---
+
+## Appendix B: Coding Style & Formatting Rules
+
+This section defines the official coding style and formatting standards for all backend Go services in the platform. These rules are designed to ensure codebase consistency, high maintainability, clean telemetry integration, and robust testing patterns.
+
+### B.1 Code Layout & Formatting
+
+#### B.1.1 Line Length
+
+- **Limit**: Maximum **100 characters** per line.
+- Long lines (e.g., function signatures, struct instantiations, string concatenations) must be wrapped readable when they exceed this limit.
+
+#### B.1.2 File Length & Splitting
+
+- **Limit**: There is no hard limit on the number of lines per file.
+- **Rule**: Split files when they become **structurally unwieldy** (e.g., when a file spans too many unrelated domains, contains a mix of core models and adapter logic, or makes navigation difficult).
+- Keep core business entities separated from concrete delivery adapters (enforced by Clean Architecture).
+
+#### B.1.3 Import Grouping
+
+Imports must be grouped into exactly **three blocks**, separated by a single empty line, in the following order:
+
+1. **Standard Library**: Packages from Go's standard library (e.g., `context`, `errors`, `fmt`).
+2. **Third-Party Libraries**: External dependencies (e.g., `github.com/gin-gonic/gin`, `github.com/google/uuid`).
+3. **Internal Packages**: Local project packages (e.g., `github.com/org/workflow-service/internal/core/domain`).
+
+Example:
+
+```go
+import (
+ "context"
+ "fmt"
+ "time"
+
+ "github.com/google/uuid"
+ "go.uber.org/multierr"
+
+ "github.com/org/workflow-service/internal/core/domain"
+ "github.com/org/workflow-service/internal/core/port"
+)
+```
+
+---
+
+### B.2 Function & Method Design
+
+#### B.2.1 Function Complexity & Length
+
+- **Cognitive Complexity**: Keep cognitive complexity **below 15**. Developers should install and run the **SonarQube** linting plugin within their IDE to check complexity before committing.
+- **Length**: No strict line-of-code (LOC) limit is enforced if a function's logic inherently requires it, but functions exceeding 80 lines should be evaluated for potential decomposition into smaller helpers.
+
+#### B.2.2 Method Grouping & Ordering
+
+- **Grouping**: All methods belonging to a specific struct must be grouped consecutively within the same Go file.
+- **Ordering**: Sort methods either **alphabetically** or by **visibility** (public methods listed first, followed by the private helper methods they invoke).
+
+---
+
+### B.3 Naming Conventions
+
+All symbols must adhere to **strict, idiomatic Go naming conventions**:
+
+- **camelCase**: Used for unexported (private) struct fields, local variables, and private functions/methods (e.g., `userID`, `workflowDef`, `activeDraft`).
+- **PascalCase**: Used for exported (public) structs, interfaces, fields, and functions/methods (e.g., `WorkflowRepository`, `VersionService`, `CheckActiveInstances`).
+- **Initialisms & Acronyms**: Must be fully capitalized to maintain readability (e.g., `JSON`, `XML`, `URL`, `ID`, `UUID`, `BPMN`, `RLS`, `GUC`, `mTLS`, `SNS`, `SQS`, `AST`, `DSL`).
+  - *Correct*: `userID`, `workflowXML`, `GetWorkflowByID`
+  - *Incorrect*: `userId`, `workflowXml`, `GetWorkflowById`
+
+---
+
+### B.4 Comments & Documentation
+
+The codebase prioritizes **self-documenting code** over extensive commenting.
+
+- **Minimize Comments**: Do not write comments unless they are absolutely necessary. Rely on descriptive variable names, clean control flows, and visible, self-explanatory logic.
+- **Documenting the Obscure**: If a code block is obscure or relies on specific low-level behavior (e.g., complex graph operations, database locking hints, or reflection), write a brief, high-level comment explaining *why* it is written this way.
+- **References**: For complex background logic, include brief references pointing to the corresponding architectural designs or external documentation inside the comment block.
+
+---
+
+### B.5 Error Handling & Structured Logging
+
+#### B.5.1 Structured Logging (`zap`)
+
+- **Framework**: Use the Zap logger (`go.uber.org/zap`) for structured, structured logging.
+- **Metric Integration**: All error scenarios must emit structured logs to ensure easy consumption by telemetry and monitoring tools (e.g., Prometheus, Grafana).
+- **Attribute Binding**: Do not format variable contexts into string messages. Pass them as structured fields:
+  - *Correct*: `logger.Error("failed to publish workflow draft", zap.Error(err), zap.String("tenant_id", tenantID))`
+  - *Incorrect*: `logger.Error(fmt.Sprintf("failed to publish workflow draft for tenant %s: %v", tenantID, err))`
+
+#### B.5.2 Error Formatting & Context
+
+- **Wrapping**: Wrap errors with meaningful context as they traverse boundary layers using `fmt.Errorf("context: %w", err)`.
+- **Sentinel Errors**: Define static sentinel errors at the package or service level (e.g., `var ErrWorkflowNotFound = errors.New("workflow not found")`) to allow callers to verify failures using `errors.Is`.
+
+---
+
+### B.6 Unit Testing & Mocking
+
+#### B.6.1 Test File Organization
+
+- **Unit Tests**: Place unit tests in standard `*_test.go` files adjacent to the source code being tested.
+- **Integration Tests**: Isolate integration tests (e.g., testing database drivers, live SQS listeners) into files matching `*_integration_test.go` and protect them using build tags to keep normal unit tests fast:
+
+  ```go
+  //go:build integration
+  
+  package postgres_test
+  ```
+
+#### B.6.2 Table-Driven Testing
+
+- **Pattern**: Always write unit tests as **table-driven tests**. Define test cases within a slice of anonymous structs to handle happy-path and failure scenarios uniformly.
+
+Example:
+
+```go
+func TestValidateKey(t *testing.T) {
+ tests := []struct {
+  name    string
+  key     string
+  wantErr bool
+ }{
+  {
+   name:    "valid key",
+   key:     "tender-review",
+   wantErr: false,
+  },
+  {
+   name:    "invalid characters",
+   key:     "tender/review",
+   wantErr: true,
+  },
+ }
+
+ for _, tt := range tests {
+  t.Run(tt.name, func(t *testing.T) {
+   err := ValidateKey(tt.key)
+   if (err != nil) != tt.wantErr {
+    t.Errorf("ValidateKey() error = %v, wantErr %v", err, tt.wantErr)
+   }
+  })
+ }
+}
+```
+
+#### B.6.3 Mocking Conventions
+
+- **Mocks**: Use **third-party mock generators** (e.g., Mockery, GoMock) to automatically construct mock implementations of repository and outbound client interfaces (`core/port/*`).
+- Avoid writing mock implementations manually to minimize boilerplate and prevent mock maintenance drift.
+
+### B.7 Commit Styles & Pull Request Guidelines
+
+#### B.7.1 Commit Messages (Conventional Commits)
+
+All commits must follow the **Conventional Commits** specification. The format is:
+
+```text
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+**Common Types:**
+
+- `feat`: A new feature for the user.
+- `fix`: A bug fix.
+- `docs`: Documentation-only changes.
+- `style`: Formatting, white-space, missing semi-colons, etc. (no behavior changes).
+- `refactor`: A code change that neither fixes a bug nor adds a feature.
+- `perf`: A code change that improves performance.
+- `test`: Adding missing tests or correcting existing tests.
+- `build`: Changes that affect the build system or external dependencies.
+- `ci`: Changes to CI configuration files and scripts.
+- `chore`: General maintenance tasks that do not modify source or test files.
+- `revert`: Reverting a previous commit.
+
+**Rules:**
+
+- **Imperative Mood**: Use the imperative present tense in the description (e.g., "add feature" instead of "added feature" or "adds feature").
+- **Character Limit**: Keep the subject line (first line) under **50 characters** if possible, and never exceed **72 characters**.
+- **Body & Footer**: Separate the subject from the body with a blank line. Use the body to explain *what* was changed and *why*. Reference issue tracker keys in the footer (e.g., `Resolves: #123`).
+- **Keep Commits Small**: Each commit should represent a single logical change. Avoid monolithic commits that mix refactoring, feature work, and formatting.
+
+**Examples:**
+
+- `feat(auth): add Keycloak support for RLS context`
+- `fix(parser): handle XML bomb with custom TokenReader`
+- `docs(lld): add detailed PR and commit guidelines`
+
+#### B.7.2 Branch Naming Conventions
+
+Branch names must align with the conventional commit type and follow a consistent structure:
+`<type>/<short-description-or-ticket>`
+
+- **Feature branches**: `feat/add-bpmn-modules` or `feat/WF-402-bpmn-validation`
+- **Bug fixes**: `fix/db-rls-leak` or `fix/WF-409-visibility-timeout`
+- **Refactoring**: `refactor/simplify-tarjan-scc`
+- **Documentation**: `docs/update-security-standards`
+
+#### B.7.3 Pull Request (PR) Guidelines
+
+To maintain code quality and delivery speed, every pull request must adhere to the following standards:
+
+- **Size Constraint**: PRs should be small, targeting **under 300 lines of code changes** (excluding auto-generated code like mocks or schema definitions). If a task requires larger changes, break it down into incremental, stackable pull requests.
+- **Description Requirements**: Every PR description must include:
+  - **Summary**: A concise explanation of the implementation.
+  - **Ticket Link**: A reference to the issue tracker (e.g., `Closes #123`).
+  - **Verification**: A description of how the change was tested (both automated tests and manual runs).
+  - **Migration & Operational Impact**: Explicit highlights if a database migration or configuration change is included.
+- **Merge Requirements**:
+  - Must receive at least **one approved peer review**.
+  - All automated checks (linting, unit tests, integration tests) must pass.
+
+---
+
+## Appendix C: Glossary
+
+This section provides definitions for key terms, concepts, and acronyms used throughout the Definition Service LLD.
+
+### Core Concepts
+
+| Term | Category | Definition |
+| --- | --- | --- |
+| **Tenant** | Core Concept | The top-level organizational boundary. All workflows, versions, and assignments are strictly isolated by tenant ID. Multi-tenancy is enforced at the gateway (headers), database (RLS), and orchestrator (task queues) layers. |
+| **Workflow Template** | Core Concept | A versioned blueprint of a business process defining routing logic, department sequencing, and task assignment criteria. Each template is identified by a unique `template_key` within a tenant. |
+| **Workflow Version** | Core Concept | An immutable iteration of a workflow template. Versions are either `DRAFT` (editable), `PUBLISHED` (active for new instances), or `ARCHIVED` (no longer startable). Only one draft may exist per workflow at any time. |
+| **Workflow Instance** | Core Concept | A live, durable execution of a template linked to a specific business entity (e.g., tender ID). Instances are managed by the Execution Service and Temporal, not the Definition Service. |
+| **Node** | Core Concept | A single step in a workflow, represented as a `<bpmn:userTask>` in the BPMN XML. Each node is bound to a Department (from its lane membership), Stage Type (from `zeebe:taskDefinition type`), and Role Level (from `zeebe:assignmentDefinition candidateGroups`). |
+| **Stage** | Core Concept | A logical grouping of one or more nodes within a department, representing a phase of work (e.g., `prep`, `review`, `approve`). Stages are ordered topologically based on sequence flows. |
+| **Department** | Core Concept | A logical organizational unit (e.g., Design, Procurement, Legal) represented as a `<bpmn:lane>` in BPMN. Departments execute in parallel or sequentially based on gateway routing. |
+| **Execution DSL** | Core Concept | The high-performance JSON representation of a BPMN diagram compiled by the Definition Service. The DSL is consumed by the Execution Service and Temporal Workers for orchestration. Stored in `workflow_version.compiled_plan_json`. |
+| **Template Key** | Core Concept | A human-readable identifier (e.g., `tender-review`, `procurement-check`) that identifies a workflow template within a tenant. Unique per tenant; distinct from the Execution Service's instance business key. |
+| **Default Assignee** | Core Concept | A user ID pre-assigned to a node at template publish time, declared via `<zeebe:assignmentDefinition candidateUsers="..."/>`. Currently limited to one UUID v7 per node; multi-user support is planned. When a workflow instance reaches that node, this default is used unless overridden at runtime. Stored in `workflow_node_assignee` for fast invalidation lookup. Full concurrency semantics are defined in §4.5. |
+| **Side-by-Side Versioning** | Core Concept | The ability to run multiple versions of the same workflow template concurrently. Existing instances continue on their original version while new instances start on the latest published version. Enables safe template updates without disrupting active work. |
+
+### Architecture & Design Patterns
+
+| Term | Category | Definition |
+| --- | --- | --- |
+| **Identity Agnostic** | Architecture | The principle where the Definition Service stores only UUID references to users and departments, without managing or validating user profiles. Identity validation is delegated to the Org & Membership Service. |
+| **Triple-Layer Isolation** | Architecture | Multi-tenancy enforcement across three layers: (1) Gateway headers (`x-tenant-id`), (2) Database RLS policies, and (3) Orchestrator task queues (tenant-isolated or shared). Provides defense-in-depth against cross-tenant data leaks. |
+| **Clean Architecture** | Architecture | Layered design where core business logic (`core/domain`, `core/port`, `core/service`) is decoupled from concrete adapters (`adapter/inbound/*`, `adapter/outbound/*`). Enforced by `go-arch-lint` import rules. |
+| **Structural Divergence** | Architecture | A breaking change in workflow topology (e.g., adding/removing gateways, changing sequence flows, introducing new departments) that could break active execution instances. Detected at publish time; requires admin override or new workflow key. |
+| **Optimistic Locking** | Architecture | Concurrency control mechanism using the `record_version` counter column (§10.11) on workflow/draft records. Prevents lost updates when multiple admins edit the same draft simultaneously. |
+
+### Security & Data Protection
+
+| Term | Category | Definition |
+| --- | --- | --- |
+| **Row-Level Security (RLS)** | Security | A PostgreSQL feature that restricts data access based on the `app.tenant_id` session variable. All queries are automatically filtered at the database layer, preventing cross-tenant data leaks regardless of application-layer bugs. |
+| **Grand Unified Configuration (GUC)** | Security | PostgreSQL session variables (e.g., `app.tenant_id`) used to pass validated tenant context to RLS policies. Set via `SET LOCAL app.tenant_id = $1` at the start of each transaction. |
+| **BYPASSRLS** | Security | A PostgreSQL role permission that allows bypassing RLS policies. API handlers use roles with `BYPASSRLS=false` for strict isolation; background processes use roles with `BYPASSRLS=true` for efficient cross-tenant batching. |
+| **XXE (XML External Entity)** | Security | An XML injection attack exploiting external entity resolution. Prevented by disabling entity resolution in the XML decoder and enforcing token count limits. |
+| **XML Bomb** | Security | A denial-of-service attack using nested entity expansion (e.g., "Billion Laughs"). Prevented by a custom `TokenReader` wrapper that aborts if token count exceeds 1,000,000. |
+
+### Database & Persistence
+
+| Term | Category | Definition |
+| --- | --- | --- |
+| **Artifact Hash** | Database | A canonical SHA-256 hash of every process in the bundled BPMN. Computed at publish time and stored in `workflow_version.artifact_hash`. |
+| **Workflow Node Assignee Table** | Database | A denormalized reverse index (`workflow_node_assignee`) mapping users to workflow versions. Enables fast lookup of affected templates when a user loses department membership. Populated atomically during publish; never updated independently. |
+| **sqlc** | Database | A Go code generator that produces type-safe database query functions from hand-written SQL. Eliminates runtime SQL errors and provides compile-time type checking. |
+| **migrate.Runner** | Database | `platform-pgcommon/v2/pkg/migrate.Runner` — a golang-migrate wrapper that applies service schema migrations (`db/migrations/NNNN_name.up.sql` / `.down.sql`) as the chart's pre-install and pre-upgrade hook and through `make migrate`, tracked under `wf_definition_migrations`; the server does not migrate at boot. |
+
+### Validation & Compilation
+
+| Term | Category | Definition |
+| --- | --- | --- |
+| **BPMN Parser** | Compilation | The component that unmarshals raw BPMN 2.0 XML into Go memory structures (`bpmn.Definitions`, `bpmn.Process`). Extracts custom Zeebe properties from `<bpmn:extensionElements>`. |
+| **Graph Compiler** | Compilation | The component that traverses the parsed BPMN graph, resolves split-to-join gateways, groups sequential tasks, and generates the hierarchical JSON DSL. Produces `compiled_plan_json`. |
+| **Validation Engine** | Compilation | The component that performs structural checks (cycles, reachability, dangling nodes), metadata validation (required properties, enum values), and semantic rules (orphan lanes, max depth). Returns a structured multi-error slice. |
+| **Forward Graph / Back-edge** | Compilation | A sequence flow is a *back-edge* when its target is an ancestor on the DFS stack from the Start Event (a revert/loop flow). The *forward graph* (all edges minus back-edges) must be a DAG; reachability, gateway matching, and traversal run over it. See §4.4. |
+| **Guarded Loop** | Compilation | A structural cycle whose back-edge originates at a diverging exclusive gateway that also has a forward (exit) branch, so the loop can always terminate. Guarded loops are valid; unguarded cycles are rejected (`CYCLE_DETECTED` / `UNGUARDED_LOOP`). |
+| **Tarjan's SCC Algorithm** | Compilation | An efficient graph algorithm for detecting strongly connected components (cycles). Used to enumerate the loops in a definition so each can be checked for a guarded exit (§4.4). |
+| **Zeebe Extension Elements** | Compilation | Standard Camunda 8 extension elements attached to BPMN user tasks inside `<bpmn:extensionElements>`. Required: `<zeebe:taskDefinition type="..."/>` (stage type, registry-based) and `<zeebe:assignmentDefinition candidateGroups="..." candidateUsers="..."/>` (role + default assignee). Optional: any number of `<zeebe:property name="..." value="..."/>` elements, forwarded verbatim to `StageDef.Extras` (e.g. `requires_comment`, `sla_category`) — no property name is special-cased by the compiler. Department is not a Zeebe property — it is derived from the task's lane membership via `<bpmn:flowNodeRef>`. |
+
+### Eventing & Integration
+
+| Term | Category | Definition |
+| --- | --- | --- |
+| **`workflow.template.published` Event** *(retired)* | Eventing | The Definition Service's only outbound SNS event, back when it had one. Emitted when a draft was promoted to `PUBLISHED` status, as a cache-warm push hint telling the Execution Service to pre-fetch the compiled plan. Retired platform-wide — producer, consumer, schema, and both services' AsyncAPI/OpenAPI entries all removed (§7.2, §10.7; `execution_service.md` §6.1/§6.2, Appendix A.5 decision 19) — once Execution's own cache-aside read was fixed to write through on a miss, making the eager prewarm this event drove redundant. The Definition Service currently emits no outbound event. |
+| **DepartmentMembershipRevoked Event** | Eventing | An inbound event from the Org & Membership Service indicating a user has been removed from a department. Triggers template invalidation if the user is a default assignee. Consumed from SQS queue `membership-workflow-q` by the shared workflow-events consumer, which forwards it to the Definition Service via `POST /api/v1/internal/events`. |
+| **Shared Workflow-Events Consumer** | Eventing | A separate engine-wide service that consumes the SQS queues (e.g. `membership-workflow-q`) and HTTP-routes each envelope to the respective workflow service (Definition or Execution). Keeps the Definition Service API-only on the inbound path. |
+| **SQS Queue** | Eventing | Amazon Simple Queue Service queue (`membership-workflow-q`) subscribed to the `iam.membership.events` SNS topic. Provides durable, ordered delivery of membership revocation events to the shared workflow-events consumer (which then forwards them to the Definition Service over HTTP). |
+
+### Observability & Monitoring
+
+| Term | Category | Definition |
+| --- | --- | --- |
+| **Prometheus Metrics** | Observability | Time-series metrics (counters, histograms, gauges) exposed via `/metrics` endpoint. Labeled with `tenant_id` to prevent noisy neighbor issues and enable strict SLAs. |
+| **OpenTelemetry (OTel)** | Observability | Distributed tracing framework used to propagate execution context across service boundaries. Trace context is injected into HTTP headers (`traceparent`). |
+| **Structured Logging (Zap)** | Observability | JSON-formatted logging using Go's `uber-go/zap` library. All logs include correlated context fields (`tenant_id`, `user_id`, `trace_id`, `workflow_id`) for easy filtering in Loki. |
+| **Correlation ID** | Observability | A unique identifier (UUID) assigned to each request and propagated across all downstream calls. Enables end-to-end tracing of a single user action through multiple services. |
+| **Audit Log** | Observability | Structured security logs capturing all denied operations, validation failures, and unauthorized access attempts. Includes full audit lineage (who, what, when, why) for compliance. |
+
+### API & Contracts
+
+| Term | Category | Definition |
+| --- | --- | --- |
+| **RFC-9457 Problem Details** | API | A standardized error response format (formerly RFC-7807) providing machine-readable error information. Includes `type`, `title`, `status`, `detail`, `instance`, and `code` fields. |
+| **Idempotency Key** | API | A UUID header (`Idempotency-Key`) used to prevent duplicate processing of mutating requests. Cached in Redis; requests with the same key and different payloads are rejected. |
+| **Plan Quota** | API | A subscription-tier limit on the number of workflow templates a tenant can create (e.g., Starter: 5, Pro: 50, Enterprise: Unlimited). Enforced at template creation time. |
+| **Internal API** | API | The service-to-service routes under `/api/v1/internal`, specified in `api/internal-openapi.yaml` and authenticated by `x-internal-token` (§3.4); the Execution Service reads compiled plans from it. |
+| **Payload Limit** | API | A hard cap (10 MB) on the size of incoming HTTP request bodies. Enforced by `http.MaxBytesReader` middleware to prevent resource exhaustion. |
+
+### Temporal & Orchestration
+
+| Term | Category | Definition |
+| --- | --- | --- |
+| **Temporal Cluster** | Infrastructure | The durable orchestration engine managing workflow state, retries, and signal delivery. Provides strong consistency guarantees and automatic recovery from failures. |
+| **Temporal Worker** | Infrastructure | Specialized Go services that execute workflow logic and database activities. Register activity handlers (e.g., `PrepActivity`, `ReviewActivity`) and listen on task queues. |
+| **Temporal Signal** | Infrastructure | An external asynchronous request sent to a running workflow to trigger a state transition (e.g., `stage-transition`, `stage-defer`, `admin-route`). Enables reactive, event-driven orchestration. |
+| **Temporal Activity** | Infrastructure | A unit of work within a workflow that can have side effects and automatic retries. Used to create tasks, update assignments, and persist state changes. |
+| **Task Queue** | Infrastructure | A Temporal queue name where workers listen for activities. Can be tenant-isolated (e.g., `wf-queue-<tenant_uuid>`) or shared (e.g., `wf-queue-default`) based on plan tier. |
+| **Workflow Type** | Infrastructure | The registered name of a Temporal workflow (e.g., `DSLWorkflow`). Workers must register this exact name to execute instances. |
+
+### Compliance & Governance
+
+| Term | Category | Definition |
+| --- | --- | --- |
+| **Audit Trail** | Compliance | A complete, immutable record of all state-changing operations (create, publish, archive, clone, promote). Includes actor, timestamp, and action details. Enables regulatory compliance and forensic investigation. |
+| **Encryption at Rest** | Compliance | BPMN XML and compiled DSL are encrypted at the AWS RDS layer. No field-level encryption is applied; RLS and database-level encryption provide sufficient protection. |
+| **Tenant Isolation** | Compliance | Strict enforcement of tenant boundaries at three layers (gateway, database, orchestrator). Prevents any cross-tenant data leaks or unauthorized access. |
+
+---
+
+## Appendix D: Docs Infrastructure
+
+Developer documentation is served locally via **MkDocs** (installed via `brew install mkdocs`). No pip, Docker, or third-party extensions are used — only extensions bundled with the Homebrew MkDocs package.
+
+| Item | Value |
+| --- | --- |
+| Tool | `mkdocs` (Homebrew) |
+| Theme | `readthedocs` (built-in) |
+| Extensions | `admonition`, `tables`, `fenced_code`, `toc` (all standard) |
+| Config | `mkdocs.yml` (project root, committed) |
+| Source | `docs/` (committed) |
+| Build output | `site/` (gitignored; regenerated via `make docs-build`) |
+| Local URL | <http://localhost:8001> (`make docs-serve`) |
+
+**Pages in `docs/`**: `index.md`, `setup.md`, `architecture.md`, `configuration.md`, `standards.md`, `testing.md`, `api.md`, `database.md`.
+
+### Changelog
+
+| Version | Date | Notes |
+| --- | --- | --- |
+| 0.1 | May 2026 | Initial draft from HLD |
+| 0.2 | Jun 2026 | Renamed `xml` → `bpmn_xml` in POST /workflows and PUT /workflows/:id/draft; renamed `valid` → `is_valid` in validate response; added `idx_workflow_name_trgm` trigram index and `pg_trgm` extension for fuzzy name search; narrowed search filter to name only; expanded `is_valid`, `status`, and `has_draft` query param docs with exact SQL semantics; fixed invalidation query to filter by `department_id` to prevent over-invalidation; added 204 response to DELETE /draft |
+| 0.3 | Jun 2026 | Service layer, all 16 HTTP handlers, gRPC `GetCompiledWorkflow`, SQS `DepartmentMembershipRevoked` consumer, `TemplateCloned` event, `TemplateEligibilityInvalidated` payload aligned with §7.2.3; `InjectGUCSet` RLS bridge, `LimitRequestBody` 10 MB cap, `TimeoutMiddleware`, `RequirePermission` added to §1.6.1 chain; plan quota enforcement, idempotency SHA-256 body hash; `record_version` added to `workflow` and `workflow_version` tables (Appendix A); `TemplatePublished` switched to reference-only payload (§7.2.1, §10.7); `rls_violation_log` + `rls_check_tenant()` (Appendix A, §10.6); dependency failure matrix (§9.2); PII classification (§8.6); `platform-pgcommon` v1.0.0 → v1.1.1, `platform-events` v1.0.0 → v1.2.0, `platform-gincommon` v1.0.0 → v1.2.0; pgmetrics, gRPC health service, processed_event pruner, OTel trace propagation via `WithTraceID`; replaced goose with `platform-pgcommon migrate.Runner` + `platform-events outbox.ApplySchema` for programmatic startup migrations (GAP-7, §1.8.1, §2.6); UUID v7 enforced for all application-level ID generation (GAP-4); OpenAPI spec fixes — `required: xml` → `bpmn_xml`, 413 responses added to POST /workflows and PUT /draft (GAP-5); `db.dbml` synced — `record_version` on both tables, `processed_event` at canonical composite-PK schema (GAP-6 documented); Appendix A ownership split noted for outbox tables; PostgreSQL upgraded to 18-alpine; `schema_version` field — `events.WithSchemaVersion("1")` available in v1.2.0 |
+| 0.4 | Jun 2026 |BPMN and collaboration model overhaul: Collaboration BPMN promoted to Tier 1 with support for collaboration, participant, messageFlow, bpmn:message, sendTask, receiveTask, inclusiveGateway, message/timer/signal start events, and CompiledCollaboration linking plans via MessageDef. BPMN extension contract migrated from custom Zeebe properties to standard Camunda 8 constructs: stage type via <zeebe:taskDefinition>, assignment via <zeebe:assignmentDefinition>, department derived from lanes, SLA modelled exclusively through timer boundary events. XOR semantics clarified: sequence-flow conditions perform routing only; rejection/rework handled through error boundary events. Event topology simplified to a single workflow.template.published event; archive, clone, and eligibility invalidation events removed, with user-task pausing handled through direct gRPC calls. Compiler correctness fixes include consultant-pool modelling, message-flow plan resolution using element-to-process mapping, correct traversal of non-terminal XOR branches, compilation of timer-boundary-only paths, and collaboration-wide department ID namespacing using planName/deptId. Validation catalog updated with new BPMN-specific error codes and removal of obsolete property-validation errors. Documentation, AsyncAPI, glossary, validation rules, tier tables, activity metadata, and BNB collaboration examples updated throughout.|
+| 0.5 | Jul 2026 | Message boundary events promoted from Tier-3-rejected to Tier-1-supported on `userTask`, `subProcess`, and `callActivity` — compile to `StageDef.BoundaryMessage`, `SubWorkflowStep.MessagePaths`, and `ExecutionStep.MessagePaths` respectively (new `MessagePath` DSL type); error boundary attachment corrected to allow `callActivity` (attachment-valid, still compile-rejected, same as timer). `requires_comment` de-special-cased: removed from `StageDef` as a dedicated field and the `userTask` boolean-parse validation removed — every `zeebe:property` now forwards verbatim to `StageDef.Extras` with no compiler special-casing. Added message-flow name resolution fallback (`ResolveMessageFlowName`/`ResolveMessageFlowTarget`): resolves via the flow's own name/messageRef, then the connected send/receive task or boundary event's own messageRef — real diagrams rarely annotate the messageFlow element itself; a new `MISSING_MESSAGE_DEFINITION` warning flags collaboration message flows whose name resolves to empty. Fixed a callActivity `zeebe:ioMapping` `Depts` dict-remap bug where `DepartmentDef.ID` was remapped but the called process's own compiled `ExecutionStep` dept references were not, producing steps that pointed at a department absent from the plan. Fixed two validation-severity bugs: `MISSING_NAMESPACE`/`MULTIPLE_PROCESSES` errors now carry `Severity: error` (previously unset, serialized as `""`); `POST /workflows/validate`'s `is_valid` now only goes `false` on a `Severity: error` issue, not on warnings-only. §4.1.6 Go Struct Mapping expanded with previously-undocumented `bpmnCollaboration`, `bpmnParticipant`, `bpmnMessageFlow`, `bpmnMessage`, `bpmnCallActivity`, `bpmnTaskDefinition`, `bpmnAssignmentDefinition`, `bpmnCalledElement`, and `bpmnMessageEventDef` types.|
+| 0.6 | Jul 2026 | §11 finalized (STC tag removed): documented `deploy/helm/` chart (dual HTTP:8080/gRPC:9090 container ports, `migrate-job` pre-install/pre-upgrade Helm hook running `/server migrate` since there is no auto-migration at server boot, NetworkPolicy/ServiceMonitor/PrometheusRule with domain alerts sourced from §6.1.2) and `release.yml`'s `deploy-gate` job (`helm upgrade --install --atomic`, deployed-digest verification, rollout wait, 2-minute Prometheus error-rate gate with `helm rollback` on failure). Local git hooks (`.githooks/pre-commit`: `make tidy`/`fmt-check`/`lint`/`arch-lint`, installed via `make setup`/`make install-hooks`) added to the service repo — dev-workflow only, not reflected in this LLD. |
+| 0.7 | Aug 2026 | Automatic connector tasks (new `automatic_connector_tasks.md`, a standalone cross-service design) — this document's own footprint. **§4.1.2**: `<bpmn:serviceTask>` moves from a blanket Tier-3 rejection to a scoped exception — compiles when `zeebe:taskDefinition type` carries a `connector:` prefix, still `REJECTED_ELEMENT` otherwise. **§4.1.3.3** (new): the Service Task/connector extension contract — reuses `zeebe:ioMapping` as-is, no `zeebe:assignmentDefinition`. **§4.1.4**: `serviceTask` removed from the flat `rejectedElements` denylist map in favor of a conditional, element-level check, documented alongside the existing `messageEventDefinition`/`signalEventDefinition` precedent for element-level (not blanket) handling. **§10.13** (new): the design decision and rationale, including why Camunda's own connector definitions/templates are not adopted (their license requires a paid Enterprise tier for commercial/production use). |
+| 0.8 | Aug 2026 | Connector worker/catalogue design deepened into new `workflow_connectors.md` (worker runtime + full v1 catalogue of 7 connector types); this document's footprint tightened to match. **§4.1.2/§4.1.3.3**: name the concrete `workflow-models` fields now — `StageDef.Type = enums.StageTypeConnector`, `StageDef.ConnectorType = "<name>"`, `StageDef.IOMapping` (all new fields, `workflow_models_lib.md` §2.3/§4.1) — replacing the earlier vaguer "compiles like a task-producing node" phrasing. Compile-time registry citation moved from `automatic_connector_tasks.md` §6 to `workflow-connectors`' `pkg/registry` package specifically. Noted the `rest-call`/`sql-query` alias-input convention (no new compiler validation — a dangling alias degrades the same as an unrecognized connector type). **§10.14** (new): why this service imports only `pkg/registry`, never `pkg/connectors`. |
+| 0.9 | Aug 2026 | `automatic_connector_tasks.md` consolidated into `workflow_connectors.md`; the former deleted. Every citation into it throughout §4.1.2/§4.1.3/§4.1.4/§10.13/§10.14 repointed at `workflow_connectors.md`'s own (renumbered) sections — no compiler behavior changed, citation-only pass. |
+| 1.0 | Aug 2026 | **§3.1**: `x-departments`'s format documented explicitly for the first time — comma-separated `<department-uuid>:<role>` pairs, with a worked example. Previously untyped ("Comma-separated user department memberships," no example, no stated whether department was named by code or UUID). Cross-team note added flagging that IAM's own `workflow-service-integration-sync.md`/item B4 in `iam-lld-org-membership-v1_6.md` currently document a different format (bare UUIDs, no role) — a follow-up for IAM's document owner, not resolved here. **§4.1.3.3**: the connector-catalogue example list and the alias-resolution citation synced against `workflow_connectors.md` rev 4.0 — `llm-verify` removed (dropped from the v1 catalogue), and alias resolution now cites `cmd/connector-worker`'s own internal-service registry rather than "the owning domain service," which no longer runs any connector code. |
+| 1.1 | Aug 2026 | IAM's org-membership LLD was renamed (`iam-lld-org-membership-v1_6.md` → `org_membership_lld_v12.md`, now rev 1.73) — §3.1's cross-team note repointed at the current filename. Sharpened the same note: that revision now cites an "AuthZ Enrichment LLD" ("AE-11") and an IAM HLD v1.41 supposedly finalizing the bare-UUID format, neither of which exists (`iam-hld.md` is still v1.38; no such LLD file exists in the design repo) — an inconsistency inside IAM's own docs, not a reason to reconsider `dept_uuid:role` here. New **§8.2** bullet: `x-departments`'s format stated in the Authentication & Authorization section directly, not just §3.1's header table — this service doesn't currently gate anything on it, documented for completeness. |
+| 1.2 | Aug 2026 | **§3.1's cross-team note trimmed** — the AE-11/HLD-v1.41 inconsistency detail now lives in a separate cross-team tracking note, not repeated in this LLD; the note here now just flags that IAM documents a different format and points elsewhere for the detail. `dept_uuid:role` remains this document's format, unaffected. |
+| 1.3 | 2026-08-12 | Citation-only pass syncing against `workflow_connectors.md` rev 6.0, which made connector tasks fully automation-only (no human fallback, ever). **§4.1.2**: dropped the stale "worker placement is deliberately still open" parenthetical (already fixed once placement was decided) — now says placement is decided, this compiler's output needed no change either way. **§4.1.3.3**: an unrecognized connector-type name's compile-time leniency no longer justified by "the runtime already degrades this safely to a plain manual task" — re-derived as "might still get registered before the workflow is ever instantiated; runtime settles it as a real, visible failure now, not a compiler concern." A dangling `endpointAlias`/`queryAlias` now "fails the workflow" the same way, not "degrades." The "no `assignmentDefinition`" note no longer says "who (if anyone) completes it manually is a runtime decision" — no one ever does, by design. No compiler behavior changed anywhere in this pass. |
+| 1.4 | 2026-08-13 | IAM sync check against the newly-updated `iam_1.41.md` (a real HLD v1.41, unlike the citation checked in rev 1.1 that referenced a v1.41 which didn't exist yet). **§3.1**: `x-departments`'s cross-team note rewritten — IAM's HLD now explicitly documents the same `<department_id>:<role_level>` format this document already used, resolving the discrepancy at the HLD level; only IAM's own org-membership LLD reportedly still lags, tracked in `Notes/conf.md`, not here. No other discrepancy found against IAM's current HLD/LLDs this pass. |
+| 1.5 | 2026-08-13 | BE-for-UI/build-vs-absorb architecture review: this service absorbs connector-authoring templates and credential custody, previously assigned to BE-for-UI, a separate not-yet-designed service (new **§10.15**; §10.14 updated to match). New `/connectors/registry` (serve element-templates) and `/connectors/credentials` (write a provider credential to OpenBao, return its secret path) endpoints added to §3.2. Explicitly does **not** absorb BE-for-UI's "custom BPMN module"/"reusable authoring component" library — that stays in BE-for-UI's own database (`execution_service.md` §1.3/Appendix A.2 #31); this service's existing `callActivity`/`module_bpmn_xmls`/`Bundle()` compile-time merge mechanism (§4.1.3.3) is unchanged. |
+| 1.6 | 2026-08-21 | **BE-for-UI retired entirely** (`execution_service.md` Appendix A.2 #31, rev 1.34) — reverses rev 1.5's exclusion. This service absorbs the "custom BPMN module"/"reusable authoring component" library and a new starter/predesigned-workflow library, both with a `global`/`tenant` scope dimension (new **§10.16**; §10.15 updated to match, no longer excludes the module library). New tables `workflow_module`/`workflow_module_version`/`workflow_template` (§2.1, Appendix A), a global-catalog-aware RLS function `rls_check_tenant_or_global` (Appendix A — the plain `rls_check_tenant` is `STRICT` and would silently hide every global row given a NULL `tenant_id`, so it isn't reused unmodified), and new endpoints `/modules`, `/modules/:id`, `/modules/:id/versions[/:version_id/publish]`, `/starters`, `/starters/:id`, `/starters/from-workflow-version/:version_id` (§3.2, §3.3.18, §3.3.19). Separately, new **§10.17**: the BPMN element allowlist (§4.1.2) is now sourced from a new shared export in `workflow-models` rather than only inline compiler logic, with a matching discovery endpoint `GET /bpmn/allowed-elements` (§3.3.20) for the frontend's modeler palette — UX convenience only, §4.1.2's server-side 422 remains the actual enforcement. New Appendix E (Open Items — this document's first, "Appendix C" already names the Glossary): the module/starter library's CMS-like-UI uncertainty (§10.16), and a pre-existing, independently-found gap where the shipped `WriteConnectorCredential` handler performs no role check despite §3.2 documenting `/connectors/credentials` as Admin-only. |
+| 1.7 | 2026-08-21 | **§7.4.2**: `DepartmentMembershipRevoked` is now also documented in `api/asyncapi.yaml` as a `receive` operation (message `DepartmentMembershipRevoked`, schema `DepartmentMembershipRevokedInbound`, non-`Payload`-suffixed since Org & Membership owns registration) — this service's asyncapi coverage was previously outbound-only, mirroring the gap `execution_service.md` §7.4 already closed for its own inbound events. Code-side: `internal/adapter/inbound/http/asyncapi.go`'s render-order lists updated to surface it, and a pre-existing, independently-found bug fixed in the same pass — that handler's `Type` field couldn't unmarshal the multi-type YAML idiom (`["string", "null"]`) `promoted_from_version_id` already used, meaning `GET /asyncapi` had likely been erroring already, unrelated to this change. |
+| 1.8 | 2026-08-26 | **§10.16 and §10.17 both fully implemented** — the module/starter-template library (Module CRUD+lifecycle, Template CRUD, RLS, a genuinely new BYPASSRLS pool + `platform_operator` handler gate) and the BPMN element allowlist (real enforcement wired into `parser.go`, `GET /bpmn/allowed-elements` live) both shipped this session. Renamed `workflow_starter_template` → `workflow_template` throughout (Appendix A, §2.1, §10.16) to match this schema's existing singular-noun table-naming convention (`workflow`, `workflow_version`, `workflow_module`). **§3.2/§3.3.18**: added `GET /modules/:id/versions` and `GET /modules/:id/versions/:version_id` (not in the original endpoint list — without them a module's pending DRAFT content could never be retrieved for review before publish) and resolved a self-contradiction between the endpoint registry and §3.3.18's own prose over whether `POST /modules/:id/versions` takes a body (it does, optionally — omitted copies the active version forward, supplied replaces it). Fixed the `§10.18` cross-reference typo (should always have been §10.17) in three places. **Appendix A**: fixed two real DDL bugs found while implementing against it — `workflow_module_version` was missing `updated_at` (every sibling table has it), and `workflow_module`/`workflow_module_version` had no `BEFORE UPDATE` triggers at all (would have left `record_version`/`updated_at` frozen forever); also documented, via a new implementation note beneath the module/template RLS block, that `rls_check_tenant_or_global()`/`FORCE ROW LEVEL SECURITY`/`REVOKE ALL FROM PUBLIC`/this Appendix's `rls_violation_log` schema were never implemented for *any* table in this service (a pre-existing, platform-wide gap, not something newly introduced) and that the shipped RLS for these three tables therefore uses the same simpler inline-policy style already in production elsewhere — `rls_check_tenant_or_global()` as written would also have thrown at runtime, since its sampled violation-log insert targets columns the real `rls_violation_log` table doesn't have. **New Appendix E entry**: the `platform_operator` role/claim source is provisional and needs sign-off from the gateway/IAM claim-contract owner; the connector-credentials role-check gap (rev 1.6) and the global-catalog-write-path gap (rev 1.6) are both marked resolved. `workflow-models`' `AllowedBPMNElements` first pass (audited against this service's own parser, `bpmncore`) was missing 8 already-supported elements (`task`, `dataStoreReference`, `timerEventDefinition`, `errorEventDefinition`, `messageEventDefinition`, `timeDuration`, `incoming`, `outgoing`) — fixed upstream and tagged `workflow-models` `v1.2.0-rc.3`. Also fixed two independent, pre-existing `parser.go` bugs found while wiring §4.1.2's enforcement: `intermediateCatchEvent` and `eventBasedGateway` were missing from the Tier 2 denylist and had been silently dropped by `encoding/xml` with no validation feedback. |
+| 1.9 | 2026-08-26 | Post-implementation review of rev 1.8's module/starter library found and fixed one critical and two minor gaps, none previously documented. **Critical**: `POST /modules/:id/versions/:version_id/publish` (§3.3.18) was missing the `platform_operator` gate every other `scope=global` mutation on `/modules`/`/starters` has — any `tenant_admin` could discover a global module's DRAFT version through the (correctly ungated) read endpoints and publish it, flipping a platform-wide `active_version_id`. Fixed by fetching the module and gating on scope before publishing, matching `AddModuleVersion`/`ArchiveModule`'s existing pattern. **Minor**: the `scope` query parameter on `GET /modules`/`GET /starters` (§3.3.18/§3.3.19) was cast to the `catalog_scope` enum without validation, so a bad value reached Postgres and surfaced as a 500 instead of a 422 — fixed with the same tenant/global validation `POST` already applied to its own `scope` field. Also corrected §3.3.18/§3.3.19's own query-param documentation: `scope`'s accepted values are `global`/`tenant` only, not `global`\|`tenant`\|`all` as originally written here — omitting the parameter already returns both scopes, so `all` was redundant surface not implemented in code, not a bug in the implementation. **Config**: `SYSTEM_DATABASE_URL` (rev 1.8) is now required-in-prod in `Validate()`, matching `INTERNAL_API_TOKEN`'s existing fail-fast-at-startup convention — previously a missing value would only surface as a failed write the first time a `platform_operator` created or published global-scope content. |
+| 1.10 | 2026-08-29 | **`workflow.template.published` removed entirely** — this service's own footprint of the platform-wide retirement (`execution_service.md` rev 1.38, Appendix A.5 decision 19): `Publish()`/`Promote()` (§5.1, §5.8) no longer build or enqueue this event's payload, the rest of each transaction (state transition, artifact hash, locking, the early-exit no-op) unchanged; the AsyncAPI channel/message/schema and `internal/eventschema/workflow_template_published.json` are deleted. §7.2 rewritten to state this service currently emits no outbound event at all; former §7.2.1 (the event's own payload/StartWorkflow-flow writeup) removed outright, and former §7.2.2 renumbered to the new §7.2.1 (AWS Glue Schema Registry), now describing the mechanism generically rather than around this one event. §7.3's downstream-consumer list (Execution, Audit, Notification) marked historical — none of it is live now that there's no event to fan out; whether Audit/Notification need a replacement signal for publish/promote is left an open question, not resolved here. §10.7's reference-only-payload decision removed (content replaced with a removal note; the slot itself is left in place, not renumbered, since decisions 10.8–10.17 are cited by number from `execution_service.md`, `workflow_connectors.md`, and `workflow_management_service.md`, none of which this pass touches). Also updated to match: §1.2's outbound-events summary, §2.2.2's `event_type` example, §3.3.10/§3.3.11's Clone/Promote endpoint specs, §8.5's audit-trail note (structured logs are now the sole audit trail for every state-changing operation, not just archive), §8.6's PII bullet (removed — no outbox payload exists to describe), §9.1/§9.3's performance-target and SLO-table outbox references, §10.12's Glue-adoption rationale, §12's "Event correctness" test row, Appendix B.3's `TemplatePublished` naming example (→ `VersionService`), and the Glossary's `workflow.template.published` entry (marked retired). |
+| 1.11 | 2026-08-30 | **Observability consolidated** (mirrors `execution_service.md`'s own same-day observability revision): new `internal/observability` package replaces 3 scattered `promauto` call sites (`internal/core/service/metrics.go`, `internal/adapter/inbound/grpc/server.go`, `internal/adapter/inbound/http/handler/internal_events.go`) with nil-until-`Register()` vars and one `Register(serviceName, buildVersion, pool)`, registering against `gincommon.MetricsRegisterer()` instead of the bare default registry — §6.1.1's metric catalog itself is unchanged (same names, same labels), only where and how they're constructed. Folds the previously-standalone `pgmetrics.Init` + `prometheus.MustRegister(pgmetrics.NewPoolStatsCollector(...))` (`cmd/server/wire.go`) into that same `Register` call, now via `pgmetrics.InitWithRegisterer` — §1.7.5 rewritten with the full, previously-undocumented `pgcommon_query_total`/`query_duration_seconds`/`slow_query_total`/`retry_total`/`retry_exhausted_total` set this activates (was documented as only 2 of the library's 7 built-in collectors). **§1.7.1's stale "`Config.Logger` not wired" callout corrected**: `platform-pgcommon` v1.2.0 replaced the field's type with the public `pkg/domain.Logger`, previously an unexported internal type no external module could implement; a new `cmd/server/pglogger.go` adapter wires this service's own logger through, on both `newDBPool` and `newSystemDBPool`. `Config.Tracer` is unrelated and still unwired — not touched by this pass, flagged as a separate, still-open item. **Version bumps**: `platform-gincommon` v1.2.0 → v1.3.0 (§1.1 — a hard prerequisite, `MetricsRegisterer()`/`MetricsConstLabels()` don't exist before v1.3.0), `platform-pgcommon` v1.1.1 → v1.2.1 (§1.1, §1.7). |
+| 1.12 | 2026-09-05 | **Wire-type casing bug fixed, platform-wide, following IAM's direct confirmation that every one of its event types is PascalCase, no exceptions**: this service's inbound handler (`internal/adapter/inbound/http/handler/internal_events.go`) matched on the dotted-lowercase string `department.membership.revoked` — real production code, not just this document's own prose — while IAM's actual wire `type`/SNS `EventType` value has always been `DepartmentMembershipRevoked`. Every citation in this document, the handler's dispatch `case`/error strings, `api/asyncapi.yaml`'s channel key, and the `processed_event` dedup row's stored `event_type` label are all corrected to match. New Appendix E row: whether IAM's `MembershipRevoked` (full tenant-membership removal) cascades into per-department `DepartmentMembershipRevoked` events is unconfirmed by IAM's own Org & Membership AsyncAPI spec — §7.4.2's "transitively covered" assumption for `user.deleted` may not hold. |
+| 1.13 | 2026-09-10 | Seven residual dotted-lowercase IAM event names corrected to PascalCase in §7.4.2 and the §7.4 consumed-events table (`user.deleted` → `UserDeleted`, `user.availability.changed` → `UserAvailabilityChanged`, `delegation.started`/`delegation.ended` → `DelegationStarted`/`DelegationEnded`, `department.membership.revoked` → `DepartmentMembershipRevoked`). Rev 1.12 fixed the handler dispatch, the AsyncAPI channel key, and the `processed_event` label, but left these prose/table citations behind. Documentation-only; no code or contract change. |
+| 1.14 | 2026-09-15 | **`MembershipRevoked` is consumed** (new §7.4.5, Appendix E). A tenant-wide membership removal arrives as `MembershipRevoked`, carries no `department_id`, and previously had no handler — every affected published version stayed valid and every live task stayed assigned. It now invalidates each version where the user is a default assignee, unfiltered by department, and calls the same `PauseUserTasks` gRPC the department-scoped handler does; `HandleMembershipRevoked`'s department filter is optional so both events share one implementation. The Appendix E row asking whether Org & Membership also fans out per-department events narrows accordingly: it now decides only whether the department-scoped handler is redundant, not whether the removal is seen. **Connector credential lifecycle and the alias-host allowlist specified** (§10.15). Rotation needs no operation of its own — OpenBao KV-v2 versions on overwrite and the read side always resolves the latest — and revocation destroys every version through the metadata endpoint rather than soft-deleting. No credential table exists in Postgres, so nothing sweeps a secret whose owning task or version is gone; on-demand cleanup only, tracked in `workflow_connectors.md` §9. A `rest-call` alias write now requires its `BaseURL` host to be on `CONNECTOR_ALIAS_ALLOWED_HOSTS` and fails closed on an empty allowlist: dispatch attaches the caller's real internal-service token to whatever host an alias names, and the registry is org-wide with no RLS, so an unbounded registry is a credential-exfiltration path. The same section records the path-injection bound on `connector_type`/`field_name`, both of which are interpolated into the OpenBao path. |
+| 1.15 | 2026-09-15 | **A gateway with one forward exit and revert back-edges compiles its forward branch with no target** (§4 compiler, §5.2 revert branches). The forward path is already emitted as the steps that follow it, so naming a target on the branch as well made the Execution Service dispatch that department twice — once from the branch, once from the continuation. The split shapes are unchanged: their branches diverge and their continuation begins at the join. The revert-loop bound is also stated plainly rather than left as something Execution "may need to define": Execution re-enters the gateway after each revert resolves and fails the instance after 50 cycles, and nothing in the compiled plan carries or configures that bound (`execution_service.md` §2.6). |
+| 1.16 | 2026-09-22 | **The `processed_event` dedup registry is removed from the design — it was specified across this document and never built.** Execution Service carries one; this service's migrations never created the table, and the envelope `id` reaches the handler only to be logged. Rather than build it, §10.9 is rewritten from "no tenant scope on an operational table" to the decision itself: both consumed types absorb redelivery in the handler. `SetVersionInvalid` replaces `is_valid` and `validation_errors_json` with the same values, and no query sets `is_valid = true` on a PUBLISHED row — `UpdateDraftVersion` is `status = 'DRAFT'`-guarded, `CreateWorkflowVersion` inserts only DRAFT rows, `PublishVersion` does not touch the column — so a redelivery cannot undo an operator's recovery; recovery is a new version (§7.4.3 Flow A). `PauseUserTasks` signals only instances it reads as `RUNNING`, and Temporal applies the transition asynchronously, so a redelivery inside that window re-signals. Reprocessing is not bit-for-bit inert: `updated_at = now()` defeats the update trigger's distinct-from guard and bumps `record_version`, which no client edit path locks against on a PUBLISHED row. **Code change in support**: `ListAssigneesByUser` gains `ORDER BY (workflow_version_id, node_key)`, without which the rendered `validation_errors_json` was heap-ordered and could differ between replays. §2.3.1 rewritten around that argument; the table's DDL, its index, its schema-section entry, the daily pruner (§7.1.2, whose "two cron jobs" count is corrected to one), the glossary row, the DR-matrix, cache-outage, §1.7, §3.3 and §12 dedup claims, and §7.4.2's idempotency step (steps renumbered, the "Step 5" back-reference corrected) all removed. §7.4.2 step 3 said the handler *appends* to `validation_errors_json` where the query replaces it — corrected, since the idempotency argument rests on replacement. `README.md`, `.claude/database.md` — which described a `processedEvents.RecordIfNew` call that exists only in Execution Service — `.claude/api-and-events.md`, `db_definition.dbml`, `api/asyncapi.yaml` and its design-repo copy, `docs/swagger/openapi.yaml`, `ARCHITECTURE.md` and its mermaid source, the PR template, a migration comment in both services, `workflow_stream_gateway.md` (whose §9.2 rationale cited Definition's table), and `scripts/smoke-test.sh` — which asserted rows in the non-existent table and would have failed against the real schema, and now asserts the property that replaces it: a redelivered envelope rewrites a byte-identical `validation_errors_json` on the published version. **New Appendix E row**: the property belongs to these two handlers, not to the endpoint, so a third inbound type must either be idempotent by construction or bring the registry with it. **Handler rename**: `HandleMembershipRevoked` → `HandleDepartmentMembershipRevoked` and `handleMembershipRevoked` → `handleDepartmentMembershipRevoked`, so the name states which of the two revocation events it serves — Execution Service uses the unqualified name for the tenant-level event, and the collision made the pair unreadable across repos. A code change: handler, service, both test files and their test-function names, `api/asyncapi.yaml` and its design-repo copy, the inbound event schema, `ARCHITECTURE.md`, `CONTRIBUTING.md`, the mermaid source and both alert runbooks. The hand-rolled `fakeMembershipRevoker` keeps its name — it fakes the two-method interface, not either method. **§7.4 reconciled against `event_consumer`'s real routing table.** §7.4.1 restates the unknown-type `200`-and-ignore behaviour (already recorded in §3.3) at the transport contract, matching `acknowledgeUnknownEventType`. §7.4.3's runtime-reassignment table: `tender-wf-q` does not exist (`IAM/iam_hld.md` §9.1 catalogues no Workflow consumer on `iam.tenant.events`, and `event_consumer` declares `membership-wf-q`, `user-wf-q` and `wf-workflow-dash-q`), and `TenderAssigneeOverridden` is removed from the table — `event_consumer` declares it with an empty target list, so it reaches no consumer here; it is owned by IAM's Org & Membership service, not the Tender Service, and its only platform-wide consumers are Audit and Notification. §7.4.4: the exclusion no longer rests on not subscribing to a `tenant-wf-q` that does not exist, but on the routing table sending `TenantStateChanged`/`TenantMembershipsPurged` to Execution alone. **Appendix E**: the Org & Membership fan-out question is resolved — a single-user removal emits both events, a tenant offboarding emits only `TenantMembershipsPurged`. |
+| 1.17 | 2026-09-22 | **A user task naming a role but no default assignee is rejected** (§4 code list, §4.5.5, §3.3.12.1). The validator treated an empty `candidateUsers` as acceptable while `candidateGroups` beside it was required, so such a template compiled to an empty assignee list and published. The Execution Service then created the task with `assignee_mode = "single"` and no assignment rows, and its claim path requires both `assignee_mode = "all"` and an existing assignment row for the caller — so the task could be neither claimed nor completed and the instance never advanced. New code `CANDIDATE_USERS_EMPTY`, emitted by a new `ValidateDefaultAssignee` rather than by the publish-time eligibility check, so it surfaces on `POST /workflows/validate` as well as at publish, which recompiles. A separate function from `validateCandidateUser`, which still checks only the format of a value that is present: `sendTask`/`receiveTask` share the format rules and must keep an optional assignee, the interpreter resolving them through the message buffer without creating a task. **The Execution Service re-checks at instantiation** — a stage resolving to nobody is named in the existing `AssigneeIneligibleError`, so a version published before this rule is refused with the offending node named rather than starting an instance that cannot advance. Its skip list mirrors the interpreter's own dispatch, so message stages are exempt there too. That side is recorded in `execution_service.md` §5.5. **New read `GET /workflows/:id/versions/:version_id/validation`** (§3.3.12.1) re-runs the validator against a stored version, so an operator can find versions published before this rule rather than discovering them when an instantiation is refused; it composes the existing version read and raw-validation service and adds no service method. **`node_key` composition corrected** (§2.2.2, §4.5.3): `extractAssignees` built `<department>/<stage type>`, which names two nodes identically wherever a department holds two stages of the same type, and disagreed with the `<department>/<BPMN element id>` form the Execution Service uses for task and override keys. No migration: the column feeds a diagnostic label only, and a version already published keeps the old form since its assignee rows are written once, at publish. §4.5.3's invalidation query, like §7.4.2's, printed a `SELECT DISTINCT … department_id` form that does not exist — both now show the real read. |
+| 1.18 | 2026-09-24 | **The membership queue is named `membership-workflow-q`** (§1.2, §1.3, §6.1.1, §7.4, §9.2, glossary). This is the name IAM's Org \& Membership implementation, its AsyncAPI, and the shared consumer's deployment all use. The IAM HLD's `membership-wf-q` is IAM's own document to reconcile. |
+| 1.19 | 2026-09-24 | **Publish stores a `CompiledCollaboration`** (§7.5, §2.2). Publish stored a bare `CompiledPlan`, while the Execution Service and `GetCompiledWorkflow` decode a collaboration, so every instance start failed with an empty main plan and `dsl_schema_version` was always 0. A new compiler entry point, `CompileForPublish`, wraps a single root as a one-plan collaboration and stamps `schema_version`. A process without a `name` takes its `id` as the plan name, so `main_plan` is never empty. The structural-divergence check and the version diff read the main plan of the stored collaboration; assignee eligibility and extraction read the main plan just compiled. **`artifact_hash` covers every process** (§2.2): `Hash` refused any bundle with more than one process, so a draft with a called process or a bundled module could not publish. A single-process hash is unchanged. Several processes are ordered by id and then by their own hash, so the XML order never changes the result. **§4 DSL types**: `schema_version` is a field of the collaboration JSON, not a column. **Not changed**: a `<bpmn:collaboration>` BPMN still fails publish with `MULTIPLE_PROCESSES` until the Execution Service can complete an ignored pool's task (§7.5). |
+| 1.20 | 2026-09-24 | **Called processes are validated** (§4.1.2 `callActivity`, §3.1.4 codes 32–33). Only the call site was checked, so a module's own tasks published unvalidated (for example a userTask with empty `candidateUsers`), and a module that called itself, directly or through another module, recursed at compile time until the process died. Every called process reachable from the root is now validated once with the root's rules. New `CALLED_ELEMENT_CYCLE` rejects a call cycle, and new `DUPLICATE_PROCESS_ID` rejects two processes with one `id`, which a bundled module could introduce. The call-site checks (`UNRESOLVED_CALLED_ELEMENT`, `MISSING_DEPT_INPUT_FOR_MODULE`) are reported once per call site; they were reported twice. An error about a whole `subProcess` body, such as `NO_END_EVENT`, names the `subProcess`; it named no node. |
+| 1.21 | 2026-09-24 | **`TASK_LIMIT_EXCEEDED` covers the inlined plan** (§3.1.4 code 9). The 1000 limit counted each process's own user tasks, while compilation inlines a called process once per call site. So a chain of small modules that each called the next twice validated clean and compiled to millions of steps, which exhausted memory at publish. A process that makes calls now also counts one per call site plus the called process's own count. |
+| 1.22 | 2026-09-24 | **Called processes are referenced plans, not inlined** (§4.1.2 `callActivity`, §3.1.4 codes 8, 9, 22, 25, 31, 32, §7.5, qualification). Inlining a module at every call site duplicated its stages inside one department (Execution runs every stage of a department wherever a step names it), collided node keys, kept the module lane's IAM id through a `Depts` remap, gave a laneless module none, and dropped message boundaries. Each called process now compiles once into its own plan, and a call compiles to `ExecutionStep.CallPlan` with its department bindings, call-site `Assignees`, `IOMapping`, `Extras` and boundary paths; both services expand calls with the shared `dsl.ExpandCalls`. A module lane without `dept_id` is an open slot the call binds: through `Depts` (now an error when malformed, and accepted with a leading `=`), or by default to the call's lane when there is one open slot. The `dept_id` input is gone. Timer and error boundaries on a callActivity are accepted. `CANDIDATE_USERS_EMPTY` becomes a warning: the assignee may be supplied at instance start, which the Execution Service already requires. Publish counts the expanded plan's stages against the 1000 limit. |
+| 1.23 | 2026-09-25 | **Modules come from the library** (§3.3.18, §10.16, §4.1.2 `callActivity`, §7.5, code 29, Appendix A). A workflow no longer carries module XML: `module_bpmn_xmls` is removed from drafts, versions and `/workflows/validate`. A call names a library module by `processId` and pins a version with `versionTag`, or takes the active version (`latest`); calls resolve at validate, publish and a draft's diff, and modules' own calls resolve the same way. A published version records what it resolved in `module_refs` and compiles each module version into its own plan, `<process_id>@v<version_number>`, so two versions of one module can coexist; a later module version or an archived module never changes it. A module's `process_id` is fixed across versions and unique among a tenant's modules and the global ones (`409 MODULE_PROCESS_ID_CONFLICT`). Modules validate with their own process as the root and their open lanes allowed; only errors block; a global module names no user, in a task or in a call's `Assignees`; a module calling itself at its latest version is `CALLED_ELEMENT_CYCLE`. New `GET /modules/:id/usages`. Workflow and starter creation resolve library calls too, and warnings no longer block them. §3.3.12.1 judges a published version against its `module_refs`. A `versionTag` always names the library; a call is judged local or library in its own document; a problem inside a module is reported on the workflow's call. |
+| 1.24 | 2026-09-26 | **Doc corrections** (§2.2.2, the index table, the glossary, §3.1.4 code 9). `artifact_hash` is stored at publish and returned, and no code path reads it; the diff compares expanded compiled plans. Code 9 now says that `/workflows/validate` and the module gates run only the static counts, so a plan that expansion alone puts over the limit is refused at publish. |
+| 1.25 | 2026-09-26 | **Module follow-ups** (§3.1.4 codes 7, 8, 9, 25, 29 and new 34–36; §3.3.12; §3.3.12.1; §3.3.18; §4.1.2 `callActivity`; boundary event rules; §7.5 readers). A published workflow gives every task a default user: `CANDIDATE_USERS_EMPTY` stays a warning on a document, since a module may leave its users to its callers, and is an error on the expanded plan at publish and at `/validate`, which now judges as publish does, task limit included. A call's `Assignees` can name a task in a nested module by the path of calls to it, the outermost call winning. A laneless module's department, and so its tasks' node keys, is named by its process id without the version. A module's `<bpmn:message>`/`<bpmn:error>` definitions come with it into the bundle; they were dropped, so a module's receive task waited on an empty message name. A boundary compiles with an explicit `Terminates` when its path reaches an end event, and a boundary leading to a call or message task is refused (`UNSUPPORTED_BOUNDARY_TARGET`): an empty target had been read as the end of a path, so such a boundary ended its instance silently. User ids must be UUID v7 at validate as at publish; a module slot bound to a workflow lane with no `dept_id` is `MISSING_DEPT_ID`; a `versionTag` pinning a process the file also defines is `UNRESOLVED_CALLED_ELEMENT`. `MISSING_DEPT_ID`/`INVALID_DEPT_ID` join the code list. A stored plan that cannot be read is recompiled against the version's own module versions for the diff and the divergence check; an active version that no longer compiles counts as divergent, so a forced publish still gets through. A workflow with no lanes is refused at publish (`MISSING_DEPT_ID`) whatever its work: none of it has an IAM department, and a boundary in it gave `/validate` an internal error. The diff compiles a draft without publish's own rules, so a draft not yet publishable still diffs. A call's `Assignees` reaches a task inside a module's subProcess. The boundary rules no longer say a callActivity rejects error and timer boundaries. |
+| 1.26 | 2026-10-01 | **Two reads for the Tender Service and the workflow UI** (§3.2, new §3.3.12.2, §3.3.18, §2.2.2, §7.5 readers, Appendix E). `GET /workflows/:id/versions/:version_id/nodes` lists a published version's human tasks, module tasks included, with each one's node key, department, role level, default users and name: what the Tender Service maps Sections to and may override at start, which it could otherwise only get by expanding the stored plan itself. `GET /modules/:id/versions/:version_id/contract` returns what a call of the module binds and names: its open and fixed slots, every human task by the key a call's `Assignees` takes and the slot it runs in, its messages and error codes, and whether it names users. Node keys and the human-task rule come from workflow-models (`dsl.NodeKey`, `StageDef.CreatesHumanTask`), which the Execution Service uses too, and stages carry their task's `name`. New Appendix E row: declared start variables. |
+| 1.27 | 2026-10-01 | **The Execution Service link is internal HTTP; gRPC is gone** (§1.1–§1.5, §1.6 renumbered, new §3.4, §3.2, §3.3.8, §7.4.2, §7.4.5, §8.2, §9.2, §9.3, §11, §12, glossary). The compiled-plan read is `GET /api/v1/internal/workflow-versions/{version_id}/compiled-plan`, its plan a JSON object; `dsl_schema_version` is dropped, the plan's own `schema_version` being the one source. The archive guard and the pause of a removed member's tasks call the Execution Service's internal API. `api/internal-openapi.yaml` is the authority for every internal route, with a design-repo copy; each caller keeps a byte-identical copy in `api/contracts`, checked against its source by `make contract-check`, and `make contract-breaking` refuses a breaking change against `main` with oasdiff, the gate platform-schemagov's `diff` gives event schemas. Tests hold responses from the real router, and every request a client sends, to the documents. Each caller sends the callee's token under the callee's name (`EXECUTION_SERVICE_TOKEN`, `DEFINITION_SERVICE_TOKEN`), compared in constant time. The gateway routes only the public path prefixes: it had routed all of `/api/v1`, `/api/v1/internal` included. §1.6.2's gRPC interceptor chain, which named an auth interceptor that did not exist, is removed. |
+| 1.28 | 2026-10-01 | **`INTERNAL_API_TOKEN` is required outside dev** (§3.4). It had been required only for `APP_ENV=prod`, so any other non-dev environment served the internal routes with no token check. `DELETE /api/v1/internal/connector-aliases/rest/{alias}` declares its `404` in `api/internal-openapi.yaml`. |
+| 1.29 | 2026-10-02 | **Tasks run in the order the flows give** (§3.1.4 codes 9 and 34 and new code 37, §3.3.12.2, §3.3.18, §4.1.3.2, §4.2, §4.4, boundary event rules). A department was a whole lane, and the Execution Service runs every stage of a department wherever a step names it: a flow returning to a lane ran its later task before the tasks between, the steps after a join ran the lane's earlier tasks again, and an exclusive branch ran every later task in its lane. A department is now a lane segment, a stretch of one lane on one path, keyed `<lane>`, then `<lane>~<n>`; module slots stay one per lane. A gateway's join is its immediate post-dominator in the forward graph, so an inner join or a loop head is no longer taken for it, and each branch stops at that join, so a nested fork no longer compiles the region after its inner join twice. Each exclusive branch carries its work as `Steps` (workflow-models LLD rev 2.14): a call on a branch had been left out of the plan, a subprocess on a branch ran on every branch, and a branch whose first task had a task type named a stage the Execution Service could not find. A boundary's path compiles on its own and stops at a node already compiled, so the task it leads to no longer runs on the normal path, and each node a boundary leads to starts a segment. Back-edges are classified from boundary events too. A compile stops at 1000 stages or 10000 nodes (`TASK_LIMIT_EXCEEDED`): exclusive splits that merge only in part compile their merged tail once per branch. A revert names the segment on its own path. A boundary to a subprocess whose body does not start with a userTask is `UNSUPPORTED_BOUNDARY_TARGET`. New `INVALID_LANE_NAME`: a lane name containing `/`, `::` or `~`. |
+
+| 1.30 | 2026-10-02 | **One pool runs; outside parties' pools and lanes are skipped; modules always run** (§3.1.4 code 20 and new codes 38–39, §4.1.2, §4.2, §4.3). A collaboration had been compiled pool by pool: messages between pools were bridged by a synthetic node, which a call-pool step and an admin stub task completed, department IDs were prefixed by pool, and publish refused a collaboration outright. That machinery is deleted. The workflow is the one process that is executable, not called and not marked ignore; a pool marked ignore, or not executable and not called, is an outside party's and produces nothing. `/validate` judges a collaboration as publish does. A called process runs as a module whether or not it is executable, and a call to a pool marked ignore is refused. A lane marked ignore is an outside party inside the process that runs: its tasks compile to nothing, and the person on the next task waits for the outside party. A call, subprocess or connector task in such a lane, a boundary on one of its tasks and a loop whose way back holds only its tasks are the new `IGNORED_LANE_WORK`, and a call cannot bind a module lane to such a lane; no runnable process is the new `NO_RUNNABLE_PROCESS`. A receive task with no message of its own waits for the message flow into it, or for its own id. `textAnnotation`, `association`, `documentation`, `property` and the data-association children are diagram-only. An outside pool's drawn calls are never made, and only a message flow into a receive task or message boundary that runs needs a name. `CompiledCollaboration.messages`, `CompiledPlan.ignored`, `DepartmentDef.ignore` and `call_pool` steps are gone (workflow-models LLD rev 2.15). |
+| 1.31 | 2026-10-07 | **What an outside party can complete, and no authored credentials** (§3.1.4 new code 40, §3.3.12.2, §4.1.3.3). The published-version nodes read gains `waits`: the receive tasks and message boundaries that no send task of the plan feeds, each with the key the Execution Service takes an outside party's answer by. A message boundary keeps its BPMN id (`MessagePath.BoundaryID`, workflow-models LLD rev 2.16) so it can be addressed. A connector input whose target is a secret field of its connector type is refused (`CONNECTOR_SECRET_AUTHORED`): a connector always uses the tenant's stored credential, so a diagram never names a secret path. A connector input's `source` is `=name` for an instance variable or any other text for a literal. |
+| 1.32 | 2026-10-08 | **The service has no outbox, relay, SNS publisher or Glue codec** (§1.1, §1.2, §1.4, §1.5, §1.8, §2.2, §2.3, §6, §7, §8, §9, §10.2, §10.4, §10.12, §11, Appendix A). It publishes no event, and the apparatus had been kept against a future producer; it also made every cluster boot require SNS and Glue settings no deployment has. The outbox tables and their RLS migration, the relay worker and its alert, the `OutboxRepository` port, the `AWS_USE_STUB`, `SNS_TOPIC_ARN`, `GLUE_REGISTRY_NAME` and `OUTBOX_*` settings and the Glue codec are gone. The Execution Service and Org & Membership URLs and tokens are required whenever `APP_ENV` is not `dev`. A future outbound event designs its contract and consumer first, and brings its own outbox. |
+| 1.33 | 2026-10-08 | **A boundary carries the whole path it leads to** (§4.1.3.2, §4.2, Appendix E). A boundary named only the department it moved to, so a path of several tasks, lanes or gateways ran its first department alone and the flow then went on as if the host had finished. Each boundary, on a task, a subProcess or a call, now carries its path as `Steps` and the boundary event's ID as `BoundaryID`, compiled after the main traversal on a state of its own; the Execution Service runs them and an interrupting boundary ends its path (workflow-models LLD rev 2.17, execution LLD rev 1.72). A path that continues into a node the main flow compiled keeps naming only its department. The outside waits read looks into the steps of boundary paths. |
+| 1.34 | 2026-10-09 | **Platform libraries at their latest majors, the platform metric standard, and RLS violation logging** (§1.1, §1.6, §1.7.5, §6.1, §6.2, §7.4.2, §10.6, Appendix A). `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.0, `platform-gincommon` v1.6.0; `workflow-models` v1.2.0, `workflow-connectors` v1.0.0. Metrics follow the platform tiers: `platform_*` from the libraries, `workflow_definition_service_<metric>` for the service. The request deadline runs innermost. `APP_ENV` is validated; OpenBao is required outside dev. Tenant tables force RLS through the sampled violation-logging functions, exported as `workflow_definition_service_rls_violations_total`. `api/asyncapi.yaml` documents both inbound events. The publish path emits the `BPMN_Compilation` and `DB_Publish_Transaction` spans. |
+| 1.35 | 2026-10-12 | **Publish and archive are consistent under concurrent edits, timers must be runnable, and the cache and lock behaviour is stated as built** (§1.1, §1.9, §2.5, §2.6, §3.1.3, §3.1.4, §3.3.7, §3.3.8, §3.4.1, DR posture). A publish is refused when the draft changed after it was read, so the stored plan always belongs to the stored BPMN. A save that changes nothing returns the `record_version` the row holds. Archive of a workflow or module acts on the version active at commit. A timer boundary needs a positive duration the Execution Service can run. Only published versions are cached as compiled plans. The draft-edit lock fails a save while the cache is unreachable. Idempotency and draft-lock key formats match the service. Libraries: `platform-pgcommon/v2` v2.0.1, `workflow-connectors/v2` v2.0.0, `workflow-models/v2` v2.0.0-rc.1. |
+| 1.36 | 2026-10-12 | **A flow splits only at a gateway; the container health check; and the write-role guard stated as built** (§1.4, §1.6.1, §3.1.4 new code 41, §8.2). A start event, task, send or receive task, subProcess or callActivity with more than one outgoing flow is refused with `SPLIT_WITHOUT_GATEWAY`; before, the plan kept the first flow and silently dropped the rest. The container image's health check is a probe of the service's own `/healthz`. The write-role guard is a role check at the start of each mutating handler, not a middleware. |
+| 1.37 | 2026-10-12 | **The validator refuses what the compiler would drop, and the review's contract fixes** (§3.1.3, §3.1.4 codes 22, 41–44, §3.3.11, §3.3.14, §4.1, §7.4). Boundary hosts, one message boundary per node, a boundary with one flow, a receive task as a revert source, an end event with an outgoing flow, duplicate element ids and an unknown error reference are refused; before, the plan silently dropped the work. An exclusive split with several unconditioned flows warns, since the Execution Service takes the first. A version marked invalid cannot be promoted. The version diff treats a changed timer boundary, message boundary or connector type as structural. A `DepartmentMembershipRevoked` whose department is not a UUID is a 400. |
+| 1.38 | 2026-10-12 | **The version list is summaries, shutdown drains, and the review's smaller fixes** (§1.8, §1.9, §2.2, §3.1.4 codes 23 and 33, §3.3.3.1, §3.1.3). A page of versions carries summaries only; a page number is bounded. The pod fails readiness for `SHUTDOWN_DRAIN_DELAY` before it stops listening. The artifact hash covers messages, errors and message flows and ignores property order everywhere. A call inside a sub-process is `UNSUPPORTED_ELEMENT`, and a main process named like a called one is `DUPLICATE_PROCESS_ID`. The active-version pointer names only a published version of its workflow. The draft-edit lock is released only by the save that took it. The bounded windows that remain are stated: a stale cached plan up to the TTL, and a revocation between a publish's eligibility check and its commit. |
+| 1.39 | 2026-10-13 | **A task's due and follow-up dates must be RFC 3339** (§3.1.4 code 45). The validator refuses a `dueDate` or `followUpDate` that is not an RFC 3339 date-time, with the new code `INVALID_TASK_SCHEDULE`; the Execution Service dropped any other value and the task ran with no SLA. The plan-expansion budget of 1000 stages is a domain constant shared by the compiler and by the publish, node-read and module-contract paths, since `workflow-models` `v2.0.0` refuses a zero budget. Definition is on `workflow-models/v2` `v2.0.0`. |
+| 1.40 | 2026-10-13 | **Branch conditions are one comparison, parsed by the shared parser** (§3.1.4 code 46, §4). The validator parses every `conditionExpression` of a split with `workflow-models` `dsl.ParseCondition` and refuses anything but `[= ] field (=|==|!=) literal` with a string, number or boolean literal as `INVALID_CONDITION_EXPRESSION`, so the form the designer guide documents (`= decision = "bid"`) is the form the Execution Service evaluates and a comparison such as `score < 70` is refused at publish instead of failing the gateway at run time. The internal events and alias routes return 413 for a body over the limit, declared in the internal spec, and a contract test sends every route through the real router against `api/internal-openapi.yaml`. |
+| 1.41 | 2026-10-14 | **Data integrity: lanes, revocations, idempotency, back edges** (§3.1.4 codes 1, 22, 37 and 43, §3.3.11, §7.4, §9, §10.9, §12). A lane that holds work needs a name, and lane names are unique without regard to case (`INVALID_LANE_NAME`). A `cancelActivity` other than `true`, `false`, `1` or `0` is refused, and `1` and `0` are read as booleans. Sub-process bodies share the process's id space (`DUPLICATE_ELEMENT_ID`). A DOCTYPE or entity declaration is refused anywhere in the document, not only in its first 4 KiB. A workflow that calls a library module is scanned for rejected elements as authored, not after bundling. The depth-first walk enters a node when it is reached, so a loop through sibling branches is a back edge and the depth check counts the path through a cross edge. A second revocation adds to a version's validation errors instead of replacing them; a revocation leaves assignees added after the event time alone; the plan cache holds only valid published plans and is re-checked after each write; a failed eviction is retried by redelivery. Module activation names only a published version of that module, workflow activation also needs a valid version, and module-version publish and archive and starter delete are scoped to the caller's tenant in SQL. A default assignee's `created_at` is a `timestamptz`, so the revocation time filter compares instants whatever the session time zone. An `Idempotency-Key` is scoped to the user, capped at 256 characters, and a concurrent request with the same key gets `409` `IDEMPOTENCY_REQUEST_IN_PROGRESS`. |
+| 1.42 | 2026-10-14 | **Resilience and operations** (§1.6, §1.7, §3.3.16, §10.6, §12). A database outage is `503 UPSTREAM_UNAVAILABLE`: connection failures, exhausted connections, an administrator shutdown, a closed pool and a statement cancelled by the statement timeout. Readiness depends on the database only and reports the cache as `ok` or `degraded`; a pod starts while Valkey is down; a draft save with an unavailable lock store answers `503` and its lock is released even if the client has gone. The HTTP write timeout outlasts the request deadline, a listener failure runs the ordered shutdown and exits non-zero, panics in long-lived goroutines are recovered, and shutdown has configurable bounds (`SHUTDOWN_GRACE`, `SHUTDOWN_POOL_DRAIN_TIMEOUT`) with a separate budget for each pool drain. Both pools are built from `pgcommon.ConfigFromEnv` (`PG_SLOW_QUERY_THRESHOLD` is a duration; `PG_STATEMENT_TIMEOUT`, `PG_LOCK_TIMEOUT` and `PG_POOL_NAME` are new; the system pool is named `system`, small and in bouncer mode). Startup verifies each pool's database role and refuses an application role that can bypass row-level security and a system role that cannot bypass it or cannot write; the local stack creates the split roles. The RLS policy functions read the tenant through a regex-guarded helper instead of an exception block, the violation exporter retries its first read, and one replica prunes the log per tick. |
+| 1.43 | 2026-10-14 | **Edge hardening** (§1.6, §3.1, §3.3, §3.4, §5, §6.2, §8, §10.15). The identity headers are parsed as UUIDs once, in one middleware that also sets the validated GUC set; a malformed one is `401`. Configuration parsing is strict, reports every problem together, requires `APP_ENV`, requires a cache address outside dev and reads `.env` in `local` and `dev` only. A bind error names fields only, a vault `403` is `503` and vault error bodies are capped. Credential and alias writes leave an audit line without values. An alias has a name charset, a path-template rule, a timeout bound and a port-aware host allowlist. A bad `page`, `limit` or `versions_limit` is `400 INVALID_INPUT` instead of a clamp. All outbound clients share a traced transport, a response cap and the dependency histogram, and publish checks each distinct assignee once with bounded concurrency. The chart admits the events consumer to the internal API. The public spec declares the idempotency `409` and `400`, the readiness bodies, the `503` and the paging bounds. |
+| 1.44 | 2026-10-14 | **Schema integrity** (§2.1.1, §2.2). Every time column is `TIMESTAMPTZ` and every `created_at` and `updated_at` is `NOT NULL`. The parent key of a version, a module version and an assignee is `NOT NULL`, and each child names its parent together with its tenant, so a child cannot point at another tenant's parent. `record_version` must be positive. Both DBML files follow the migrations. |
+| 1.45 | 2026-10-14 | **Schema-registry payloads on the event ingest** (§7.4.1). An envelope with a `dataschema` carries a base64 string of a registry-framed payload; the endpoint decodes it with the platform library's decode-only Glue codec and answers `502 EVENT_DECODE_FAILED` for a payload it cannot decode. Before this, any revocation published through a registry was answered `400`. |
+| 1.46 | 2026-10-14 | **Connector catalogue at `workflow-connectors/v2` v2.1.0** (§1.1, §2.2, §10.14, §10.15). The registry no longer lists `chat-notify`: a task naming it publishes with the `UNKNOWN_CONNECTOR_TYPE` warning and the template and credential endpoints refuse it. `storage` and `send-email` declare `provider` as required. The registry lists three types: `storage`, `send-email` and `rest-call`. |
+| 1.47 | 2026-10-14 | **The public spec and the docs follow the code** (§1.6.1.1, §3.4, §4.2, §10.8, Appendix A). Every body route declares `413` and `415`; a publish takes no required body; limits nothing enforced are removed; validation severities are lowercase; getDraft carries `updated_at`; the registry's `retry` includes `not-delivered`; the compiled-plan schemas carry `iam_department_id`, `connector_type`, `io_mapping`, `boundary_id` and boundary and branch `steps`. A module, starter or draft field over its column or documented limit (name 255, description 2000, starter category 64) is `422 INVALID_INPUT` with `invalid_params`; before, it reached the database and came back as `500`. A version diff sends `step_changes` in snake_case and never `null` for a department list. `MULTIPLE_END_EVENTS` is deprecated and never raised; the logger section describes `logger.NewLogger`; library pins are current. |
+| 1.48 | 2026-10-14 | **The template key is named for what it is** (§3, §4, §10, Appendix A). The workflow's key is `template_key`, error code `DUPLICATE_TEMPLATE_KEY`, constraint `uq_workflow_template_key`; the public field stays `key`. The Execution Service keeps its own instance business key (with the subject), so the two no longer share a name or an error code. The LLD no longer claims a slug pattern or a 100-character limit: the key is free-form up to 255 characters, over which it is `422 INVALID_INPUT`. |
+| 1.49 | 2026-10-14 | **Two statements follow the code** (§1.6.1, §7.2). The request identity middleware parses both identity headers as UUIDs (it is no longer the gincommon `RequireAuth` length check), and the Execution Service keeps no `workflow_key → version_id` mapping. |
+---
+
+## Appendix E: Open Items
+
+This document had no dedicated Open Items tracker before rev 1.6 — items below are the first entries, following the same `Theme | Item | Owner` convention `execution_service.md`'s own Appendix B already uses.
+
+| Theme | Item | Owner |
+| --- | --- | --- |
+| Constraint | **A new inbound event type needs the dedup registry introduced with it, unless its handler is idempotent by construction (§2.3.1, §10.9).** The two types consumed today converge on the same state when reprocessed, which is why no `processed_event` table exists here. That property belongs to those handlers, not to `POST /internal/events`, so it has to be re-established — or the registry built, as the Execution Service has — whenever the inbound surface grows. | Definition Service team, at the time a third inbound type is added |
+| Deferred | **Declared start variables.** A workflow declares no variables it needs at start, so the node read (§3.3.12.2) lists only what the Execution Service checks at start: each human task's department, role level and default users. Declaring start variables — on the start event, compiled into the plan and checked at instance start — spans this compiler, workflow-models and the Execution Service. | Definition + Execution Service teams, once a caller needs it |
+| Deferred | **A boundary path that rejoins the main flow runs only its first department.** A boundary carries its path as `Steps`, but a path that continues into a node the main flow compiled carries none and names only its `TargetDept`, whose department runs alone; expressing a continuation into the main flow needs the path's steps to end by naming the node they rejoin. | Definition + Execution Service teams |
+| Deferred | **Module/starter library's product shape (§10.16).** Designed here as "just another versioned BPMN entity" (module) or a simple CRUD row (starter). If the intended UI turns out to be CMS-like — cross-tenant search, tagging, thumbnails, marketplace-style discovery across a large catalog — that product shape could justify pulling this back into a dedicated service later, independent of the data-ownership reasoning that put it here. Not pre-built for; revisit once real product/UI requirements exist. | Definition Service team + product, once UI requirements are known |
+| ~~Security~~ | ~~**`POST /connectors/credentials` has no role check despite being documented Admin-only (§3.2, `workflow_connectors.md` §4.3/§6.2).**~~ **Resolved 2026-08-24**: `WriteConnectorCredential` now gates on `requireAdmin` before writing, mirroring `execution_service`'s own `adminRoles`/`requireAdmin` pattern. | Definition Service team |
+| ~~Cross-team~~ | ~~**Global-catalog write path for `workflow_module`/`workflow_template` (§10.16) needs its `platform_operator`-gated handler + `BYPASSRLS`-role wiring actually built**~~ **Resolved 2026-08-26**: Module CRUD, Template CRUD, the RLS DDL, and a genuinely new second (`SYSTEM_DATABASE_URL`) pool + `platform_operator` handler-layer gate all shipped — see §10.16's "Implemented" note and Appendix A's implementation note below the module/template RLS block for the two corrections made to the original design along the way. **Not resolved**: the `platform_operator` role/claim source itself is still provisional (see §10.16) — needs sign-off from whoever owns the gateway/IAM claim contract before this path can be trusted in a real environment; tracked as a new row below. | Definition Service team |
+| Cross-team | **`platform_operator` role/claim source is unconfirmed.** `isPlatformOperator`/`requirePlatformOperator` (mirroring `isAdmin`/`requireAdmin`) check the same `rc.Roles` the gateway populates per-tenant via `x-tenant-roles` — but no code anywhere available locally (`platform-gincommon`, this service, or elsewhere) defines a `platform_operator` claim or confirms how a claim that's inherently cross-tenant would ever appear in a per-tenant header. Built as the most reasonable default; the global-write path (§10.16) isn't trustworthy in a real environment until this is confirmed one way or the other. | Gateway/IAM claim-contract owner |
+| ~~Cross-team~~ | ~~§7.4.2's `UserDeleted` transitive-coverage claim is unconfirmed against IAM's own spec: a full tenant-membership removal arrives as `MembershipRevoked`, which carries no `department_id`, and this service subscribed to `DepartmentMembershipRevoked` only.~~ **Closed on this side (§7.4.5).** `MembershipRevoked` is handled directly: a tenant-wide removal invalidates every published version where the user is a default assignee, with no department filter, then calls the same `PauseUserTasks` gRPC the department-scoped handler does. **RESOLVED (rev 1.16 — Org & Membership emits both).** A single-user removal emits `DepartmentMembershipRevoked` per department and `MembershipRevoked` at tenant level (confirmed with IAM's Tender question set, item 20, citing O&M §15.2.2), so the department-scoped handler is redundant belt-and-braces rather than a coverage gap. Full tenant offboarding emits only `TenantMembershipsPurged`, which this service does not consume (§7.4.4). | Closed |

@@ -1,0 +1,2918 @@
+openapi: "3.0.3"
+info:
+  title: Workflow Definition Service
+  version: "1.0.0"
+  description: >
+    Manages workflow template lifecycle: create, draft, publish, archive, clone,
+    promote, validate, export, and diff BPMN-based workflow definitions.
+    All identity and tenant context is injected by the Envoy API Gateway.
+servers:
+  - url: http://localhost:8080
+    description: Local dev server (matches cmd/server's actual route mounts)
+  - url: https://api.internal/definition
+    description: Envoy API Gateway (production)
+# All endpoints require a valid tenant context injected by the Envoy gateway.
+# Mutating endpoints (POST/PUT/DELETE) additionally require x-tenant-roles.
+security:
+  - GatewayTenantContext: []
+components:
+
+  securitySchemes:
+    GatewayTenantContext:
+      type: apiKey
+      in: header
+      name: x-tenant-id
+      description: >
+        Tenant UUID injected by the Envoy ext_authz filter after JWT validation.
+        Must be present on every request. Never supplied directly by the client
+        in production — the gateway rejects any request without a valid JWT and
+        sets this header from the token claims.
+
+    AdminRoles:
+      type: apiKey
+      in: header
+      name: x-tenant-roles
+      description: >
+        Roles claim injected by the gateway. Required for mutating operations.
+        Contains a comma-separated list of roles (e.g. tenant_admin,member).
+        Accepted values for mutation: tenant_admin, tenant_owner.
+        Read-only endpoints (GET) do not require this header.
+
+  parameters:
+    TenantId:
+      name: x-tenant-id
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Tenant UUID injected by Envoy.
+
+    UserId:
+      name: x-user-id
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Authenticated user UUID injected by Envoy.
+
+    TenantRoles:
+      name: x-tenant-roles
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Comma-separated tenant roles injected by Envoy. Reads need only the tenant and user; a mutating call without `tenant_admin` or `tenant_owner` here is `403`.
+
+    Departments:
+      name: x-departments
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Comma-separated list of department memberships and role levels injected by Envoy.
+
+    Plan:
+      name: x-plan
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Tenant billing plan tier injected by Envoy.
+
+    FeatureFlags:
+      name: x-feature-flags
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Encoded set of effective feature flags injected by Envoy.
+
+    WorkflowId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    VersionId:
+      name: version_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 256
+      description: >
+        Optional client-generated request key that makes a retry safe. The same key with the
+        same body replays the first response; the same key with a different body is a 409
+        (`IDEMPOTENCY_KEY_REPLAY`); the same key while the first request is still running is
+        a 409 (`IDEMPOTENCY_REQUEST_IN_PROGRESS`) and is retried after the first one
+        finishes. A key longer than 256 characters is a 400 (`BAD_REQUEST`). Keys are scoped
+        to the tenant, the user, the method and the path.
+
+  schemas:
+
+    VersionStatus:
+      type: string
+      enum: [DRAFT, PUBLISHED, ARCHIVED]
+
+    ChangeType:
+      type: string
+      enum: [STRUCTURAL, METADATA_ONLY]
+
+    Pagination:
+      type: object
+      properties:
+        total_count: { type: integer }
+        page:        { type: integer }
+        limit:       { type: integer }
+      example:
+        total_count: 4
+        page: 1
+        limit: 20
+
+    ValidationError:
+      type: object
+      properties:
+        node_id: { type: string }
+        error:   { type: string }
+      example:
+        node_id: Task_design_prep
+        error: "userTask is missing zeebe:taskDefinition"
+
+    WorkflowSummary:
+      type: object
+      properties:
+        id:                    { type: string, format: uuid }
+        key:                   { type: string }
+        name:                  { type: string }
+        description:           { type: string }
+        active_version_id:     { type: string, format: uuid, nullable: true }
+        active_version_number: { type: integer, nullable: true }
+        has_draft:             { type: boolean }
+        created_at:            { type: string, format: date-time }
+        updated_at:            { type: string, format: date-time }
+      example:
+        id: 7ca648b2-b432-4744-884c-35fd556a310c
+        key: tender-review-123
+        name: Tender Document Review Process
+        description: Standard review process for tender proposal documents
+        active_version_id: 8fa88cde-824c-47bc-836b-665cd42c2222
+        active_version_number: 3
+        has_draft: true
+        created_at: "2026-05-10T08:00:00Z"
+        updated_at: "2026-05-18T12:30:00Z"
+
+    VersionSummary:
+      type: object
+      properties:
+        id:                  { type: string, format: uuid }
+        version_number:      { type: integer, nullable: true }
+        status:              { $ref: '#/components/schemas/VersionStatus' }
+        is_valid:
+          type: boolean
+          description: >-
+            Whether all default assignees in this version are still valid members
+            of their required departments. Set to false by a DepartmentMembershipRevoked
+            event; does not reflect BPMN structural validity.
+        created_by_user_id:  { type: string, format: uuid }
+        published_at:        { type: string, format: date-time, nullable: true }
+        created_at:          { type: string, format: date-time }
+      example:
+        id: 8fa88cde-824c-47bc-836b-665cd42c2222
+        version_number: 2
+        status: PUBLISHED
+        is_valid: true
+        created_by_user_id: 4da18bde-7244-47ac-986c-665cd42caaaa
+        published_at: "2026-05-14T09:00:00Z"
+
+    CatalogScope:
+      type: string
+      enum: [tenant, global]
+      description: >-
+        `tenant` rows are owned by the caller's own tenant; `global` rows are
+        platform-authored and visible to every tenant. Creating or deleting a
+        `global` row requires the `platform_operator` role.
+
+    ModuleSummary:
+      type: object
+      properties:
+        id:                { type: string, format: uuid }
+        tenant_id:         { type: string, format: uuid, nullable: true }
+        scope:             { $ref: '#/components/schemas/CatalogScope' }
+        name:              { type: string }
+        description:       { type: string }
+        process_id:
+          type: string
+          description: The module's `<bpmn:process>` id, fixed for every version; what a calling `callActivity`'s `calledElement processId` names.
+        active_version_id: { type: string, format: uuid, nullable: true }
+        created_at:        { type: string, format: date-time }
+        updated_at:        { type: string, format: date-time }
+      example:
+        id: 018f1a2b-0000-7000-8000-000000000001
+        tenant_id: null
+        scope: global
+        name: Standard Approval Chain
+        description: Reusable three-step approval sequence
+        process_id: ApprovalChain
+        active_version_id: 018f1a2b-0000-7000-8000-000000000002
+        created_at: "2026-08-20T08:00:00Z"
+        updated_at: "2026-08-25T10:00:00Z"
+
+    ModuleVersion:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        module_id:       { type: string, format: uuid }
+        scope:           { $ref: '#/components/schemas/CatalogScope' }
+        status:          { $ref: '#/components/schemas/VersionStatus' }
+        bpmn_xml:        { type: string }
+        process_id:
+          type: string
+          description: The `<bpmn:process id="...">` value inside `bpmn_xml`; always its module's `process_id`.
+        version_number:  { type: integer, nullable: true }
+        is_valid:        { type: boolean }
+        published_at:    { type: string, format: date-time, nullable: true }
+        created_at:      { type: string, format: date-time }
+      example:
+        id: 018f1a2b-0000-7000-8000-000000000002
+        module_id: 018f1a2b-0000-7000-8000-000000000001
+        scope: global
+        status: PUBLISHED
+        process_id: ApprovalChain
+        version_number: 1
+        is_valid: true
+        published_at: "2026-08-20T09:00:00Z"
+        created_at: "2026-08-20T08:00:00Z"
+
+    PlanNode:
+      type: object
+      description: >-
+        One human task of a published version's expanded main plan. node_key is
+        dsl.NodeKey(department.id, stage), the key the Execution Service accepts
+        in override_map.
+      required: [node_key, node_id, stage_type, role_level, department, default_user_ids]
+      properties:
+        node_key:   { type: string, example: "CA_Eng::Process_Review/Review_Task" }
+        node_id:    { type: string, example: Review_Task }
+        name:       { type: string, example: Review }
+        stage_type: { type: string, example: review }
+        role_level: { type: string, example: reviewer }
+        department:
+          type: object
+          description: >-
+            The department the task runs in. A module task's id is call-scoped
+            (<call id>::<department>), and its label and iam_department_id are
+            those of the lane the call binds it to.
+          required: [id, label]
+          properties:
+            id:                { type: string, example: "CA_Eng::Process_Review" }
+            label:             { type: string, example: Engineering }
+            iam_department_id: { type: string, format: uuid }
+        default_user_ids:
+          type: array
+          description: The users the version assigns when the start request names none for this node.
+          items: { type: string, format: uuid }
+
+    PlanWait:
+      type: object
+      description: >-
+        A receive task or message boundary of the expanded main plan that no send
+        task of the plan feeds: only an outside party's answer completes it. key
+        is what the Execution Service takes that answer by.
+      required: [key, kind, message]
+      properties:
+        key:
+          type: string
+          description: >-
+            A receive task's node key, or a message boundary's host and boundary id
+            joined by "#" (the host stage's node key, or the id of the subprocess or
+            call the boundary is attached to).
+          example: "Ops/Prepare#Boundary_Withdraw"
+        kind:    { type: string, enum: [receive_task, message_boundary] }
+        message: { type: string, description: "The BPMN message name, for display.", example: withdraw }
+
+    VersionNodes:
+      type: object
+      required: [workflow_id, version_id, version_number, nodes, waits]
+      properties:
+        workflow_id:    { type: string, format: uuid }
+        version_id:     { type: string, format: uuid }
+        version_number: { type: integer, format: int32 }
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/PlanNode' }
+        waits:
+          type: array
+          description: The outside waits of the expanded main plan, in plan order.
+          items: { $ref: '#/components/schemas/PlanWait' }
+
+    ModuleSlot:
+      type: object
+      description: >-
+        One of the module's own departments. id is its lane's name, the key a
+        call's Depts maps. An open slot has no dept_id and a call binds it; a
+        fixed slot carries its IAM department. A laneless module has one open
+        slot, named by its process id.
+      required: [id, label, open]
+      properties:
+        id:                { type: string, example: Author }
+        label:             { type: string, example: Author }
+        open:              { type: boolean }
+        iam_department_id: { type: string, format: uuid, description: Set on a fixed slot. }
+
+    ModuleTask:
+      type: object
+      description: >-
+        One human task the module runs, its called modules' included.
+        assignee_key is the key a call's Assignees takes: the task id, or the ids
+        of the calls leading to it and then its own, joined by "::".
+      required: [assignee_key, node_id, stage_type, role_level, default_user_ids]
+      properties:
+        assignee_key: { type: string, example: "Pkg_Check::Check_Task" }
+        node_id:      { type: string, example: Check_Task }
+        name:         { type: string, example: Check }
+        slot:
+          type: string
+          description: The module's own slot the task runs in. Omitted for a task in a called module's fixed lane.
+          example: Author
+        iam_department_id:
+          type: string
+          format: uuid
+          description: Set for a task in a called module's fixed lane, which no call can rebind.
+        stage_type: { type: string, example: review }
+        role_level: { type: string, example: checker }
+        default_user_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    ModuleContract:
+      type: object
+      required: [module_id, version_id, process_id, slots, tasks, messages, error_codes, names_users]
+      properties:
+        module_id:      { type: string, format: uuid }
+        version_id:     { type: string, format: uuid }
+        process_id:     { type: string, example: Process_Package }
+        version_number: { type: integer, format: int32, description: Omitted for a DRAFT. }
+        slots:
+          type: array
+          items: { $ref: '#/components/schemas/ModuleSlot' }
+        tasks:
+          type: array
+          items: { $ref: '#/components/schemas/ModuleTask' }
+        messages:
+          type: array
+          description: Names of the bpmn:message elements of the module and its called modules, deduplicated and sorted.
+          items: { type: string }
+        error_codes:
+          type: array
+          description: Codes of the bpmn:error elements of the module and its called modules, deduplicated and sorted.
+          items: { type: string }
+        names_users:
+          type: boolean
+          description: Whether any task has a default user. A global module never names one.
+
+    ModuleRef:
+      type: object
+      required: [module_id, version_id, process_id, version_number]
+      properties:
+        module_id:      { type: string, format: uuid }
+        version_id:     { type: string, format: uuid }
+        process_id:     { type: string }
+        version_number: { type: integer }
+
+    ModuleUsage:
+      type: object
+      properties:
+        workflow_id:           { type: string, format: uuid }
+        workflow_key:          { type: string }
+        workflow_name:         { type: string }
+        version_id:            { type: string, format: uuid }
+        version_number:        { type: integer, nullable: true }
+        status:                { $ref: '#/components/schemas/VersionStatus' }
+        module_version_number: { type: integer, description: "The module version this workflow version holds a snapshot of." }
+        behind:                { type: boolean, description: "True when the module's active version is newer." }
+
+    ModuleDetail:
+      allOf:
+        - $ref: '#/components/schemas/ModuleSummary'
+        - type: object
+          properties:
+            active_version:
+              allOf: [{ $ref: '#/components/schemas/ModuleVersion' }]
+              nullable: true
+
+    StarterTemplate:
+      type: object
+      properties:
+        id:                          { type: string, format: uuid }
+        tenant_id:                   { type: string, format: uuid, nullable: true }
+        scope:                       { $ref: '#/components/schemas/CatalogScope' }
+        name:                        { type: string }
+        description:                 { type: string }
+        category:                    { type: string }
+        bpmn_xml:                    { type: string }
+        source_workflow_version_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Informational only — the content is copied at creation time, not linked.
+        created_at:                  { type: string, format: date-time }
+        updated_at:                  { type: string, format: date-time }
+      example:
+        id: 018f1a2b-0000-7000-8000-000000000003
+        tenant_id: null
+        scope: global
+        name: Standard Onboarding
+        description: Starting point for a new-hire onboarding workflow
+        category: hr
+        bpmn_xml: "<bpmn:definitions>...</bpmn:definitions>"
+        created_at: "2026-08-20T08:00:00Z"
+        updated_at: "2026-08-20T08:00:00Z"
+
+    StageDef:
+      type: object
+      required: [type, activity, role]
+      properties:
+        type:
+          type: string
+          description: >
+            Stage type sourced from zeebe:taskDefinition on the BPMN element.
+            Built-in values: prep, review, approve (userTask); send_task, receive_task (sendTask/receiveTask).
+            Unknown types are forwarded as passthrough with engine_note set.
+        activity:            { type: string }
+        role:
+          type: string
+          description: "IAM role level name passed as '?level=<role>' to the Org & Membership eligibility endpoint at publish time. Sourced from zeebe:assignmentDefinition candidateGroups."
+        default_assignees:
+          type: array
+          nullable: true
+          items: { type: string, format: uuid }
+          minItems: 1
+          description: "Default assignee UUID(s). Sourced from zeebe:assignmentDefinition candidateUsers. Omitted when assignment is not set — optional for send_task/receive_task stage types."
+        is_zeebe_user_task:
+          type: boolean
+          description: "true when the userTask carries a bare <zeebe:userTask/> marker extension element (no taskDefinition/assignmentDefinition required in that case). Omitted (false) otherwise."
+        node_id:
+          type: string
+          description: "Stable BPMN element ID (e.g. 'Activity_0abc123'). Suitable for machine-addressable routing."
+        name:
+          type: string
+          description: "The BPMN task's name, for display. Omitted when the task has none."
+        due_date:
+          type: string
+          nullable: true
+          description: "RFC 3339 datetime for the task due date, the only form the validator accepts. Sourced from zeebe:taskSchedule dueDate. Absent when not set in BPMN."
+        follow_up_date:
+          type: string
+          nullable: true
+          description: "RFC 3339 datetime for the task follow-up date, the only form the validator accepts. Sourced from zeebe:taskSchedule followUpDate. Absent when not set in BPMN."
+        extras:
+          type: object
+          nullable: true
+          additionalProperties: { type: string }
+          description: "Forward of every zeebe:property from the BPMN task, unmodified — the compiler does not special-case any property name. Also carries 'message' for send_task/receive_task stage types."
+        engine_note:
+          type: string
+          nullable: true
+          description: "Advisory note set when stage type is not a registered engine class (IAM-owned passthrough). Absent for known types."
+        connector_type:
+          type: string
+          description: "The connector a connector stage runs, from zeebe:taskDefinition type connector:<name>. Set only on a connector stage."
+        io_mapping:
+          allOf: [{ $ref: '#/components/schemas/IOMapping' }]
+          nullable: true
+          description: "Variable input/output declarations of a connector stage."
+        boundary_timer:
+          type: object
+          nullable: true
+          description: "SLA deadline from a timer boundary event on the task. Null when no boundary timer is attached."
+          properties:
+            boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
+            steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
+            duration:     { type: string, description: "ISO 8601 duration (e.g. 'PT48H', 'P3D')." }
+            interrupting: { type: boolean, description: "true = task cancelled on fire; false = escalation runs concurrently." }
+            target_dept:  { type: string, nullable: true, description: "Department key to route the escalation path to." }
+            terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
+        boundary_message:
+          allOf: [{ $ref: '#/components/schemas/MessagePath' }]
+          nullable: true
+          description: "Correlation info from a message boundary event on the task. Null when no message boundary is attached."
+      example:
+        type: prep
+        activity: PrepActivity
+        node_id: Activity_0abc123
+        role: preparator
+        default_assignees: [018f2d3c-0000-7000-8000-0000000000a1]
+        extras: { requires_comment: "false" }
+        boundary_timer: { duration: "PT24H", interrupting: false }
+
+    DepartmentDef:
+      type: object
+      required: [id, label, stages]
+      properties:
+        id:
+          type: string
+          description: "Department identifier from the BPMN lane name. Sourced from the lane name attribute; format is owned by the Profile Service."
+        label:  { type: string }
+        iam_department_id: { type: string, format: uuid, description: "The IAM department that owns the lane's stages." }
+        props:
+          type: object
+          nullable: true
+          additionalProperties: { type: string }
+          description: "Arbitrary key/value pairs forwarded from <zeebe:properties> on the lane element."
+        stages:
+          type: array
+          items: { $ref: '#/components/schemas/StageDef' }
+      example:
+        id: Tender
+        label: Tender
+        stages:
+          - type: prep
+            activity: PrepActivity
+            role: bd-agent
+            default_assignees: [018e1f2a-0000-7000-8000-000000000001]
+            extras: { requires_comment: "false" }
+          - type: review
+            activity: ReviewActivity
+            role: tender-manager
+            default_assignees: [018e1f2a-0000-7000-8000-000000000002]
+            extras: { requires_comment: "true" }
+          - type: approve
+            activity: ApproveActivity
+            role: tender-director
+            default_assignees: [018e1f2a-0000-7000-8000-000000000003]
+            extras: { requires_comment: "true" }
+
+    ExecutionStep:
+      type: object
+      properties:
+        sequential:
+          type: array
+          items: { type: string }
+        parallel:
+          type: array
+          description: "Each entry is a parallel branch with its own sequential execution steps."
+          items:
+            $ref: '#/components/schemas/ParallelBranch'
+        exclusive:
+          type: array
+          items:
+            type: object
+            required: [condition_expression]
+            properties:
+              target:
+                type: string
+                description: >
+                  Destination department for a forward branch. Omitted when the branch
+                  terminates the workflow (see terminates) or on a revert branch.
+              target_stage:  { type: string }
+              target_node_id:
+                type: string
+                description: "Stable BPMN element ID of the forward target. Use this for machine routing instead of target_name."
+              target_name:
+                type: string
+                description: >
+                  BPMN element name of the target node. Present when target_stage is
+                  "sub_workflow" (disambiguates multiple subworkflows in the same dept)
+                  or empty (task has no zeebe:taskDefinition).
+              condition_expression: { type: string }
+              terminates:
+                type: boolean
+                description: "True when this forward branch leads directly to an end event."
+              revert_to_dept:
+                type: string
+                description: >
+                  Set on a guarded-loop revert branch (a back-edge from this exclusive gateway):
+                  the department to revert to. Present instead of a populated target.
+              revert_to_stage:
+                type: string
+                description: "Set with revert_to_dept: the stage level to revert to."
+              revert_to_node_id:
+                type: string
+                description: "Stable BPMN element ID of the revert target. Use for machine routing."
+              revert_to_name:
+                type: string
+                description: >
+                  BPMN element name of the revert target. Present when revert_to_stage
+                  is "sub_workflow" or empty, same rules as target_name.
+              steps:
+                type: array
+                description: "The steps the branch runs when it is taken."
+                items: { $ref: '#/components/schemas/ExecutionStep' }
+        sub_workflow:
+          allOf: [{ $ref: '#/components/schemas/SubWorkflowStep' }]
+          nullable: true
+        call_plan:
+          allOf: [{ $ref: '#/components/schemas/CallPlanStep' }]
+          nullable: true
+        io_mapping:
+          allOf: [{ $ref: '#/components/schemas/IOMapping' }]
+          nullable: true
+          description: "Variable input/output declarations of a callActivity step (call_plan). The Depts and Assignees inputs compile to call_plan, not here."
+        extras:
+          type: object
+          nullable: true
+          additionalProperties: { type: string }
+          description: "The zeebe:properties of a callActivity step (call_plan)."
+        message_paths:
+          type: array
+          nullable: true
+          items: { $ref: '#/components/schemas/MessagePath' }
+          description: "Message boundary events attached to this step."
+      example:
+        sequential: [design, planning, construction]
+
+    IOMapping:
+      type: object
+      properties:
+        inputs:
+          type: array
+          items: { $ref: '#/components/schemas/IOVar' }
+        outputs:
+          type: array
+          items: { $ref: '#/components/schemas/IOVar' }
+
+    IOVar:
+      type: object
+      required: [source, target]
+      properties:
+        source: { type: string, description: "FEEL expression or literal variable name from the caller's context." }
+        target: { type: string, description: "Variable name in the called process context." }
+
+    ParallelBranch:
+      type: object
+      required: [dept, steps]
+      properties:
+        dept:
+          type: string
+          description: "Lead department ID for this branch."
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/ExecutionStep' }
+
+    SubWorkflowStep:
+      type: object
+      required: [name, plan]
+      properties:
+        node_id:     { type: string, description: "Stable BPMN element ID of the subProcess element." }
+        name:        { type: string }
+        plan:
+          type: object
+          properties:
+            steps:
+              type: array
+              items: { $ref: '#/components/schemas/ExecutionStep' }
+        error_paths:
+          type: array
+          items: { $ref: '#/components/schemas/ErrorPath' }
+        timer_paths:
+          type: array
+          items: { $ref: '#/components/schemas/TimerPath' }
+        message_paths:
+          type: array
+          items: { $ref: '#/components/schemas/MessagePath' }
+          description: "From message boundary events attached to the subProcess."
+
+    CallPlanStep:
+      type: object
+      description: >
+        A callActivity. The called process is compiled once into its own plan in
+        CompiledCollaboration.plans; consumers expand the call with dsl.ExpandCalls
+        (workflow_models_lib.md §2.6), which clones the called plan's departments into
+        the caller as "<node_id>::<department>".
+      required: [node_id, plan]
+      properties:
+        node_id: { type: string, description: "BPMN element ID of the callActivity." }
+        name:    { type: string }
+        plan:    { type: string, description: "Name of the called plan in CompiledCollaboration.plans (its process id)." }
+        departments:
+          type: object
+          additionalProperties: { type: string }
+          description: "Called plan department → calling plan department. A called department absent here keeps its own IAM department."
+        assignees:
+          type: object
+          additionalProperties: { type: string, format: uuid }
+          description: "A task → its default user for this call only. The key is a called task's node ID, or the node IDs of the calls leading to a task in a nested module, then its node ID, joined by '::' (e.g. Review_Check::Check_Task). An outer call's entry wins over an inner call's."
+        error_paths:
+          type: array
+          items: { $ref: '#/components/schemas/ErrorPath' }
+        timer_paths:
+          type: array
+          items: { $ref: '#/components/schemas/TimerPath' }
+        message_paths:
+          type: array
+          items: { $ref: '#/components/schemas/MessagePath' }
+
+    ErrorPath:
+      type: object
+      required: [short_circuit]
+      properties:
+        boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
+        error_code:   { type: string, nullable: true, description: "BPMN error code that triggers this path. Empty means catch-all." }
+        short_circuit: { type: boolean, description: "true = bypass remaining stages and route directly to target_dept." }
+        target_dept:  { type: string, nullable: true, description: "Department to route to on this error path." }
+        terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
+        steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
+
+    TimerPath:
+      type: object
+      required: [duration, interrupting]
+      properties:
+        boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
+        duration:     { type: string, description: "ISO 8601 duration string." }
+        interrupting: { type: boolean, description: "true = task cancelled on fire; false = escalation runs concurrently." }
+        target_dept:  { type: string, nullable: true, description: "Department to route to on this timer path." }
+        terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
+        steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
+
+    MessagePath:
+      type: object
+      required: [message_name, interrupting]
+      properties:
+        boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
+        message_name: { type: string, description: "Resolved message name used for runtime correlation. May be empty if the source BPMN's message flow/messageRef could not be resolved (see MISSING_MESSAGE_DEFINITION warning)." }
+        interrupting: { type: boolean, description: "true = host activity cancelled on fire; false = escalation runs concurrently." }
+        target_dept:  { type: string, nullable: true, description: "Department to route to on this message path." }
+        terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
+        steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
+
+    CompiledCollaboration:
+      type: object
+      description: "The stored compiled_plan_json: the document's one runnable pool as the main plan, with a plan for each process it calls."
+      required: [main_plan, plans, schema_version]
+      properties:
+        main_plan:      { type: string, description: "Name of the plan in `plans` that an instance starts." }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/CompiledPlan' }
+        schema_version: { type: integer, description: "DSL schema major version, stamped at publish." }
+
+    CompiledPlan:
+      type: object
+      required: [name, departments, execution]
+      properties:
+        name:        { type: string }
+        task_queue:  { type: string, description: "Temporal task queue." }
+        departments:
+          type: array
+          items: { $ref: '#/components/schemas/DepartmentDef' }
+        execution:
+          type: object
+          properties:
+            steps:
+              type: array
+              items: { $ref: '#/components/schemas/ExecutionStep' }
+        visual_elements:
+          type: array
+          nullable: true
+          description: "Visual-only BPMN elements (e.g. dataStoreReference) that carry no execution semantics. Informational only."
+          items: { $ref: '#/components/schemas/VisualElementDef' }
+      example:
+        name: Tender Document Review Process
+        task_queue: wf-queue-default
+        departments:
+          - id: Tender
+            label: Tender
+            stages:
+              - { type: prep,    activity: PrepActivity,    role: bd-agent,       default_assignees: [018e1f2a-0000-7000-8000-000000000001], extras: { requires_comment: "false" } }
+              - { type: review,  activity: ReviewActivity,  role: tender-manager, default_assignees: [018e1f2a-0000-7000-8000-000000000002], extras: { requires_comment: "true" } }
+              - { type: approve, activity: ApproveActivity, role: tender-director, default_assignees: [018e1f2a-0000-7000-8000-000000000003], extras: { requires_comment: "true" } }
+          - id: Engineering
+            label: Engineering
+            stages:
+              - { type: prep,    activity: PrepActivity,    role: lead-engineer,  default_assignees: [018e1f2a-0000-7000-8000-000000000010], extras: { requires_comment: "false" }, boundary_timer: { duration: "PT48H", interrupting: false, target_dept: tender } }
+        execution:
+          steps:
+            - sequential: [Tender, Engineering]
+
+    StageChange:
+      type: object
+      properties:
+        node_key:    { type: string, description: "Department id and node id of the stage." }
+        description: { type: string }
+      example:
+        node_key: "dept-eng/Task_Review"
+        description: "timer boundary changed"
+
+    StepChange:
+      type: object
+      properties:
+        description: { type: string }
+        before:      { $ref: '#/components/schemas/ExecutionStep' }
+        after:       { $ref: '#/components/schemas/ExecutionStep' }
+      example:
+        description: "Step 1 changed from sequential to parallel"
+        before: { sequential: [design, planning] }
+        after:  { parallel: [{dept: design, steps: []}, {dept: planning, steps: []}] }
+
+    ConnectorRegistryField:
+      type: object
+      properties:
+        name:        { type: string }
+        kind:
+          type: string
+          enum: [string, bool, int, float, enum, list, map, any, document_ref, secret_ref, timestamp]
+        required:    { type: boolean }
+        enum_values:
+          type: array
+          items: { type: string }
+        condition:   { type: string }
+        description: { type: string }
+
+    GatewayAuthError:
+      type: object
+      required: [error, status]
+      properties:
+        error:      { type: string, example: "missing or invalid authentication headers" }
+        status:     { type: integer, example: 401 }
+        trace_id:   { type: string }
+        request_id: { type: string }
+
+    ProblemDetails:
+      type: object
+      required: [type, title, status, detail, instance, code]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: A URI reference that identifies the problem type.
+        title:
+          type: string
+          description: A short, human-readable summary of the problem type.
+        status:
+          type: integer
+          description: The HTTP status code generated by the origin server for this occurrence of the problem.
+        detail:
+          type: string
+          description: A human-readable explanation specific to this occurrence of the problem.
+        instance:
+          type: string
+          description: A URI reference that identifies the specific occurrence of the problem.
+        code:
+          type: string
+          description: Service-specific error code for programmatic handling.
+        invalid_params:
+          type: array
+          description: Details about specific fields that failed validation.
+          items:
+            type: object
+            required: [name, reason]
+            properties:
+              name:
+                type: string
+              reason:
+                type: string
+              code:
+                type: string
+      example:
+        type: "https://api.workflow.platform/errors/not-found"
+        title: "Resource Not Found"
+        status: 404
+        detail: "Workflow not found or tenant boundary breached."
+        instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222"
+        code: "NOT_FOUND"
+
+    VisualElementDef:
+      type: object
+      required: [kind, id]
+      properties:
+        kind: { type: string, description: "Element type tag (e.g. dataStoreReference)." }
+        id:   { type: string, description: "BPMN element ID." }
+        name: { type: string, nullable: true, description: "Display name, if set on the element." }
+
+    BpmnValidationSeverity:
+      type: string
+      description: "Severity of a BPMN validation issue. error = compilation blocked; warning = advisory only, compilation succeeds."
+      enum: [error, warning]
+
+    BpmnErrorCode:
+      type: string
+      description: Machine-readable BPMN validation issue code.
+      enum:
+        - REJECTED_ELEMENT              # Element on the Tier-3 parser denylist
+        - UNSUPPORTED_ELEMENT           # Element type recognised but not supported by this service
+        - MISSING_NAMESPACE             # Required bpmn or zeebe namespace missing
+        - MISSING_TASK_DEFINITION       # zeebe:taskDefinition absent on a userTask; also raised for a boundary event with no event definition (timer/error/message)
+        - MISSING_ASSIGNMENT_DEFINITION # zeebe:assignmentDefinition absent on a userTask
+        - INVALID_TASK_DEFINITION_TYPE  # deprecated: superseded by UNKNOWN_STAGE_TYPE (warning)
+        - UNKNOWN_STAGE_TYPE            # taskDefinition.type not in the registered StageTypeHandler set; warning severity — compilation continues with passthrough StageDef
+        - TASK_NOT_IN_LANE              # userTask not listed in any lane via flowNodeRef
+        - CANDIDATE_GROUPS_EMPTY        # candidateGroups absent or exceeds 256 chars
+        - INVALID_CANDIDATE_USER        # candidateUsers is not a UUID v7; in a global module, any candidateUsers or call Assignees at all
+        - CANDIDATE_USERS_EMPTY         # a userTask names no user: a warning on a document; an error at publish and /validate for a task of the expanded plan with no default, on the task or the top-level call that runs it
+        - INVALID_CONDITION_EXPRESSION  # conditionExpression exceeds 4096 chars
+        - INVALID_SLA_DURATION          # timer boundary duration is not valid ISO 8601 or Go duration
+        - INVALID_ZEEBE_PROPERTY        # callActivity: malformed Depts/Assignees input, a Depts lane or an Assignees task or call path that does not exist, an Assignees user that is not a UUID v7, or a retired dept_id input
+        - MISSING_MESSAGE_DEFINITION    # error severity when a messageFlow's messageRef references an undeclared bpmn:message; warning severity when a message boundary event's or collaboration messageFlow's name cannot be resolved at all
+        - UNMATCHED_MESSAGE_FLOW        # message flow source/target does not reference a known element
+        - TASK_LIMIT_EXCEEDED           # userTask count > 1000 in the process, a compile making more than 1000 stages or visiting more than 10000 nodes, or more than 1000 stages and calls once its calls are expanded
+        - LANE_LIMIT_EXCEEDED           # lane count > 100
+        - MULTIPLE_START_EVENTS         # more than one startEvent in the process
+        - MULTIPLE_END_EVENTS           # deprecated: not currently raised by the compiler (multiple end events are valid)
+        - NO_START_EVENT                # process has no startEvent
+        - NO_END_EVENT                  # process has no endEvent
+        - DANGLING_NODE                 # node has no incoming or outgoing sequence flow
+        - UNREACHABLE_NODE              # node not reachable from startEvent via DFS
+        - CYCLE_DETECTED                # Tarjan SCC found a strongly-connected component without a guarded exit
+        - UNGUARDED_LOOP                # a back-edge is a self-loop, originates at an exclusive gateway with no forward exit, or originates at a node type that may not source a back-edge
+        - UNMATCHED_GATEWAY             # split gateway has no reachable matching join gateway
+        - INVALID_SEQUENCE_FLOW_REF     # sequenceFlow references unknown sourceRef or targetRef
+        - MULTIPLE_PROCESSES            # more than one process would run: executable, not called, not marked ignore
+        - NO_RUNNABLE_PROCESS           # no process would run: every one is marked ignore, not executable, or called
+        - MAX_DEPTH_EXCEEDED            # longest forward path exceeds 2000 nodes
+        - INVALID_BOUNDARY_ATTACHMENT   # more than one event definition on a boundary event, more than one timer boundary on the same host, an error boundary attached to a host other than subProcess/callActivity, or an unknown errorRef
+        - MISSING_DIAGRAM               # bpmndi:BPMNDiagram section absent
+        - MISSING_DIAGRAM_SHAPE         # a flow node has no corresponding BPMNShape in the diagram
+        - UNRESOLVED_CALLED_ELEMENT     # callActivity missing zeebe:calledElement, naming neither a process in the document nor a callable library module version, or pinning a versionTag of a process id the document also defines
+        - NESTED_SUBPROCESS_NOT_SUPPORTED # subProcess nested inside another subProcess
+        - MISSING_DEPT_INPUT_FOR_MODULE # a called process has two or more open lanes (no dept_id) and the call's Depts input does not map every one
+        - CALLED_ELEMENT_CYCLE          # a chain of callActivity calls returns to a process already on it
+        - DUPLICATE_PROCESS_ID          # two bpmn:process elements in the bundled document share an id
+        - SPLIT_WITHOUT_GATEWAY         # a start event, task, send or receive task, subProcess, callActivity or boundary event has more than one outgoing flow; a flow splits only at a gateway
+        - END_EVENT_WITH_OUTGOING_FLOW  # an end event has an outgoing flow
+        - DUPLICATE_ELEMENT_ID          # two elements of one process share an id
+        - INVALID_TASK_SCHEDULE         # a task's dueDate or followUpDate is not an RFC 3339 date-time
+        - GATEWAY_BRANCH_WITHOUT_CONDITION # warning: an exclusive split has more than one flow without a conditionExpression, so only the first is ever taken
+        - UNSUPPORTED_BOUNDARY_TARGET   # a boundary event's path reaches a callActivity, sendTask or receiveTask before any userTask, subProcess or end event, or a subProcess whose body does not start with a userTask
+        - MISSING_DEPT_ID               # a task's lane has no dept_id; a call binds a module lane to a workflow lane with no dept_id; or, at publish and /validate, the workflow has no lanes or a task of its expanded plan runs in no IAM department
+        - INVALID_DEPT_ID               # a lane's dept_id is not a UUID
+        - INVALID_LANE_NAME             # a lane's name contains /, :: or ~
+        - IGNORED_LANE_WORK             # a lane marked ignore holds a callActivity, subProcess or connector task, a boundary on one of its skipped tasks, or a loop whose way back holds only skipped tasks
+        - UNKNOWN_CONNECTOR_TYPE        # warning: a connector serviceTask names a connector type the registry does not know
+        - CONNECTOR_TASK_HAS_ASSIGNMENT # warning: a connector serviceTask carries an assignmentDefinition, which it does not use
+        - CONNECTOR_SECRET_AUTHORED     # a connector serviceTask input targets a secret field of its connector type; the tenant's stored credential is always used
+
+    BpmnValidationFailure:
+      type: object
+      description: >
+        Returned by POST /validate. is_valid is false when any issue has severity "error";
+        true when all issues are warnings (compilation would succeed). The issues array is
+        empty on a fully valid document.
+      properties:
+        is_valid:
+          type: boolean
+          example: false
+        issues:
+          type: array
+          items:
+            type: object
+            required: [code, message, severity]
+            properties:
+              code:     { $ref: '#/components/schemas/BpmnErrorCode' }
+              severity: { $ref: '#/components/schemas/BpmnValidationSeverity' }
+              node_id:
+                type: string
+                nullable: true
+                description: BPMN element ID that caused the issue, if applicable.
+                example: Task_design_prep
+              message:
+                type: string
+                description: Human-readable description of the issue.
+                example: "userTask is missing zeebe:taskDefinition"
+      example:
+        is_valid: false
+        issues:
+          - code: MISSING_TASK_DEFINITION
+            severity: error
+            node_id: Task_design_prep
+            message: "userTask is missing zeebe:taskDefinition"
+          - code: UNKNOWN_STAGE_TYPE
+            severity: warning
+            node_id: Task_audit_check
+            message: "taskDefinition type \"audit\" is not a defined stage class in the workflow engine"
+
+  responses:
+    Unauthorized:
+      description: >
+        Missing or invalid gateway identity headers. A missing identity is refused by the
+        shared HTTP library with `GatewayAuthError`; an identity that is present but is not a
+        UUID is refused with a problem document.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - { $ref: '#/components/schemas/ProblemDetails' }
+              - { $ref: '#/components/schemas/GatewayAuthError' }
+          example:
+            type: "https://api.workflow.platform/errors/unauthorized"
+            title: "Unauthorized Access"
+            status: 401
+            detail: "x-tenant-id header is missing or could not be resolved to a valid tenant."
+            instance: "/workflows"
+            code: "UNAUTHORIZED"
+
+    Forbidden:
+      description: Caller lacks the required role or plan limits were exceeded.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/forbidden"
+            title: "Forbidden Operation"
+            status: 403
+            detail: "This operation requires x-tenant-roles: tenant_admin or tenant_owner."
+            instance: "/workflows"
+            code: "FORBIDDEN"
+
+    NotFound:
+      description: Resource not found or tenant boundary breached (security through obscurity).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/not-found"
+            title: "Resource Not Found"
+            status: 404
+            detail: "Workflow not found or belongs to a different tenant."
+            instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222"
+            code: "NOT_FOUND"
+
+    PayloadTooLarge:
+      description: The request body exceeds the 10 MB limit.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+    UnsupportedMediaType:
+      description: A request with a body must carry `Content-Type` application/json.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+    BadRequest:
+      description: >
+        Malformed request — unparseable JSON, a missing or invalid field, a page, limit or
+        versions_limit outside its range, or an Idempotency-Key longer than 256 characters.
+        Fields and parameters are named in `invalid_params`; values are never echoed.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/bad-request"
+            title: "Bad Request"
+            status: 400
+            detail: "Idempotency-Key must be at most 256 characters"
+            instance: "/workflows"
+            code: "BAD_REQUEST"
+
+    ServiceUnavailable:
+      description: >
+        A dependency is temporarily unavailable — the database, the lock store, the secret
+        store or Execution. The request changed nothing and is safe to retry.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/service-unavailable"
+            title: "Upstream Service Unavailable"
+            status: 503
+            detail: "an upstream dependency is temporarily unavailable"
+            instance: "/workflows"
+            code: "UPSTREAM_UNAVAILABLE"
+
+    Conflict:
+      description: State conflict — see error body for detail.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/conflict"
+            title: "State Conflict"
+            status: 409
+            detail: "An active draft already exists for this workflow. Publish or discard it before initializing a new one."
+            instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/draft"
+            code: "DRAFT_ALREADY_EXISTS"
+
+    UnprocessableEntity:
+      description: Semantically invalid BPMN — see errors array for per-node details.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/validation-failed"
+            title: "BPMN Validation Failed"
+            status: 422
+            detail: "BPMN semantic or structural validation failed."
+            instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/versions/11abcc22/publish"
+            code: "BPMN_VALIDATION_FAILED"
+            invalid_params:
+              - name: Task_design_prep
+                reason: "userTask is missing zeebe:taskDefinition"
+                code: MISSING_TASK_DEFINITION
+              - name: Gateway_parallel_split
+                reason: "Parallel split gateway has no reachable matching join gateway"
+                code: UNMATCHED_GATEWAY
+
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/internal-error"
+            title: "Internal Server Error"
+            status: 500
+            detail: "An unexpected error occurred. Please retry or contact support if the issue persists."
+            instance: "/workflows"
+            code: "INTERNAL_ERROR"
+
+paths:
+
+  # 3.1 / 3.2
+  /api/v1/workflows:
+    get:
+      operationId: listWorkflows
+      summary: List tenant workflows
+      tags: [Workflows]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - in: query
+          name: page
+          schema: { type: integer, default: 1, minimum: 1, maximum: 100000 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - in: query
+          name: search
+          schema: { type: string }
+          description: Fuzzy search on name.
+        - in: query
+          name: key
+          schema: { type: string }
+          description: Exact template key match.
+        - in: query
+          name: is_valid
+          schema: { type: boolean }
+          description: >
+            Filter on `workflow_version.is_valid` of the active version
+            (`workflow.active_version_id → workflow_version.id`).
+            `is_valid` is set to `false` when a `DepartmentMembershipRevoked` event invalidates
+            an assignee in a published version, preventing new workflow instances until
+            reassignment. Workflows with no active version (`active_version_id IS NULL`)
+            are excluded when this filter is set because there is no active version to evaluate.
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, archived]
+          description: Filter active (active_version_id IS NOT NULL) or archived (active_version_id IS NULL) workflows.
+        - in: query
+          name: has_draft
+          schema: { type: boolean }
+          description: Filter workflows that have (true) or do not have (false) an unpublished DRAFT version.
+      responses:
+        "200":
+          description: Paginated workflow list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflows:
+                    type: array
+                    items: { $ref: '#/components/schemas/WorkflowSummary' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+    post:
+      operationId: createWorkflow
+      summary: Create workflow definition (first draft)
+      tags: [Workflows]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, name, bpmn_xml]
+              properties:
+                key:
+                  type: string
+                  maxLength: 255
+                  description: Unique template key for this workflow within the tenant. Immutable after creation.
+                  example: tender-review
+                name:
+                  type: string
+                  maxLength: 255
+                  example: Tender Document Review Process
+                description:
+                  type: string
+                  maxLength: 2000
+                  example: Standard review process for tender proposal documents
+                bpmn_xml:
+                  type: string
+                  description: Raw BPMN 2.0 XML string. The request body is limited to 10 MB (413 above it). Must declare bpmn and zeebe namespaces.
+                  example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
+      responses:
+        "201":
+          description: Workflow and initial draft created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:    { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer, nullable: true }
+                  message:        { type: string }
+        "400":
+          description: Malformed request body — unparseable JSON or missing required field.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409":
+          description: Template key already exists for this tenant, or idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example:
+                type: "https://api.workflow.platform/errors/conflict"
+                title: "Duplicate Template Key"
+                status: 409
+                detail: "A workflow with key 'tender-review' already exists for this tenant."
+                instance: "/workflows"
+                code: "DUPLICATE_TEMPLATE_KEY"
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # must come before /workflows/{id} to avoid route shadowing
+  /api/v1/workflows/validate:
+    post:
+      operationId: validateBpmn
+      summary: Validate BPMN without persisting
+      tags: [Validation]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bpmn_xml]
+              properties:
+                bpmn_xml:
+                  type: string
+                  description: Raw BPMN 2.0 XML. The request body is limited to 10 MB (413 above it). Must declare bpmn and zeebe namespaces.
+                  example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
+      responses:
+        "200":
+          description: BPMN validation results (valid status and potential errors list).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BpmnValidationFailure' }
+        "400":
+          description: Malformed XML payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # 3.3
+  /api/v1/workflows/{id}:
+    get:
+      operationId: getWorkflow
+      summary: Get workflow root and version history
+      tags: [Workflows]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - in: query
+          name: versions_limit
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+          description: Max number of versions returned inline in the versions array.
+      responses:
+        "200":
+          description: Workflow detail with version list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:               { type: string, format: uuid }
+                  key:              { type: string }
+                  name:             { type: string }
+                  description:      { type: string }
+                  active_version_id: { type: string, format: uuid, nullable: true }
+                  created_at:       { type: string, format: date-time }
+                  updated_at:       { type: string, format: date-time }
+                  has_draft:        { type: boolean }
+                  versions:
+                    type: array
+                    items: { $ref: '#/components/schemas/VersionSummary' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/workflows/{id}/versions:
+    get:
+      operationId: listWorkflowVersions
+      summary: Get paginated version history of a workflow
+      tags: [Versions]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - in: query
+          name: page
+          schema: { type: integer, default: 1, minimum: 1, maximum: 100000 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: Paginated version list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items: { $ref: '#/components/schemas/VersionSummary' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # 3.5 / 3.9
+  /api/v1/workflows/{id}/draft:
+    get:
+      operationId: getDraft
+      summary: Get the active draft version detail for a workflow
+      tags: [Drafts]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+      responses:
+        "200":
+          description: Draft version detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:                 { type: string, format: uuid }
+                  workflow_id:        { type: string, format: uuid }
+                  version_number:     { type: integer, nullable: true }
+                  status:             { $ref: '#/components/schemas/VersionStatus' }
+                  is_valid:           { type: boolean }
+                  validation_errors:
+                    type: array
+                    items: { $ref: '#/components/schemas/ValidationError' }
+                    nullable: true
+                  bpmn_xml:           { type: string }
+                  module_refs:        { type: array, items: { $ref: '#/components/schemas/ModuleRef' }, description: "Library module versions this version resolved at publish, whose snapshot it holds. Empty on drafts." }
+                  artifact_hash:      { type: string, nullable: true, description: "SHA-256 of the BPMN XML at publish time. Absent on DRAFT versions." }
+                  compiled_plan_json: { $ref: '#/components/schemas/CompiledCollaboration' }
+                  created_by_user_id: { type: string, format: uuid }
+                  created_at:         { type: string, format: date-time }
+                  updated_at:         { type: string, format: date-time }
+                  published_at:       { type: string, format: date-time, nullable: true }
+                  record_version:     { type: integer, format: int64, description: "Monotonic counter. Echo on PUT /draft requests." }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404":
+          description: Draft not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example:
+                type: "https://api.workflow.platform/errors/not-found"
+                title: "Draft Not Found"
+                status: 404
+                detail: "No active draft exists for this workflow."
+                instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/draft"
+                code: "DRAFT_NOT_FOUND"
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+    post:
+      operationId: initDraft
+      summary: Initialize a new draft from the active published version
+      tags: [Drafts]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        "201":
+          description: Draft created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:    { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer, nullable: true }
+                  message:        { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: Draft already exists or idempotency key reused with different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+    put:
+      operationId: updateDraft
+      summary: Save canvas changes to the active draft
+      tags: [Drafts]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                  example: Updated Tender Review Process
+                description:
+                  type: string
+                  maxLength: 2000
+                  example: Updated standard review process
+                bpmn_xml:
+                  type: string
+                  description: Updated BPMN 2.0 XML. The request body is limited to 10 MB (413 above it). Must declare bpmn and zeebe namespaces.
+                record_version:
+                  type: integer
+                  format: int64
+                  description: "Monotonic optimistic-lock counter. Echo the value received in the last GET/PUT response. If another update has been applied since you read, RowsAffected=0 triggers DRAFT_CONCURRENCY (409)."
+                  example: 3
+      responses:
+        "200":
+          description: Draft updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:    { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer, nullable: true }
+                  record_version: { type: integer, format: int64, description: "Updated record_version after the write. Pass this value on the next PUT." }
+                  message:        { type: string }
+        "400":
+          description: Malformed request body or unparseable XML.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404":
+          description: Workflow or draft version not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example:
+                type: https://api.workflow.platform/errors/not-found
+                title: Not Found
+                status: 404
+                detail: "no draft found for this workflow"
+                instance: /api/v1/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/draft
+                code: DRAFT_NOT_FOUND
+        "409":
+          description: Optimistic concurrency conflict or idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+    delete:
+      operationId: discardDraft
+      summary: Discard and delete the active draft
+      tags: [Drafts]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        "204":
+          description: Draft discarded. No response body.
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404":
+          description: Workflow or draft version not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example:
+                type: https://api.workflow.platform/errors/not-found
+                title: Not Found
+                status: 404
+                detail: "no draft found for this workflow"
+                instance: /api/v1/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/draft
+                code: DRAFT_NOT_FOUND
+        "409":
+          description: Idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # 3.8
+  /api/v1/workflows/{id}/archive:
+    post:
+      operationId: archiveWorkflow
+      summary: Archive workflow — prevents new execution instances
+      tags: [Workflows]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        "200":
+          description: Workflow archived.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id: { type: string, format: uuid }
+                  status:      { $ref: '#/components/schemas/VersionStatus' }
+                  message:     { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: Workflow already archived or idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503":
+          description: Upstream service unavailable (Execution Service could not be notified).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  # 3.4
+  /api/v1/workflows/{id}/versions/{version_id}:
+    get:
+      operationId: getVersion
+      summary: Get version detail including BPMN XML and compiled DSL
+      tags: [Versions]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        "200":
+          description: Version detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:                 { type: string, format: uuid }
+                  workflow_id:        { type: string, format: uuid }
+                  version_number:     { type: integer, nullable: true }
+                  status:             { $ref: '#/components/schemas/VersionStatus' }
+                  is_valid:           { type: boolean }
+                  validation_errors:
+                    type: array
+                    items: { $ref: '#/components/schemas/ValidationError' }
+                    nullable: true
+                  bpmn_xml:           { type: string }
+                  module_refs:        { type: array, items: { $ref: '#/components/schemas/ModuleRef' }, description: "Library module versions this version resolved at publish, whose snapshot it holds. Empty on drafts." }
+                  artifact_hash:      { type: string, nullable: true, description: "SHA-256 of the BPMN XML at publish time. Absent on DRAFT versions." }
+                  compiled_plan_json: { $ref: '#/components/schemas/CompiledCollaboration' }
+                  created_by_user_id: { type: string, format: uuid }
+                  created_at:         { type: string, format: date-time }
+                  updated_at:         { type: string, format: date-time }
+                  published_at:       { type: string, format: date-time, nullable: true }
+                  record_version:     { type: integer, format: int64, description: "Monotonic counter. Echo on PUT /draft requests." }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # 3.7
+  /api/v1/workflows/{id}/versions/{version_id}/publish:
+    post:
+      operationId: publishVersion
+      summary: Compile and publish the active draft
+      tags: [Versions]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force_publish_structural:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Version published.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:    { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer }
+                  message:        { type: string }
+        "400":
+          description: Malformed request body — unparseable JSON or missing required field.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: Structural divergence detected (`STRUCTURAL_DIVERGENCE`; `force_publish_structural` accepts it), the draft was saved after the publish read it (`DRAFT_CONCURRENCY`; publish again), or idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503":
+          description: Upstream service unavailable (Execution Service could not be notified).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  # 3.10
+  /api/v1/workflows/{id}/versions/{version_id}/clone:
+    post:
+      operationId: cloneVersion
+      summary: Clone a published version into a new workflow key
+      tags: [Versions]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_key, new_name]
+              properties:
+                new_key:
+                  type: string
+                  maxLength: 255
+                  description: New unique template key for the cloned workflow. Must not already exist for this tenant.
+                  example: tender-review-copy
+                new_name:
+                  type: string
+                  maxLength: 255
+                  example: "Tender Document Review Process (Cloned)"
+                new_description:
+                  type: string
+                  maxLength: 2000
+                  example: Duplicate copy of standard review process
+      responses:
+        "201":
+          description: New workflow created from clone.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:    { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer, nullable: true }
+                  message:        { type: string }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: Template key conflict (cloned key already exists), source version is not PUBLISHED or ARCHIVED, or idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              examples:
+                duplicate_key:
+                  summary: Cloned key already exists
+                  value:
+                    type: "https://api.workflow.platform/errors/conflict"
+                    title: "Duplicate Template Key"
+                    status: 409
+                    detail: "A workflow with this key already exists for this tenant."
+                    instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/versions/11abcc22-3844-42bc-938b-665cd42c1111/clone"
+                    code: "DUPLICATE_TEMPLATE_KEY"
+                invalid_status:
+                  summary: Source version is not in PUBLISHED or ARCHIVED status
+                  value:
+                    type: "https://api.workflow.platform/errors/conflict"
+                    title: "Invalid Version Status"
+                    status: 409
+                    detail: "Only PUBLISHED or ARCHIVED versions can be cloned."
+                    instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/versions/11abcc22-3844-42bc-938b-665cd42c1111/clone"
+                    code: "INVALID_VERSION_STATUS"
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # 3.11
+  /api/v1/workflows/{id}/versions/{version_id}/promote:
+    post:
+      operationId: promoteVersion
+      summary: Promote a published version to active (rollback / rollforward)
+      tags: [Versions]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        "200":
+          description: Version promoted to active.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:       { type: string, format: uuid }
+                  active_version_id: { type: string, format: uuid }
+                  version_number:    { type: integer }
+                  message:           { type: string }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: Version is not in PUBLISHED status, or idempotency key reused with a different payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example:
+                type: "https://api.workflow.platform/errors/conflict"
+                title: "Invalid Version Status"
+                status: 409
+                detail: "Only PUBLISHED versions can be promoted."
+                instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/versions/11abcc22-3844-42bc-938b-665cd42c1111/promote"
+                code: "INVALID_VERSION_STATUS"
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # 3.13
+  /api/v1/workflows/{id}/versions/{version_id}/validation:
+    get:
+      operationId: getVersionValidation
+      summary: Re-run structural validation against a stored version
+      description: >-
+        Validates a stored version's own BPMN, in any status, and writes nothing.
+        A draft's library calls resolve against the library as it is now; any
+        other version's resolve to the module versions in its `module_refs`.
+        A validator rule added after a version was published does not
+        retroactively invalidate it, so this is how an operator finds a template
+        that still holds a defect rather than discovering it when the Execution
+        Service refuses to instantiate.
+      tags: [Versions]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        "200":
+          description: Validation result for the stored version.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version_id, status, is_valid, issues]
+                properties:
+                  version_id: { type: string, format: uuid }
+                  status:     { type: string, example: PUBLISHED }
+                  is_valid:   { type: boolean }
+                  issues:
+                    type: array
+                    items:
+                      type: object
+                      required: [node_id, code, message, severity]
+                      properties:
+                        node_id:  { type: string, example: Activity_0abc123 }
+                        code:     { type: string, example: CANDIDATE_USERS_EMPTY }
+                        message:  { type: string }
+                        severity: { $ref: '#/components/schemas/BpmnValidationSeverity' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/workflows/{id}/versions/{version_id}/nodes:
+    get:
+      operationId: getVersionNodes
+      summary: List a published version's human tasks, module tasks included
+      description: >-
+        Reads a PUBLISHED or ARCHIVED version's stored plan with its calls
+        expanded and lists every human task, in plan order: the nodes the Execution Service checks for eligibility at
+        instance start and keys in override_map. Writes nothing.
+      tags: [Versions]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        "200":
+          description: The version's nodes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VersionNodes' }
+        "400":
+          description: An id in the path is not a UUID.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: The version is a DRAFT, which has no stored plan (INVALID_VERSION_STATUS).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/workflows/{id}/versions/{version_id}/export:
+    get:
+      operationId: exportBpmn
+      summary: Download raw BPMN XML for a version
+      tags: [Versions]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        "200":
+          description: Raw BPMN XML file.
+          headers:
+            Content-Disposition:
+              schema: { type: string, example: 'attachment; filename="workflow-tender-review-v2.bpmn"' }
+          content:
+            application/xml:
+              schema: { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # 3.14
+  /api/v1/workflows/{id}/versions/{version_id}/diff/{target_version_id}:
+    get:
+      operationId: getVersionDiff
+      summary: Structural diff between two versions
+      tags: [Versions]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/Departments'
+        - $ref: '#/components/parameters/Plan'
+        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/WorkflowId'
+        - name: version_id
+          in: path
+          required: true
+          description: Base version ID.
+          schema: { type: string, format: uuid }
+        - name: target_version_id
+          in: path
+          required: true
+          description: Target version ID.
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Diff result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflow_id:       { type: string, format: uuid }
+                  base_version_id:   { type: string, format: uuid }
+                  target_version_id: { type: string, format: uuid }
+                  change_type:       { $ref: '#/components/schemas/ChangeType' }
+                  changes:
+                    type: object
+                    properties:
+                      added_departments:   { type: array, items: { type: string } }
+                      removed_departments: { type: array, items: { type: string } }
+                      step_changes:
+                        type: array
+                        items: { $ref: '#/components/schemas/StepChange' }
+                      stage_changes:
+                        type: array
+                        description: Stages whose timer boundary, message boundary or connector type changed. Each one is a structural change.
+                        items: { $ref: '#/components/schemas/StageChange' }
+                      metadata_only: { type: boolean }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+  # Health Checks
+  /healthz:
+    get:
+      operationId: healthCheck
+      summary: Liveness Probe
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "OK" }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /readyz:
+    get:
+      operationId: readinessCheck
+      summary: Readiness Probe
+      description: >
+        Ready means the database answers. A Valkey outage does not make the service unready,
+        since plans are served from the database; it is reported as `cache: degraded`.
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is ready to accept traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, cache]
+                properties:
+                  status:         { type: string, example: "OK" }
+                  cache:          { type: string, enum: [ok, degraded], description: "`degraded` when Valkey does not answer; plan serving and drafts continue (drafts answer 503 while the lock store is down)." }
+                  db_utilization: { type: number, example: 0.3, description: "Ratio of acquired connections to max pool size." }
+                  db_conns:       { type: integer, example: 3, description: "Current number of acquired connections." }
+                  db_max_conns:   { type: integer, example: 10, description: "Configured pool maximum." }
+        "503":
+          description: Not ready — the database is unreachable, or the pod is draining for shutdown.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [unavailable, draining] }
+                  db:     { type: string, enum: [unreachable] }
+              example:
+                status: "unavailable"
+                db: "unreachable"
+
+  /api/v1/bpmn/allowed-elements:
+    get:
+      operationId: getAllowedBpmnElements
+      summary: List the recognized BPMN element vocabulary
+      description: >
+        Serves the same Tier-1 allowlist the compiler enforces, for the modeler UI's
+        palette configuration. UX convenience only — the compiler's own server-side
+        422 rejection is the actual enforcement boundary, not this endpoint.
+      tags: [BPMN]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        "200":
+          description: The recognized element list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  elements:
+                    type: array
+                    items: { type: string }
+              example:
+                elements: [definitions, process, userTask, callActivity]
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/connectors/registry:
+    get:
+      operationId: listConnectorRegistry
+      summary: List the connector type registry
+      description: >
+        Static metadata for every registered connector type (currently storage,
+        send-email, rest-call) — field definitions for the modeler
+        UI's connector-task configuration form.
+      tags: [Connectors]
+      security:
+        - GatewayTenantContext: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        "200":
+          description: The connector registry.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connectors:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        type:         { type: string }
+                        display_name: { type: string }
+                        description:  { type: string }
+                        inputs:
+                          type: array
+                          items: { $ref: '#/components/schemas/ConnectorRegistryField' }
+                        outputs:
+                          type: array
+                          items: { $ref: '#/components/schemas/ConnectorRegistryField' }
+                        retry:
+                          type: string
+                          enum: [safe, unsafe, conditional, not-delivered]
+              example:
+                connectors:
+                  rest-call:
+                    type: rest-call
+                    display_name: REST Call
+                    description: Invoke an external HTTP endpoint via a pre-registered alias.
+                    inputs:
+                      - name: provider
+                        kind: enum
+                        required: false
+                        enum_values: [aws-s3, azure-blob, gcp-gcs, google-drive]
+                        description: Backend provider for this call. Required — no default.
+                    outputs: []
+                    retry: conditional
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/connectors/credentials:
+    post:
+      operationId: writeConnectorCredential
+      summary: Write a connector credential field to the secret store
+      description: >
+        Writes one field of a connector's credential material to OpenBao at
+        connectors/<tenantID>/<connector_type>/<field_name>. Requires
+        tenant_admin or tenant_owner.
+      tags: [Connectors]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connector_type, field_name, value]
+              properties:
+                connector_type: { type: string, description: Must match a registered connector type. }
+                field_name:     { type: string, pattern: '^[a-zA-Z0-9_-]+$' }
+                value:          { type: string }
+      responses:
+        "201":
+          description: Credential field written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret_path: { type: string, example: "connectors/018f1a2b-.../rest-call/api_key" }
+        "400":
+          description: Missing required field, unrecognized connector_type, or invalid field_name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503":
+          description: The secret store (OpenBao) is unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  /api/v1/connectors/credentials/{connector_type}/{field_name}:
+    delete:
+      operationId: revokeConnectorCredential
+      summary: Revoke a connector credential field
+      description: >
+        Deletes the OpenBao metadata at
+        connectors/<tenantID>/<connector_type>/<field_name>, destroying every
+        version of that field. This is not a recoverable soft-delete. Rotation
+        does not use this endpoint — KV-v2 versions on overwrite, so writing
+        the field again is what rotates it. Requires tenant_admin or
+        tenant_owner.
+      tags: [Connectors]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - in: path
+          name: connector_type
+          required: true
+          schema: { type: string }
+          description: Must match a registered connector type.
+        - in: path
+          name: field_name
+          required: true
+          schema: { type: string, pattern: '^[a-zA-Z0-9_-]+$' }
+      responses:
+        "204": { description: Credential field revoked. No response body. }
+        "400":
+          description: Unrecognized connector_type, or an invalid field_name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503":
+          description: The secret store (OpenBao) is unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  /api/v1/modules:
+    get:
+      operationId: listModules
+      summary: List modules visible to the caller (own tenant + global)
+      tags: [Modules]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: query
+          name: page
+          schema: { type: integer, default: 1, minimum: 1, maximum: 100000 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - in: query
+          name: scope
+          schema: { $ref: '#/components/schemas/CatalogScope' }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Fuzzy search on name.
+      responses:
+        "200":
+          description: Paginated module list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  modules:
+                    type: array
+                    items: { $ref: '#/components/schemas/ModuleSummary' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+    post:
+      operationId: createModule
+      summary: Create a module and its first DRAFT version
+      description: >
+        `scope: global` requires the `platform_operator` role and is written
+        through a BYPASSRLS system connection — the ordinary tenant-scoped
+        role cannot insert a global-scope row regardless of this check.
+      tags: [Modules]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, bpmn_xml]
+              properties:
+                name:        { type: string, maxLength: 255 }
+                description: { type: string, maxLength: 2000 }
+                bpmn_xml:
+                  type: string
+                  description: Must contain exactly one top-level `<bpmn:process>`.
+                scope:
+                  allOf: [{ $ref: '#/components/schemas/CatalogScope' }]
+                  default: tenant
+      responses:
+        "201":
+          description: Module and initial draft version created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  module_id:  { type: string, format: uuid }
+                  version_id: { type: string, format: uuid }
+                  status:     { $ref: '#/components/schemas/VersionStatus' }
+                  message:    { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409":
+          description: MODULE_PROCESS_ID_CONFLICT — the process id is used by a module the caller can call, or a new version's process id differs from its module's.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/modules/{id}:
+    get:
+      operationId: getModule
+      summary: Get a module's metadata and active version
+      tags: [Modules]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Module detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModuleDetail' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+    delete:
+      operationId: archiveModule
+      summary: Archive a module (clears its active version)
+      description: Deleting a `scope=global` module requires the `platform_operator` role.
+      tags: [Modules]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Module archived.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  module_id: { type: string, format: uuid }
+                  status:    { type: string, example: ARCHIVED }
+                  message:   { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: The module has no active version to archive.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/modules/{id}/usages:
+    get:
+      operationId: listModuleUsages
+      summary: Workflow versions that hold a snapshot of a module
+      description: >
+        The caller's workflow versions whose `module_refs` include this module, with the module
+        version each uses and whether the module has a newer active version.
+      tags: [Modules]
+      security:
+        - GatewayTenantContext: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The module's usages.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  usages:
+                    type: array
+                    items: { $ref: '#/components/schemas/ModuleUsage' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/modules/{id}/versions:
+    get:
+      operationId: listModuleVersions
+      summary: List a module's version history
+      tags: [Modules]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1, minimum: 1, maximum: 100000 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: Paginated version list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items: { $ref: '#/components/schemas/ModuleVersion' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+    post:
+      operationId: addModuleVersion
+      summary: Add a new DRAFT version to an existing module
+      description: >
+        `bpmn_xml` is optional — omit it to copy the current active version's
+        content forward, or supply it to author fresh content in the new draft.
+      tags: [Modules]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bpmn_xml: { type: string, nullable: true }
+      responses:
+        "201":
+          description: Draft version created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  module_id:  { type: string, format: uuid }
+                  version_id: { type: string, format: uuid }
+                  status:     { $ref: '#/components/schemas/VersionStatus' }
+                  message:    { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: >-
+            A DRAFT version already exists for this module (DRAFT_ALREADY_EXISTS),
+            or MODULE_PROCESS_ID_CONFLICT: the process id is used by a module the
+            caller can call, or a new version's process id differs from its module's.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/modules/{id}/versions/{version_id}:
+    get:
+      operationId: getModuleVersion
+      summary: Get a specific module version, including its BPMN XML
+      tags: [Modules]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: version_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Module version detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModuleVersion' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/modules/{id}/versions/{version_id}/contract:
+    get:
+      operationId: getModuleContract
+      summary: Get what a call of the module version binds and names
+      description: >-
+        Compiles the module version, in any status, with its own process as the
+        root, its open lanes allowed and its library calls resolved against the
+        library as it is now. Returns its slots, every human task by the key a
+        call's Assignees takes and the slot it runs in, its messages and error
+        codes, and whether it names users. Writes nothing.
+      tags: [Modules]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: version_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The module version's contract.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModuleContract' }
+        "400":
+          description: An id in the path is not a UUID.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/modules/{id}/versions/{version_id}/publish:
+    post:
+      operationId: publishModuleVersion
+      summary: Publish a DRAFT module version
+      tags: [Modules]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: version_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Version published and set as the module's active version.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  module_id:      { type: string, format: uuid }
+                  version_id:     { type: string, format: uuid }
+                  status:         { $ref: '#/components/schemas/VersionStatus' }
+                  version_number: { type: integer }
+                  message:        { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: The version is not in DRAFT status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/starters:
+    get:
+      operationId: listStarters
+      summary: List starter templates visible to the caller (own tenant + global)
+      tags: [Starters]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: query
+          name: page
+          schema: { type: integer, default: 1, minimum: 1, maximum: 100000 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - in: query
+          name: scope
+          schema: { $ref: '#/components/schemas/CatalogScope' }
+        - in: query
+          name: category
+          schema: { type: string }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Fuzzy search on name.
+      responses:
+        "200":
+          description: Paginated starter list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  starters:
+                    type: array
+                    items: { $ref: '#/components/schemas/StarterTemplate' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+    post:
+      operationId: createStarter
+      summary: Create a starter template directly from raw BPMN XML
+      description: >
+        Runs through the same parser/element-allowlist validation as any BPMN upload.
+        `scope: global` requires the `platform_operator` role.
+      tags: [Starters]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, bpmn_xml]
+              properties:
+                name:        { type: string, maxLength: 255 }
+                description: { type: string, maxLength: 2000 }
+                category:    { type: string, maxLength: 64 }
+                bpmn_xml:    { type: string }
+                scope:
+                  allOf: [{ $ref: '#/components/schemas/CatalogScope' }]
+                  default: tenant
+      responses:
+        "201":
+          description: Starter created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StarterTemplate' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/starters/from-workflow-version/{version_id}:
+    post:
+      operationId: createStarterFromWorkflowVersion
+      summary: Snapshot one of the caller's own workflow versions into a tenant-scoped starter
+      description: >
+        The source version must be the caller's own (enforced by the same tenant-scoped
+        read every other endpoint uses) and must be PUBLISHED or ARCHIVED, not DRAFT.
+        Always creates a `scope: tenant` starter — the BPMN content is copied, not linked,
+        so a later edit to the source workflow never changes the starter.
+      tags: [Starters]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: version_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:        { type: string, maxLength: 255 }
+                description: { type: string, maxLength: 2000 }
+                category:    { type: string, maxLength: 64 }
+      responses:
+        "201":
+          description: Starter created from the source version's current content.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StarterTemplate' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409":
+          description: The source version is still in DRAFT status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/v1/starters/{id}:
+    get:
+      operationId: getStarter
+      summary: Get a starter template's metadata and BPMN XML
+      tags: [Starters]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Starter detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StarterTemplate' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+    delete:
+      operationId: deleteStarter
+      summary: Delete a starter template
+      description: Deleting a `scope=global` starter requires the `platform_operator` role.
+      tags: [Starters]
+      security:
+        - GatewayTenantContext: []
+          AdminRoles: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Starter deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  starter_id: { type: string, format: uuid }
+                  message:    { type: string }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
+tags:
+  - name: Workflows
+    description: Root workflow template management.
+  - name: Drafts
+    description: Draft workspace operations (init, save, discard).
+  - name: Versions
+    description: Version-specific operations (get, publish, clone, promote, export, diff).
+  - name: Validation
+    description: Stateless BPMN validation.
+  - name: Health
+    description: Health and readiness checks.
+  - name: Modules
+    description: Reusable BPMN module library (tenant + platform-authored global catalog).
+  - name: Starters
+    description: Starter/predesigned workflow templates (tenant + platform-authored global catalog).
+  - name: BPMN
+    description: BPMN modeler-support endpoints (element allowlist discovery).
+  - name: Connectors
+    description: Connector type registry and per-tenant credential management.

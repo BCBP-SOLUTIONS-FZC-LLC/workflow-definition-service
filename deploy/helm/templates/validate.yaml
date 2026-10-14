@@ -1,0 +1,7 @@
+{{- if ne .Values.env.APP_ENV "dev" }}
+{{- range $key := list "ORG_MEMBERSHIP_BASE_URL" "EXECUTION_SERVICE_URL" "OPENBAO_ADDR" "VALKEY_ADDR" }}
+{{- if not (index $.Values.env $key) }}
+{{- fail (printf "env.%s is required when env.APP_ENV is not dev: the service refuses to start without it, and so does the migrate job." $key) }}
+{{- end }}
+{{- end }}
+{{- end }}

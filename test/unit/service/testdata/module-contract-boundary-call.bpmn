@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A library module whose message boundary leads through an escalation task
+     to a call of the laneless Process_Check: the call sits on a boundary's
+     path, not on the main flow. See module_contract_test.go. -->
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_BoundaryCall" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_stop" name="stop"/>
+  <bpmn:process id="Process_BoundaryCall" name="Boundary call" isExecutable="true">
+    <bpmn:laneSet id="BC_LaneSet">
+      <bpmn:lane id="Lane_Author" name="Author">
+        <bpmn:flowNodeRef>BC_Start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>BC_Prep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>BC_Esc</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>BC_Check</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>BC_End</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>BC_EndEsc</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="BC_Start"/>
+    <bpmn:userTask id="BC_Prep" name="Prepare">
+      <bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="L2"/></bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="BC_Stop" attachedToRef="BC_Prep"><bpmn:messageEventDefinition id="BC_MED" messageRef="Msg_stop"/></bpmn:boundaryEvent>
+    <bpmn:userTask id="BC_Esc" name="Escalate">
+      <bpmn:extensionElements><zeebe:taskDefinition type="approve"/><zeebe:assignmentDefinition candidateGroups="L4"/></bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:callActivity id="BC_Check" name="Check on escalation">
+      <bpmn:extensionElements><zeebe:calledElement processId="Process_Check"/></bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:endEvent id="BC_End"/>
+    <bpmn:endEvent id="BC_EndEsc"/>
+    <bpmn:sequenceFlow id="BC_F1" sourceRef="BC_Start" targetRef="BC_Prep"/>
+    <bpmn:sequenceFlow id="BC_F2" sourceRef="BC_Prep" targetRef="BC_End"/>
+    <bpmn:sequenceFlow id="BC_F3" sourceRef="BC_Stop" targetRef="BC_Esc"/>
+    <bpmn:sequenceFlow id="BC_F4" sourceRef="BC_Esc" targetRef="BC_Check"/>
+    <bpmn:sequenceFlow id="BC_F5" sourceRef="BC_Check" targetRef="BC_EndEsc"/>
+  </bpmn:process>
+</bpmn:definitions>

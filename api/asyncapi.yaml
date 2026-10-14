@@ -1,0 +1,124 @@
+asyncapi: 3.0.0
+info:
+  title: workflow-definition-service events
+  version: 1.1.0
+  description: >
+    Inbound only. The shared Workflow-Events Consumer forwards two
+    Org & Membership events to POST /api/v1/internal/events:
+    DepartmentMembershipRevoked and MembershipRevoked. Their payload schemas
+    are owned and registered by the producing service and are not
+    re-registered here. Any other event type is acknowledged with 200 and
+    ignored. This service publishes no events.
+
+channels:
+  iam/membership/events:
+    address: iam-membership-events
+    description: Consumed off membership-workflow-q and forwarded over HTTP by the Workflow-Events Consumer.
+    bindings:
+      sqs:
+        queue:
+          name: membership-workflow-q
+          fifoQueue: false
+          redrivePolicy:
+            deadLetterQueue: { name: membership-workflow-q-dlq }
+            maxReceiveCount: 5
+    messages:
+      DepartmentMembershipRevoked: { $ref: '#/components/messages/DepartmentMembershipRevokedInbound' }
+      MembershipRevoked: { $ref: '#/components/messages/MembershipRevokedInbound' }
+
+operations:
+  receiveMembershipEvents:
+    action: receive
+    channel: { $ref: '#/channels/iam~1membership~1events' }
+    description: >
+      A revocation invalidates every workflow version whose default-assignee
+      node targets the revoked user, and pauses the user's active tasks in
+      Execution. A redelivery reprocesses and converges on the same state.
+      2xx means handled, 400 means malformed (not retried), 500 and 502
+      mean transient (retried). A message that carries a dataschema holds a
+      schema-registry framed payload, which the service decodes first; 502
+      means that frame could not be decoded.
+
+components:
+  messages:
+    DepartmentMembershipRevokedInbound:
+      name: DepartmentMembershipRevoked
+      x-lifecycle: { status: active }
+      title: Department membership revoked (owned by Org & Membership Service)
+      description: >
+        Invalidates versions whose default-assignee node targets this
+        user and department, and pauses the user's active Execution tasks.
+      x-schema-owner: iam-org-membership
+      payload: { $ref: '#/components/schemas/DepartmentMembershipRevokedInbound' }
+
+    MembershipRevokedInbound:
+      name: MembershipRevoked
+      x-lifecycle: { status: active }
+      title: Tenant membership revoked (owned by IAM)
+      description: >
+        The user left the tenant outright, so it carries no department.
+        Invalidates every version whose default-assignee nodes target this
+        user, and pauses the user's active Execution tasks.
+      x-schema-owner: iam-org-membership
+      payload: { $ref: '#/components/schemas/MembershipRevokedInbound' }
+
+  schemas:
+    EventEnvelope:
+      type: object
+      description: >
+        The platform-events envelope as the producer sends it. Only the fields
+        below are read here; `data` carries the payload.
+      required: [id, type, tenant_id, data]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUID message identifier
+        type:
+          type: string
+          description: Event type, matched against the two messages above
+        tenant_id:
+          type: string
+          format: uuid
+        source:
+          type: string
+        time:
+          type: string
+          format: date-time
+        specversion:
+          type: string
+        trace_id:
+          type: string
+        correlation_id:
+          type: string
+        subject:
+          type: string
+        actor:
+          type: string
+        data:
+          type: object
+
+    DepartmentMembershipRevokedInbound:
+      type: object
+      additionalProperties: true
+      required: [user_id, department_id]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        department_id:
+          type: string
+          format: uuid
+          description: The department the user left. A value that is not a UUID is answered 400 and is not retried.
+        role:
+          type: string
+          description: The membership role being revoked. Informational; the service does not read it.
+
+    MembershipRevokedInbound:
+      type: object
+      additionalProperties: true
+      required: [user_id]
+      properties:
+        user_id:
+          type: string
+          format: uuid

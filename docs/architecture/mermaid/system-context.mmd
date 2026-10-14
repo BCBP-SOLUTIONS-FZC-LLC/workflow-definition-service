@@ -1,0 +1,16 @@
+flowchart LR
+    FE["Frontend\nWorkflow Builder"]
+    DEF["workflow-definition-service\n(this repo)\nHTTP :8080"]
+    EXEC["workflow-execution-service\nHTTP :8080"]
+    DB[("PostgreSQL 18\nworkflow_definition")]
+    CACHE[("Valkey 8\nidempotency · cache")]
+    CONSUMER["shared workflow-events\nconsumer (membership-workflow-q)"]
+    IAM["iam-service\norg membership API"]
+
+    FE -->|"REST"| DEF
+    EXEC -->|"compiled-plan read\ninternal HTTP"| DEF
+    DEF -->|"active-instances · pause-tasks\ninternal HTTP"| EXEC
+    DEF -->|"read/write"| DB
+    DEF -->|"idempotency · quota cache"| CACHE
+    CONSUMER -->|"POST /internal/events\n(DepartmentMembershipRevoked)"| DEF
+    DEF -->|"eligibility check"| IAM
