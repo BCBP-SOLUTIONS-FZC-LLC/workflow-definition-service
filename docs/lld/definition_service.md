@@ -221,8 +221,8 @@ Incoming HTTP request
   → TimeoutMiddleware(30s)      (gincommon, innermost via Config.RequestTimeout) — sets the per-request deadline;
                                               returns 503 and counts platform_http_request_timeouts_total{method,route}
   → [/healthz, /readyz — public; no further middleware; /metrics is served on the separate metrics port]
-  → RequireAuth                 (gincommon) — validates x-user-id and x-tenant-id (non-empty, ≤ 256 chars,
-                                              no control chars); returns 401 if missing or malformed
+  → RequireIdentity              (this service) — parses x-tenant-id and x-user-id as UUIDs; returns 401 if missing or
+                                              malformed, 500 if the request has no RequestContext, and sets the RLS GUCs
   → ContextMiddleware           (gincommon) — builds RequestContext{TenantID, UserID, Roles, TraceID}
                                               and stores it in the Gin context for handler access
   → RequireIdentity             (service)   — reads RequestContext from the Gin context, parses the tenant and
@@ -3683,7 +3683,7 @@ The Definition Service emits **no outbound event** today (§10.7). None of its s
 
 ### 7.3 Decoupled Service Integrations
 
-This service has no outbound event and therefore no downstream consumers today (§7.2). Execution Service self-warms its compiled-plan cache and `workflow_key → version_id` mapping on ordinary cache-miss via write-through (`execution_service.md` §6.1/§6.2, Appendix A.5 decision 19); archive is guarded directly by the synchronous active-instances read (§3.3.8), and eligibility invalidation is delivered by a direct pause-tasks call (§7.4.2 step 5) — none of these depend on an outbound event from this service. Whether Audit & Compliance or Notification need a replacement signal for publish/promote is an open product question, not resolved here; structured logs (§8.5) are the audit trail for these operations regardless.
+This service has no outbound event and therefore no downstream consumers today (§7.2). Execution Service reads a compiled plan from this service when it starts an instance and keeps no `workflow_key → version_id` mapping (a workflow's key never reaches it); archive is guarded directly by the synchronous active-instances read (§3.3.8), and eligibility invalidation is delivered by a direct pause-tasks call (§7.4.2 step 5) — none of these depend on an outbound event from this service. Whether Audit & Compliance or Notification need a replacement signal for publish/promote is an open product question, not resolved here; structured logs (§8.5) are the audit trail for these operations regardless.
 
 ### 7.4 Inbound Event Ingest (`POST /api/v1/internal/events`)
 
@@ -4957,6 +4957,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.46 | 2026-10-14 | **Connector catalogue at `workflow-connectors/v2` v2.1.0** (§1.1, §2.2, §10.14, §10.15). The registry no longer lists `chat-notify`: a task naming it publishes with the `UNKNOWN_CONNECTOR_TYPE` warning and the template and credential endpoints refuse it. `storage` and `send-email` declare `provider` as required. The registry lists three types: `storage`, `send-email` and `rest-call`. |
 | 1.47 | 2026-10-14 | **The public spec and the docs follow the code** (§1.6.1.1, §3.4, §4.2, §10.8, Appendix A). Every body route declares `413` and `415`; a publish takes no required body; limits nothing enforced are removed; validation severities are lowercase; getDraft carries `updated_at`; the registry's `retry` includes `not-delivered`; the compiled-plan schemas carry `iam_department_id`, `connector_type`, `io_mapping`, `boundary_id` and boundary and branch `steps`. A module, starter or draft field over its column or documented limit (name 255, description 2000, starter category 64) is `422 INVALID_INPUT` with `invalid_params`; before, it reached the database and came back as `500`. A version diff sends `step_changes` in snake_case and never `null` for a department list. `MULTIPLE_END_EVENTS` is deprecated and never raised; the logger section describes `logger.NewLogger`; library pins are current. |
 | 1.48 | 2026-10-14 | **The template key is named for what it is** (§3, §4, §10, Appendix A). The workflow's key is `template_key`, error code `DUPLICATE_TEMPLATE_KEY`, constraint `uq_workflow_template_key`; the public field stays `key`. The Execution Service keeps its own instance business key (with the subject), so the two no longer share a name or an error code. The LLD no longer claims a slug pattern or a 100-character limit: the key is free-form up to 255 characters, over which it is `422 INVALID_INPUT`. |
+| 1.49 | 2026-10-14 | **Two statements follow the code** (§1.6.1, §7.2). The request identity middleware parses both identity headers as UUIDs (it is no longer the gincommon `RequireAuth` length check), and the Execution Service keeps no `workflow_key → version_id` mapping. |
 ---
 
 ## Appendix E: Open Items

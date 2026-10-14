@@ -16,6 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The LLD names the identity middleware as built (UUID parsing) and no longer says the Execution Service keeps a workflow key mapping.
 - The tool downloads in the Makefile (hadolint, Trivy) use `curl -f`, so a 404 stops the install instead of leaving a broken binary. The README says that an `existingSecret` skips the chart's render-time key checks.
 - The route table is registered by `RegisterAPIRoutes` and `RegisterInternalRoutes`, which the router and the handler tests both call, so the tests no longer keep a copy of it (and no longer use the old `/internal/...` paths).
 - The workflow's key is named `template_key` (column, domain, repository), its conflict code is `DUPLICATE_TEMPLATE_KEY` and its constraint `uq_workflow_template_key` (migrations edited in place); the public field stays `key`. Execution's instance business key is a separate identifier and keeps its name and code. The docs no longer claim a slug pattern: the key is free-form up to 255 characters.
