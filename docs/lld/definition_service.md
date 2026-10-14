@@ -292,12 +292,12 @@ Tracing starts once at startup, before the metrics identity is fixed and before 
 ```text
 1. OS signal received
 2. Readiness fails (`/readyz` answers 503) and the pod waits `SHUTDOWN_DRAIN_DELAY` (default 5 s), so the gateway and the Execution Service drop it from their endpoint lists
-3. HTTP server: stop accepting new connections and finish in-flight requests, bounded by 30 s
+3. HTTP server: stop accepting new connections and finish in-flight requests, bounded by `SHUTDOWN_GRACE` (default 30 s)
 4. gincommon.Shutdown(logger)   — flushes OTel HTTP spans + Zap buffer (platform-gincommon v1.2.0)
-5. DB pool: pool.Close()
+5. DB pools: each drains within its own `SHUTDOWN_POOL_DRAIN_TIMEOUT` (default 10 s), the application pool first, then the system pool
 ```
 
-Step 4 must run before pool.Close() to ensure any in-flight DB-related spans are flushed before the pool drains. The drain delay plus the 30 s bound stays within the pod's termination grace period.
+Step 4 must run before pool.Close() to ensure any in-flight DB-related spans are flushed before the pool drains. The drain delay, the grace and two pool drains stay within the pod's termination grace period (5 + 30 + 2 x 10 s against 60 s). A listener that fails to bind or stops with an error starts the same ordered shutdown and the process then exits non-zero; a panic in a long-lived goroutine is recovered and logged, and does not stop the others; the violation exporter is also restarted after a panic. The startup role check tolerates a schema that is not migrated yet.
 
 **Request deadline** (30 s): a request exceeding it is cancelled and returns 503, and `platform_http_request_timeouts_total` counts it separately from other 5xx errors. The deadline runs innermost in the middleware chain, so the metrics, the access log and the server span record the same 503 the client receives.
 
@@ -363,18 +363,27 @@ The Definition Service uses `platform-pgcommon` as the single source of truth fo
 `pgcommon.NewPool` is called once in `cmd/server/main.go` after config is loaded. It pings the database at construction — if unreachable, startup fails immediately.
 
 ```go
-pool, err := pgcommon.NewPool(ctx, pgcommon.Config{
-    DSN:                 cfg.DatabaseURL,
-    MaxConns:            cfg.PGMaxConns,
-    MinConns:            cfg.PGMinConns,
-    SlowQueryThreshold:  cfg.PGSlowQueryThreshold,
-    GUCProvider:         pgcommon.GUCSetFromContext,
-    AllowFullStatements: false,   // safe default: emit only SQL verb in OTel spans (no PII leakage)
-    PGBouncerMode:       cfg.PGBouncerMode, // set MinConns=0 automatically under PgBouncer transaction-pooling
-    Logger:              newPGCommonLogger(log), // pglogger.go — see below
-})
+base, warnings := pgcommon.ConfigFromEnv()   // PG_MAX_CONNS, PG_MIN_CONNS, PG_BOUNCER_MODE, PG_SLOW_QUERY_THRESHOLD,
+                                              // PG_STATEMENT_TIMEOUT, PG_LOCK_TIMEOUT, PG_POOL_NAME
+base.Logger = newPGCommonLogger(log)          // pglogger.go — see below
+base.Tracer = gincommon.NewSpanTracer(cfg.OTELServiceName)
+
+app := base
+app.DSN = cfg.DatabaseURL
+app.GUCProvider = pgcommon.GUCSetFromContext
+
+system := base                                // the BYPASSRLS pool for global-catalog writes and the violation log
+system.DSN = cfg.SystemDSN()
+system.MaxConns, system.MinConns = 3, 0
+system.PoolName = "system"                    // platform_db_* tells the two pools apart
+system.PGBouncerMode = true                   // simple protocol whatever the app pool does
+system.GUCProvider = nil                      // a BYPASSRLS role must see every tenant
+
+pool, err := pgcommon.NewPool(ctx, app)
 ```
 
+> The pool settings have one implementation, `pgcommon.ConfigFromEnv`; invalid values are logged as startup warnings. **After both pools exist the service reads each pool's role and refuses to start** when the application role is a superuser or has `BYPASSRLS` (in every environment), or when the system role cannot bypass row-level security or cannot write the module, starter and violation-log tables outside dev, local and test or whenever `SYSTEM_DATABASE_URL` is set; dev without it logs a warning. The local stack (`scripts/init-db.sql`) creates the split roles, so row-level security is exercised locally.
+>
 > **`Config.Logger` is wired** via `cmd/server/pglogger.go`'s `pgCommonLogger`, which adapts this service's own `port.Logger` (`map[string]any` fields) to `platform-pgcommon`'s public `pkg/domain.Logger` interface (`Debug/Info/Warn/Error(msg string, fields ...domain.Field)`), converting the variadic `Field` slice into a map. Wired into every `pgcommon.Config` construction site (`newDBPool`/`newSystemDBPool` both), so slow-query warnings and GUC-injection failures flow through the service's real logger. **`Config.Tracer` is not wired**; per-query OTel spans are not emitted.
 
 `pool.Close()` is deferred in the shutdown hook (step 8 in the shutdown sequence) to drain in-use connections after all servers have stopped.
@@ -403,7 +412,7 @@ func GUCMiddleware(pool *pgcommon.Pool) gin.HandlerFunc {
 
 #### 1.7.3 Readiness Check
 
-`/readyz` calls `pool.Health(ctx)` to check the database pool and `cache.Ping(ctx)` to check Valkey. Returns `503 Service Unavailable` if either dependency is unreachable.
+`/readyz` checks the database pool and pings Valkey, but only the database decides readiness: it returns `503 Service Unavailable` when the pool is unhealthy, and `200` with `"cache":"degraded"` when Valkey is unreachable. Compiled-plan reads fail open, so a Valkey failover must not take every pod out of rotation and stop plan serving. A pod also starts while Valkey is down, logging a warning, because the client reconnects on its own.
 
 ```go
 func readyzHandler(pool *pgcommon.Pool, cache port.CacheStore) gin.HandlerFunc {
@@ -416,15 +425,13 @@ func readyzHandler(pool *pgcommon.Pool, cache port.CacheStore) gin.HandlerFunc {
             })
             return
         }
+        cacheState := "ok"
         if err := cache.Ping(c.Request.Context()); err != nil {
-            c.JSON(http.StatusServiceUnavailable, gin.H{
-                "status": "unavailable",
-                "cache":  "unreachable",
-            })
-            return
+            cacheState = "degraded"
         }
         c.JSON(http.StatusOK, gin.H{
             "status":         "OK",
+            "cache":          cacheState,
             "db_utilization": hs.Utilization,
             "db_conns":       hs.AcquiredConns,
             "db_max_conns":   hs.MaxConns,
@@ -438,10 +445,15 @@ func readyzHandler(pool *pgcommon.Pool, cache port.CacheStore) gin.HandlerFunc {
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DATABASE_URL` | — | Full pgx DSN (`postgres://user:pass@host:5432/db`) |
-| `PG_MAX_CONNS` | `10` | Pool ceiling (pgcommon default) |
-| `PG_MIN_CONNS` | `2` | Minimum idle connections (set `0` when `PG_BOUNCER_MODE=true`) |
-| `PG_SLOW_QUERY_THRESHOLD_MS` | `200` | Slow-query log threshold in milliseconds |
-| `PG_BOUNCER_MODE` | `false` | Enable PgBouncer transaction-pooling mode; sets MinConns=0 automatically |
+| `PG_MAX_CONNS` | `10` | Pool ceiling (read by `platform-pgcommon`) |
+| `PG_MIN_CONNS` | `2` | Minimum idle connections (`0` under PgBouncer) |
+| `PG_SLOW_QUERY_THRESHOLD` | `200ms` | Slow-query log threshold |
+| `PG_STATEMENT_TIMEOUT` | `0` (server setting) | Per-transaction statement timeout; a cancelled query answers `503` |
+| `PG_LOCK_TIMEOUT` | `0` (server setting) | Per-transaction lock timeout |
+| `PG_POOL_NAME` | `default` | `pool` label of the application pool; the system pool is `system` |
+| `PG_BOUNCER_MODE` | `false` | PgBouncer transaction-pooling mode for the application pool (the system pool always uses it) |
+| `SHUTDOWN_GRACE` | `30s` | Bound on finishing in-flight HTTP requests at shutdown |
+| `SHUTDOWN_POOL_DRAIN_TIMEOUT` | `10s` | Bound on each pool drain |
 
 #### 1.7.5 Prometheus Metrics
 
@@ -642,7 +654,7 @@ A cached published plan can outlive an archive or a membership revocation, by at
 | Compiled-plan cache miss (normal) | Falls through to Postgres; response is back-filled into Valkey before returning |
 | Idempotency cache set failure | Logged at `WARN`; request continues without caching — duplicate protection is degraded, not lost |
 | Draft-edit lock: Valkey unavailable | Lock acquisition fails; handler returns `503 Service Unavailable` rather than silently proceeding without the lock |
-| Valkey fully down | `/readyz` returns `503 {"status":"unavailable","cache":"unreachable"}` (§3.3.16); pod is removed from rotation |
+| Valkey fully down | `/readyz` stays `200` and reports `"cache":"degraded"` (§3.3.16); the pod stays in rotation and serves plans from Postgres |
 
 #### 1.9.4 Environment Variables
 
@@ -1912,19 +1924,20 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 #### 3.3.16 Readiness Probe
 
 - **GET** `/readyz`
-- **Semantics**: Checks both database connectivity (`pool.Health`) and cache reachability (`cache.Ping`).
-- **Response (`200 OK`)**: Both dependencies are healthy. Returns:
+- **Semantics**: Readiness depends on the database only; the cache is reported, not required.
+- **Response (`200 OK`)**: The database is healthy. `cache` is `ok`, or `degraded` when Valkey is unreachable. Returns:
 
   ```json
   {
     "status": "OK",
+    "cache": "ok",
     "db_utilization": 0.3,
     "db_conns": 3,
     "db_max_conns": 10
   }
   ```
 
-- **Response (`503 Service Unavailable`)**: Database pool health check failed → `{"status":"unavailable","db":"unreachable"}`; or cache ping failed → `{"status":"unavailable","cache":"unreachable"}`.
+- **Response (`503 Service Unavailable`)**: The database pool health check failed → `{"status":"unavailable","db":"unreachable"}`; or the pod is draining → `{"status":"draining"}`.
 
 ---
 
@@ -3902,8 +3915,8 @@ To ensure optimal connection management, the service connects to PostgreSQL thro
 
 | Dependency | Failure mode | Service behaviour | Data loss risk |
 | --- | --- | --- | --- |
-| **PostgreSQL** | Down / unreachable | All DB-backed endpoints return `503`. `/readyz` fails → pod removed from load balancer rotation. | None — no write is acknowledged without a successful DB commit. |
-| **Valkey (cache)** | Down / unreachable | Three effects: (1) compiled-plan cache miss falls through to Postgres transparently (no caller-visible impact); (2) idempotency middleware — cache miss → request passes through uncached (duplicate protection degraded, not lost); (3) draft-edit lock acquisition fails → handler returns `503`. `/readyz` returns `503 {"status":"unavailable","cache":"unreachable"}` — pod is removed from load balancer rotation. | None for business data. Duplicate-mutation window open for the outage duration. |
+| **PostgreSQL** | Down / unreachable | Connection failures, exhausted connections, an administrator shutdown, a closed pool and a statement cancelled by `PG_STATEMENT_TIMEOUT` answer `503 UPSTREAM_UNAVAILABLE`, not `500`, so clients know to retry. `/readyz` fails → pod removed from load balancer rotation. | None — no write is acknowledged without a successful DB commit. |
+| **Valkey (cache)** | Down / unreachable | Three effects: (1) compiled-plan cache miss falls through to Postgres transparently (no caller-visible impact); (2) idempotency middleware — cache miss → request passes through uncached (duplicate protection degraded, not lost); (3) draft-edit lock acquisition fails → handler returns `503`. `/readyz` stays `200` with `"cache":"degraded"` — the pod stays in rotation. | None for business data. Duplicate-mutation window open for the outage duration. |
 | **Execution Service internal API** | Down / timeout | `ArchiveWorkflow` reads the workflow's active instances before archiving (§3.4.2). On timeout (default 5 s), the handler returns `503 UPSTREAM_UNAVAILABLE`. No archive proceeds. The workflow remains in its current state. | None. |
 | **Inbound event ingest** (`POST /internal/events`) | Definition pod down, or shared consumer down | The shared consumer holds `DepartmentMembershipRevoked` messages on `membership-workflow-q` (SQS retention: 14 days) and retries the HTTP POST until the Definition Service is healthy. On recovery, events are reprocessed; the handlers converge on the same state either way (§2.3.1). `is_valid` flags may be stale for the duration of the outage. | None — SQS retains the messages and the consumer retries. |
 | **Org & Membership eligibility endpoint** | Down at publish time | Publish calls the membership eligibility check for each assignee. On timeout/5xx, publish returns `503 UPSTREAM_UNAVAILABLE`. The draft is not promoted. | None. |
@@ -3984,7 +3997,7 @@ This section captures the key architectural and design decisions made for the Wo
 
 - **Rationale**: PostgreSQL RLS has no native violation callback — a row that fails the `USING` clause is silently filtered, indistinguishable from an empty result set. Without the log, a misconfigured pool connection (GUC not set), a cross-tenant bug, or a deliberate probe produces no observable signal. The 1% sampling rate prevents log flooding under high-volume scans while still making systematic issues visible.
 
-- **Export**: the service reads the log through the system pool every `RLS_VIOLATION_EXPORT_INTERVAL` and adds the new rows to `workflow_definition_service_rls_violations_total{violation_type}`; rows older than `RLS_VIOLATION_RETENTION` are deleted by the same loop. Rows present at startup are not counted. The system role holds `SELECT` and `DELETE` on the log. §6.1.2 lists the alerts. See Appendix A for the DDL.
+- **Export**: the service reads the log through the system pool every `RLS_VIOLATION_EXPORT_INTERVAL` and adds the new rows to `workflow_definition_service_rls_violations_total{violation_type}`; rows older than `RLS_VIOLATION_RETENTION` are deleted by the same loop. Rows present at startup are not counted. The system role holds `SELECT` and `DELETE` on the log. The exporter retries its first read until it succeeds, so a pod that started while the database was unavailable still exports. Each replica counts the rows it sees, so the alerts use `increase(...) > 0` and a sum across replicas overcounts; one replica prunes per tick, chosen by a transaction-scoped advisory lock. The policy functions read the caller's tenant through a regex-guarded helper that returns no tenant for an unset or malformed value, so no row check opens a subtransaction. §6.1.2 lists the alerts. See Appendix A for the DDL.
 
 ### 10.7 ~~`workflow.template.published` Reference-Only Payload~~ — Removed
 
@@ -4441,6 +4454,23 @@ REVOKE ALL ON rls_violation_log FROM PUBLIC;
 
 CREATE INDEX idx_rls_violation_log_time ON rls_violation_log (occurred_at);
 
+-- The caller's tenant, or NULL when app.tenant_id is unset or not a UUID. A
+-- regex guard replaces a cast inside an exception block: that block opens a
+-- subtransaction for every row a policy checks, and past 64 of them in one
+-- transaction every concurrent reader slows down.
+CREATE OR REPLACE FUNCTION rls_app_tenant()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+SET search_path = public
+AS $$
+    SELECT CASE
+        WHEN current_setting('app.tenant_id', true) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        THEN current_setting('app.tenant_id', true)::uuid
+    END
+$$;
+
 -- Tenant checks with sampled violation logging. A row that fails a plain USING
 -- clause is silently filtered; these functions record 1% of such rows so a pool
 -- connection with no tenant GUC, a cross-tenant bug or a probe leaves a signal.
@@ -4454,11 +4484,7 @@ AS $$
 DECLARE
     app_tenant uuid;
 BEGIN
-    BEGIN
-        app_tenant := current_setting('app.tenant_id', true)::uuid;
-    EXCEPTION WHEN others THEN
-        app_tenant := NULL;
-    END;
+    app_tenant := rls_app_tenant();
 
     IF row_tenant_id = app_tenant THEN
         RETURN true;
@@ -4494,11 +4520,7 @@ BEGIN
         RETURN true;
     END IF;
 
-    BEGIN
-        app_tenant := current_setting('app.tenant_id', true)::uuid;
-    EXCEPTION WHEN others THEN
-        app_tenant := NULL;
-    END;
+    app_tenant := rls_app_tenant();
 
     IF row_tenant_id = app_tenant THEN
         RETURN true;
@@ -4924,6 +4946,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.39 | 2026-10-13 | **A task's due and follow-up dates must be RFC 3339** (§3.1.4 code 45). The validator refuses a `dueDate` or `followUpDate` that is not an RFC 3339 date-time, with the new code `INVALID_TASK_SCHEDULE`; the Execution Service dropped any other value and the task ran with no SLA. The plan-expansion budget of 1000 stages is a domain constant shared by the compiler and by the publish, node-read and module-contract paths, since `workflow-models` `v2.0.0` refuses a zero budget. Definition is on `workflow-models/v2` `v2.0.0`. |
 | 1.40 | 2026-10-13 | **Branch conditions are one comparison, parsed by the shared parser** (§3.1.4 code 46, §4). The validator parses every `conditionExpression` of a split with `workflow-models` `dsl.ParseCondition` and refuses anything but `[= ] field (=|==|!=) literal` with a string, number or boolean literal as `INVALID_CONDITION_EXPRESSION`, so the form the designer guide documents (`= decision = "bid"`) is the form the Execution Service evaluates and a comparison such as `score < 70` is refused at publish instead of failing the gateway at run time. The internal events and alias routes return 413 for a body over the limit, declared in the internal spec, and a contract test sends every route through the real router against `api/internal-openapi.yaml`. |
 | 1.41 | 2026-10-14 | **Data integrity: lanes, revocations, idempotency, back edges** (§3.1.4 codes 1, 22, 37 and 43, §3.3.11, §7.4, §9, §10.9, §12). A lane that holds work needs a name, and lane names are unique without regard to case (`INVALID_LANE_NAME`). A `cancelActivity` other than `true`, `false`, `1` or `0` is refused, and `1` and `0` are read as booleans. Sub-process bodies share the process's id space (`DUPLICATE_ELEMENT_ID`). A DOCTYPE or entity declaration is refused anywhere in the document, not only in its first 4 KiB. A workflow that calls a library module is scanned for rejected elements as authored, not after bundling. The depth-first walk enters a node when it is reached, so a loop through sibling branches is a back edge and the depth check counts the path through a cross edge. A second revocation adds to a version's validation errors instead of replacing them; a revocation leaves assignees added after the event time alone; the plan cache holds only valid published plans and is re-checked after each write; a failed eviction is retried by redelivery. Module activation names only a published version of that module, workflow activation also needs a valid version, and module-version publish and archive and starter delete are scoped to the caller's tenant in SQL. A default assignee's `created_at` is a `timestamptz`, so the revocation time filter compares instants whatever the session time zone. An `Idempotency-Key` is scoped to the user, capped at 256 characters, and a concurrent request with the same key gets `409` `IDEMPOTENCY_REQUEST_IN_PROGRESS`. |
+| 1.42 | 2026-10-14 | **Resilience and operations** (§1.6, §1.7, §3.3.16, §10.6, §12). A database outage is `503 UPSTREAM_UNAVAILABLE`: connection failures, exhausted connections, an administrator shutdown, a closed pool and a statement cancelled by the statement timeout. Readiness depends on the database only and reports the cache as `ok` or `degraded`; a pod starts while Valkey is down; a draft save with an unavailable lock store answers `503` and its lock is released even if the client has gone. The HTTP write timeout outlasts the request deadline, a listener failure runs the ordered shutdown and exits non-zero, panics in long-lived goroutines are recovered, and shutdown has configurable bounds (`SHUTDOWN_GRACE`, `SHUTDOWN_POOL_DRAIN_TIMEOUT`) with a separate budget for each pool drain. Both pools are built from `pgcommon.ConfigFromEnv` (`PG_SLOW_QUERY_THRESHOLD` is a duration; `PG_STATEMENT_TIMEOUT`, `PG_LOCK_TIMEOUT` and `PG_POOL_NAME` are new; the system pool is named `system`, small and in bouncer mode). Startup verifies each pool's database role and refuses an application role that can bypass row-level security and a system role that cannot bypass it or cannot write; the local stack creates the split roles. The RLS policy functions read the tenant through a regex-guarded helper instead of an exception block, the violation exporter retries its first read, and one replica prunes the log per tick. |
 ---
 
 ## Appendix E: Open Items

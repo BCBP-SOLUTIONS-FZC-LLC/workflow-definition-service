@@ -10,6 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The pools are built from `pgcommon.ConfigFromEnv`: `PG_SLOW_QUERY_THRESHOLD` is a duration (replacing `PG_SLOW_QUERY_THRESHOLD_MS`), `PG_STATEMENT_TIMEOUT`, `PG_LOCK_TIMEOUT` and `PG_POOL_NAME` are new, the chart sets a 25 s statement timeout, and the system pool is named `system`, holds three connections and always uses the simple protocol.
+- The service reads each pool's database role at startup and refuses to start when the application role is a superuser or has `BYPASSRLS`, or when the system role cannot bypass row-level security or cannot write the module, starter and violation-log tables (a warning in dev without `SYSTEM_DATABASE_URL`). The local compose stack bootstraps from `scripts/init-db.sql` (a `workflow_definition_app` role without `BYPASSRLS` and a `workflow_definition_migrator` role that owns the schema and is the system role), the CI smoke job applies the same script, and `make docker-reset` recreates the volume.
+- `/readyz` depends on the database only and reports the cache as `"cache":"ok"` or `"degraded"`; a pod starts while Valkey is down.
+- Shutdown: a listener error runs the ordered shutdown and exits non-zero instead of exiting from the goroutine, each pool drain has its own bound (`SHUTDOWN_POOL_DRAIN_TIMEOUT`), the HTTP bound is `SHUTDOWN_GRACE`, and a panic in a long-lived goroutine is recovered and logged (the violation exporter is restarted).
+- The RLS policy functions read the tenant through a regex-guarded `rls_app_tenant()` instead of an exception block, so a policy check no longer opens a subtransaction per row. The metric `workflow_definition_service_rls_violations_total` documents that each replica counts the rows it sees.
 - A branch condition must be one comparison of a result field with a literal, `[= ] field (=|==|!=) literal`, parsed by `workflow-models` `dsl.ParseCondition`, the parser the Execution Service evaluates with. The validator refuses anything else as `INVALID_CONDITION_EXPRESSION` (before, it checked the length only, and a condition the Execution Service could not evaluate failed the gateway at run time). A request body over 10 MiB on `POST /api/v1/internal/events` returns 413, not 400.
 - `make contract-breaking` also gates `docs/swagger/openapi.yaml`.
 - The copy of the Execution Service's internal spec is refreshed, and `SOURCES` names `feat/service`, where the file is, so `make contract-check` reads it.
@@ -27,6 +32,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Fixed
 
+- A database outage answers `503 UPSTREAM_UNAVAILABLE`, not `500`: connection failures, exhausted connections, an administrator shutdown, a closed pool, a dial failure and a statement cancelled by the statement timeout.
+- A Valkey outage no longer stops plan serving: readiness ignores the cache, and a draft save with an unavailable lock store answers `503`. The draft lock is released even when the client has disconnected.
+- The HTTP write timeout is the request deadline plus 5 s, so the timeout body is no longer cut by a reset.
+- The RLS violation exporter retries its first read until it succeeds instead of stopping for the life of the pod, and one replica prunes the log per tick.
 - A lane that holds work needs a name, and lane names must differ without regard to case or surrounding space (`INVALID_LANE_NAME`); an unnamed lane without work stays valid.
 - A second membership revocation adds its nodes to a version's validation errors instead of replacing the first one's, and a redelivery changes nothing.
 - A revocation event leaves a default assignee added after the event time alone, so a reordered or redelivered event cannot invalidate a version published after the user was added back. A default assignee's `created_at` is a `timestamptz`, so the comparison holds whatever the database session time zone.

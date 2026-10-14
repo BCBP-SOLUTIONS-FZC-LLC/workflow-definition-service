@@ -65,6 +65,8 @@ Migrations run via the `migrate` subcommand (`go run ./cmd/server migrate`, `cmd
 
 PL/pgSQL functions need no `StatementBegin/End` wrappers — pgx/v5 runs each file as one statement.
 
+**Roles:** `DATABASE_URL` names the application role (`NOSUPERUSER NOBYPASSRLS`); `MIGRATION_DATABASE_URL` and `SYSTEM_DATABASE_URL` name the schema owner, which is the `BYPASSRLS` system role. Startup reads both pools' roles and refuses a bypassing application role. `scripts/init-db.sql` creates them locally; `make docker-reset` re-runs it.
+
 **PgBouncer note:** When `DATABASE_URL` points to PgBouncer, set `MIGRATION_DATABASE_URL` to a direct Postgres DSN — golang-migrate uses session advisory locks that PgBouncer transaction pooling drops.
 
 ## Inbound Event Redelivery
