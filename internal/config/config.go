@@ -23,14 +23,10 @@ type Config struct {
 	OTELExporterInsecure   bool
 	OTELTracesSamplerRatio float64
 
-	DatabaseURL            string
-	PGMaxConns             int32
-	PGMinConns             int32
-	PGSlowQueryThresholdMS int
-	PGBouncerMode          bool
-	MigrationDatabaseURL   string
-	DatabaseFallbackURL    string
-	SystemDatabaseURL      string
+	DatabaseURL          string
+	MigrationDatabaseURL string
+	DatabaseFallbackURL  string
+	SystemDatabaseURL    string
 
 	ValkeyAddr           string
 	ValkeyPassword       string
@@ -40,6 +36,9 @@ type Config struct {
 	CacheCompiledPlanTTL time.Duration
 	IdempotencyTTL       time.Duration
 	ShutdownDrainDelay   time.Duration
+
+	ShutdownGrace            time.Duration
+	ShutdownPoolDrainTimeout time.Duration
 
 	InternalAPIToken string
 
@@ -75,14 +74,10 @@ func Load() (*Config, error) {
 		OTELExporterInsecure:   getEnvBoolOrDefault("OTEL_EXPORTER_OTLP_INSECURE", true),
 		OTELTracesSamplerRatio: getEnvFloat64OrDefault("OTEL_TRACES_SAMPLER_RATIO", 1.0),
 
-		DatabaseURL:            getEnvOrDefault("DATABASE_URL", ""),
-		PGMaxConns:             int32(getEnvIntOrDefault("PG_MAX_CONNS", 10)),
-		PGMinConns:             int32(getEnvIntOrDefault("PG_MIN_CONNS", 2)),
-		PGSlowQueryThresholdMS: getEnvIntOrDefault("PG_SLOW_QUERY_THRESHOLD_MS", 200),
-		PGBouncerMode:          getEnvBoolOrDefault("PG_BOUNCER_MODE", false),
-		MigrationDatabaseURL:   getEnvOrDefault("MIGRATION_DATABASE_URL", ""),
-		DatabaseFallbackURL:    getEnvOrDefault("DATABASE_FALLBACK_URL", ""),
-		SystemDatabaseURL:      getEnvOrDefault("SYSTEM_DATABASE_URL", ""),
+		DatabaseURL:          getEnvOrDefault("DATABASE_URL", ""),
+		MigrationDatabaseURL: getEnvOrDefault("MIGRATION_DATABASE_URL", ""),
+		DatabaseFallbackURL:  getEnvOrDefault("DATABASE_FALLBACK_URL", ""),
+		SystemDatabaseURL:    getEnvOrDefault("SYSTEM_DATABASE_URL", ""),
 
 		ValkeyAddr:           getEnvOrDefault("VALKEY_ADDR", "localhost:6379"),
 		ValkeyPassword:       getEnvOrDefault("VALKEY_PASSWORD", ""),
@@ -92,6 +87,9 @@ func Load() (*Config, error) {
 		CacheCompiledPlanTTL: getEnvDurationOrDefault("CACHE_COMPILED_PLAN_TTL", time.Hour),
 		IdempotencyTTL:       getEnvDurationOrDefault("IDEMPOTENCY_TTL", 24*time.Hour),
 		ShutdownDrainDelay:   getEnvDurationOrDefault("SHUTDOWN_DRAIN_DELAY", 5*time.Second),
+
+		ShutdownGrace:            getEnvDurationOrDefault("SHUTDOWN_GRACE", 30*time.Second),
+		ShutdownPoolDrainTimeout: getEnvDurationOrDefault("SHUTDOWN_POOL_DRAIN_TIMEOUT", 10*time.Second),
 
 		InternalAPIToken: getEnvOrDefault("INTERNAL_API_TOKEN", ""),
 
@@ -134,14 +132,11 @@ func (c *Config) validate() error {
 	if c.MetricsPort < 1 || c.MetricsPort > 65535 {
 		return fmt.Errorf("METRICS_PORT must be in [1, 65535]")
 	}
-	if c.PGMaxConns <= 0 {
-		return fmt.Errorf("PG_MAX_CONNS must be > 0")
+	if c.HTTPPort < 1 || c.HTTPPort > 65535 {
+		return fmt.Errorf("HTTP_PORT must be in [1, 65535]")
 	}
-	if c.PGMinConns < 0 {
-		return fmt.Errorf("PG_MIN_CONNS must be >= 0")
-	}
-	if c.PGMinConns > c.PGMaxConns {
-		return fmt.Errorf("PG_MIN_CONNS must be <= PG_MAX_CONNS")
+	if c.MetricsPort < 1 || c.MetricsPort > 65535 {
+		return fmt.Errorf("METRICS_PORT must be in [1, 65535]")
 	}
 	if c.OTELTracesSamplerRatio < 0.0 || c.OTELTracesSamplerRatio > 1.0 {
 		return fmt.Errorf("OTEL_TRACES_SAMPLER_RATIO must be in [0.0, 1.0]")
@@ -151,6 +146,12 @@ func (c *Config) validate() error {
 	}
 	if c.ShutdownDrainDelay < 0 {
 		return fmt.Errorf("SHUTDOWN_DRAIN_DELAY must not be negative")
+	}
+	if c.ShutdownGrace <= 0 {
+		return fmt.Errorf("SHUTDOWN_GRACE must be > 0")
+	}
+	if c.ShutdownPoolDrainTimeout <= 0 {
+		return fmt.Errorf("SHUTDOWN_POOL_DRAIN_TIMEOUT must be > 0")
 	}
 	if c.SecretsClientTimeout <= 0 {
 		return fmt.Errorf("SECRETS_CLIENT_TIMEOUT must be > 0")

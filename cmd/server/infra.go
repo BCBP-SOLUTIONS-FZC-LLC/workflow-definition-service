@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -15,23 +14,42 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-func dbPoolConfig(cfg *config.Config, dsn string, pgBouncerMode bool, log port.Logger) pgcommon.Config {
-	return pgcommon.Config{
-		DSN:                dsn,
-		MaxConns:           cfg.PGMaxConns,
-		MinConns:           cfg.PGMinConns,
-		SlowQueryThreshold: time.Duration(cfg.PGSlowQueryThresholdMS) * time.Millisecond,
-		GUCProvider:        pgcommon.GUCSetFromContext,
-		PGBouncerMode:      pgBouncerMode,
-		Logger:             newPGCommonLogger(log),
-		Tracer:             gincommon.NewSpanTracer(cfg.OTELServiceName),
-	}
+const systemPoolMaxConns = 3
+
+type poolConfigs struct {
+	app      pgcommon.Config
+	fallback pgcommon.Config
+	system   pgcommon.Config
 }
 
-func newDBPool(ctx context.Context, cfg *config.Config, log port.Logger) (*pgcommon.Pool, error) {
-	pool, err := pgcommon.NewPool(ctx, dbPoolConfig(cfg, cfg.DatabaseURL, cfg.PGBouncerMode, log))
-	if err != nil && cfg.DatabaseFallbackURL != "" {
-		pool, err = pgcommon.NewPool(ctx, dbPoolConfig(cfg, cfg.DatabaseFallbackURL, false, log))
+func newPoolConfigs(cfg *config.Config, log port.Logger) (poolConfigs, []pgcommon.ConfigWarning) {
+	base, warnings := pgcommon.ConfigFromEnv()
+	base.Logger = newPGCommonLogger(log)
+	base.Tracer = gincommon.NewSpanTracer(cfg.OTELServiceName)
+
+	app := base
+	app.DSN = cfg.DatabaseURL
+	app.GUCProvider = pgcommon.GUCSetFromContext
+
+	fallback := app
+	fallback.DSN = cfg.DatabaseFallbackURL
+	fallback.PGBouncerMode = false
+
+	system := base
+	system.DSN = cfg.SystemDSN()
+	system.MaxConns = systemPoolMaxConns
+	system.MinConns = 0
+	system.PoolName = "system"
+	system.PGBouncerMode = true
+	system.GUCProvider = nil
+
+	return poolConfigs{app: app, fallback: fallback, system: system}, warnings
+}
+
+func newDBPool(ctx context.Context, pools poolConfigs, hasFallback bool) (*pgcommon.Pool, error) {
+	pool, err := pgcommon.NewPool(ctx, pools.app)
+	if err != nil && hasFallback {
+		pool, err = pgcommon.NewPool(ctx, pools.fallback)
 		if err != nil {
 			return nil, fmt.Errorf("db pool (primary and fallback both failed): %w", err)
 		}
@@ -42,25 +60,15 @@ func newDBPool(ctx context.Context, cfg *config.Config, log port.Logger) (*pgcom
 	return pool, nil
 }
 
-const systemPoolMaxConns = 3
-
-func newSystemDBPool(ctx context.Context, cfg *config.Config, log port.Logger) (*pgcommon.Pool, error) {
-	pool, err := pgcommon.NewPool(ctx, pgcommon.Config{
-		DSN:                cfg.SystemDSN(),
-		MaxConns:           systemPoolMaxConns,
-		MinConns:           0,
-		SlowQueryThreshold: time.Duration(cfg.PGSlowQueryThresholdMS) * time.Millisecond,
-		PGBouncerMode:      cfg.PGBouncerMode,
-		Logger:             newPGCommonLogger(log),
-		Tracer:             gincommon.NewSpanTracer(cfg.OTELServiceName),
-	})
+func newSystemDBPool(ctx context.Context, pools poolConfigs) (*pgcommon.Pool, error) {
+	pool, err := pgcommon.NewPool(ctx, pools.system)
 	if err != nil {
 		return nil, fmt.Errorf("system db pool: %w", err)
 	}
 	return pool, nil
 }
 
-func newCacheStore(ctx context.Context, cfg *config.Config) (port.CacheStore, *redis.Client, error) {
+func newCacheStore(ctx context.Context, cfg *config.Config, log port.Logger) (port.CacheStore, *redis.Client) {
 	client := redis.NewClient(&redis.Options{
 		Addr:         cfg.ValkeyAddr,
 		Password:     cfg.ValkeyPassword,
@@ -69,7 +77,7 @@ func newCacheStore(ctx context.Context, cfg *config.Config) (port.CacheStore, *r
 		WriteTimeout: cfg.ValkeyWriteTimeout,
 	})
 	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, nil, fmt.Errorf("valkey ping: %w", err)
+		log.Warn("valkey unreachable at startup, serving without the cache until it returns", map[string]any{"error": err.Error()})
 	}
-	return valkey.NewCache(client), client, nil
+	return valkey.NewCache(client), client
 }

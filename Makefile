@@ -63,7 +63,7 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/http:3 \
         arch-lint lint lint-fix vuln \
         tidy fmt-check fix check \
         setup install-hooks \
-        docker-up docker-down \
+        docker-up docker-down docker-reset \
         docker-build docker-lint docker-trivy docker-check pin-base-images \
         clean help
 
@@ -393,6 +393,12 @@ docker-up:
 ## docker-down: Stop local infra
 docker-down:
 	docker compose down
+
+## docker-reset: Drop the local volumes and recreate the infra (re-runs scripts/init-db.sql, which creates the app and migrator roles)
+docker-reset:
+	docker compose down -v
+	docker compose up -d
+	@echo "postgres on :5432 (roles from scripts/init-db.sql), valkey on :6379"
 
 
 ## clean: Remove build output, generated files, and coverage reports

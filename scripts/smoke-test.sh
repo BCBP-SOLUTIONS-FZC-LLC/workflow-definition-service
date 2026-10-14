@@ -37,7 +37,7 @@ API="${HTTP}/api/v1"
 METRICS="${METRICS_BASE:-http://localhost:9091}"
 MEMBERSHIP_CTRL="${MEMBERSHIP_CTRL:-http://localhost:8081}"
 EXECUTION_CTRL="${EXECUTION_CTRL:-http://localhost:8083}"
-DB_URL="${DB_URL:-postgres://wfdef:wfdef@localhost:5432/workflow_definition?sslmode=disable}"
+DB_URL="${DB_URL:-postgres://workflow_definition_migrator:devpassword@localhost:5432/workflow_definition?sslmode=disable}"
 INTERNAL_TOKEN="${INTERNAL_TOKEN:-}"
 
 # Stable fixture UUIDs matching initial-diagram.bpmn

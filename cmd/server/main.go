@@ -42,5 +42,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	a.run()
+	if err := a.run(); err != nil {
+		fmt.Fprintf(os.Stderr, "stopped: %v\n", err)
+		os.Exit(1)
+	}
 }

@@ -101,7 +101,7 @@ groups:
           summary: workflow-definition-service p99 latency above 2s
           description: >-
             The p99 request duration is {{ $value | humanizeDuration }}, exceeding
-            the 2s SLO threshold. Check slow-query logs (PG_SLOW_QUERY_THRESHOLD_MS)
+            the 2s SLO threshold. Check slow-query logs (PG_SLOW_QUERY_THRESHOLD)
             and Valkey response times.
 
       - alert: WorkflowDefinitionServiceCriticalLatency

@@ -513,9 +513,12 @@ All configuration is read from environment variables via `internal/config.Config
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | **Yes** | — | pgx DSN, e.g. `postgres://user:pass@host:5432/db?sslmode=disable` |
-| `PG_MAX_CONNS` | No | `10` | Max open connections in the pgx pool |
-| `PG_MIN_CONNS` | No | `2` | Min idle connections kept alive |
-| `PG_SLOW_QUERY_THRESHOLD_MS` | No | `200` | Queries exceeding this duration (ms) are logged as slow |
+| `PG_MAX_CONNS` | No | `10` | Max open connections in the pgx pool (read by `platform-pgcommon`) |
+| `PG_MIN_CONNS` | No | `2` | Min idle connections kept alive; `0` under PgBouncer |
+| `PG_SLOW_QUERY_THRESHOLD` | No | `200ms` | Queries exceeding this duration are logged as slow |
+| `PG_STATEMENT_TIMEOUT` | No | `0` (server setting) | Per-transaction statement timeout; a query cancelled by it answers `503` |
+| `PG_LOCK_TIMEOUT` | No | `0` (server setting) | Per-transaction lock timeout |
+| `PG_POOL_NAME` | No | `default` | The `pool` metric label of the application pool; the system pool is always `system` |
 | `PG_BOUNCER_MODE` | No | `false` | Set `true` when `DATABASE_URL` points to PgBouncer; switches pgx to simple protocol + transaction-local GUC injection |
 | `MIGRATION_DATABASE_URL` | No | *(uses `DATABASE_URL`)* | Direct Postgres DSN for the `migrate` subcommand; required when `DATABASE_URL` points to PgBouncer (advisory locks require a direct connection) |
 | `DATABASE_FALLBACK_URL` | No | *(empty)* | Startup-only fallback DSN tried once if the primary pool is unreachable (rolling deploys, PgBouncer not ready) |
@@ -531,7 +534,9 @@ All configuration is read from environment variables via `internal/config.Config
 | `VALKEY_WRITE_TIMEOUT` | No | `1s` | Timeout for socket writes |
 | `CACHE_COMPILED_PLAN_TTL` | No | `1h` | TTL for the internal compiled-plan read's cache; entries are also deleted on archive / membership invalidation |
 | `IDEMPOTENCY_TTL` | No | `24h` | TTL for idempotency keys on HTTP mutations |
-| `SHUTDOWN_DRAIN_DELAY` | No | `5s` | On SIGTERM `/readyz` fails for this long before the listener closes, so the pod leaves endpoint lists first; must be less than the pod's termination grace period minus the 30 s shutdown bound |
+| `SHUTDOWN_DRAIN_DELAY` | No | `5s` | On SIGTERM `/readyz` fails for this long before the listener closes, so the pod leaves endpoint lists first |
+| `SHUTDOWN_GRACE` | No | `30s` | Bound on finishing in-flight HTTP requests at shutdown |
+| `SHUTDOWN_POOL_DRAIN_TIMEOUT` | No | `10s` | Bound on each database pool drain; the drain delay, the grace and two pool drains must stay under the pod's termination grace period |
 
 ### Internal endpoint
 

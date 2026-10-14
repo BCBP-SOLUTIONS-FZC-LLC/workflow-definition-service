@@ -32,18 +32,39 @@ func newApp(cfg *config.Config) (*app, error) {
 		return nil, err
 	}
 
-	pool, err := newDBPool(context.Background(), cfg, log)
+	pools, poolWarnings := newPoolConfigs(cfg, log)
+	for _, w := range poolWarnings {
+		log.Warn("postgres config warning", map[string]any{"key": w.Key, "reason": w.Reason})
+	}
+
+	pool, err := newDBPool(context.Background(), pools, cfg.DatabaseFallbackURL != "")
 	if err != nil {
 		tracingShutdown()
 		return nil, err
 	}
 
-	systemPool, err := newSystemDBPool(context.Background(), cfg, log)
+	systemPool, err := newSystemDBPool(context.Background(), pools)
 	if err != nil {
 		pool.Close()
 		tracingShutdown()
 		return nil, err
 	}
+
+	roleCtx, cancelRoleCheck := context.WithTimeout(context.Background(), 10*time.Second)
+	roleWarnings, appRole, systemRole, err := verifyPoolRoles(roleCtx, pool, systemPool, cfg.AppEnv, cfg.SystemDatabaseURL != "")
+	cancelRoleCheck()
+	if err != nil {
+		pool.Close()
+		systemPool.Close()
+		tracingShutdown()
+		return nil, err
+	}
+	for _, msg := range roleWarnings {
+		log.Warn(msg, nil)
+	}
+	log.Info("database role posture verified", map[string]any{
+		"app_role": appRole.Role, "system_role": systemRole.Role, "system_bypassrls": systemRole.BypassesRLS(),
+	})
 
 	rlsExporter := service.NewRLSViolationExporter(service.RLSViolationExporterDeps{
 		Log:       pgadapter.NewRLSViolationRepo(systemPool),
@@ -53,13 +74,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		Logger:    log,
 	})
 
-	cache, redisClient, err := newCacheStore(context.Background(), cfg)
-	if err != nil {
-		pool.Close()
-		systemPool.Close()
-		tracingShutdown()
-		return nil, err
-	}
+	cache, redisClient := newCacheStore(context.Background(), cfg, log)
 
 	membershipSvc := newMembershipService(cfg)
 	executionSvc := newExecutionService(cfg)
@@ -177,14 +192,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		Cache:            cache,
 	})
 
-	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:           router.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
+	srv := newHTTPServer(cfg.HTTPPort, router.Handler())
 
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", gincommon.MetricsHandler())

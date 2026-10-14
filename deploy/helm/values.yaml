@@ -47,10 +47,14 @@ env:
   PG_MAX_CONNS: "15"
   PG_MIN_CONNS: "0"                                # 0 when PG_BOUNCER_MODE=true
   PG_BOUNCER_MODE: "true"
-  PG_SLOW_QUERY_THRESHOLD_MS: "200"
+  PG_SLOW_QUERY_THRESHOLD: "200ms"
+  PG_STATEMENT_TIMEOUT: "25s"                      # below the 30s request deadline, so a runaway query is cancelled by the database
+  PG_LOCK_TIMEOUT: "5s"
   CACHE_COMPILED_PLAN_TTL: "1h"
   IDEMPOTENCY_TTL: "24h"
   SHUTDOWN_DRAIN_DELAY: "5s"                       # /readyz fails this long before the listener closes, so endpoint lists drop the pod first
+  SHUTDOWN_GRACE: "30s"                            # bound on finishing in-flight HTTP requests
+  SHUTDOWN_POOL_DRAIN_TIMEOUT: "10s"               # each pool drain gets its own bound; drain delay + grace + 2 x this stays under terminationGracePeriodSeconds
   VALKEY_ADDR: ""                                  # cluster-internal Valkey address
   VALKEY_DIAL_TIMEOUT: "2s"
   VALKEY_READ_TIMEOUT: "1s"

@@ -682,7 +682,9 @@ One PgBouncer deployment shared by all microservices. `DEFAULT_POOL_SIZE` is the
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `PG_BOUNCER_MODE` | `true` when `DATABASE_URL` points to PgBouncer. Switches pgx to simple protocol + transaction-local GUC/RLS injection. | `false` |
+| `PG_BOUNCER_MODE` | `true` when `DATABASE_URL` points to PgBouncer. Switches pgx to simple protocol + transaction-local GUC/RLS injection. The system pool always uses it. | `false` |
+| `PG_STATEMENT_TIMEOUT`, `PG_LOCK_TIMEOUT` | Per-transaction timeouts applied to both pools. A query cancelled by the statement timeout answers `503`. | `0` (server setting) |
+| `PG_SLOW_QUERY_THRESHOLD` | Duration above which a query is logged as slow. | `200ms` |
 | `MIGRATION_DATABASE_URL` | Direct Postgres DSN for the `migrate` subcommand. Required when `DATABASE_URL` is a PgBouncer URL — `golang-migrate` uses session advisory locks that PgBouncer transaction pooling drops. Falls back to `DATABASE_URL` when unset. | *(unset)* |
 | `DATABASE_FALLBACK_URL` | Startup-only fallback DSN (direct Postgres). Tried once at boot if the primary pool fails — covers PgBouncer not yet ready during rolling deploys. Not used for runtime reconnection. | *(unset)* |
 
@@ -691,18 +693,19 @@ One PgBouncer deployment shared by all microservices. `DEFAULT_POOL_SIZE` is the
 ```bash
 make docker-up   # starts postgres (5432) + pgbouncer (6432)
 
-# Migrations always run direct — never through PgBouncer (advisory locks)
-DATABASE_URL=postgres://wfdef:wfdef@localhost:5432/workflow_definition?sslmode=disable \
+# Migrations always run direct — never through PgBouncer (advisory locks) — as the migrator role
+# that scripts/init-db.sql creates (it owns the schema and is the BYPASSRLS system role).
+DATABASE_URL=postgres://workflow_definition_migrator:devpassword@localhost:5432/workflow_definition?sslmode=disable \
   go run ./cmd/server migrate
 
-# Service via PgBouncer — update .env:
-#   DATABASE_URL=postgres://wfdef:wfdef@localhost:6432/workflow_definition?sslmode=disable
+# Service via PgBouncer as the application role (NOSUPERUSER NOBYPASSRLS) — update .env:
+#   DATABASE_URL=postgres://workflow_definition_app:devpassword@localhost:6432/workflow_definition?sslmode=disable
 #   PG_BOUNCER_MODE=true
 #   PG_MIN_CONNS=0
 go run ./cmd/server
 
 # Verify PgBouncer is active
-psql "postgresql://wfdef:wfdef@localhost:6432/pgbouncer" -c "SHOW POOLS;"
+psql "postgresql://workflow_definition_app:devpassword@localhost:6432/pgbouncer" -c "SHOW POOLS;"
 ```
 
 ### Production setup

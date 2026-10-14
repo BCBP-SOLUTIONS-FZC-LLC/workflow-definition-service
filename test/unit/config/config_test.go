@@ -14,8 +14,7 @@ func TestLoad_Success(t *testing.T) {
 	keysToBackup := []string{
 		"DATABASE_URL", "APP_ENV", "BUILD_VERSION", "HTTP_PORT",
 		"OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_INSECURE",
-		"OTEL_TRACES_SAMPLER_RATIO", "PG_MAX_CONNS", "PG_MIN_CONNS",
-		"PG_SLOW_QUERY_THRESHOLD_MS", "VALKEY_ADDR", "VALKEY_PASSWORD",
+		"OTEL_TRACES_SAMPLER_RATIO", "VALKEY_ADDR", "VALKEY_PASSWORD",
 		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
 		"INTERNAL_API_TOKEN", "OPENBAO_ADDR", "OPENBAO_TOKEN",
 	}
@@ -40,9 +39,6 @@ func TestLoad_Success(t *testing.T) {
 	_ = os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel:4317")
 	_ = os.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "false")
 	_ = os.Setenv("OTEL_TRACES_SAMPLER_RATIO", "0.5")
-	_ = os.Setenv("PG_MAX_CONNS", "20")
-	_ = os.Setenv("PG_MIN_CONNS", "5")
-	_ = os.Setenv("PG_SLOW_QUERY_THRESHOLD_MS", "500")
 	_ = os.Setenv("VALKEY_ADDR", "valkey:6379")
 	_ = os.Setenv("VALKEY_PASSWORD", "secret")
 	_ = os.Setenv("ORG_MEMBERSHIP_BASE_URL", "http://org")
@@ -81,15 +77,6 @@ func TestLoad_Success(t *testing.T) {
 	if cfg.OTELTracesSamplerRatio != 0.5 {
 		t.Errorf("OTELTracesSamplerRatio = %f, want 0.5", cfg.OTELTracesSamplerRatio)
 	}
-	if cfg.PGMaxConns != 20 {
-		t.Errorf("PGMaxConns = %d, want 20", cfg.PGMaxConns)
-	}
-	if cfg.PGMinConns != 5 {
-		t.Errorf("PGMinConns = %d, want 5", cfg.PGMinConns)
-	}
-	if cfg.PGSlowQueryThresholdMS != 500 {
-		t.Errorf("PGSlowQueryThresholdMS = %d, want 500", cfg.PGSlowQueryThresholdMS)
-	}
 	if cfg.ValkeyAddr != "valkey:6379" {
 		t.Errorf("ValkeyAddr = %q, want valkey:6379", cfg.ValkeyAddr)
 	}
@@ -109,7 +96,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		"DATABASE_URL", "APP_ENV",
 		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
 		"INTERNAL_API_TOKEN", "SYSTEM_DATABASE_URL", "OPENBAO_ADDR", "OPENBAO_TOKEN",
-		"HTTP_PORT", "PG_MIN_CONNS", "PG_MAX_CONNS",
+		"HTTP_PORT",
 		"OTEL_TRACES_SAMPLER_RATIO", "EXECUTION_CLIENT_TIMEOUT",
 		"RLS_VIOLATION_EXPORT_INTERVAL", "RLS_VIOLATION_RETENTION",
 	}
@@ -259,21 +246,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		{
 			name:    "http port above range",
 			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "HTTP_PORT": "65536"},
-			wantErr: true,
-		},
-		{
-			name:    "pg max conns zero",
-			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "PG_MAX_CONNS": "0", "PG_MIN_CONNS": "0"},
-			wantErr: true,
-		},
-		{
-			name:    "pg min conns negative",
-			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "PG_MIN_CONNS": "-1", "PG_MAX_CONNS": "10"},
-			wantErr: true,
-		},
-		{
-			name:    "pg min conns exceeds max conns",
-			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "PG_MIN_CONNS": "20", "PG_MAX_CONNS": "10"},
 			wantErr: true,
 		},
 		{
@@ -509,5 +481,37 @@ func TestLoad_ShutdownDrainDelay(t *testing.T) {
 	t.Setenv("SHUTDOWN_DRAIN_DELAY", "-1s")
 	if _, err := config.Load(); err == nil {
 		t.Error("a negative drain delay must be refused at startup")
+	}
+}
+
+func TestLoad_ShutdownBudgets(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost:5432/test")
+	t.Setenv("APP_ENV", "dev")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ShutdownGrace != 30*time.Second || cfg.ShutdownPoolDrainTimeout != 10*time.Second {
+		t.Errorf("defaults = grace %s, pool drain %s, want 30s and 10s", cfg.ShutdownGrace, cfg.ShutdownPoolDrainTimeout)
+	}
+	if total := cfg.ShutdownDrainDelay + cfg.ShutdownGrace + 2*cfg.ShutdownPoolDrainTimeout; total >= 60*time.Second {
+		t.Errorf("the default shutdown budget is %s, which must stay under the chart's 60s termination grace period", total)
+	}
+
+	t.Setenv("SHUTDOWN_GRACE", "20s")
+	t.Setenv("SHUTDOWN_POOL_DRAIN_TIMEOUT", "4s")
+	cfg, err = config.Load()
+	if err != nil || cfg.ShutdownGrace != 20*time.Second || cfg.ShutdownPoolDrainTimeout != 4*time.Second {
+		t.Errorf("overrides gave grace %s, pool drain %s, %v", cfg.ShutdownGrace, cfg.ShutdownPoolDrainTimeout, err)
+	}
+
+	for _, name := range []string{"SHUTDOWN_GRACE", "SHUTDOWN_POOL_DRAIN_TIMEOUT"} {
+		t.Run(name+" must be positive", func(t *testing.T) {
+			t.Setenv(name, "0s")
+			if _, err := config.Load(); err == nil {
+				t.Errorf("%s=0s loaded, want an error", name)
+			}
+		})
 	}
 }

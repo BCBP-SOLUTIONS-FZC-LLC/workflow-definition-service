@@ -213,8 +213,10 @@ jobs:
     env:
       GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
       GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
-      DATABASE_URL: postgres://wfdef:wfdef@localhost:5432/wfdef?sslmode=disable
-      DB_URL: postgres://wfdef:wfdef@localhost:5432/wfdef?sslmode=disable
+      DATABASE_URL: postgres://workflow_definition_app:devpassword@localhost:5432/workflow_definition?sslmode=disable
+      MIGRATION_DATABASE_URL: postgres://workflow_definition_migrator:devpassword@localhost:5432/workflow_definition?sslmode=disable
+      SYSTEM_DATABASE_URL: postgres://workflow_definition_migrator:devpassword@localhost:5432/workflow_definition?sslmode=disable
+      DB_URL: postgres://workflow_definition_migrator:devpassword@localhost:5432/workflow_definition?sslmode=disable
       APP_ENV: test
       INTERNAL_API_TOKEN: smoke-internal-token
       INTERNAL_TOKEN: smoke-internal-token
@@ -227,9 +229,9 @@ jobs:
       postgres:
         image: postgres:18-alpine
         env:
-          POSTGRES_USER: wfdef
-          POSTGRES_PASSWORD: wfdef
-          POSTGRES_DB: wfdef
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: workflow_definition
         ports:
           - 5432:5432
         options: >-
@@ -271,6 +273,11 @@ jobs:
 
       - name: Download modules
         run: go mod download
+
+      - name: Create the application and migrator roles
+        env:
+          PGPASSWORD: postgres
+        run: psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d workflow_definition -f scripts/init-db.sql
 
       - name: Run migrations
         run: go run ./cmd/server migrate
