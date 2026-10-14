@@ -77,19 +77,32 @@ func gatewayOnlyDiamonds(count int) string {
 	return flowDocument([]flowLane{{"Engineering", engDeptID, nodes}}, body.String())
 }
 
+// The bound is on growth, not wall time, so it holds on a slow runner and
+// under the race detector: refusing a chain four times longer takes about four
+// times as long, where a quadratic walk would take sixteen.
 func TestValidate_LongChainOfTasklessGateways_IsRefusedQuickly(t *testing.T) {
-	bpmnXML := gatewayOnlyDiamonds(4000)
-
-	start := time.Now()
-	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
-	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
+	validate := func(diamonds int) ([]domain.BPMNValidationError, time.Duration) {
+		t.Helper()
+		bpmnXML := gatewayOnlyDiamonds(diamonds)
+		start := time.Now()
+		errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("Validate of %d diamonds: %v", diamonds, err)
+		}
+		return errs, elapsed
 	}
+
+	validate(250)
+	_, short := validate(1000)
+	errs, long := validate(4000)
 	if !hasCode(errs, domain.BPMNErrMaxDepthExceeded) {
 		t.Errorf("errors = %v, want MAX_DEPTH_EXCEEDED", errCodes(errs))
 	}
-	if elapsed > 3*time.Second {
-		t.Errorf("Validate of a 4000-diamond gateway chain took %s", elapsed)
+	if long > 8*short {
+		t.Errorf("a 4000-diamond chain took %s, more than 8 times the %s of a 1000-diamond chain", long, short)
+	}
+	if long > 30*time.Second {
+		t.Errorf("Validate of a 4000-diamond gateway chain took %s", long)
 	}
 }
