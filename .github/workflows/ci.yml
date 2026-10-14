@@ -138,6 +138,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generated
+          path: internal
 
       - uses: docker/setup-buildx-action@v3
 
@@ -170,6 +171,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generated
+          path: internal
 
       - uses: docker/setup-buildx-action@v3
 
@@ -271,6 +273,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generated
+          path: internal
 
       - name: Download modules
         run: go mod download
@@ -308,6 +311,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generated
+          path: internal
 
       - uses: docker/setup-buildx-action@v3
 

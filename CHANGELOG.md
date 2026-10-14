@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Fixed
 
+- CI's first full run on this branch (earlier runs skipped every job on a draft) failed wherever the `generated` artifact was used: an upload of two paths is rooted at their common parent, `internal/`, so downloading it into the workspace root left the sqlc output and the mocks outside the tree. Every download now extracts into `internal/`.
 - A module or starter name, description or category, and a draft name or description, over its limit reached the database and came back as `500`. They are `422 INVALID_INPUT` with `invalid_params` now (name 255, description 2000, starter category 64), counted in characters, as the workflow create and clone limits are.
 - A version diff sent `step_changes` with Go field names (`Description`, `Before`, `After`) instead of `description`, `before` and `after`, and sent `null` for a department list with no entry.
 - A membership event published through a schema registry (a `dataschema` on the envelope and a base64 string of a registry-framed payload in `data`) was answered `400` and never reached the revocation handler. The ingest now decodes the frame with `events.GlueDecodeCodec` and answers `502 EVENT_DECODE_FAILED` for a payload it cannot decode. The internal spec declares `dataschema`, the string form of `data` and the `502`.
