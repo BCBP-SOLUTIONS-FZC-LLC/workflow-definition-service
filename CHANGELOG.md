@@ -46,7 +46,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Added
 
-- CI runs the Execution Service's compatibility suite against this checkout in a `compat` job: the suite builds this service's binary and drives it against the Execution Service's real API and worker, so a change here that breaks Execution fails this pull request.
+- CI runs the Execution Service's compatibility suite against this checkout in a `compat` job: the suite builds this service's binary and drives it against the Execution Service's real API and worker, so a change here that breaks Execution fails this pull request. The job also checks out the Workflow-Events Consumer (`compat_consumer_ref`, `feat/event-consumer`), so membership events published on SNS reach this service through the real consumer.
 - Contract tests also fail on a response field that the spec's schema does not declare (`Spec.Undeclared`), applied to the public and internal routes the tests send; that found `updated_at` and `has_draft` missing from the getWorkflow response, now declared.
 - The public spec declares the idempotency 409 `IDEMPOTENCY_REQUEST_IN_PROGRESS`, the 400 for a key over 256 characters (the header is no longer typed as a UUID), a 503 `UPSTREAM_UNAVAILABLE` on every operation, and the real `/readyz` bodies (`cache` ok or degraded; `unavailable` or `draining` on 503). Contract tests send these through the real router against it.
 - Contract tests send the internal events and connector alias routes through the real router against `api/internal-openapi.yaml`, including 400, 401, 413 and 500, and the internal spec declares 413.

@@ -558,7 +558,7 @@ See [ARCHITECTURE.md § BPMN Compiler](ARCHITECTURE.md#bpmn-compiler) for the fu
 | `test/unit/<pkg>/` | Black-box unit tests (exported API only) | `make test` |
 | `test/contract/` | The public and internal APIs against their specs, the Execution client against the copied Execution contract | `make test` |
 | `test/integration/`, `test/e2e/` | DB integration and service lifecycle tests against a real PostgreSQL container | `make test-integration` |
-| Execution's `test/compat/` | This service's binary against the Execution Service's real API and worker | `make -C <execution checkout> test-compat DEFINITION_SERVICE_DIR=$PWD` |
+| Execution's `test/compat/` | This service's binary against the Execution Service's real API, worker and connector worker, with IAM events delivered through the Workflow-Events Consumer | `make -C <execution checkout> test-compat DEFINITION_SERVICE_DIR=$PWD EVENT_CONSUMER_DIR=<consumer checkout>` |
 
 Integration tests require Docker. Pre-pull the image once:
 

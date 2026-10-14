@@ -20,6 +20,11 @@ name: Validate Test
         type: string
         required: false
         default: feat/service
+      compat_consumer_ref:
+        description: 'Branch or tag of the Workflow-Events Consumer the compat job runs'
+        type: string
+        required: false
+        default: feat/event-consumer
 
 permissions:
   contents: read
@@ -131,6 +136,15 @@ jobs:
           persist-credentials: false
           token: ${{ secrets.CI_REPO_READ_TOKEN || secrets.GO_PRIVATE_TOKEN }}
 
+      - name: Checkout the Workflow-Events Consumer
+        uses: actions/checkout@v6
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/workflow-event-consumer
+          ref: ${{ inputs.compat_consumer_ref }}
+          path: peer/event_consumer
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || secrets.GO_PRIVATE_TOKEN }}
+
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -139,6 +153,7 @@ jobs:
             go.sum
             go.mod
             peer/execution_service/go.sum
+            peer/event_consumer/go.sum
 
       - name: Configure private module access
         env:
@@ -152,4 +167,4 @@ jobs:
           make -C peer/execution_service generate-sqlc SQLC="$RUNNER_TEMP/bin/sqlc"
 
       - name: Execution's compatibility suite against this checkout
-        run: make -C peer/execution_service test-compat DEFINITION_SERVICE_DIR="$GITHUB_WORKSPACE"
+        run: make -C peer/execution_service test-compat DEFINITION_SERVICE_DIR="$GITHUB_WORKSPACE" EVENT_CONSUMER_DIR="$GITHUB_WORKSPACE/peer/event_consumer"
