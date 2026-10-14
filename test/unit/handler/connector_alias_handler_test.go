@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	httpadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
@@ -18,9 +19,7 @@ import (
 func aliasRouter(h *handler.Handler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/internal/connector-aliases", h.ListConnectorAliases)
-	r.POST("/internal/connector-aliases/rest", h.WriteConnectorRestAlias)
-	r.DELETE("/internal/connector-aliases/rest/:alias", h.DeleteConnectorRestAlias)
+	httpadapter.RegisterInternalRoutes(r.Group("/api/v1/internal"), h)
 	return r
 }
 
@@ -30,7 +29,7 @@ func TestListConnectorAliases(t *testing.T) {
 			return []domain.ConnectorRestAlias{{Alias: "tender-get", Method: "GET", BaseURL: "http://tender-service.internal", PathTemplate: "/x", Timeout: 5 * time.Second}}, nil
 		},
 	}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodGet, "/internal/connector-aliases", nil))
+	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodGet, "/api/v1/internal/connector-aliases", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]any
@@ -47,7 +46,7 @@ func TestWriteConnectorRestAlias_Success(t *testing.T) {
 		},
 	}
 	body := map[string]any{"alias": "tender-get", "method": "GET", "baseURL": "http://tender-service.internal", "pathTemplate": "/x"}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/internal/connector-aliases/rest", body))
+	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/api/v1/internal/connector-aliases/rest", body))
 	assert.Equal(t, http.StatusNoContent, w.Code)
 	assert.Equal(t, "tender-get", got.Alias)
 	assert.Equal(t, 5*time.Second, got.Timeout)
@@ -60,7 +59,7 @@ func TestWriteConnectorRestAlias_ValidationError(t *testing.T) {
 		},
 	}
 	body := map[string]any{"alias": "tender-get", "method": "NOPE", "baseURL": "http://x", "pathTemplate": "/x"}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/internal/connector-aliases/rest", body))
+	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/api/v1/internal/connector-aliases/rest", body))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -68,7 +67,7 @@ func TestDeleteConnectorRestAlias_NotFound(t *testing.T) {
 	conn := &fakeConnectorSvc{
 		deleteRestFn: func(context.Context, string) (bool, error) { return false, nil },
 	}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodDelete, "/internal/connector-aliases/rest/missing", nil))
+	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodDelete, "/api/v1/internal/connector-aliases/rest/missing", nil))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -76,13 +75,13 @@ func TestDeleteConnectorRestAlias_Success(t *testing.T) {
 	conn := &fakeConnectorSvc{
 		deleteRestFn: func(context.Context, string) (bool, error) { return true, nil },
 	}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodDelete, "/internal/connector-aliases/rest/tender-get", nil))
+	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodDelete, "/api/v1/internal/connector-aliases/rest/tender-get", nil))
 	assert.Equal(t, http.StatusNoContent, w.Code)
 }
 
 func TestWriteConnectorRestAlias_BindError(t *testing.T) {
 	conn := &fakeConnectorSvc{}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/internal/connector-aliases/rest", map[string]any{"alias": "x"}))
+	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/api/v1/internal/connector-aliases/rest", map[string]any{"alias": "x"}))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -92,7 +91,7 @@ func TestListConnectorAliases_Error(t *testing.T) {
 			return nil, domain.ErrUpstreamUnavailable
 		},
 	}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodGet, "/internal/connector-aliases", nil))
+	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodGet, "/api/v1/internal/connector-aliases", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
@@ -101,6 +100,6 @@ func TestWriteConnectorRestAlias_HugeTimeoutIsRefusedNotWrapped(t *testing.T) {
 		writeRestFn: func(_ context.Context, a domain.ConnectorRestAlias) error { return a.Validate() },
 	}
 	body := map[string]any{"alias": "tender-get", "method": "GET", "baseURL": "http://tender-service.internal", "pathTemplate": "/x", "timeoutMs": int64(9223372036854775807)}
-	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/internal/connector-aliases/rest", body))
+	w := do(aliasRouter(handler.New(handler.Services{Connectors: conn})), req(http.MethodPost, "/api/v1/internal/connector-aliases/rest", body))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

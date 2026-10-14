@@ -19,6 +19,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 
+	httpadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/unit/testkit"
@@ -77,7 +78,7 @@ func internalRouter(rev *fakeMembershipRevoker) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	h := handler.New(handler.Services{Membership: rev, Log: testkit.FakeLogger{}})
 	r := gin.New()
-	r.POST("/internal/events", h.HandleInternalEvent)
+	httpadapter.RegisterInternalRoutes(r.Group("/api/v1/internal"), h)
 	return r
 }
 
@@ -85,7 +86,7 @@ func postEvent(rev *fakeMembershipRevoker, body any) *httptest.ResponseRecorder 
 	var r = internalRouter(rev)
 	raw, _ := json.Marshal(body)
 	w := httptest.NewRecorder()
-	httpReq := httptest.NewRequest(http.MethodPost, "/internal/events", bytes.NewReader(raw))
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/events", bytes.NewReader(raw))
 	httpReq.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, httpReq)
 	return w
@@ -179,7 +180,7 @@ func TestInternalEvents_MalformedEnvelope_400(t *testing.T) {
 	rev := &fakeMembershipRevoker{}
 	r := internalRouter(rev)
 	w := httptest.NewRecorder()
-	httpReq := httptest.NewRequest(http.MethodPost, "/internal/events", bytes.NewReader([]byte(`not-json`)))
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/events", bytes.NewReader([]byte(`not-json`)))
 	httpReq.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, httpReq)
 

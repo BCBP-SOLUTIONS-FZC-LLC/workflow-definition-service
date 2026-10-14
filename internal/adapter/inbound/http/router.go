@@ -62,7 +62,6 @@ func NewRouter(cfg RouterConfig) *Router {
 	}
 
 	h := cfg.Handler
-	idem := h.Idempotent
 
 	r := gin.New()
 	r.MaxMultipartMemory = 10 << 20
@@ -96,11 +95,7 @@ func NewRouter(cfg RouterConfig) *Router {
 	internal := r.Group("/api/v1/internal")
 	internal.Use(httpmiddleware.RequireInternalToken(cfg.InternalAPIToken))
 	internal.Use(httpmiddleware.LimitRequestBody())
-	internal.POST("/events", h.HandleInternalEvent)
-	internal.GET("/workflow-versions/:version_id/compiled-plan", h.GetCompiledPlan)
-	internal.GET("/connector-aliases", h.ListConnectorAliases)
-	internal.POST("/connector-aliases/rest", h.WriteConnectorRestAlias)
-	internal.DELETE("/connector-aliases/rest/:alias", h.DeleteConnectorRestAlias)
+	RegisterInternalRoutes(internal, h)
 
 	api := r.Group("/api/v1")
 	for _, mw := range gincommon.ProtectedMiddlewares(cfg.GinConfig) {
@@ -109,6 +104,22 @@ func NewRouter(cfg RouterConfig) *Router {
 	api.Use(httpmiddleware.RequireIdentity(cfg.Log))
 	api.Use(httpmiddleware.LimitRequestBody())
 	api.Use(httpmiddleware.RequireJSONContentType())
+
+	RegisterAPIRoutes(api, h)
+
+	return &Router{engine: r, draining: draining}
+}
+
+func RegisterInternalRoutes(internal gin.IRoutes, h *handler.Handler) {
+	internal.POST("/events", h.HandleInternalEvent)
+	internal.GET("/workflow-versions/:version_id/compiled-plan", h.GetCompiledPlan)
+	internal.GET("/connector-aliases", h.ListConnectorAliases)
+	internal.POST("/connector-aliases/rest", h.WriteConnectorRestAlias)
+	internal.DELETE("/connector-aliases/rest/:alias", h.DeleteConnectorRestAlias)
+}
+
+func RegisterAPIRoutes(api *gin.RouterGroup, h *handler.Handler) {
+	idem := h.Idempotent
 
 	wf := api.Group("/workflows")
 	wf.GET("", h.ListWorkflows)
@@ -159,8 +170,6 @@ func NewRouter(cfg RouterConfig) *Router {
 	starters.POST("/from-workflow-version/:version_id", idem(h.CreateStarterFromWorkflowVersion))
 	starters.GET("/:id", h.GetStarter)
 	starters.DELETE("/:id", idem(h.DeleteStarter))
-
-	return &Router{engine: r, draining: draining}
 }
 
 func readyzHandler(db DBPinger, cache Pinger, draining *atomic.Bool) gin.HandlerFunc {

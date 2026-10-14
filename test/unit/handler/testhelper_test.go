@@ -14,6 +14,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 
+	httpadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	httpmiddleware "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/middleware"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -290,51 +291,7 @@ func (f *fakeStarterSvc) Delete(ctx context.Context, callerTenantID, id uuid.UUI
 }
 
 func registerRoutes(r *gin.Engine, h *handler.Handler) {
-	wf := r.Group("/api/v1/workflows")
-	wf.GET("", h.ListWorkflows)
-	wf.POST("", h.CreateWorkflow)
-	wf.POST("/validate", h.ValidateBPMN)
-	wf.GET("/:id", h.GetWorkflow)
-	wf.GET("/:id/versions", h.ListVersions)
-	wf.GET("/:id/draft", h.GetDraft)
-	wf.POST("/:id/draft", h.InitDraft)
-	wf.PUT("/:id/draft", h.UpdateDraft)
-	wf.DELETE("/:id/draft", h.DiscardDraft)
-	wf.POST("/:id/archive", h.ArchiveWorkflow)
-	wf.GET("/:id/versions/:version_id", h.GetVersion)
-	wf.POST("/:id/versions/:version_id/publish", h.PublishVersion)
-	wf.POST("/:id/versions/:version_id/clone", h.CloneVersion)
-	wf.POST("/:id/versions/:version_id/promote", h.PromoteVersion)
-	wf.GET("/:id/versions/:version_id/validation", h.GetVersionValidation)
-	wf.GET("/:id/versions/:version_id/nodes", h.GetVersionNodes)
-	wf.GET("/:id/versions/:version_id/export", h.ExportBPMN)
-	wf.GET("/:id/versions/:version_id/diff/:target_version_id", h.GetVersionDiff)
-
-	conn := r.Group("/api/v1/connectors")
-	conn.GET("/registry", h.ListConnectorRegistry)
-	conn.POST("/credentials", h.WriteConnectorCredential)
-	conn.DELETE("/credentials/:connector_type/:field_name", h.RevokeConnectorCredential)
-
-	r.GET("/api/v1/bpmn/allowed-elements", h.AllowedBPMNElements)
-
-	mod := r.Group("/api/v1/modules")
-	mod.GET("", h.ListModules)
-	mod.POST("", h.CreateModule)
-	mod.GET("/:id", h.GetModule)
-	mod.GET("/:id/usages", h.ListModuleUsages)
-	mod.GET("/:id/versions", h.ListModuleVersions)
-	mod.GET("/:id/versions/:version_id", h.GetModuleVersion)
-	mod.GET("/:id/versions/:version_id/contract", h.GetModuleContract)
-	mod.POST("/:id/versions", h.AddModuleVersion)
-	mod.POST("/:id/versions/:version_id/publish", h.PublishModuleVersion)
-	mod.DELETE("/:id", h.ArchiveModule)
-
-	starters := r.Group("/api/v1/starters")
-	starters.GET("", h.ListStarters)
-	starters.POST("", h.CreateStarter)
-	starters.POST("/from-workflow-version/:version_id", h.CreateStarterFromWorkflowVersion)
-	starters.GET("/:id", h.GetStarter)
-	starters.DELETE("/:id", h.DeleteStarter)
+	httpadapter.RegisterAPIRoutes(r.Group("/api/v1"), h)
 }
 
 func newRouter(h *handler.Handler) *gin.Engine {
