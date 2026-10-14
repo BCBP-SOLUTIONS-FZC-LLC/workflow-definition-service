@@ -56,10 +56,25 @@ func (s *CompiledPlanService) Get(ctx context.Context, tenantID, versionID uuid.
 		WorkflowID: v.WorkflowID, VersionID: v.ID, VersionNumber: v.VersionNumber,
 		Status: v.Status, IsValid: v.IsValid, PlanJSON: v.CompiledPlanJSON,
 	}
-	if v.Status == domain.VersionStatusPublished {
-		s.writeCache(ctx, key, p)
+	if v.Status == domain.VersionStatusPublished && v.IsValid {
+		if s.writeCache(ctx, key, p) {
+			s.evictIfRevoked(ctx, tenantID, versionID, key)
+		}
 	}
 	return p, nil
+}
+
+func (s *CompiledPlanService) evictIfRevoked(ctx context.Context, tenantID, versionID uuid.UUID, key string) {
+	if s.cache == nil {
+		return
+	}
+	current, err := s.versions.GetByID(ctx, tenantID, versionID)
+	if err == nil && current.Status == domain.VersionStatusPublished && current.IsValid {
+		return
+	}
+	if err := s.cache.Del(ctx, key); err != nil {
+		s.log.Warn("compiled-plan cache eviction failed", map[string]any{"key": key, "error": err.Error()})
+	}
 }
 
 func (s *CompiledPlanService) readCache(ctx context.Context, key string) (*CompiledPlan, bool) {
@@ -82,15 +97,17 @@ func (s *CompiledPlanService) readCache(ctx context.Context, key string) (*Compi
 	return &p, true
 }
 
-func (s *CompiledPlanService) writeCache(ctx context.Context, key string, p *CompiledPlan) {
+func (s *CompiledPlanService) writeCache(ctx context.Context, key string, p *CompiledPlan) bool {
 	if s.cache == nil {
-		return
+		return false
 	}
 	raw, err := json.Marshal(p)
 	if err != nil {
-		return
+		return false
 	}
 	if err := s.cache.Set(ctx, key, string(raw), s.cacheTTL); err != nil {
 		s.log.Warn("compiled-plan cache write failed", map[string]any{"key": key, "error": err.Error()})
+		return false
 	}
+	return true
 }

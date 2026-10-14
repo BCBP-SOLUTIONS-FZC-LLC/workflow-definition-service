@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -22,6 +23,7 @@ func (s *VersionService) HandleDepartmentMembershipRevoked(
 	ctx context.Context,
 	eventID, tenantID, userID uuid.UUID,
 	departmentID string,
+	occurredAt time.Time,
 ) error {
 	assignees, err := s.assignees.ListByUser(ctx, tenantID, userID)
 	if err != nil {
@@ -33,23 +35,25 @@ func (s *VersionService) HandleDepartmentMembershipRevoked(
 		return fmt.Errorf("invalid department id %q: %w", departmentID, err)
 	}
 
-	return s.invalidateAssigneeVersions(ctx, eventID, tenantID, userID, assignees, &deptUUID, departmentID)
+	return s.invalidateAssigneeVersions(ctx, eventID, tenantID, userID, occurredAt, assignees, &deptUUID, departmentID)
 }
 
 func (s *VersionService) HandleTenantMembershipRevoked(
 	ctx context.Context,
 	eventID, tenantID, userID uuid.UUID,
+	occurredAt time.Time,
 ) error {
 	assignees, err := s.assignees.ListByUser(ctx, tenantID, userID)
 	if err != nil {
 		return fmt.Errorf("list assignees: %w", err)
 	}
-	return s.invalidateAssigneeVersions(ctx, eventID, tenantID, userID, assignees, nil, "")
+	return s.invalidateAssigneeVersions(ctx, eventID, tenantID, userID, occurredAt, assignees, nil, "")
 }
 
 func (s *VersionService) invalidateAssigneeVersions(
 	ctx context.Context,
 	eventID, tenantID, userID uuid.UUID,
+	occurredAt time.Time,
 	assignees []*domain.NodeAssignee,
 	departmentID *uuid.UUID,
 	departmentLogValue string,
@@ -59,12 +63,20 @@ func (s *VersionService) invalidateAssigneeVersions(
 		if departmentID != nil && a.DepartmentID != *departmentID {
 			continue
 		}
+		if !occurredAt.IsZero() && a.CreatedAt.After(occurredAt) {
+			continue
+		}
 		nodesByVersion[a.WorkflowVersionID] = append(nodesByVersion[a.WorkflowVersionID], a.NodeKey)
 	}
 
+	var evictionErrs []error
 	for versionID, nodeKeys := range nodesByVersion {
 		if err := s.invalidateVersion(ctx, tenantID, versionID, nodeKeys); err != nil {
-			return err
+			var evictErr *evictionError
+			if !errors.As(err, &evictErr) {
+				return err
+			}
+			evictionErrs = append(evictionErrs, err)
 		}
 	}
 
@@ -86,7 +98,7 @@ func (s *VersionService) invalidateAssigneeVersions(
 		"department_id":     departmentLogValue,
 		"versions_affected": len(nodesByVersion),
 	})
-	return nil
+	return errors.Join(evictionErrs...)
 }
 
 func (s *VersionService) invalidateVersion(
@@ -110,8 +122,7 @@ func (s *VersionService) invalidateVersion(
 	if err := s.versions.SetInvalid(ctx, tenantID, versionID, errorsJSON); err != nil {
 		return fmt.Errorf("set invalid: %w", err)
 	}
-	invalidateCompiledPlanCache(ctx, s.cache, s.log, tenantID, versionID)
-	return nil
+	return evictCompiledPlan(ctx, s.cache, tenantID, versionID)
 }
 
 func (s *VersionService) skipDeletedVersion(versionID uuid.UUID, err error) error {

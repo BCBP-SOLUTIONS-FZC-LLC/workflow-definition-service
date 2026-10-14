@@ -82,8 +82,8 @@ type ModuleVersionRepository interface {
 		callerTenantID, moduleID uuid.UUID,
 		page, limit int,
 	) ([]*domain.ModuleVersion, int64, error)
-	Publish(ctx context.Context, versionID uuid.UUID, versionNumber int32) error
-	Archive(ctx context.Context, versionID uuid.UUID) error
+	Publish(ctx context.Context, callerTenantID, versionID uuid.UUID, versionNumber int32) error
+	Archive(ctx context.Context, callerTenantID, versionID uuid.UUID) error
 	NextVersionNumber(ctx context.Context, moduleID uuid.UUID) (int32, error)
 	Resolve(ctx context.Context, callerTenantID uuid.UUID, processID string, versionNumber int32) (*domain.ModuleVersion, error)
 }
@@ -100,7 +100,7 @@ type StarterTemplateRepository interface {
 	Create(ctx context.Context, s *domain.StarterTemplate) error
 	GetByID(ctx context.Context, callerTenantID, id uuid.UUID) (*domain.StarterTemplate, error)
 	List(ctx context.Context, callerTenantID uuid.UUID, filter StarterFilter) ([]*domain.StarterTemplate, int64, error)
-	Delete(ctx context.Context, id uuid.UUID) error
+	Delete(ctx context.Context, callerTenantID, id uuid.UUID) error
 }
 
 type WorkflowFilter struct {

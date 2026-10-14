@@ -2,11 +2,13 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
@@ -64,10 +66,22 @@ func (r *ModuleRepo) UpdateActiveVersion(ctx context.Context, moduleID uuid.UUID
 			return mapErr(err)
 		}
 		if tag.RowsAffected() == 0 {
-			return domain.ErrNotFound
+			return moduleOrVersionNotPublished(ctx, dbtx, moduleID)
 		}
 		return nil
 	})
+}
+
+func moduleOrVersionNotPublished(ctx context.Context, dbtx db.DBTX, moduleID uuid.UUID) error {
+	var found int
+	err := dbtx.QueryRow(ctx, `SELECT 1 FROM workflow_module WHERE id = $1`, moduleID).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrNotFound
+	}
+	if err != nil {
+		return mapErr(err)
+	}
+	return domain.ErrVersionNotPublished
 }
 
 func (r *ModuleRepo) ProcessIDInUse(ctx context.Context, callerTenantID *uuid.UUID, processID string) (bool, error) {

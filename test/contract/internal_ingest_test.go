@@ -21,11 +21,11 @@ import (
 
 type fakeMembership struct{ err error }
 
-func (f fakeMembership) HandleDepartmentMembershipRevoked(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string) error {
+func (f fakeMembership) HandleDepartmentMembershipRevoked(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, time.Time) error {
 	return f.err
 }
 
-func (f fakeMembership) HandleTenantMembershipRevoked(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+func (f fakeMembership) HandleTenantMembershipRevoked(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error {
 	return f.err
 }
 

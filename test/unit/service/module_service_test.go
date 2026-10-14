@@ -476,7 +476,7 @@ func TestModuleService_Publish_OK(t *testing.T) {
 		Return(&domain.ModuleVersion{ID: versionID, ModuleID: moduleID, Status: domain.VersionStatusDraft, Scope: domain.ScopeTenant}, nil)
 	expectModuleValidation(m.compiler, "", nil, nil)
 	m.versions.EXPECT().NextVersionNumber(gomock.Any(), moduleID).Return(int32(1), nil)
-	m.versions.EXPECT().Publish(gomock.Any(), versionID, int32(1)).Return(nil)
+	m.versions.EXPECT().Publish(gomock.Any(), gomock.Any(), versionID, int32(1)).Return(nil)
 	m.modules.EXPECT().UpdateActiveVersion(gomock.Any(), moduleID, &versionID).Return(nil)
 
 	v, err := svc.Publish(context.Background(), tenantID, userID, moduleID, versionID)
@@ -495,7 +495,7 @@ func TestModuleService_Publish_GlobalScope_UsesSystemPool(t *testing.T) {
 		Return(&domain.ModuleVersion{ID: versionID, ModuleID: moduleID, Status: domain.VersionStatusDraft, Scope: domain.ScopeGlobal}, nil)
 	expectModuleValidation(m.compiler, "", nil, nil)
 	m.globalVersions.EXPECT().NextVersionNumber(gomock.Any(), moduleID).Return(int32(1), nil)
-	m.globalVersions.EXPECT().Publish(gomock.Any(), versionID, int32(1)).Return(nil)
+	m.globalVersions.EXPECT().Publish(gomock.Any(), gomock.Any(), versionID, int32(1)).Return(nil)
 	m.globalModules.EXPECT().UpdateActiveVersion(gomock.Any(), moduleID, &versionID).Return(nil)
 
 	_, err := svc.Publish(context.Background(), uuid.New(), uuid.New(), moduleID, versionID)
@@ -586,7 +586,7 @@ func TestModuleService_Publish_PublishError(t *testing.T) {
 		Return(&domain.ModuleVersion{ID: versionID, ModuleID: moduleID, Status: domain.VersionStatusDraft}, nil)
 	expectModuleValidation(m.compiler, "", nil, nil)
 	m.versions.EXPECT().NextVersionNumber(gomock.Any(), moduleID).Return(int32(1), nil)
-	m.versions.EXPECT().Publish(gomock.Any(), versionID, int32(1)).Return(domain.ErrVersionNotDraft)
+	m.versions.EXPECT().Publish(gomock.Any(), gomock.Any(), versionID, int32(1)).Return(domain.ErrVersionNotDraft)
 
 	_, err := svc.Publish(context.Background(), uuid.New(), uuid.New(), moduleID, versionID)
 	if !errors.Is(err, domain.ErrVersionNotDraft) {
@@ -604,7 +604,7 @@ func TestModuleService_Publish_UpdateActiveVersionError(t *testing.T) {
 		Return(&domain.ModuleVersion{ID: versionID, ModuleID: moduleID, Status: domain.VersionStatusDraft}, nil)
 	expectModuleValidation(m.compiler, "", nil, nil)
 	m.versions.EXPECT().NextVersionNumber(gomock.Any(), moduleID).Return(int32(1), nil)
-	m.versions.EXPECT().Publish(gomock.Any(), versionID, int32(1)).Return(nil)
+	m.versions.EXPECT().Publish(gomock.Any(), gomock.Any(), versionID, int32(1)).Return(nil)
 	m.modules.EXPECT().UpdateActiveVersion(gomock.Any(), moduleID, &versionID).Return(errors.New("db error"))
 
 	_, err := svc.Publish(context.Background(), uuid.New(), uuid.New(), moduleID, versionID)
@@ -621,7 +621,7 @@ func TestModuleService_Archive_OK(t *testing.T) {
 	tenantID, userID, moduleID, activeID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	m.modules.EXPECT().GetByID(gomock.Any(), tenantID, moduleID).
 		Return(&domain.Module{ID: moduleID, Scope: domain.ScopeTenant, ActiveVersionID: &activeID}, nil).Times(2)
-	m.versions.EXPECT().Archive(gomock.Any(), activeID).Return(nil)
+	m.versions.EXPECT().Archive(gomock.Any(), gomock.Any(), activeID).Return(nil)
 	m.modules.EXPECT().UpdateActiveVersion(gomock.Any(), moduleID, (*uuid.UUID)(nil)).Return(nil)
 
 	if err := svc.Archive(context.Background(), tenantID, userID, moduleID); err != nil {
@@ -642,7 +642,7 @@ func TestModuleService_Archive_ArchivesTheVersionActiveInsideTheTransaction(t *t
 		m.modules.EXPECT().GetByID(gomock.Any(), tenantID, moduleID).
 			Return(&domain.Module{ID: moduleID, Scope: domain.ScopeTenant, ActiveVersionID: &publishedMeanwhile}, nil),
 	)
-	m.versions.EXPECT().Archive(gomock.Any(), publishedMeanwhile).Return(nil)
+	m.versions.EXPECT().Archive(gomock.Any(), gomock.Any(), publishedMeanwhile).Return(nil)
 	m.modules.EXPECT().UpdateActiveVersion(gomock.Any(), moduleID, (*uuid.UUID)(nil)).Return(nil)
 
 	if err := svc.Archive(context.Background(), tenantID, userID, moduleID); err != nil {
@@ -660,7 +660,7 @@ func TestModuleService_Archive_GlobalScope_UsesSystemPool(t *testing.T) {
 		Return(&domain.Module{ID: moduleID, Scope: domain.ScopeGlobal, ActiveVersionID: &activeID}, nil)
 	m.globalModules.EXPECT().GetByID(gomock.Any(), gomock.Any(), moduleID).
 		Return(&domain.Module{ID: moduleID, Scope: domain.ScopeGlobal, ActiveVersionID: &activeID}, nil)
-	m.globalVersions.EXPECT().Archive(gomock.Any(), activeID).Return(nil)
+	m.globalVersions.EXPECT().Archive(gomock.Any(), gomock.Any(), activeID).Return(nil)
 	m.globalModules.EXPECT().UpdateActiveVersion(gomock.Any(), moduleID, (*uuid.UUID)(nil)).Return(nil)
 
 	if err := svc.Archive(context.Background(), uuid.New(), uuid.New(), moduleID); err != nil {
@@ -700,7 +700,7 @@ func TestModuleService_Archive_ArchiveError(t *testing.T) {
 	activeID := uuid.New()
 	m.modules.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&domain.Module{ActiveVersionID: &activeID}, nil).Times(2)
-	m.versions.EXPECT().Archive(gomock.Any(), activeID).Return(errors.New("db error"))
+	m.versions.EXPECT().Archive(gomock.Any(), gomock.Any(), activeID).Return(errors.New("db error"))
 
 	if err := svc.Archive(context.Background(), uuid.New(), uuid.New(), uuid.New()); err == nil {
 		t.Fatal("expected error")
@@ -715,7 +715,7 @@ func TestModuleService_Archive_UpdateActiveVersionError(t *testing.T) {
 	activeID := uuid.New()
 	m.modules.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&domain.Module{ActiveVersionID: &activeID}, nil).Times(2)
-	m.versions.EXPECT().Archive(gomock.Any(), activeID).Return(nil)
+	m.versions.EXPECT().Archive(gomock.Any(), gomock.Any(), activeID).Return(nil)
 	m.modules.EXPECT().UpdateActiveVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("db error"))
 
 	if err := svc.Archive(context.Background(), uuid.New(), uuid.New(), uuid.New()); err == nil {

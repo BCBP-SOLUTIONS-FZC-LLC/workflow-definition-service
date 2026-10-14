@@ -10,4 +10,5 @@ FROM workflow_template
 WHERE id = $1 AND (scope = 'global' OR tenant_id = $2);
 
 -- name: DeleteStarter :execresult
-DELETE FROM workflow_template WHERE id = $1;
+DELETE FROM workflow_template
+WHERE id = sqlc.arg(id) AND (scope = 'global' OR tenant_id = sqlc.arg(tenant_id));

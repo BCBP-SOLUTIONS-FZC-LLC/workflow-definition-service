@@ -91,7 +91,7 @@ func TestStarterRepo_Delete(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := repo.Delete(ctx, st.ID); err != nil {
+	if err := repo.Delete(ctx, tenantID, st.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := repo.GetByID(ctx, tenantID, st.ID); err != domain.ErrNotFound {
@@ -103,7 +103,7 @@ func TestStarterRepo_Delete_NotFound(t *testing.T) {
 	pool := newTestPool(t)
 	repo := postgres.NewStarterRepo(pool)
 
-	err := repo.Delete(context.Background(), uuid.New())
+	err := repo.Delete(context.Background(), uuid.New(), uuid.New())
 	if err != domain.ErrNotFound {
 		t.Errorf("Delete = %v, want ErrNotFound", err)
 	}
@@ -152,5 +152,24 @@ func TestStarterRepo_List_SearchFilter(t *testing.T) {
 	}
 	if total != 1 || len(results) != 1 {
 		t.Errorf("expected 1 match; got total=%d results=%+v", total, results)
+	}
+}
+
+func TestStarterRepo_Delete_IsScopedToTheCallersTenant(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewStarterRepo(pool)
+	ctx := context.Background()
+
+	owner := uuid.New()
+	st := &domain.StarterTemplate{ID: uuid.New(), TenantID: &owner, Scope: domain.ScopeTenant, Name: "S", BPMNXML: "<bpmn/>"}
+	if err := repo.Create(ctx, st); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := repo.Delete(ctx, uuid.New(), st.ID); err != domain.ErrNotFound {
+		t.Errorf("another tenant's Delete = %v, want ErrNotFound", err)
+	}
+	if _, err := repo.GetByID(ctx, owner, st.ID); err != nil {
+		t.Errorf("the starter must survive a foreign Delete: %v", err)
 	}
 }

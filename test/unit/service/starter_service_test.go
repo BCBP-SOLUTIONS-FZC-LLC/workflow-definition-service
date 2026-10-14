@@ -247,7 +247,7 @@ func TestStarterService_Delete_TenantScope_OK(t *testing.T) {
 
 	id := uuid.New()
 	m.starters.EXPECT().GetByID(gomock.Any(), gomock.Any(), id).Return(&domain.StarterTemplate{ID: id, Scope: domain.ScopeTenant}, nil)
-	m.starters.EXPECT().Delete(gomock.Any(), id).Return(nil)
+	m.starters.EXPECT().Delete(gomock.Any(), gomock.Any(), id).Return(nil)
 
 	if err := svc.Delete(context.Background(), uuid.New(), id); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -260,7 +260,7 @@ func TestStarterService_Delete_GlobalScope_UsesSystemPool(t *testing.T) {
 
 	id := uuid.New()
 	m.starters.EXPECT().GetByID(gomock.Any(), gomock.Any(), id).Return(&domain.StarterTemplate{ID: id, Scope: domain.ScopeGlobal}, nil)
-	m.globalStarters.EXPECT().Delete(gomock.Any(), id).Return(nil)
+	m.globalStarters.EXPECT().Delete(gomock.Any(), gomock.Any(), id).Return(nil)
 
 	if err := svc.Delete(context.Background(), uuid.New(), id); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -283,7 +283,7 @@ func TestStarterService_Delete_DeleteError(t *testing.T) {
 	svc, m := newStarterService(ctrl)
 
 	m.starters.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(&domain.StarterTemplate{Scope: domain.ScopeTenant}, nil)
-	m.starters.EXPECT().Delete(gomock.Any(), gomock.Any()).Return(errors.New("db error"))
+	m.starters.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("db error"))
 
 	if err := svc.Delete(context.Background(), uuid.New(), uuid.New()); err == nil {
 		t.Fatal("expected error")

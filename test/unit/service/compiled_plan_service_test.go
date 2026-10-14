@@ -30,10 +30,21 @@ type planCache struct {
 	sets    int
 	getErr  error
 	setErr  error
+	delErr  error
 	lastTTL time.Duration
 }
 
 func newPlanCache() *planCache { return &planCache{store: map[string]string{}} }
+
+func (c *planCache) Del(_ context.Context, keys ...string) error {
+	if c.delErr != nil {
+		return c.delErr
+	}
+	for _, key := range keys {
+		delete(c.store, key)
+	}
+	return nil
+}
 
 func (c *planCache) Get(_ context.Context, key string) (string, error) {
 	return c.store[key], c.getErr
@@ -144,8 +155,8 @@ func TestCompiledPlan_CachePopulateThenHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Get: %v", err)
 	}
-	if versions.reads != 1 || cache.sets != 1 || cache.lastTTL != time.Hour {
-		t.Errorf("reads %d, sets %d, ttl %s; want one read, one populate at 1h", versions.reads, cache.sets, cache.lastTTL)
+	if versions.reads != 2 || cache.sets != 1 || cache.lastTTL != time.Hour {
+		t.Errorf("reads %d, sets %d, ttl %s; want the read and the check after the write, one populate at 1h", versions.reads, cache.sets, cache.lastTTL)
 	}
 	if _, ok := cache.store[domain.CompiledPlanCacheKey(tenantID, versionID)]; !ok {
 		t.Error("the plan is not cached under its tenant-scoped key")
@@ -160,12 +171,13 @@ func TestCompiledPlan_CachePopulateThenHit(t *testing.T) {
 func TestCompiledPlan_CacheFailsOpen(t *testing.T) {
 	tenantID, versionID := uuid.New(), uuid.New()
 	for _, tc := range []struct {
-		name  string
-		cache *planCache
+		name      string
+		cache     *planCache
+		wantReads int
 	}{
-		{"read error", &planCache{store: map[string]string{}, getErr: errors.New("valkey down")}},
-		{"undecodable entry", &planCache{store: map[string]string{domain.CompiledPlanCacheKey(tenantID, versionID): "{not json"}}},
-		{"write error", &planCache{store: map[string]string{}, setErr: errors.New("valkey down")}},
+		{"read error", &planCache{store: map[string]string{}, getErr: errors.New("valkey down")}, 2},
+		{"undecodable entry", &planCache{store: map[string]string{domain.CompiledPlanCacheKey(tenantID, versionID): "{not json"}}, 2},
+		{"write error", &planCache{store: map[string]string{}, setErr: errors.New("valkey down")}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			versions := &planVersions{get: func(uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error) {
@@ -173,8 +185,8 @@ func TestCompiledPlan_CacheFailsOpen(t *testing.T) {
 			}}
 			svc := service.NewCompiledPlanService(service.CompiledPlanDeps{Versions: versions, Cache: tc.cache, CacheTTL: time.Hour})
 			got, err := svc.Get(context.Background(), tenantID, versionID)
-			if err != nil || got.PlanJSON == nil || versions.reads != 1 {
-				t.Errorf("Get = %+v, %v after %d reads; want the database's plan", got, err, versions.reads)
+			if err != nil || got.PlanJSON == nil || versions.reads != tc.wantReads {
+				t.Errorf("Get = %+v, %v after %d reads; want the database's plan after %d", got, err, versions.reads, tc.wantReads)
 			}
 		})
 	}
@@ -185,5 +197,36 @@ func TestCompiledPlan_RepositoryErrorIsReturned(t *testing.T) {
 	versions := &planVersions{get: func(uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error) { return nil, boom }}
 	if _, err := service.NewCompiledPlanService(service.CompiledPlanDeps{Versions: versions}).Get(context.Background(), uuid.New(), uuid.New()); !errors.Is(err, boom) {
 		t.Errorf("err = %v, want the repository's", err)
+	}
+}
+
+// A revocation that commits and evicts after the read but before the cache
+// write must not leave the stale valid plan behind: the next read has to see
+// the invalid version.
+func TestCompiledPlan_RevocationBetweenTheReadAndTheCacheWrite_LeavesNoValidEntry(t *testing.T) {
+	tenantID, versionID, workflowID := uuid.New(), uuid.New(), uuid.New()
+	cache := newPlanCache()
+	revoked := false
+	versions := &planVersions{}
+	versions.get = func(uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error) {
+		v := publishedPlanVersion(versionID, workflowID, `{"schema_version":1}`)
+		v.IsValid = !revoked
+		if versions.reads == 1 {
+			revoked = true
+			_ = cache.Del(context.Background(), domain.CompiledPlanCacheKey(tenantID, versionID))
+		}
+		return v, nil
+	}
+	svc := service.NewCompiledPlanService(service.CompiledPlanDeps{Versions: versions, Cache: cache, CacheTTL: time.Hour})
+
+	if _, err := svc.Get(context.Background(), tenantID, versionID); err != nil {
+		t.Fatalf("first Get: %v", err)
+	}
+	got, err := svc.Get(context.Background(), tenantID, versionID)
+	if err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+	if got.IsValid {
+		t.Error("the second read served a valid plan from a cache entry written after the revocation evicted it")
 	}
 }

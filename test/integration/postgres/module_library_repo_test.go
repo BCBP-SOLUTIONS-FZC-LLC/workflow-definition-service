@@ -38,7 +38,7 @@ func libraryModule(t *testing.T, pool *pgcommon.Pool, tenantID *uuid.UUID, proce
 		if err := versions.Create(ctx, v); err != nil {
 			t.Fatalf("create module version: %v", err)
 		}
-		if err := versions.Publish(ctx, v.ID, n); err != nil {
+		if err := versions.Publish(ctx, callerTenant(tenantID), v.ID, n); err != nil {
 			t.Fatalf("publish module version: %v", err)
 		}
 		v.VersionNumber = &n
@@ -122,7 +122,7 @@ func TestModuleVersionRepo_Resolve(t *testing.T) {
 	}
 
 	archived, archivedVersions := libraryModule(t, pool, &tenantA, "Process_Archived", 1)
-	if err := postgres.NewModuleVersionRepo(pool).Archive(ctx, archivedVersions[0].ID); err != nil {
+	if err := postgres.NewModuleVersionRepo(pool).Archive(ctx, tenantA, archivedVersions[0].ID); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 	if err := postgres.NewModuleRepo(pool).UpdateActiveVersion(ctx, archived.ID, nil); err != nil {
@@ -260,4 +260,11 @@ func TestModuleVersionRepo_Resolve_PrefersTheTenantsOwnOnAProcessIDClash(t *test
 			t.Fatalf("resolved %s (scope %s), want the tenant's own %s", v.ID, v.Scope, own[0].ID)
 		}
 	}
+}
+
+func callerTenant(tenantID *uuid.UUID) uuid.UUID {
+	if tenantID != nil {
+		return *tenantID
+	}
+	return uuid.New()
 }

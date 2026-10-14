@@ -27,11 +27,14 @@ WHERE module_id = $1 AND (scope = 'global' OR tenant_id = $2);
 
 -- name: PublishModuleVersion :execresult
 UPDATE workflow_module_version
-SET status = 'PUBLISHED', version_number = $2, published_at = now()
-WHERE id = $1 AND status = 'DRAFT';
+SET status = 'PUBLISHED', version_number = sqlc.arg(version_number), published_at = now()
+WHERE id = sqlc.arg(id) AND status = 'DRAFT'
+  AND (scope = 'global' OR tenant_id = sqlc.arg(tenant_id));
 
 -- name: ArchiveModuleVersion :execresult
-UPDATE workflow_module_version SET status = 'ARCHIVED' WHERE id = $1 AND status = 'PUBLISHED';
+UPDATE workflow_module_version SET status = 'ARCHIVED'
+WHERE id = sqlc.arg(id) AND status = 'PUBLISHED'
+  AND (scope = 'global' OR tenant_id = sqlc.arg(tenant_id));
 
 -- name: NextModuleVersionNumber :one
 SELECT COALESCE(MAX(version_number), 0) + 1

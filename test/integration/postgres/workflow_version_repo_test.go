@@ -2,7 +2,9 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -423,6 +425,55 @@ func TestWorkflowVersionRepo_SetInvalid(t *testing.T) {
 	if got.IsValid {
 		t.Error("IsValid should be false after SetInvalid")
 	}
+}
+
+func TestWorkflowVersionRepo_SetInvalid_KeepsEveryRevocationsNodes(t *testing.T) {
+	pool := newTestPool(t)
+	wfRepo := postgres.NewWorkflowRepo(pool)
+	vRepo := postgres.NewWorkflowVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	wf := &domain.Workflow{
+		ID: uuid.New(), TenantID: tenantID,
+		CreatedByUserID: uuid.New(), BusinessKey: "wv-inv-merge", Name: "X",
+	}
+	if err := wfRepo.Create(ctx, wf); err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	v := newDraftVersion(wf.ID, tenantID)
+	if err := vRepo.Create(ctx, v); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	first := `[{"node_id":"A","error":"gone"},{"node_id":"B","error":"gone"}]`
+	second := `[{"node_id":"C","error":"gone"},{"node_id":"A","error":"gone"}]`
+	for _, in := range []string{first, second, first} {
+		if err := vRepo.SetInvalid(ctx, tenantID, v.ID, in); err != nil {
+			t.Fatalf("SetInvalid: %v", err)
+		}
+	}
+
+	got, err := vRepo.GetByID(ctx, tenantID, v.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	want := `[{"error":"gone","node_id":"A"},{"error":"gone","node_id":"B"},{"error":"gone","node_id":"C"}]`
+	if got.ValidationErrorsJSON == nil || !jsonEqual(t, *got.ValidationErrorsJSON, want) {
+		t.Errorf("validation errors = %v, want %s (first occurrence first, no duplicates, none lost)", got.ValidationErrorsJSON, want)
+	}
+}
+
+func jsonEqual(t *testing.T, a, b string) bool {
+	t.Helper()
+	var x, y any
+	if err := json.Unmarshal([]byte(a), &x); err != nil {
+		t.Fatalf("decode %q: %v", a, err)
+	}
+	if err := json.Unmarshal([]byte(b), &y); err != nil {
+		t.Fatalf("decode %q: %v", b, err)
+	}
+	return reflect.DeepEqual(x, y)
 }
 
 func TestWorkflowVersionRepo_NextVersionNumber(t *testing.T) {

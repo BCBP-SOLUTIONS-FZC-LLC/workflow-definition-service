@@ -96,6 +96,9 @@ func TestModuleRepo_UpdateActiveVersion(t *testing.T) {
 	if err := versionRepo.Create(ctx, v); err != nil {
 		t.Fatalf("create version: %v", err)
 	}
+	if err := versionRepo.Publish(ctx, tenantID, v.ID, 1); err != nil {
+		t.Fatalf("publish version: %v", err)
+	}
 
 	if err := repo.UpdateActiveVersion(ctx, m.ID, &v.ID); err != nil {
 		t.Fatalf("UpdateActiveVersion: %v", err)
@@ -183,5 +186,45 @@ func TestModuleRepo_List_Pagination(t *testing.T) {
 	}
 	if total != 3 || len(results) != 2 {
 		t.Errorf("expected total=3 page-len=2; got total=%d len=%d", total, len(results))
+	}
+}
+
+func TestModuleRepo_UpdateActiveVersion_OnlyAPublishedVersionOfThisModule(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleRepo(pool)
+	versionRepo := postgres.NewModuleVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	mine := &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "Mine"}
+	other := &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "Other"}
+	for _, m := range []*domain.Module{mine, other} {
+		if err := repo.Create(ctx, m); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+	draft := newDraftModuleVersion(mine.ID, &tenantID, domain.ScopeTenant)
+	foreign := newDraftModuleVersion(other.ID, &tenantID, domain.ScopeTenant)
+	for _, v := range []*domain.ModuleVersion{draft, foreign} {
+		if err := versionRepo.Create(ctx, v); err != nil {
+			t.Fatalf("create version: %v", err)
+		}
+	}
+	if err := versionRepo.Publish(ctx, tenantID, foreign.ID, 1); err != nil {
+		t.Fatalf("publish the other module's version: %v", err)
+	}
+
+	if err := repo.UpdateActiveVersion(ctx, mine.ID, &draft.ID); err == nil {
+		t.Error("a draft version became the module's active version")
+	}
+	if err := repo.UpdateActiveVersion(ctx, mine.ID, &foreign.ID); err == nil {
+		t.Error("another module's published version became this module's active version")
+	}
+	got, err := repo.GetByID(ctx, tenantID, mine.ID)
+	if err != nil || got.ActiveVersionID != nil {
+		t.Errorf("active version = %v, %v; want none after both refusals", got.ActiveVersionID, err)
+	}
+	if err := repo.UpdateActiveVersion(ctx, mine.ID, nil); err != nil {
+		t.Errorf("clearing the pointer = %v, want nil", err)
 	}
 }

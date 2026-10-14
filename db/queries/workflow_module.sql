@@ -9,7 +9,13 @@ FROM workflow_module
 WHERE id = $1 AND (scope = 'global' OR tenant_id = $2);
 
 -- name: UpdateModuleActiveVersion :execresult
-UPDATE workflow_module SET active_version_id = $2, updated_at = now() WHERE id = $1;
+-- The pointer may only name a PUBLISHED version of this module, or be cleared.
+UPDATE workflow_module AS m
+SET active_version_id = sqlc.narg(active_version_id), updated_at = now()
+WHERE m.id = sqlc.arg(id)
+  AND (sqlc.narg(active_version_id)::uuid IS NULL OR EXISTS (
+        SELECT 1 FROM workflow_module_version v
+        WHERE v.id = sqlc.narg(active_version_id) AND v.module_id = m.id AND v.status = 'PUBLISHED'));
 
 -- name: ModuleProcessIDInUse :one
 -- A NULL tenant, used on the system pool when creating a global module,

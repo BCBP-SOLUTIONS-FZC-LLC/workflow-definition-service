@@ -46,7 +46,7 @@ CREATE TABLE workflow_node_assignee (
     user_id             UUID NOT NULL,
     department_id       UUID NOT NULL,
     role                VARCHAR(64) NOT NULL,
-    created_at          TIMESTAMP DEFAULT now()
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE workflow_module (

@@ -229,7 +229,7 @@ func assigneeFromDB(row db.WorkflowNodeAssignee) *domain.NodeAssignee {
 		UserID:            row.UserID,
 		DepartmentID:      row.DepartmentID,
 		Role:              row.Role,
-		CreatedAt:         fromPgtypeTimestamp(row.CreatedAt),
+		CreatedAt:         row.CreatedAt,
 	}
 }
 

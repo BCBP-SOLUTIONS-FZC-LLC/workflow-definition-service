@@ -105,13 +105,13 @@ func (r *WorkflowRepo) UpdateActiveVersion(
 			return mapErr(err)
 		}
 		if tag.RowsAffected() == 0 {
-			return workflowOrVersionNotPublished(ctx, dbtx, tenantID, workflowID)
+			return workflowOrVersionNotPublished(ctx, dbtx, tenantID, workflowID, versionID)
 		}
 		return nil
 	})
 }
 
-func workflowOrVersionNotPublished(ctx context.Context, dbtx db.DBTX, tenantID, workflowID uuid.UUID) error {
+func workflowOrVersionNotPublished(ctx context.Context, dbtx db.DBTX, tenantID, workflowID uuid.UUID, versionID *uuid.UUID) error {
 	_, err := db.New(dbtx).GetWorkflowByIDWithVersionNumber(ctx, db.GetWorkflowByIDWithVersionNumberParams{
 		TenantID: tenantID,
 		ID:       workflowID,
@@ -121,6 +121,12 @@ func workflowOrVersionNotPublished(ctx context.Context, dbtx db.DBTX, tenantID, 
 	}
 	if err != nil {
 		return mapErr(err)
+	}
+	if versionID != nil {
+		version, err := db.New(dbtx).GetWorkflowVersionByID(ctx, db.GetWorkflowVersionByIDParams{TenantID: tenantID, ID: *versionID})
+		if err == nil && fromVersionStatus(version.Status) == domain.VersionStatusPublished && !version.IsValid {
+			return domain.ErrInvalidVersionStatus
+		}
 	}
 	return domain.ErrVersionNotPublished
 }

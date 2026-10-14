@@ -56,9 +56,12 @@ func (r *StarterRepo) GetByID(ctx context.Context, callerTenantID, id uuid.UUID)
 	return result, err
 }
 
-func (r *StarterRepo) Delete(ctx context.Context, id uuid.UUID) error {
+func (r *StarterRepo) Delete(ctx context.Context, callerTenantID, id uuid.UUID) error {
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		tag, err := db.New(dbtx).DeleteStarter(ctx, id)
+		tag, err := db.New(dbtx).DeleteStarter(ctx, db.DeleteStarterParams{
+			ID:       id,
+			TenantID: pgtype.UUID{Bytes: callerTenantID, Valid: true},
+		})
 		if err != nil {
 			return mapErr(err)
 		}

@@ -379,7 +379,7 @@ func (s *ModuleService) Publish(
 			return fmt.Errorf("next module version number: %w", err)
 		}
 		versionNumber = n
-		if err := versions.Publish(ctx, versionID, versionNumber); err != nil {
+		if err := versions.Publish(ctx, callerTenantID, versionID, versionNumber); err != nil {
 			return err
 		}
 		return modules.UpdateActiveVersion(ctx, moduleID, &versionID)
@@ -420,7 +420,7 @@ func (s *ModuleService) Archive(ctx context.Context, callerTenantID, userID, mod
 			return domain.ErrNoActiveVersion
 		}
 		activeVersionID = *current.ActiveVersionID
-		if err := versions.Archive(ctx, activeVersionID); err != nil {
+		if err := versions.Archive(ctx, callerTenantID, activeVersionID); err != nil {
 			return err
 		}
 		return modules.UpdateActiveVersion(ctx, moduleID, nil)

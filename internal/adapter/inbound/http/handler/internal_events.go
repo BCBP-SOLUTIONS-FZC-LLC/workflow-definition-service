@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -25,8 +26,8 @@ func HandledEventTypes() []string {
 }
 
 type membershipRevoker interface {
-	HandleDepartmentMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID, departmentID string) error
-	HandleTenantMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID) error
+	HandleDepartmentMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID, departmentID string, occurredAt time.Time) error
+	HandleTenantMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID, occurredAt time.Time) error
 }
 
 type membershipRevokedPayload struct {
@@ -67,6 +68,7 @@ func (h *Handler) acknowledgeUnknownEventType(c *gin.Context, eventType string) 
 type revocationIdentity struct {
 	eventID, tenantID, userID uuid.UUID
 	departmentID              string
+	occurredAt                time.Time
 	ctx                       context.Context
 }
 
@@ -100,7 +102,7 @@ func (h *Handler) parseRevocation(c *gin.Context, env events.Envelope[json.RawMe
 	}
 
 	return revocationIdentity{
-		eventID: eventID, tenantID: tenantID, userID: userID, departmentID: p.DepartmentID,
+		eventID: eventID, tenantID: tenantID, userID: userID, departmentID: p.DepartmentID, occurredAt: env.Timestamp,
 		ctx: pgcommon.WithGUCSet(c.Request.Context(), pgdomain.GUCSet{TenantID: env.TenantID}),
 	}, true
 }
@@ -124,7 +126,7 @@ func (h *Handler) handleDepartmentMembershipRevoked(c *gin.Context, env events.E
 	if !ok {
 		return
 	}
-	err := h.membership.HandleDepartmentMembershipRevoked(in.ctx, in.eventID, in.tenantID, in.userID, in.departmentID)
+	err := h.membership.HandleDepartmentMembershipRevoked(in.ctx, in.eventID, in.tenantID, in.userID, in.departmentID, in.occurredAt)
 	h.finishRevocation(c, evtType, "internal events: HandleDepartmentMembershipRevoked failed", err)
 }
 
@@ -134,6 +136,6 @@ func (h *Handler) handleTenantMembershipRevoked(c *gin.Context, env events.Envel
 	if !ok {
 		return
 	}
-	err := h.membership.HandleTenantMembershipRevoked(in.ctx, in.eventID, in.tenantID, in.userID)
+	err := h.membership.HandleTenantMembershipRevoked(in.ctx, in.eventID, in.tenantID, in.userID, in.occurredAt)
 	h.finishRevocation(c, evtType, "internal events: HandleTenantMembershipRevoked failed", err)
 }

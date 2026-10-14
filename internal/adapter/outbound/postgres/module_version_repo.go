@@ -105,30 +105,34 @@ func (r *ModuleVersionRepo) ListByModule(
 	return results, total, err
 }
 
-func (r *ModuleVersionRepo) Publish(ctx context.Context, versionID uuid.UUID, versionNumber int32) error {
+func (r *ModuleVersionRepo) Publish(ctx context.Context, callerTenantID, versionID uuid.UUID, versionNumber int32) error {
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		tag, err := db.New(dbtx).PublishModuleVersion(ctx, db.PublishModuleVersionParams{
 			ID:            versionID,
+			TenantID:      pgtype.UUID{Bytes: callerTenantID, Valid: true},
 			VersionNumber: pgtype.Int4{Int32: versionNumber, Valid: true},
 		})
 		if err != nil {
 			return mapErr(err)
 		}
 		if tag.RowsAffected() == 0 {
-			return moduleVersionStatusOrNotFound(ctx, dbtx, versionID, domain.ErrVersionNotDraft)
+			return moduleVersionStatusOrNotFound(ctx, dbtx, callerTenantID, versionID, domain.ErrVersionNotDraft)
 		}
 		return nil
 	})
 }
 
-func (r *ModuleVersionRepo) Archive(ctx context.Context, versionID uuid.UUID) error {
+func (r *ModuleVersionRepo) Archive(ctx context.Context, callerTenantID, versionID uuid.UUID) error {
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		tag, err := db.New(dbtx).ArchiveModuleVersion(ctx, versionID)
+		tag, err := db.New(dbtx).ArchiveModuleVersion(ctx, db.ArchiveModuleVersionParams{
+			ID:       versionID,
+			TenantID: pgtype.UUID{Bytes: callerTenantID, Valid: true},
+		})
 		if err != nil {
 			return mapErr(err)
 		}
 		if tag.RowsAffected() == 0 {
-			return moduleVersionStatusOrNotFound(ctx, dbtx, versionID, domain.ErrVersionNotPublished)
+			return moduleVersionStatusOrNotFound(ctx, dbtx, callerTenantID, versionID, domain.ErrVersionNotPublished)
 		}
 		return nil
 	})
@@ -144,9 +148,11 @@ func (r *ModuleVersionRepo) NextVersionNumber(ctx context.Context, moduleID uuid
 	return n, err
 }
 
-func moduleVersionStatusOrNotFound(ctx context.Context, dbtx db.DBTX, versionID uuid.UUID, wrongStatusErr error) error {
+func moduleVersionStatusOrNotFound(ctx context.Context, dbtx db.DBTX, callerTenantID, versionID uuid.UUID, wrongStatusErr error) error {
 	var status string
-	err := dbtx.QueryRow(ctx, `SELECT status FROM workflow_module_version WHERE id = $1`, versionID).Scan(&status)
+	err := dbtx.QueryRow(ctx,
+		`SELECT status FROM workflow_module_version WHERE id = $1 AND (scope = 'global' OR tenant_id = $2)`,
+		versionID, callerTenantID).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrNotFound
 	}

@@ -482,3 +482,37 @@ func TestWorkflowRepo_UpdateActiveVersion_OnlyAPublishedVersionOfThatWorkflow(t 
 		t.Errorf("clearing the pointer = %v, want nil", err)
 	}
 }
+
+func TestWorkflowRepo_UpdateActiveVersion_RefusesARevokedVersion(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewWorkflowRepo(pool)
+	vRepo := postgres.NewWorkflowVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	wf := &domain.Workflow{
+		ID: uuid.New(), TenantID: tenantID,
+		CreatedByUserID: uuid.New(), BusinessKey: "upd-av-invalid", Name: "X",
+	}
+	if err := repo.Create(ctx, wf); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	v := newDraftVersion(wf.ID, tenantID)
+	if err := vRepo.Create(ctx, v); err != nil {
+		t.Fatalf("Create version: %v", err)
+	}
+	if err := vRepo.Publish(ctx, tenantID, v.ID, 1, 1, `{}`, "h", nil); err != nil {
+		t.Fatalf("publish version: %v", err)
+	}
+	if err := vRepo.SetInvalid(ctx, tenantID, v.ID, `[{"node_id":"A","error":"gone"}]`); err != nil {
+		t.Fatalf("SetInvalid: %v", err)
+	}
+
+	if err := repo.UpdateActiveVersion(ctx, tenantID, wf.ID, &v.ID); err != domain.ErrInvalidVersionStatus {
+		t.Errorf("UpdateActiveVersion of a revoked version = %v, want ErrInvalidVersionStatus", err)
+	}
+	got, err := repo.GetByID(ctx, tenantID, wf.ID)
+	if err != nil || got.ActiveVersionID != nil {
+		t.Errorf("active version = %v, %v; want none", got.ActiveVersionID, err)
+	}
+}

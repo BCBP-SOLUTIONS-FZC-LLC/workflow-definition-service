@@ -183,7 +183,7 @@ func (s *StarterService) Delete(ctx context.Context, callerTenantID, id uuid.UUI
 	if err != nil {
 		return fmt.Errorf("get starter: %w", err)
 	}
-	if err := s.startersFor(st.Scope).Delete(ctx, id); err != nil {
+	if err := s.startersFor(st.Scope).Delete(ctx, callerTenantID, id); err != nil {
 		return fmt.Errorf("delete starter: %w", err)
 	}
 	s.log.Info("starter deleted", map[string]any{

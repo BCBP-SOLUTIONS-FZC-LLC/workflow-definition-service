@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -32,13 +33,16 @@ type fakeMembershipRevoker struct {
 	gotTenantID uuid.UUID
 	gotUserID   uuid.UUID
 	gotDeptID   string
+	gotAt       time.Time
 }
 
 func (f *fakeMembershipRevoker) HandleTenantMembershipRevoked(
 	_ context.Context,
 	eventID, tenantID, userID uuid.UUID,
+	occurredAt time.Time,
 ) error {
 	f.tenantCalled = true
+	f.gotAt = occurredAt
 	f.gotEventID = eventID
 	f.gotTenantID = tenantID
 	f.gotUserID = userID
@@ -49,8 +53,10 @@ func (f *fakeMembershipRevoker) HandleDepartmentMembershipRevoked(
 	_ context.Context,
 	eventID, tenantID, userID uuid.UUID,
 	departmentID string,
+	occurredAt time.Time,
 ) error {
 	f.called = true
+	f.gotAt = occurredAt
 	f.gotEventID = eventID
 	f.gotTenantID = tenantID
 	f.gotUserID = userID
@@ -63,6 +69,8 @@ var (
 	ieTenantID = uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 	ieUserID   = uuid.MustParse("cccccccc-cccc-cccc-cccc-cccccccccccc")
 	ieDeptID   = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+
+	ieEventTime = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 )
 
 func internalRouter(rev *fakeMembershipRevoker) *gin.Engine {
@@ -89,6 +97,7 @@ func envelope(eventType, eventID, tenantID string, payload any) map[string]any {
 		"id":        eventID,
 		"type":      eventType,
 		"tenant_id": tenantID,
+		"time":      ieEventTime.Format(time.RFC3339),
 		"data":      json.RawMessage(raw),
 	}
 }
@@ -104,6 +113,7 @@ func TestInternalEvents_HappyPath(t *testing.T) {
 	assert.Equal(t, ieTenantID, rev.gotTenantID)
 	assert.Equal(t, ieUserID, rev.gotUserID)
 	assert.Equal(t, ieDeptID, rev.gotDeptID)
+	assert.True(t, ieEventTime.Equal(rev.gotAt), "the envelope time reaches the service, got %s", rev.gotAt)
 }
 
 func TestInternalEvents_DepartmentRevoked_NonUUIDDepartment_400(t *testing.T) {

@@ -41,11 +41,24 @@ func enforceWorkflowQuota(ctx context.Context, workflows port.WorkflowRepository
 	return nil
 }
 
-func invalidateCompiledPlanCache(ctx context.Context, cache port.CacheStore, log port.Logger, tenantID, versionID uuid.UUID) {
+type evictionError struct{ err error }
+
+func (e *evictionError) Error() string { return e.err.Error() }
+
+func (e *evictionError) Unwrap() error { return e.err }
+
+func evictCompiledPlan(ctx context.Context, cache port.CacheStore, tenantID, versionID uuid.UUID) error {
 	if cache == nil {
-		return
+		return nil
 	}
 	if err := cache.Del(ctx, domain.CompiledPlanCacheKey(tenantID, versionID)); err != nil {
+		return &evictionError{err: fmt.Errorf("evict compiled plan %s: %w", versionID, err)}
+	}
+	return nil
+}
+
+func invalidateCompiledPlanCache(ctx context.Context, cache port.CacheStore, log port.Logger, tenantID, versionID uuid.UUID) {
+	if err := evictCompiledPlan(ctx, cache, tenantID, versionID); err != nil {
 		log.Warn("compiled-plan cache invalidation failed", map[string]any{
 			"version_id": versionID.String(), "error": err.Error(),
 		})

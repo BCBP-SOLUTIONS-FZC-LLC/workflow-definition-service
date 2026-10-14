@@ -69,11 +69,23 @@ DELETE FROM workflow_version
 WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT';
 
 -- name: SetVersionInvalid :execresult
+-- Each revocation adds its nodes to the version's errors: the stored list
+-- first, then the new one, without repeating an entry.
 UPDATE workflow_version
 SET is_valid               = false,
-    validation_errors_json  = $3,
+    validation_errors_json  = (
+        SELECT COALESCE(jsonb_agg(merged.entry ORDER BY merged.pos), '[]'::jsonb)
+        FROM (
+            SELECT DISTINCT ON (t.entry) t.entry, t.pos
+            FROM jsonb_array_elements(
+                CASE WHEN jsonb_typeof(validation_errors_json) = 'array' THEN validation_errors_json ELSE '[]'::jsonb END
+                || CASE WHEN jsonb_typeof(sqlc.arg(validation_errors_json)::jsonb) = 'array' THEN sqlc.arg(validation_errors_json)::jsonb ELSE '[]'::jsonb END
+            ) WITH ORDINALITY AS t(entry, pos)
+            ORDER BY t.entry, t.pos
+        ) AS merged
+    ),
     updated_at              = now()
-WHERE tenant_id = $1 AND id = $2;
+WHERE tenant_id = sqlc.arg(tenant_id) AND id = sqlc.arg(id);
 
 -- name: NextVersionNumber :one
 SELECT COALESCE(MAX(version_number), 0) + 1

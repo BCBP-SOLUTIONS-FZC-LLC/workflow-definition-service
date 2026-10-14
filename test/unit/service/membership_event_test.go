@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
@@ -37,6 +38,8 @@ var (
 	mDeptID   = "018e1f2a-0000-7000-8000-000000000010"
 	mVerID    = uuid.MustParse("dddddddd-dddd-dddd-dddd-dddddddddddd")
 	mVerID2   = uuid.MustParse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+
+	mEventTime = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 )
 
 func assignee(versionID uuid.UUID, nodeKey, deptID string) *domain.NodeAssignee {
@@ -61,7 +64,7 @@ func TestHandleDepartmentMembershipRevoked_ListByUserError(t *testing.T) {
 	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).Return(nil, errors.New("db error"))
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err == nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err == nil {
 		t.Fatal("expected error from ListByUser, got nil")
 	}
 }
@@ -80,7 +83,7 @@ func TestHandleDepartmentMembershipRevoked_VersionDeletedMeanwhile_IsSkipped(t *
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err != nil {
 		t.Fatalf("expected nil (silent skip), got %v", err)
 	}
 }
@@ -97,7 +100,7 @@ func TestHandleDepartmentMembershipRevoked_VersionLookupFailure_IsReturnedSoTheE
 	vRepo.EXPECT().GetByID(gomock.Any(), mTenantID, mVerID).Return(nil, errors.New("connection reset"))
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err == nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err == nil {
 		t.Fatal("a database failure while reading the version must be returned, or the revocation is lost for good")
 	}
 }
@@ -116,7 +119,7 @@ func TestHandleDepartmentMembershipRevoked_NoMatchingAssignees(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 }
@@ -151,7 +154,7 @@ func TestHandleTenantMembershipRevoked_InvalidatesEveryDepartment(t *testing.T) 
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleTenantMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID); err != nil {
+	if err := svc.HandleTenantMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mEventTime); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -166,7 +169,7 @@ func TestHandleTenantMembershipRevoked_ListByUserError(t *testing.T) {
 	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).Return(nil, errors.New("db error"))
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleTenantMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID); err == nil {
+	if err := svc.HandleTenantMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mEventTime); err == nil {
 		t.Fatal("expected the list failure to propagate so the delivery is retried")
 	}
 }
@@ -190,7 +193,7 @@ func TestHandleDepartmentMembershipRevoked_DraftVersion(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -216,7 +219,7 @@ func TestHandleDepartmentMembershipRevoked_PublishedVersion(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -244,7 +247,7 @@ func TestHandleDepartmentMembershipRevoked_DeduplicatesVersion(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -268,7 +271,7 @@ func TestHandleDepartmentMembershipRevoked_ArchivedVersionSkipped(t *testing.T) 
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -291,7 +294,7 @@ func TestHandleDepartmentMembershipRevoked_SetInvalidError(t *testing.T) {
 	vRepo.EXPECT().SetInvalid(gomock.Any(), mTenantID, mVerID, gomock.Any()).Return(errors.New("db error"))
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err == nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
@@ -315,7 +318,7 @@ func TestHandleDepartmentMembershipRevoked_PauseUserTasksError(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(domain.ErrUpstreamUnavailable)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err == nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err == nil {
 		t.Fatal("expected error from PauseUserTasks, got nil")
 	}
 }
@@ -346,7 +349,7 @@ func TestHandleDepartmentMembershipRevoked_NilExecution(t *testing.T) {
 		Execution:  nil, // not configured
 		Log:        testkit.FakeLogger{},
 	})
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err != nil {
 		t.Fatalf("unexpected error with nil execution: %v", err)
 	}
 }
@@ -376,13 +379,16 @@ func TestHandleDepartmentMembershipRevoked_MultipleVersions(t *testing.T) {
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestHandleDepartmentMembershipRevoked_CacheDelError_LogsAndContinues(t *testing.T) {
-	// invalidatePlanCache: when cache.Del fails the error is logged only, not returned.
+// A revocation whose cache eviction fails is not done: Execution would keep
+// starting instances on the plan the cache still calls valid. The user's tasks
+// are still paused, and the failure reaches the consumer so the event is
+// redelivered.
+func TestHandleDepartmentMembershipRevoked_CacheDelError_StillPausesThenReturnsIt(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	aRepo := mocks.NewMockAssigneeRepository(ctrl)
@@ -394,7 +400,8 @@ func TestHandleDepartmentMembershipRevoked_CacheDelError_LogsAndContinues(t *tes
 	vRepo.EXPECT().GetByID(gomock.Any(), mTenantID, mVerID).
 		Return(&domain.WorkflowVersion{ID: mVerID, WorkflowID: uuid.New(), Status: domain.VersionStatusPublished}, nil)
 	vRepo.EXPECT().SetInvalid(gomock.Any(), mTenantID, mVerID, gomock.Any()).Return(nil)
-	cache.EXPECT().Del(gomock.Any(), gomock.Any()).Return(errors.New("cache unavailable"))
+	evictionErr := errors.New("cache unavailable")
+	cache.EXPECT().Del(gomock.Any(), gomock.Any()).Return(evictionErr)
 	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
 
 	svc := service.NewVersionService(service.VersionDeps{
@@ -404,8 +411,8 @@ func TestHandleDepartmentMembershipRevoked_CacheDelError_LogsAndContinues(t *tes
 		Cache:     cache,
 		Log:       testkit.FakeLogger{},
 	})
-	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
-		t.Fatalf("cache Del error must not propagate: %v", err)
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); !errors.Is(err, evictionErr) {
+		t.Fatalf("error = %v, want the cache eviction failure", err)
 	}
 }
 
@@ -425,8 +432,54 @@ func TestHandleDepartmentMembershipRevoked_RedeliveryConverges(t *testing.T) {
 
 	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
 	for delivery := 1; delivery <= 2; delivery++ {
-		if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID); err != nil {
+		if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err != nil {
 			t.Fatalf("delivery %d: unexpected error: %v", delivery, err)
 		}
+	}
+}
+
+// A redelivered or reordered revocation that arrives after the user was added
+// back and a new version was published with them as default assignee must not
+// invalidate that version: its assignee row is newer than the event. The user's
+// open tasks are still paused, since this service cannot tell whether they
+// were re-added.
+func TestHandleDepartmentMembershipRevoked_AssigneeAddedAfterTheEvent_IsLeftAlone(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	aRepo := mocks.NewMockAssigneeRepository(ctrl)
+	tx := mocks.NewMockTransactor(ctrl)
+	exec := mocks.NewMockExecutionService(ctrl)
+
+	older := assignee(mVerID, "task-old", mDeptID)
+	older.CreatedAt = mEventTime.Add(-time.Hour)
+	newer := assignee(mVerID2, "task-new", mDeptID)
+	newer.CreatedAt = mEventTime.Add(time.Hour)
+	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).Return([]*domain.NodeAssignee{older, newer}, nil)
+	vRepo.EXPECT().GetByID(gomock.Any(), mTenantID, mVerID).
+		Return(&domain.WorkflowVersion{ID: mVerID, WorkflowID: uuid.New(), Status: domain.VersionStatusPublished}, nil)
+	vRepo.EXPECT().SetInvalid(gomock.Any(), mTenantID, mVerID, gomock.Any()).Return(nil)
+	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
+
+	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
+	if err := svc.HandleDepartmentMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mDeptID, mEventTime); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestHandleTenantMembershipRevoked_AssigneeAddedAfterTheEvent_IsLeftAlone(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	aRepo := mocks.NewMockAssigneeRepository(ctrl)
+	tx := mocks.NewMockTransactor(ctrl)
+	exec := mocks.NewMockExecutionService(ctrl)
+
+	newer := assignee(mVerID, "task-new", mDeptID)
+	newer.CreatedAt = mEventTime.Add(time.Minute)
+	aRepo.EXPECT().ListByUser(gomock.Any(), mTenantID, mUserID).Return([]*domain.NodeAssignee{newer}, nil)
+	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
+
+	svc := newMembershipSvc(ctrl, tx, vRepo, aRepo, exec)
+	if err := svc.HandleTenantMembershipRevoked(context.Background(), mEventID, mTenantID, mUserID, mEventTime); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
