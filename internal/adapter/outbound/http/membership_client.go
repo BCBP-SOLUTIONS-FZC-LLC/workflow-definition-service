@@ -10,8 +10,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
-
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
@@ -26,7 +24,7 @@ type MembershipClient struct {
 func NewMembershipClient(baseURL string, timeout time.Duration) *MembershipClient {
 	return &MembershipClient{
 		baseURL: baseURL,
-		client:  &http.Client{Timeout: timeout},
+		client:  newClient(timeout),
 	}
 }
 
@@ -35,6 +33,19 @@ const maxEligibilityAttempts = 3
 const notEligibleStatusCode = http.StatusConflict
 
 func (c *MembershipClient) CheckEligibility(
+	ctx context.Context,
+	tenantID, userID uuid.UUID,
+	departmentID, role string,
+) (eligible bool, err error) {
+	err = observed("membership", "check_eligibility", func() error {
+		var callErr error
+		eligible, callErr = c.checkEligibility(ctx, tenantID, userID, departmentID, role)
+		return callErr
+	})
+	return eligible, err
+}
+
+func (c *MembershipClient) checkEligibility(
 	ctx context.Context,
 	tenantID, userID uuid.UUID,
 	departmentID, role string,
@@ -67,7 +78,6 @@ func (c *MembershipClient) tryCheckEligibility(ctx context.Context, rawURL strin
 	if err != nil {
 		return false, false, fmt.Errorf("build eligibility request: %w", err)
 	}
-	gincommon.InjectTraceContext(ctx, req.Header)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return false, true, fmt.Errorf("%w: membership eligibility check: %w", domain.ErrUpstreamUnavailable, err)
@@ -86,7 +96,7 @@ func (c *MembershipClient) tryCheckEligibility(ctx context.Context, rawURL strin
 	var body struct {
 		Eligible bool `json:"eligible"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(limitedBody(resp.Body)).Decode(&body); err != nil {
 		return false, false, fmt.Errorf("decode eligibility response: %w", err)
 	}
 	return body.Eligible, false, nil

@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -34,6 +35,8 @@ var (
 	InternalEventsIngestTotal *prometheus.CounterVec
 
 	RLSViolationsTotal *prometheus.CounterVec
+
+	DependencyRequestSeconds *prometheus.HistogramVec
 )
 
 var registerOnce sync.Once
@@ -50,6 +53,7 @@ func must[C any](c C, err error) C {
 }
 
 func registerServiceMetrics() {
+	DependencyRequestSeconds = must(gincommon.NewSharedHistogramVec(nil, "platform_dependency_request_seconds"))
 	WFSubmissionsTotal = must(gincommon.NewCounterVec(nil,
 		"workflow_definition_service_submissions_total",
 		"Total workflow creation attempts, labelled by outcome.",
@@ -101,6 +105,17 @@ func AddRLSViolations(violationType string, n float64) {
 	if RLSViolationsTotal != nil {
 		RLSViolationsTotal.WithLabelValues(violationType).Add(n)
 	}
+}
+
+func ObserveDependency(dependency, operation string, err error, elapsed time.Duration) {
+	if DependencyRequestSeconds == nil {
+		return
+	}
+	outcome := "success"
+	if err != nil {
+		outcome = "error"
+	}
+	DependencyRequestSeconds.WithLabelValues(dependency, operation, outcome).Observe(elapsed.Seconds())
 }
 
 func OutcomeLabel(err error) string {

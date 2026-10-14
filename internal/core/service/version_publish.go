@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
@@ -164,39 +165,73 @@ func (s *VersionService) runPublishTx(ctx context.Context, in publishTxInput) er
 	return s.workflows.UpdateActiveVersion(ctx, in.tenantID, in.workflowID, &in.versionID)
 }
 
+const maxEligibilityConcurrency = 8
+
+type eligibilityCheck struct {
+	assigneeID string
+	userID     uuid.UUID
+	deptID     string
+	role       string
+}
+
+func distinctEligibilityChecks(plan *dsl.CompiledPlan) ([]eligibilityCheck, error) {
+	var checks []eligibilityCheck
+	seen := map[eligibilityCheck]bool{}
+	for _, dept := range plan.Departments {
+		for _, stage := range dept.Stages {
+			for _, assigneeID := range stage.DefaultAssignees {
+				userID, err := uuid.Parse(assigneeID)
+				if err != nil || userID.Version() != 7 {
+					return nil, fmt.Errorf("invalid assignee UUID %s: %w", assigneeID, domain.ErrAssigneeIneligible)
+				}
+				check := eligibilityCheck{assigneeID: assigneeID, userID: userID, deptID: dept.IAMDepartmentID, role: stage.Role}
+				if !seen[check] {
+					seen[check] = true
+					checks = append(checks, check)
+				}
+			}
+		}
+	}
+	return checks, nil
+}
+
 func (s *VersionService) checkAssigneeEligibility(
 	ctx context.Context,
 	tenantID uuid.UUID,
 	plan *dsl.CompiledPlan,
 ) error {
-	for _, dept := range plan.Departments {
-		for _, stage := range dept.Stages {
-			if err := s.checkStageEligibility(ctx, tenantID, dept.IAMDepartmentID, stage); err != nil {
-				return err
-			}
+	checks, err := distinctEligibilityChecks(plan)
+	if err != nil {
+		return err
+	}
+	results := make([]error, len(checks))
+	slots := make(chan struct{}, maxEligibilityConcurrency)
+	var wg sync.WaitGroup
+	for i, check := range checks {
+		slots <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			results[i] = s.checkEligibility(ctx, tenantID, check)
+		}()
+	}
+	wg.Wait()
+	for _, err := range results {
+		if err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (s *VersionService) checkStageEligibility(
-	ctx context.Context,
-	tenantID uuid.UUID,
-	deptID string,
-	stage dsl.StageDef,
-) error {
-	for _, assigneeID := range stage.DefaultAssignees {
-		userID, err := uuid.Parse(assigneeID)
-		if err != nil || userID.Version() != 7 {
-			return fmt.Errorf("invalid assignee UUID %s: %w", assigneeID, domain.ErrAssigneeIneligible)
-		}
-		eligible, err := s.membership.CheckEligibility(ctx, tenantID, userID, deptID, stage.Role)
-		if err != nil {
-			return fmt.Errorf("check eligibility: %w", err)
-		}
-		if !eligible {
-			return fmt.Errorf("user %s dept %s role %s: %w", assigneeID, deptID, stage.Role, domain.ErrAssigneeIneligible)
-		}
+func (s *VersionService) checkEligibility(ctx context.Context, tenantID uuid.UUID, check eligibilityCheck) error {
+	eligible, err := s.membership.CheckEligibility(ctx, tenantID, check.userID, check.deptID, check.role)
+	if err != nil {
+		return fmt.Errorf("check eligibility: %w", err)
+	}
+	if !eligible {
+		return fmt.Errorf("user %s dept %s role %s: %w", check.assigneeID, check.deptID, check.role, domain.ErrAssigneeIneligible)
 	}
 	return nil
 }

@@ -50,7 +50,7 @@ func TestMembershipClient_PropagatesTraceContext(t *testing.T) {
 	srv := captureTraceparent(&traceparent)
 	defer srv.Close()
 
-	c := &MembershipClient{baseURL: srv.URL, client: srv.Client()}
+	c := NewMembershipClient(srv.URL, time.Second)
 	_, _, _ = c.tryCheckEligibility(tracedContext(t), srv.URL)
 
 	if traceparent == "" {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -28,7 +27,7 @@ func NewSecretsClient(addr, token, mount string, timeout time.Duration) *Secrets
 		addr:   addr,
 		token:  token,
 		mount:  mount,
-		client: &http.Client{Timeout: timeout},
+		client: newClient(timeout),
 	}
 }
 
@@ -37,6 +36,10 @@ type openBaoWriteRequest struct {
 }
 
 func (c *SecretsClient) Write(ctx context.Context, path string, data map[string]string) error {
+	return observed("openbao", "write_secret", func() error { return c.write(ctx, path, data) })
+}
+
+func (c *SecretsClient) write(ctx context.Context, path string, data map[string]string) error {
 	body, err := json.Marshal(openBaoWriteRequest{Data: data})
 	if err != nil {
 		return fmt.Errorf("encode openbao write request: %w", err)
@@ -65,6 +68,10 @@ func (c *SecretsClient) Write(ctx context.Context, path string, data map[string]
 }
 
 func (c *SecretsClient) Delete(ctx context.Context, path string) error {
+	return observed("openbao", "delete_secret", func() error { return c.remove(ctx, path) })
+}
+
+func (c *SecretsClient) remove(ctx context.Context, path string) error {
 	url := fmt.Sprintf("%s/v1/%s/metadata/%s", strings.TrimRight(c.addr, "/"), c.mount, strings.TrimLeft(path, "/"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
@@ -84,11 +91,4 @@ func (c *SecretsClient) Delete(ctx context.Context, path string) error {
 	default:
 		return fmt.Errorf("%w: openbao delete %q: status %d: %s", domain.ErrUpstreamUnavailable, path, resp.StatusCode, errorSnippet(resp.Body))
 	}
-}
-
-const maxErrorSnippet = 1 << 10
-
-func errorSnippet(body io.Reader) string {
-	b, _ := io.ReadAll(io.LimitReader(body, maxErrorSnippet))
-	return string(b)
 }

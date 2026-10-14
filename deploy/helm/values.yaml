@@ -173,10 +173,13 @@ networkPolicy:
   # Leave empty ({}) to allow all pods in the ingress controller namespace.
   ingressControllerPodSelector: {}
   # Named same-namespace callers, replacing a blanket podSelector: {} allow.
-  # The Execution Service calls the internal API (definition LLD §3.4).
+  # The Execution Service reads compiled plans, and the shared events consumer
+  # forwards membership events, over the internal API (definition LLD §3.4).
   allowedCallers:
     - podSelector:
         app.kubernetes.io/name: workflow-execution-service
+    - podSelector:
+        app.kubernetes.io/name: workflow-events-consumer
   metricsIngress:
     enabled: true
     # Namespace where Prometheus runs.

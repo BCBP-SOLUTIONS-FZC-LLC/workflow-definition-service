@@ -12,8 +12,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
-
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
@@ -32,7 +30,7 @@ type ExecutionClient struct {
 }
 
 func NewExecutionClient(baseURL, token string, timeout time.Duration) *ExecutionClient {
-	return &ExecutionClient{baseURL: baseURL, token: token, client: &http.Client{Timeout: timeout}}
+	return &ExecutionClient{baseURL: baseURL, token: token, client: newClient(timeout)}
 }
 
 func (c *ExecutionClient) CheckActiveInstances(ctx context.Context, tenantID, workflowID uuid.UUID) (bool, int32, error) {
@@ -42,7 +40,10 @@ func (c *ExecutionClient) CheckActiveInstances(ctx context.Context, tenantID, wo
 		HasActive *bool `json:"has_active"`
 		Count     int32 `json:"count"`
 	}
-	if err := c.call(ctx, "check active instances", http.MethodGet, rawURL, nil, http.StatusOK, &out); err != nil {
+	err := observed("execution", "check_active_instances", func() error {
+		return c.call(ctx, "check active instances", http.MethodGet, rawURL, nil, http.StatusOK, &out)
+	})
+	if err != nil {
 		return false, 0, err
 	}
 	if out.HasActive == nil {
@@ -57,7 +58,9 @@ func (c *ExecutionClient) PauseUserTasks(ctx context.Context, tenantID, userID u
 		return fmt.Errorf("%w: pause user tasks: %w", domain.ErrUpstreamUnavailable, err)
 	}
 	rawURL := c.baseURL + "/api/v1/internal/users/" + userID.String() + "/pause-tasks"
-	return c.call(ctx, "pause user tasks", http.MethodPost, rawURL, body, http.StatusNoContent, nil)
+	return observed("execution", "pause_user_tasks", func() error {
+		return c.call(ctx, "pause user tasks", http.MethodPost, rawURL, body, http.StatusNoContent, nil)
+	})
 }
 
 func (c *ExecutionClient) call(ctx context.Context, op, method, rawURL string, body []byte, want int, out any) error {
@@ -95,7 +98,6 @@ func (c *ExecutionClient) try(ctx context.Context, method, rawURL string, body [
 	if c.token != "" {
 		req.Header.Set(internalTokenHeader, c.token)
 	}
-	gincommon.InjectTraceContext(ctx, req.Header)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return ctx.Err() == nil, fmt.Errorf("send request: %w", err)
@@ -110,7 +112,7 @@ func (c *ExecutionClient) try(ctx context.Context, method, rawURL string, body [
 	if out == nil {
 		return false, nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.NewDecoder(limitedBody(resp.Body)).Decode(out); err != nil {
 		return false, fmt.Errorf("decode response: %w", err)
 	}
 	return false, nil

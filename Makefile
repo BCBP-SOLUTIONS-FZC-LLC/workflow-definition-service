@@ -356,6 +356,10 @@ HELM_PROD_SETTINGS = --set existingSecret=workflow-definition-service-secrets \
 helm-check:
 	helm lint deploy/helm $(HELM_PROD_SETTINGS)
 	helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) > /dev/null
+	@for caller in workflow-execution-service workflow-events-consumer; do \
+		helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/networkpolicy.yaml | grep -q "app.kubernetes.io/name: $$caller" \
+			|| { echo "helm-check: the NetworkPolicy does not admit $$caller to the internal API"; exit 1; }; \
+	done
 	@if helm template workflow-definition-service deploy/helm --set existingSecret=workflow-definition-service-secrets > /dev/null 2>&1; then \
 		echo "helm-check: the chart renders for prod without ORG_MEMBERSHIP_BASE_URL, OPENBAO_ADDR and VALKEY_ADDR"; exit 1; fi
 

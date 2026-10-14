@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
@@ -154,4 +155,17 @@ func TestAddRLSViolations_RecordsByTypeAndIsNilSafe(t *testing.T) {
 	observability.AddRLSViolations("cross_tenant_access", 3)
 
 	require.InDelta(t, before+3, testutil.ToFloat64(cross), 0)
+}
+
+func TestObserveDependency_RecordsOutcomeByDependencyAndOperation(t *testing.T) {
+	require.NotPanics(t, func() { observability.ObserveDependency("execution", "x", nil, 0) })
+
+	initIdentity(t)
+	observability.ObserveDependency("execution", "check_active_instances", nil, 20*time.Millisecond)
+	observability.ObserveDependency("execution", "check_active_instances", errors.New("boom"), 20*time.Millisecond)
+
+	body := scrape(t)
+	require.Contains(t, body, `platform_dependency_request_seconds_count{dependency="execution",domain="workflow"`)
+	require.Contains(t, body, `operation="check_active_instances",outcome="success"`)
+	require.Contains(t, body, `operation="check_active_instances",outcome="error"`)
 }
