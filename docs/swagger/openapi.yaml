@@ -111,8 +111,14 @@ components:
       required: false
       schema:
         type: string
-        format: uuid
-      description: Optional unique client-generated request key to prevent duplicate operations on network retries.
+        maxLength: 256
+      description: >
+        Optional client-generated request key that makes a retry safe. The same key with the
+        same body replays the first response; the same key with a different body is a 409
+        (`IDEMPOTENCY_KEY_REPLAY`); the same key while the first request is still running is
+        a 409 (`IDEMPOTENCY_REQUEST_IN_PROGRESS`) and is retried after the first one
+        finishes. A key longer than 256 characters is a 400 (`BAD_REQUEST`). Keys are scoped
+        to the tenant, the user, the method and the path.
 
   schemas:
 
@@ -1008,6 +1014,34 @@ components:
             instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222"
             code: "NOT_FOUND"
 
+    BadRequest:
+      description: Malformed request — unparseable JSON, a missing or invalid field, or an Idempotency-Key longer than 256 characters.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/bad-request"
+            title: "Bad Request"
+            status: 400
+            detail: "Idempotency-Key must be at most 256 characters"
+            instance: "/workflows"
+            code: "BAD_REQUEST"
+
+    ServiceUnavailable:
+      description: >
+        A dependency is temporarily unavailable — the database, the lock store, the secret
+        store or Execution. The request changed nothing and is safe to retry.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          example:
+            type: "https://api.workflow.platform/errors/service-unavailable"
+            title: "Upstream Service Unavailable"
+            status: 503
+            detail: "an upstream dependency is temporarily unavailable"
+            instance: "/workflows"
+            code: "UPSTREAM_UNAVAILABLE"
+
     Conflict:
       description: State conflict — see error body for detail.
       content:
@@ -1117,6 +1151,7 @@ paths:
                   pagination: { $ref: '#/components/schemas/Pagination' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
     post:
       operationId: createWorkflow
@@ -1207,6 +1242,7 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   # must come before /workflows/{id} to avoid route shadowing
   /api/v1/workflows/validate:
@@ -1258,6 +1294,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   # 3.3
   /api/v1/workflows/{id}:
@@ -1297,6 +1334,7 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/workflows/{id}/versions:
     get:
@@ -1332,6 +1370,7 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   # 3.5 / 3.9
   /api/v1/workflows/{id}/draft:
@@ -1386,6 +1425,7 @@ paths:
                 instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/draft"
                 code: "DRAFT_NOT_FOUND"
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
     post:
       operationId: initDraft
@@ -1425,6 +1465,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
     put:
       operationId: updateDraft
@@ -1518,6 +1560,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
     delete:
       operationId: discardDraft
@@ -1558,6 +1601,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   # 3.8
   /api/v1/workflows/{id}/archive:
@@ -1597,6 +1642,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "400": { $ref: '#/components/responses/BadRequest' }
         "503":
           description: Upstream service unavailable (Execution Service could not be notified).
           content:
@@ -1646,6 +1692,7 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   # 3.7
   /api/v1/workflows/{id}/versions/{version_id}/publish:
@@ -1795,6 +1842,7 @@ paths:
                     instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/versions/11abcc22-3844-42bc-938b-665cd42c1111/clone"
                     code: "INVALID_VERSION_STATUS"
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   # 3.11
   /api/v1/workflows/{id}/versions/{version_id}/promote:
@@ -1844,6 +1892,7 @@ paths:
                 instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/versions/11abcc22-3844-42bc-938b-665cd42c1111/promote"
                 code: "INVALID_VERSION_STATUS"
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   # 3.13
   /api/v1/workflows/{id}/versions/{version_id}/validation:
@@ -1892,6 +1941,7 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/workflows/{id}/versions/{version_id}/nodes:
     get:
@@ -1926,6 +1976,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/workflows/{id}/versions/{version_id}/export:
     get:
@@ -1953,6 +2004,7 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   # 3.14
   /api/v1/workflows/{id}/versions/{version_id}/diff/{target_version_id}:
@@ -2007,6 +2059,7 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
   # Health Checks
   /healthz:
     get:
@@ -2023,11 +2076,15 @@ paths:
                 properties:
                   status: { type: string, example: "OK" }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /readyz:
     get:
       operationId: readinessCheck
       summary: Readiness Probe
+      description: >
+        Ready means the database answers. A Valkey outage does not make the service unready,
+        since plans are served from the database; it is reported as `cache: degraded`.
       tags: [Health]
       responses:
         "200":
@@ -2036,23 +2093,26 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [status, cache]
                 properties:
                   status:         { type: string, example: "OK" }
+                  cache:          { type: string, enum: [ok, degraded], description: "`degraded` when Valkey does not answer; plan serving and drafts continue (drafts answer 503 while the lock store is down)." }
                   db_utilization: { type: number, example: 0.3, description: "Ratio of acquired connections to max pool size." }
                   db_conns:       { type: integer, example: 3, description: "Current number of acquired connections." }
                   db_max_conns:   { type: integer, example: 10, description: "Configured pool maximum." }
         "503":
-          description: Service is not ready — database pool unhealthy or Valkey cache unreachable.
+          description: Not ready — the database is unreachable, or the pod is draining for shutdown.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [unavailable, draining] }
+                  db:     { type: string, enum: [unreachable] }
               example:
-                type: "https://api.workflow.platform/errors/service-unavailable"
-                title: "Service Unavailable"
-                status: 503
-                detail: "Database connectivity check failed."
-                instance: "/readyz"
-                code: "DATABASE_DISCONNECTED"
+                status: "unavailable"
+                db: "unreachable"
 
   /api/v1/bpmn/allowed-elements:
     get:
@@ -2080,6 +2140,7 @@ paths:
               example:
                 elements: [definitions, process, userTask, callActivity]
         "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/connectors/registry:
     get:
@@ -2135,6 +2196,7 @@ paths:
                     outputs: []
                     retry: conditional
         "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/connectors/credentials:
     post:
@@ -2276,6 +2338,7 @@ paths:
                     items: { $ref: '#/components/schemas/ModuleSummary' }
                   pagination: { $ref: '#/components/schemas/Pagination' }
         "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
     post:
       operationId: createModule
@@ -2330,6 +2393,8 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/modules/{id}:
     get:
@@ -2351,6 +2416,7 @@ paths:
               schema: { $ref: '#/components/schemas/ModuleDetail' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
     delete:
       operationId: archiveModule
@@ -2388,6 +2454,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/modules/{id}/usages:
     get:
@@ -2419,6 +2487,8 @@ paths:
                     items: { $ref: '#/components/schemas/ModuleUsage' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+
   /api/v1/modules/{id}/versions:
     get:
       operationId: listModuleVersions
@@ -2450,6 +2520,7 @@ paths:
                     items: { $ref: '#/components/schemas/ModuleVersion' }
                   pagination: { $ref: '#/components/schemas/Pagination' }
         "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
     post:
       operationId: addModuleVersion
@@ -2502,6 +2573,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/modules/{id}/versions/{version_id}:
     get:
@@ -2527,6 +2600,7 @@ paths:
               schema: { $ref: '#/components/schemas/ModuleVersion' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/modules/{id}/versions/{version_id}/contract:
     get:
@@ -2565,6 +2639,7 @@ paths:
         "404": { $ref: '#/components/responses/NotFound' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "500": { $ref: '#/components/responses/InternalError' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/modules/{id}/versions/{version_id}/publish:
     post:
@@ -2609,6 +2684,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/starters:
     get:
@@ -2647,6 +2724,7 @@ paths:
                     items: { $ref: '#/components/schemas/StarterTemplate' }
                   pagination: { $ref: '#/components/schemas/Pagination' }
         "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
     post:
       operationId: createStarter
@@ -2687,6 +2765,9 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/starters/from-workflow-version/{version_id}:
     post:
@@ -2735,6 +2816,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/starters/{id}:
     get:
@@ -2756,6 +2839,7 @@ paths:
               schema: { $ref: '#/components/schemas/StarterTemplate' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
     delete:
       operationId: deleteStarter
@@ -2787,6 +2871,9 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
 tags:
   - name: Workflows

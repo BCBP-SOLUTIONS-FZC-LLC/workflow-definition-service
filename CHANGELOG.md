@@ -21,6 +21,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Added
 
+- The public spec declares the idempotency 409 `IDEMPOTENCY_REQUEST_IN_PROGRESS`, the 400 for a key over 256 characters (the header is no longer typed as a UUID), a 503 `UPSTREAM_UNAVAILABLE` on every operation, and the real `/readyz` bodies (`cache` ok or degraded; `unavailable` or `draining` on 503). Contract tests send these through the real router against it.
 - Contract tests send the internal events and connector alias routes through the real router against `api/internal-openapi.yaml`, including 400, 401, 413 and 500, and the internal spec declares 413.
 
 ### Security
