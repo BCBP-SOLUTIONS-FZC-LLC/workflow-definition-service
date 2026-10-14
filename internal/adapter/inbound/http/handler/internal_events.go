@@ -39,6 +39,9 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 	var env events.Envelope[json.RawMessage]
 	if err := c.ShouldBindJSON(&env); err != nil {
 		observability.IncCounterVec(observability.InternalEventsIngestTotal, "unknown", "bad_payload")
+		if writeIfTooLarge(c, err) {
+			return
+		}
 		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid event envelope", nil)
 		return
 	}

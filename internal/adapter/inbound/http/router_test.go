@@ -151,7 +151,7 @@ func TestInternalRoutes_RejectBodiesOverTheLimit(t *testing.T) {
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 }
 
 func TestReadyz_AfterDrainBegins_Returns503EvenWhenHealthy(t *testing.T) {

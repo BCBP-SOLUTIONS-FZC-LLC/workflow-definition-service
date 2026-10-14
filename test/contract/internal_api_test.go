@@ -44,15 +44,20 @@ func (c contractVersions) GetByID(_ context.Context, _, id uuid.UUID) (*domain.W
 
 func internalRouter(t *testing.T, versions ...*domain.WorkflowVersion) http.Handler {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
 	repo := contractVersions{byID: map[uuid.UUID]*domain.WorkflowVersion{}}
 	for _, v := range versions {
 		repo.byID[v.ID] = v
 	}
 	plans := service.NewCompiledPlanService(service.CompiledPlanDeps{Versions: repo})
+	return internalRouterWith(t, handler.Services{CompiledPlans: plans})
+}
+
+func internalRouterWith(t *testing.T, services handler.Services) http.Handler {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
 	return httpadapter.NewRouter(httpadapter.RouterConfig{
 		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
-		Handler: handler.New(handler.Services{CompiledPlans: plans}),
+		Handler: handler.New(services),
 		DB:      upDB{}, Cache: upPinger{},
 	}).Handler()
 }

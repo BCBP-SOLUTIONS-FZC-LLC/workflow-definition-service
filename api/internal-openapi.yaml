@@ -160,6 +160,12 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
 
+    PayloadTooLarge:
+      description: The request body exceeds the 10 MB limit. Not retryable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+
     InternalError:
       description: Unexpected server error.
       content:
@@ -235,6 +241,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
         "500":
           description: Transient processing failure (DB/transaction). The consumer retries and eventually DLQs.
           content:
@@ -318,6 +325,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
         "500": { $ref: '#/components/responses/InternalError' }
 
   /api/v1/internal/connector-aliases/rest/{alias}:

@@ -291,7 +291,7 @@ arch-lint:
 contract-check:
 	@scripts/contract-check.sh
 
-## contract-breaking: Fail on a breaking change to api/internal-openapi.yaml against CONTRACT_BASE_REF (default origin/main)
+## contract-breaking: Fail on a breaking change to api/internal-openapi.yaml or docs/swagger/openapi.yaml against CONTRACT_BASE_REF (default origin/main)
 contract-breaking:
 	@OASDIFF=$(OASDIFF) scripts/contract-breaking.sh
 

@@ -115,11 +115,18 @@ func writeProblem(c *gin.Context, status int, code ErrCode, detail string, param
 	})
 }
 
-func bindErrResponse(c *gin.Context, err error) {
+func writeIfTooLarge(c *gin.Context, err error) bool {
 	var maxBytesErr *http.MaxBytesError
-	if errors.As(err, &maxBytesErr) {
-		writeProblem(c, http.StatusRequestEntityTooLarge, CodePayloadTooLarge,
-			"request body exceeds the 10 MB limit", nil)
+	if !errors.As(err, &maxBytesErr) {
+		return false
+	}
+	writeProblem(c, http.StatusRequestEntityTooLarge, CodePayloadTooLarge,
+		"request body exceeds the 10 MB limit", nil)
+	return true
+}
+
+func bindErrResponse(c *gin.Context, err error) {
+	if writeIfTooLarge(c, err) {
 		return
 	}
 	writeProblem(c, http.StatusBadRequest, CodeBadRequest, err.Error(), nil)
