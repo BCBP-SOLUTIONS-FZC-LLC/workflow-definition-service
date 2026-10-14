@@ -11,9 +11,9 @@ metadata:
 
 **HTTP path:** `RequireIdentity` middleware (`middleware/identity.go`) bridges gincommon → pgcommon by reading `gincommon.RequestContext(c)`, parsing the tenant and user UUIDs once (401 on a malformed value), storing a typed `Identity` that `mustCtx` and the role checks read (`middleware.IdentityFrom`), and calling `pgcommon.WithValidatedGUCSet(ctx, ...)` on `c.Request`. Placed immediately after `ProtectedMiddlewares` in `router.go`; a route without it answers 500 rather than serving with RLS unenforced.
 
-**Internal path (`/api/v1/internal`):** no gateway identity reaches these routes, so `RequireIdentity` is not on the group; each handler (the compiled-plan read, `POST /internal/events`) calls `pgcommon.WithGUCSet` itself from the `tenant_id` its request carries.
+**Internal path (`/api/v1/internal`):** no gateway identity reaches these routes, so `RequireIdentity` is not on the group; each handler (the compiled-plan read, `POST /api/v1/internal/events`) calls `pgcommon.WithGUCSet` itself from the `tenant_id` its request carries.
 
-## Inbound Events: `POST /internal/events`
+## Inbound Events: `POST /api/v1/internal/events`
 
 The service does **not** consume SQS in-process. The shared workflow-events consumer (separate service) forwards each `events.Envelope[json.RawMessage]` to this endpoint, which dispatches by `env.Type` to `versionSvc.HandleDepartmentMembershipRevoked` or `versionSvc.HandleTenantMembershipRevoked`.
 

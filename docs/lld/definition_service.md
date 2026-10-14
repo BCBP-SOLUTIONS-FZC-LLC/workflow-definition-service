@@ -15,7 +15,7 @@ The **Workflow Definition Service** acts as the design-time control plane for th
 - **Database Driver**: `platform-pgcommon/v2 v2.0.1` — wraps `github.com/jackc/pgx/v5` with RLS GUC injection (`app.tenant_id`, `app.user_id`, `app.tenant_roles`), slow-query logging, OTel tracing, Prometheus pool metrics, transaction helpers, pool health check, and a golang-migrate-based `migrate.Runner`. See §1.7 for the full integration.
 - **Database Tooling**: `sqlc` for type-safe query generation, `platform-pgcommon/v2 migrate.Runner` for schema migrations.
 - **Distributed Cache / Store**: Valkey 8.0 (Redis-compatible), via `github.com/redis/go-redis/v9`. Used for: compiled-plan caching, idempotency key deduplication (`Idempotency-Key` header), and distributed draft-edit locking (prevents concurrent draft overwrites between sessions).
-- **Events**: this service publishes none and keeps no outbox. `platform-events v1.2.0` supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /internal/events`. See §1.8 for the full integration.
+- **Events**: this service publishes none and keeps no outbox. `platform-events v1.2.0` supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /api/v1/internal/events`. See §1.8 for the full integration.
 - **Structured Logging**: `go.uber.org/zap` via `platform-gincommon/pkg/logger` — used by middleware chain and all application code. See `coding_style_rules.md §5.1`.
 - **Mocks**: `go.uber.org/mock` (GoMock / `mockgen`) — generates mocks for all `core/port/` interfaces. See §1.5.3.
 
@@ -27,9 +27,9 @@ The Definition Service operates within a broader ecosystem and interacts with th
 2. **PostgreSQL**: Stores the compiled DSL, draft XMLs, historical versions, and default node assignee mapping records (`workflow_node_assignee`).
 3. **Internal API (HTTP)**: Serves the compiled plan of a workflow version to the Execution Service and its Temporal Worker on the internal route group, `/api/v1/internal`, specified in `api/internal-openapi.yaml` (§3.4.1).
 4. **Org & Membership Service (Outbound REST)**: During publish/execution transactions and validation passes, the Definition Service calls `POST /tenants/:t/users/:u/eligibility?department=:dept&level=:level` as a backend defense-in-depth check to ensure all default assignees are eligible.
-5. **Event Bus (inbound only)**: This service publishes no events and has no outbox (§7.2, §10.7). It does **not** consume SQS: the shared workflow-events consumer subscribes to `membership-workflow-q` (`iam.membership.events`) and forwards `DepartmentMembershipRevoked` events to `POST /internal/events` (§7.4), which triggers template invalidation.
-6. **Shared Workflow-Events Consumer (Inbound HTTP)**: A separate engine-wide service consumes the SQS queues and HTTP-routes each envelope to the respective workflow service (Definition or Execution). For the Definition Service it calls the internal `POST /internal/events` endpoint.
-7. **Execution Service (Outbound HTTP)**: The Definition Service makes two calls on the Execution Service's internal API (§3.4.2). (a) During archive (`POST /workflows/:id/archive`): the active-instances read refuses the archive with `ACTIVE_INSTANCES_EXIST` (409) if any instance is RUNNING or PAUSED. (b) During membership revocation (`POST /internal/events`, §7.4.2): the pause-tasks call has Execution pause the revoked user's active task assignments. Both calls wrap errors as `ErrUpstreamUnavailable` after retries.
+5. **Event Bus (inbound only)**: This service publishes no events and has no outbox (§7.2, §10.7). It does **not** consume SQS: the shared workflow-events consumer subscribes to `membership-workflow-q` (`iam.membership.events`) and forwards `DepartmentMembershipRevoked` events to `POST /api/v1/internal/events` (§7.4), which triggers template invalidation.
+6. **Shared Workflow-Events Consumer (Inbound HTTP)**: A separate engine-wide service consumes the SQS queues and HTTP-routes each envelope to the respective workflow service (Definition or Execution). For the Definition Service it calls the internal `POST /api/v1/internal/events` endpoint.
+7. **Execution Service (Outbound HTTP)**: The Definition Service makes two calls on the Execution Service's internal API (§3.4.2). (a) During archive (`POST /workflows/:id/archive`): the active-instances read refuses the archive with `ACTIVE_INSTANCES_EXIST` (409) if any instance is RUNNING or PAUSED. (b) During membership revocation (`POST /api/v1/internal/events`, §7.4.2): the pause-tasks call has Execution pause the revoked user's active task assignments. Both calls wrap errors as `ErrUpstreamUnavailable` after retries.
 8. **User Profile Service (Display Enrichment)**: The Definition Service stores only UUID references for users (`workflow_node_assignee.user_id`). It does **not** make outbound calls to User Profile — display enrichment (name, email, job title) is performed directly by the frontend calling `POST /api/v1/users:batch` with the UUID list returned by the Definition Service. This keeps the Definition Service identity-agnostic at the service layer.
 
 ### 1.3 High-Level Component Diagram
@@ -52,7 +52,7 @@ graph TD
         Parser[BPMN Parser]
         Compiler[DSL Compiler]
         Validator[Validation Engine]
-        InternalEvents[POST /internal/events]
+        InternalEvents[POST /api/v1/internal/events]
         
         API --> Validator
         API --> Parser
@@ -80,7 +80,7 @@ graph TD
     Compiler -->|3. Validate Assignee Eligibility| OrgMembership
     Compiler -->|4. Store Draft/Publish| DB
     SQS_Membership -.->|5. Consume Revocation Events| EventsConsumer
-    EventsConsumer -->|6. POST /internal/events| InternalEvents
+    EventsConsumer -->|6. POST /api/v1/internal/events| InternalEvents
     InternalEvents -->|Invalidate Affected Templates| DB
     
 ```
@@ -113,7 +113,7 @@ Below is a detailed breakdown of each internal module within the Workflow Defini
   - **Input**: Validated Go BPMN Graph AST (`bpmn.Process` struct).
   - **Output**: Orchestration-ready compiled JSON DSL (`domain.WorkflowDef` struct).
 
-- **Internal Event Ingest Handler (`POST /internal/events`)**
+- **Internal Event Ingest Handler (`POST /api/v1/internal/events`)**
   - **Responsibility**: Receives domain-event envelopes forwarded over HTTP by the shared workflow-events consumer, dispatches by `env.Type`, and drives the `HandleDepartmentMembershipRevoked` invalidation logic. Redelivery is absorbed by handler idempotency (§2.3.1, §10.9); injects the RLS GUC from the envelope `tenant_id`, as every internal route does (§3.4, §14).
   - **Input**: `events.Envelope[json.RawMessage]` JSON body on the internal (non-gateway) route group, authenticated by service-to-service auth.
   - **Output**: 2xx on success, 4xx on malformed payload, 5xx on transient error (signals the consumer to retry).
@@ -124,7 +124,7 @@ The service follows clean architecture: nothing in `core/` imports from `adapter
 
 - **`workflow-definition-service/`** (Project Root)
   - **`cmd/server/`**
-    - `main.go` — Application bootstrap (concurrently starts the Gin HTTP server and the metrics server) and dependency injection wire-up. Inbound membership events arrive via `POST /internal/events`, forwarded by the shared workflow-events consumer.
+    - `main.go` — Application bootstrap (concurrently starts the Gin HTTP server and the metrics server) and dependency injection wire-up. Inbound membership events arrive via `POST /api/v1/internal/events`, forwarded by the shared workflow-events consumer.
   - **`internal/`**
     - **`core/`** — Core business domain logic, fully decoupled from external libraries.
       - `domain/` — Core entities, workflow definitions, and compiled DSL models.
@@ -220,7 +220,7 @@ Incoming HTTP request
   → LoggingMiddleware           (gincommon) — emits structured http_request log via Zap on completion
   → TimeoutMiddleware(30s)      (gincommon, innermost via Config.RequestTimeout) — sets the per-request deadline;
                                               returns 503 and counts platform_http_request_timeouts_total{method,route}
-  → [/healthz, /readyz, /metrics — public; no further middleware]
+  → [/healthz, /readyz — public; no further middleware; /metrics is served on the separate metrics port]
   → RequireAuth                 (gincommon) — validates x-user-id and x-tenant-id (non-empty, ≤ 256 chars,
                                               no control chars); returns 401 if missing or malformed
   → ContextMiddleware           (gincommon) — builds RequestContext{TenantID, UserID, Roles, TraceID}
@@ -501,13 +501,13 @@ On application startup the tracing initialisation runs first, then the pool is b
 
 #### 1.8.2 Inbound Event Ingest (HTTP)
 
-Inbound domain events are consumed by the shared workflow-events consumer service, which forwards each envelope over HTTP to `POST /internal/events`. The handler injects the RLS tenant context (`pgcommon.WithGUCSet`) from the envelope `tenant_id` — the same manual-injection pattern every internal route uses (§3.4, §14) — and dispatches by `env.Type` to the existing handler logic (e.g. `HandleDepartmentMembershipRevoked`). Redelivery is absorbed by handler idempotency (§2.3.1, §10.9). See §7.4 for the full flow.
+Inbound domain events are consumed by the shared workflow-events consumer service, which forwards each envelope over HTTP to `POST /api/v1/internal/events`. The handler injects the RLS tenant context (`pgcommon.WithGUCSet`) from the envelope `tenant_id` — the same manual-injection pattern every internal route uses (§3.4, §14) — and dispatches by `env.Type` to the existing handler logic (e.g. `HandleDepartmentMembershipRevoked`). Redelivery is absorbed by handler idempotency (§2.3.1, §10.9). See §7.4 for the full flow.
 
 #### 1.8.3 Prometheus Metrics
 
 | Metric | Type | Description |
 | --- | --- | --- |
-| `workflow_definition_service_internal_events_ingest_total` | Counter | Inbound envelopes received at `POST /internal/events` (labels: `type`, `result`) |
+| `workflow_definition_service_internal_events_ingest_total` | Counter | Inbound envelopes received at `POST /api/v1/internal/events` (labels: `type`, `result`) |
 
 ---
 
@@ -927,7 +927,7 @@ A **denormalized reverse index** that inverts the compiled DSL's `default_assign
 
     created_by_user_id (UUID): The tenant admin who created/updated this specific version. Provides strict revision history auditing.
 
-    is_valid (BOOLEAN): Reflects assignee validity — not BPMN structural validity. Default `true`. Set to `false` by the `DepartmentMembershipRevoked` handler (`POST /internal/events`, §7.4) when an assigned user loses the required department role. A version with `is_valid = false` cannot be promoted or used to start new workflow instances; existing running instances are not affected. The version must be updated (re-assign the affected node) and republished to restore validity.
+    is_valid (BOOLEAN): Reflects assignee validity — not BPMN structural validity. Default `true`. Set to `false` by the `DepartmentMembershipRevoked` handler (`POST /api/v1/internal/events`, §7.4) when an assigned user loses the required department role. A version with `is_valid = false` cannot be promoted or used to start new workflow instances; existing running instances are not affected. The version must be updated (re-assign the affected node) and republished to restore validity.
 
     module_refs (JSONB): The library module versions a published version resolved, one `{module_id, version_id, process_id, version_number}` per module version, written at publish (§3.3.18). The version holds a snapshot of each: a later module version or an archived module never changes it. `GET /modules/:id/usages` reads it. `[]` on drafts.
 
@@ -1673,7 +1673,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 | `/starters/:id` | `DELETE` | Admin | Delete a starter (tenant-scoped rows only, or `platform_operator` for `scope=global`) |
 | `/healthz` | `GET` | Any | Liveness probe (returns 200 OK) |
 | `/readyz` | `GET` | Any | Readiness probe (performs database dependency connection checks, returns 200/503) |
-| `/internal/events` | `POST` | Internal (service-to-service) | Ingest a domain-event envelope forwarded by the shared workflow-events consumer (e.g. `DepartmentMembershipRevoked`). Not exposed on the public gateway. |
+| `/api/v1/internal/events` | `POST` | Internal (service-to-service) | Ingest a domain-event envelope forwarded by the shared workflow-events consumer (e.g. `DepartmentMembershipRevoked`). Not exposed on the public gateway. |
 | `/internal/workflow-versions/:version_id/compiled-plan` | `GET` | Internal (service-to-service) | A workflow version and its stored compiled plan, read by the Execution Service (§3.4.1) |
 
 ---
@@ -1953,7 +1953,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 
 #### 3.3.17 Internal Event Ingest
 
-- **POST** `/internal/events`
+- **POST** `/api/v1/internal/events`
 - **Caller**: The shared workflow-events consumer (service-to-service). Mounted on an internal route group — **not** behind `ProtectedMiddlewares` and **not** exposed through the Envoy gateway. Authenticated by service-to-service auth (shared-secret header / mTLS / network policy).
 - **Semantics**: Accepts a single `events.Envelope[json.RawMessage]`, injects the RLS GUC from the envelope `tenant_id` (`pgcommon.WithGUCSet`, §14), and dispatches on `type`. Today it handles `DepartmentMembershipRevoked` → `HandleDepartmentMembershipRevoked` (the full flow is in §7.4.2). Redelivery is absorbed by handler idempotency (§2.3.1, §10.9).
 - **Request body**:
@@ -3499,7 +3499,7 @@ To ensure high operational reliability, fast debugging, and multi-tenant perform
 
 ### 6.1 Metrics Strategy (Prometheus)
 
-All metrics are exposed via a standard HTTP `/metrics` endpoint scraped by Prometheus, unauthenticated (access control is enforced by network policy/ingress at the infra layer, not the app — same reasoning as `/internal/events`'s reliance on Kubernetes `NetworkPolicy`). None of the service-specific business metrics below carry a `tenant_id` label today — cross-tenant noisy-neighbor attribution for these particular counters/histograms is not currently possible; `wf_*` metrics are process-wide only.
+All metrics are exposed via a standard HTTP `/metrics` endpoint scraped by Prometheus, unauthenticated (access control is enforced by network policy/ingress at the infra layer, not the app — same reasoning as `/api/v1/internal/events`'s reliance on Kubernetes `NetworkPolicy`). None of the service-specific business metrics below carry a `tenant_id` label today — cross-tenant noisy-neighbor attribution for these particular counters/histograms is not currently possible; `wf_*` metrics are process-wide only.
 
 **Platform HTTP metrics** are emitted for every route without service code:
 
@@ -3544,7 +3544,7 @@ The following **service-specific metrics** supplement the platform series:
   - **Description**: Total BPMN validation calls (`ValidationService.Validate`) that returned at least one blocking validation error.
   - **Labels**: none
 - **`workflow_definition_service_internal_events_ingest_total`** (CounterVec)
-  - **Description**: Inbound events received at `POST /internal/events` from the shared consumer.
+  - **Description**: Inbound events received at `POST /api/v1/internal/events` from the shared consumer.
   - **Labels**: `event_type` (e.g. `DepartmentMembershipRevoked`), `result`
   - **Note**: `sqs_queue_depth` / `sqs_dlq_depth` for `membership-workflow-q` are emitted by the shared workflow-events consumer, not the Definition Service.
 - **`workflow_definition_service_cache_hits_total`** (Counter)
@@ -3702,15 +3702,15 @@ The Definition Service emits **no outbound event** today (§10.7). None of its s
 
 This service has no outbound event and therefore no downstream consumers today (§7.2). Execution Service self-warms its compiled-plan cache and `workflow_key → version_id` mapping on ordinary cache-miss via write-through (`execution_service.md` §6.1/§6.2, Appendix A.5 decision 19); archive is guarded directly by the synchronous active-instances read (§3.3.8), and eligibility invalidation is delivered by a direct pause-tasks call (§7.4.2 step 5) — none of these depend on an outbound event from this service. Whether Audit & Compliance or Notification need a replacement signal for publish/promote is an open product question, not resolved here; structured logs (§8.5) are the audit trail for these operations regardless.
 
-### 7.4 Inbound Event Ingest (`POST /internal/events`)
+### 7.4 Inbound Event Ingest (`POST /api/v1/internal/events`)
 
-The Definition Service does **not** consume SQS directly. The shared workflow-events consumer subscribes to `membership-workflow-q` (itself subscribed to the `iam.membership.events` SNS topic) and forwards each envelope to the Definition Service's internal HTTP endpoint `POST /internal/events`, which applies the invalidation logic described in §7.4.2.
+The Definition Service does **not** consume SQS directly. The shared workflow-events consumer subscribes to `membership-workflow-q` (itself subscribed to the `iam.membership.events` SNS topic) and forwards each envelope to the Definition Service's internal HTTP endpoint `POST /api/v1/internal/events`, which applies the invalidation logic described in §7.4.2.
 
 #### 7.4.1 Transport & Delivery Contract
 
 The queue topology (`membership-workflow-q`, its `membership-workflow-q-dlq` DLQ, visibility timeout `30s`, max receive count `5`) is owned by the **shared consumer's** infrastructure, not the Definition Service. Between the consumer and this endpoint:
 
-- The consumer POSTs the full `events.Envelope[json.RawMessage]` (carrying `id`, `type`, `tenant_id`, `data`) to `/internal/events`.
+- The consumer POSTs the full `events.Envelope[json.RawMessage]` (carrying `id`, `type`, `tenant_id`, `data`) to `/api/v1/internal/events`.
 - The endpoint is on an **internal route group** (service-to-service auth — shared-secret header / mTLS / network policy), **not** the gateway-authenticated public API. It is never exposed through the Envoy gateway.
 - **Unknown types are acknowledged with `200` and ignored**, counted against the ingest metric with the received type as its label. A producer adding an event type this service has no handler for never breaks delivery.
 - **Retry contract**: `2xx` marks the message handled; `4xx` (malformed payload) is treated as non-retryable by the consumer and routed to its DLQ; `5xx`/timeouts cause the consumer to retry and eventually DLQ per its `maxReceiveCount`.
@@ -3739,7 +3739,7 @@ The queue topology (`membership-workflow-q`, its `membership-workflow-q-dlq` DLQ
 
 - **AsyncAPI documentation**: also documented as a `receive` operation in `api/asyncapi.yaml` (messages `DepartmentMembershipRevoked` and `MembershipRevoked`, schemas `DepartmentMembershipRevokedInbound` and `MembershipRevokedInbound`) — non-`Payload`-suffixed so `schema-gov`'s extractor skips it, since this event is owned/registered by the Org & Membership service, not Definition. Mirrors `execution_service`'s own convention for its inbound events.
 
-- **What and How Happens** (executed by the `POST /internal/events` handler after dispatching on `env.Type`):
+- **What and How Happens** (executed by the `POST /api/v1/internal/events` handler after dispatching on `env.Type`):
 
   1. **Set Tenant Context**: The handler injects the RLS GUC from the envelope `tenant_id` via `pgcommon.WithGUCSet` (`SET LOCAL app.tenant_id = :tenant_id`) — the manual-injection pattern every internal route uses (§3.4, §14), since this is a service-to-service call without gateway identity headers.
 
@@ -3798,7 +3798,7 @@ This is the standard path when an admin intentionally wants to change who gets a
 
 This is the automated path triggered when an assignee loses their department membership via an IAM event. The full processing steps are documented in §7.4.2. In summary:
 
-1. The shared workflow-events consumer receives the event from `membership-workflow-q` and forwards it to `POST /internal/events`; the handler queries `workflow_node_assignee` to find all versions (any status) referencing the revoked user.
+1. The shared workflow-events consumer receives the event from `membership-workflow-q` and forwards it to `POST /api/v1/internal/events`; the handler queries `workflow_node_assignee` to find all versions (any status) referencing the revoked user.
 2. Affected versions are marked `is_valid = false` with a structured validation error appended to `validation_errors_json`.
 3. Definition calls `ExecutionClient.PauseUserTasks(tenantID, userID)` — Execution pauses active task assignments for that user from its own runtime data.
 
@@ -3820,7 +3820,7 @@ Runtime reassignment flows — including the `POST /tasks/{id}/reassign` admin e
 
 #### 7.4.4 Exclusion of Tenant Lifecycle Events
 
-The Definition Service consumes no tenant lifecycle event. `event_consumer`'s routing table sends `TenantStateChanged` and `TenantMembershipsPurged` to the Execution Service alone, and any other tenant-lifecycle type delivered to this service's `/internal/events` endpoint is acknowledged and ignored by the unknown-type default (§7.4.1). Because the Definition Service only handles design-time template compilation and version drafts, active tenant locks are instead enforced upstream at the API Gateway (which rejects incoming user requests for suspended tenants) and downstream in the Execution Service (which handles pausing in-flight Temporal workflow executions).
+The Definition Service consumes no tenant lifecycle event. `event_consumer`'s routing table sends `TenantStateChanged` and `TenantMembershipsPurged` to the Execution Service alone, and any other tenant-lifecycle type delivered to this service's `/api/v1/internal/events` endpoint is acknowledged and ignored by the unknown-type default (§7.4.1). Because the Definition Service only handles design-time template compilation and version drafts, active tenant locks are instead enforced upstream at the API Gateway (which rejects incoming user requests for suspended tenants) and downstream in the Execution Service (which handles pausing in-flight Temporal workflow executions).
 
 ---
 
@@ -3929,7 +3929,7 @@ To ensure optimal connection management, the service connects to PostgreSQL thro
 | **PostgreSQL** | Down / unreachable | Connection failures, exhausted connections, an administrator shutdown, a closed pool and a statement cancelled by `PG_STATEMENT_TIMEOUT` answer `503 UPSTREAM_UNAVAILABLE`, not `500`, so clients know to retry. `/readyz` fails → pod removed from load balancer rotation. | None — no write is acknowledged without a successful DB commit. |
 | **Valkey (cache)** | Down / unreachable | Three effects: (1) compiled-plan cache miss falls through to Postgres transparently (no caller-visible impact); (2) idempotency middleware — cache miss → request passes through uncached (duplicate protection degraded, not lost); (3) draft-edit lock acquisition fails → handler returns `503`. `/readyz` stays `200` with `"cache":"degraded"` — the pod stays in rotation. | None for business data. Duplicate-mutation window open for the outage duration. |
 | **Execution Service internal API** | Down / timeout | `ArchiveWorkflow` reads the workflow's active instances before archiving (§3.4.2). On timeout (default 5 s), the handler returns `503 UPSTREAM_UNAVAILABLE`. No archive proceeds. The workflow remains in its current state. | None. |
-| **Inbound event ingest** (`POST /internal/events`) | Definition pod down, or shared consumer down | The shared consumer holds `DepartmentMembershipRevoked` messages on `membership-workflow-q` (SQS retention: 14 days) and retries the HTTP POST until the Definition Service is healthy. On recovery, events are reprocessed; the handlers converge on the same state either way (§2.3.1). `is_valid` flags may be stale for the duration of the outage. | None — SQS retains the messages and the consumer retries. |
+| **Inbound event ingest** (`POST /api/v1/internal/events`) | Definition pod down, or shared consumer down | The shared consumer holds `DepartmentMembershipRevoked` messages on `membership-workflow-q` (SQS retention: 14 days) and retries the HTTP POST until the Definition Service is healthy. On recovery, events are reprocessed; the handlers converge on the same state either way (§2.3.1). `is_valid` flags may be stale for the duration of the outage. | None — SQS retains the messages and the consumer retries. |
 | **Org & Membership eligibility endpoint** | Down at publish time | Publish calls the membership eligibility check once for each distinct (user, department, role), at most eight at a time, and reports the first failure in plan order. On timeout/5xx, publish returns `503 UPSTREAM_UNAVAILABLE`. The draft is not promoted. | None. |
 
 ### 9.3 Service-Level Objectives
@@ -4023,7 +4023,7 @@ This section captures the key architectural and design decisions made for the Wo
 
 ### 10.9 No Dedup Registry — Inbound Handlers Absorb Redelivery
 
-- **Decision**: This service keeps no `processed_event` table. At-least-once delivery on `POST /internal/events` is absorbed by handler idempotency (§2.3.1). The Execution Service, whose inbound surface includes types that are not idempotent by construction, carries the registry instead.
+- **Decision**: This service keeps no `processed_event` table. At-least-once delivery on `POST /api/v1/internal/events` is absorbed by handler idempotency (§2.3.1). The Execution Service, whose inbound surface includes types that are not idempotent by construction, carries the registry instead.
 
 - **Rationale**: Both consumed types are revocations that converge on the same terminal state (§2.3.1). `SetVersionInvalid` replaces `is_valid` and `validation_errors_json` with the same values, and no query sets `is_valid = true` on a PUBLISHED row, so a redelivery cannot undo an operator's recovery — recovery is a new version (§7.4.3 Flow A). The pause-tasks call signals only instances Execution reads as `RUNNING`. A registry would add a table, an index, a daily pruner and a write on the hot path of every inbound event to detect a duplicate whose only trace is a bumped `record_version` on a row no client edit path locks against.
 
@@ -4849,7 +4849,7 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 | Term | Category | Definition |
 | --- | --- | --- |
 | **`workflow.template.published` Event** *(retired)* | Eventing | The Definition Service's only outbound SNS event, back when it had one. Emitted when a draft was promoted to `PUBLISHED` status, as a cache-warm push hint telling the Execution Service to pre-fetch the compiled plan. Retired platform-wide — producer, consumer, schema, and both services' AsyncAPI/OpenAPI entries all removed (§7.2, §10.7; `execution_service.md` §6.1/§6.2, Appendix A.5 decision 19) — once Execution's own cache-aside read was fixed to write through on a miss, making the eager prewarm this event drove redundant. The Definition Service currently emits no outbound event. |
-| **DepartmentMembershipRevoked Event** | Eventing | An inbound event from the Org & Membership Service indicating a user has been removed from a department. Triggers template invalidation if the user is a default assignee. Consumed from SQS queue `membership-workflow-q` by the shared workflow-events consumer, which forwards it to the Definition Service via `POST /internal/events`. |
+| **DepartmentMembershipRevoked Event** | Eventing | An inbound event from the Org & Membership Service indicating a user has been removed from a department. Triggers template invalidation if the user is a default assignee. Consumed from SQS queue `membership-workflow-q` by the shared workflow-events consumer, which forwards it to the Definition Service via `POST /api/v1/internal/events`. |
 | **Shared Workflow-Events Consumer** | Eventing | A separate engine-wide service that consumes the SQS queues (e.g. `membership-workflow-q`) and HTTP-routes each envelope to the respective workflow service (Definition or Execution). Keeps the Definition Service API-only on the inbound path. |
 | **SQS Queue** | Eventing | Amazon Simple Queue Service queue (`membership-workflow-q`) subscribed to the `iam.membership.events` SNS topic. Provides durable, ordered delivery of membership revocation events to the shared workflow-events consumer (which then forwards them to the Definition Service over HTTP). |
 

@@ -101,7 +101,6 @@ func createRequest(key string) *http.Request {
 
 func listRequest(query string) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows"+query, nil)
-	req.Header.Set("x-tenant-roles", "tenant_member")
 	req.Header.Set("x-tenant-id", uuid.NewString())
 	req.Header.Set("x-user-id", uuid.NewString())
 	return req
@@ -138,6 +137,7 @@ func TestPublicContract_Responses(t *testing.T) {
 				t.Fatalf("status %d, want %d: %s", w.Code, tc.want, w.Body.String())
 			}
 			spec.Response(t, tc.req, w.Code, w.Header(), w.Body.Bytes())
+			spec.Undeclared(t, tc.req, w.Code, w.Body.Bytes())
 		})
 	}
 }
@@ -162,6 +162,7 @@ func TestPublicContract_Readiness(t *testing.T) {
 				t.Fatalf("status %d, want %d: %s", w.Code, tc.want, w.Body.String())
 			}
 			spec.Response(t, req, w.Code, w.Header(), w.Body.Bytes())
+			spec.Undeclared(t, req, w.Code, w.Body.Bytes())
 			if tc.cache == "" {
 				return
 			}
@@ -205,6 +206,56 @@ func TestPublicContract_MalformedIdentityIsRefusedBeforeTheService(t *testing.T)
 				t.Errorf("the service was called %d times", calls)
 			}
 			spec.Response(t, req, w.Code, w.Header(), w.Body.Bytes())
+			spec.Undeclared(t, req, w.Code, w.Body.Bytes())
+		})
+	}
+}
+
+type readFake struct {
+	createFake
+	workflow *domain.Workflow
+	versions []*domain.WorkflowVersion
+}
+
+func (f readFake) Get(_ context.Context, _ uuid.UUID, id uuid.UUID, _ int) (*domain.Workflow, []*domain.WorkflowVersion, error) {
+	if f.workflow == nil || f.workflow.ID != id {
+		return nil, nil, domain.ErrNotFound
+	}
+	return f.workflow, f.versions, nil
+}
+
+func TestPublicContract_GetWorkflow(t *testing.T) {
+	spec := contract.Load(t, publicSpec)
+	tenant := uuid.New()
+	n := int32(2)
+	published := time.Now().UTC()
+	wf := &domain.Workflow{ID: uuid.New(), TenantID: tenant, BusinessKey: "flow-one", Name: "Flow one", Description: "d", CreatedByUserID: uuid.New(), CreatedAt: published, UpdatedAt: published}
+	versions := []*domain.WorkflowVersion{
+		{ID: uuid.New(), WorkflowID: wf.ID, Status: domain.VersionStatusPublished, VersionNumber: &n, IsValid: true, CreatedAt: published, PublishedAt: &published},
+		{ID: uuid.New(), WorkflowID: wf.ID, Status: domain.VersionStatusDraft, IsValid: true, CreatedAt: published},
+	}
+	router := publicRouter(t, readFake{workflow: wf, versions: versions}, freeCache{}, upDB{}, upPinger{})
+
+	for _, tc := range []struct {
+		name string
+		id   uuid.UUID
+		want int
+	}{
+		{"found", wf.ID, http.StatusOK},
+		{"unknown", uuid.New(), http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/"+tc.id.String(), nil)
+			req.Header.Set("x-tenant-id", tenant.String())
+			req.Header.Set("x-user-id", uuid.NewString())
+			spec.Request(t, req)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			if w.Code != tc.want {
+				t.Fatalf("status %d, want %d: %s", w.Code, tc.want, w.Body.String())
+			}
+			spec.Response(t, req, w.Code, w.Header(), w.Body.Bytes())
+			spec.Undeclared(t, req, w.Code, w.Body.Bytes())
 		})
 	}
 }

@@ -9,7 +9,7 @@ info:
 servers:
   - url: http://localhost:8080
     description: Local dev server (matches cmd/server's actual route mounts)
-  - url: https://api.internal/definition/v1
+  - url: https://api.internal/definition
     description: Envoy API Gateway (production)
 # All endpoints require a valid tenant context injected by the Envoy gateway.
 # Mutating endpoints (POST/PUT/DELETE) additionally require x-tenant-roles.
@@ -60,10 +60,10 @@ components:
     TenantRoles:
       name: x-tenant-roles
       in: header
-      required: true
+      required: false
       schema:
         type: string
-      description: Comma-separated tenant roles injected by Envoy.
+      description: Comma-separated tenant roles injected by Envoy. Reads need only the tenant and user; a mutating call without `tenant_admin` or `tenant_owner` here is `403`.
 
     Departments:
       name: x-departments
@@ -1347,6 +1347,8 @@ paths:
                   description:      { type: string }
                   active_version_id: { type: string, format: uuid, nullable: true }
                   created_at:       { type: string, format: date-time }
+                  updated_at:       { type: string, format: date-time }
+                  has_draft:        { type: boolean }
                   versions:
                     type: array
                     items: { $ref: '#/components/schemas/VersionSummary' }

@@ -120,8 +120,8 @@ Verify:
 
 ```bash
 curl http://localhost:8080/healthz   # {"status":"OK"}
-curl http://localhost:8080/readyz    # {"status":"OK"}
-curl http://localhost:8080/metrics   # Prometheus exposition
+curl http://localhost:8080/readyz    # {"status":"OK","cache":"ok",...}
+curl http://localhost:9091/metrics   # Prometheus exposition (metrics port)
 ```
 
 ---
@@ -223,7 +223,7 @@ internal/
     service/              ← business logic
   adapter/
     inbound/
-      http/              ← Gin handlers, authz, middleware, POST /internal/events
+      http/              ← Gin handlers, authz, middleware, POST /api/v1/internal/events
     outbound/
       postgres/          ← sqlc DB layer + repo adapters
       valkey/            ← Valkey cache adapter
@@ -319,9 +319,9 @@ rctx := gincommon.RequestContext(c)
 | `GET` | `/api/v1/workflows/:id/versions/:version_id/export` | Any | Download raw BPMN XML |
 | `GET` | `/api/v1/workflows/:id/versions/:version_id/diff/:target_version_id` | Any | Structural diff between two versions |
 | `GET` | `/healthz` | Public | Liveness probe |
-| `GET` | `/readyz` | Public | Readiness probe (database and Valkey ping) |
-| `GET` | `/metrics` | Public | Prometheus metrics |
-| `POST` | `/internal/events` | Internal | Ingest a domain-event envelope from the shared workflow-events consumer (e.g. `DepartmentMembershipRevoked`) |
+| `GET` | `/readyz` | Public | Readiness probe (database; a Valkey outage is reported as `cache: degraded`, not unready) |
+| `GET` | `/metrics` | Metrics port `9091` | Prometheus metrics |
+| `POST` | `/api/v1/internal/events` | Internal | Ingest a domain-event envelope from the shared workflow-events consumer (e.g. `DepartmentMembershipRevoked`) |
 
 **Admin** = requires `tenant_admin` or `tenant_owner` in `x-tenant-roles`. **Internal** = service-to-service only; not exposed on the public gateway. Authenticated with `x-internal-token` (`INTERNAL_API_TOKEN`, required outside dev); the handler sets the RLS tenant from the envelope `tenant_id`. Returns 2xx (incl. idempotent no-op), 400 (malformed — non-retryable), or 500 (transient — retried).
 
@@ -479,7 +479,7 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 - **Compiled-plan read error rate/latency** — the internal route's own 5xx ratio and p99, since this is the one call the Execution Service depends on synchronously.
 - **BPMN validation failure rate** — sustained activity on `workflow_definition_service_validation_failures_total` (emitted only by the standalone `/validate` endpoint).
 - **Publish latency and retry exhaustion** — p95 of `workflow_definition_service_publish_latency_seconds` exceeding 2s, and any increase in `platform_db_transaction_retries_exhausted_total`.
-- **Internal event ingest failures** — sustained `bad_payload`/`error` results on `POST /internal/events`.
+- **Internal event ingest failures** — sustained `bad_payload`/`error` results on `POST /api/v1/internal/events`.
 - **Postgres query error rate** — `platform_db_queries_total{outcome="error"}`.
 - **Panics** — any increase in `platform_http_panics_total`, paged immediately.
 - **Compiled-plan cache hit ratio** (informational) — `workflow_definition_service_cache_hits_total`/`workflow_definition_service_cache_misses_total`, not an incident trigger.
@@ -544,7 +544,7 @@ See [ARCHITECTURE.md § BPMN Compiler](ARCHITECTURE.md#bpmn-compiler) for the fu
 | HTTP | Gin + `platform-gincommon` (OTel, Prometheus, Zap, auth) |
 | Database | PostgreSQL 18 · pgx/v5 · sqlc · golang-migrate · `platform-pgcommon` (pool & RLS) |
 | Cache / locks | Valkey 8 · go-redis/v9 |
-| Events | None published, no outbox. Inbound: HTTP `POST /internal/events` from the shared workflow-events consumer |
+| Events | None published, no outbox. Inbound: HTTP `POST /api/v1/internal/events` from the shared workflow-events consumer |
 | Contracts | OpenAPI 3 · kin-openapi (tests) · oasdiff (breaking-change gate) |
 | Observability | OTel traces · Prometheus metrics · Zap structured logs |
 | Testing | GoMock · race detector · `testcontainers-go` (integration) |

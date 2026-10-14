@@ -107,6 +107,7 @@ func runExchanges(t *testing.T, spec *contract.Spec, router http.Handler, cases 
 				t.Fatalf("status %d, want %d: %s", w.Code, tc.want, w.Body.String())
 			}
 			spec.Response(t, req, w.Code, w.Header(), w.Body.Bytes())
+			spec.Undeclared(t, req, w.Code, w.Body.Bytes())
 		})
 	}
 }

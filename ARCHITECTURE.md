@@ -27,7 +27,7 @@ flowchart LR
     DEF -->|"active-instances · pause-tasks\ninternal HTTP"| EXEC
     DEF -->|"read/write"| DB
     DEF -->|"idempotency · quota cache"| CACHE
-    CONSUMER -->|"POST /internal/events\n(DepartmentMembershipRevoked)"| DEF
+    CONSUMER -->|"POST /api/v1/internal/events\n(DepartmentMembershipRevoked)"| DEF
     DEF -->|"eligibility check"| IAM
 ```
 
@@ -55,7 +55,7 @@ graph TD
         Parser[BPMN Parser]
         Compiler[DSL Compiler]
         Validator[Validation Engine]
-        InternalEvents[POST /internal/events]
+        InternalEvents[POST /api/v1/internal/events]
 
         API --> Validator
         API --> Parser
@@ -81,7 +81,7 @@ graph TD
     Compiler -->|3. Validate Assignee Eligibility| OrgMembership
     Compiler -->|4. Store Draft/Publish| DB
     SQS_Membership -.->|5. Consume Revocation Events| EventsConsumer
-    EventsConsumer -->|6. POST /internal/events| InternalEvents
+    EventsConsumer -->|6. POST /api/v1/internal/events| InternalEvents
     InternalEvents -->|Invalidate Affected Templates| DB
 
 ```
@@ -267,7 +267,7 @@ Incoming request
   → Metrics                (gincommon) — Prometheus platform_http_requests_total etc.
   → Logging                (gincommon) — structured http_request log on close
 
-  → /healthz, /readyz, /metrics        ← stop here (public)
+  → /healthz, /readyz                  ← stop here (public; /metrics is served on the separate metrics port)
 
   → RequireAuth            (gincommon) — validates x-user-id, x-tenant-id
   → ContextMiddleware      (gincommon) — builds RequestContext{TenantID, UserID, Roles, TraceID}
@@ -345,7 +345,7 @@ sequenceDiagram
     H -->>- ExecSvc: 200 {workflow_id, version_id, version_number, status, is_valid, compiled_plan}
 ```
 
-### 3. DepartmentMembershipRevoked (inbound via POST /internal/events)
+### 3. DepartmentMembershipRevoked (inbound via POST /api/v1/internal/events)
 
 > Source: [docs/architecture/mermaid/membership-revoked-flow.mmd](docs/architecture/mermaid/membership-revoked-flow.mmd)
 
@@ -357,7 +357,7 @@ sequenceDiagram
     participant Tx as Transactor.RunInTx
     participant Repo as VersionRepo
 
-    Consumer ->>+ Handler: POST /internal/events (envelope)
+    Consumer ->>+ Handler: POST /api/v1/internal/events (envelope)
     Handler ->> Handler: WithGUCSet(tenant_id) · dispatch by type
     Handler ->>+ Svc: HandleDepartmentMembershipRevoked(ctx, payload)
     loop for each affected version
@@ -1204,7 +1204,7 @@ The three BCBP platform libraries are private Go modules — see the table and u
 
 ### platform-events (event envelope)
 
-The service uses only `Envelope[T]` from this library: the inbound handler (`internal/adapter/inbound/http/handler/internal_events.go`) decodes the envelope the shared workflow-events consumer forwards to `POST /internal/events` (see [API Overview](README.md#api-overview) in the README). The service publishes nothing, so it uses neither the SNS publisher nor the outbox runner, and it does not use `NewSQSConsumer`. `cmd/server/telemetry.go` calls `events.InitMetrics` so `platform_library_info` identifies the library version in every scrape.
+The service uses only `Envelope[T]` from this library: the inbound handler (`internal/adapter/inbound/http/handler/internal_events.go`) decodes the envelope the shared workflow-events consumer forwards to `POST /api/v1/internal/events` (see [API Overview](README.md#api-overview) in the README). The service publishes nothing, so it uses neither the SNS publisher nor the outbox runner, and it does not use `NewSQSConsumer`. `cmd/server/telemetry.go` calls `events.InitMetrics` so `platform_library_info` identifies the library version in every scrape.
 
 ### platform-pgcommon (pool, RLS GUC injection, transactor, migrations)
 

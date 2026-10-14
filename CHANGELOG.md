@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Docs follow the code: the internal events path is `/api/v1/internal/events` everywhere, `/metrics` is on the metrics port, the public spec's production server URL has no second `/v1`, `x-tenant-roles` is optional on reads, and the AsyncAPI page says events are received over HTTP, not published to an SNS topic.
 - Schema (migrations edited in place): every time column is `TIMESTAMPTZ`, `created_at` and `updated_at` are `NOT NULL`, the parent key of a version, module version and assignee is `NOT NULL`, each child names its parent together with its tenant (composite foreign keys, so another tenant's parent cannot be named; deleting an active version clears only the active pointer), and `record_version` must be positive. The repository mapping lost its null-parent panic and timestamp conversions with it. Both DBML files follow the migrations.
 - The identity headers are parsed as UUIDs once, by `RequireIdentity` (which replaces `InjectGUCSet` and sets the validated GUC set); a malformed `x-tenant-id` or `x-user-id` is `401`, not `500`, and never reaches the database. A request that reaches the middleware without a `RequestContext` is refused with `500` instead of being served with RLS unenforced.
 - Configuration is strict: an unparseable value, a zero TTL or timeout, a missing `APP_ENV` (no longer defaulting to `dev`) and, outside `dev`, a missing `VALKEY_ADDR` fail startup, and every problem is listed in one error. `.env` is read in `local` and `dev` only. `OTEL_EXPORTER_OTLP_*` and `OTEL_TRACES_SAMPLER_RATIO` are no longer parsed by the service (the platform library reads them).
@@ -30,6 +31,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Added
 
+- Contract tests also fail on a response field that the spec's schema does not declare (`Spec.Undeclared`), applied to the public and internal routes the tests send; that found `updated_at` and `has_draft` missing from the getWorkflow response, now declared.
 - The public spec declares the idempotency 409 `IDEMPOTENCY_REQUEST_IN_PROGRESS`, the 400 for a key over 256 characters (the header is no longer typed as a UUID), a 503 `UPSTREAM_UNAVAILABLE` on every operation, and the real `/readyz` bodies (`cache` ok or degraded; `unavailable` or `draining` on 503). Contract tests send these through the real router against it.
 - Contract tests send the internal events and connector alias routes through the real router against `api/internal-openapi.yaml`, including 400, 401, 413 and 500, and the internal spec declares 413.
 

@@ -109,6 +109,7 @@ func TestInternalContract_CompiledPlan(t *testing.T) {
 				t.Fatalf("status %d, want %d: %s", w.Code, tc.want, w.Body.String())
 			}
 			spec.Response(t, req, w.Code, w.Header(), w.Body.Bytes())
+			spec.Undeclared(t, req, w.Code, w.Body.Bytes())
 		})
 	}
 }
