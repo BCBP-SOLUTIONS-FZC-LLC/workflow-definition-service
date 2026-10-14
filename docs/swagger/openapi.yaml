@@ -810,6 +810,15 @@ components:
         condition:   { type: string }
         description: { type: string }
 
+    GatewayAuthError:
+      type: object
+      required: [error, status]
+      properties:
+        error:      { type: string, example: "missing or invalid authentication headers" }
+        status:     { type: integer, example: 401 }
+        trace_id:   { type: string }
+        request_id: { type: string }
+
     ProblemDetails:
       type: object
       required: [type, title, status, detail, instance, code]
@@ -976,10 +985,16 @@ components:
 
   responses:
     Unauthorized:
-      description: Missing or invalid gateway identity headers.
+      description: >
+        Missing or invalid gateway identity headers. A missing identity is refused by the
+        shared HTTP library with `GatewayAuthError`; an identity that is present but is not a
+        UUID is refused with a problem document.
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          schema:
+            oneOf:
+              - { $ref: '#/components/schemas/ProblemDetails' }
+              - { $ref: '#/components/schemas/GatewayAuthError' }
           example:
             type: "https://api.workflow.platform/errors/unauthorized"
             title: "Unauthorized Access"
