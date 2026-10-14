@@ -14,6 +14,8 @@ type RLSViolationExporterDeps struct {
 	Interval  time.Duration
 	Retention time.Duration
 	Logger    port.Logger
+
+	RetryDelay time.Duration
 }
 
 type RLSViolationExporter struct {
@@ -50,9 +52,10 @@ func (e *RLSViolationExporter) Tick(ctx context.Context) error {
 	return nil
 }
 
+const defaultStartRetryDelay = 5 * time.Second
+
 func (e *RLSViolationExporter) Run(ctx context.Context) {
-	if err := e.Start(ctx); err != nil {
-		e.deps.Logger.Error("rls violation exporter not started", map[string]any{"error": err.Error()})
+	if !e.startWithRetry(ctx) {
 		return
 	}
 	ticker := time.NewTicker(e.deps.Interval)
@@ -65,6 +68,25 @@ func (e *RLSViolationExporter) Run(ctx context.Context) {
 			if err := e.Tick(ctx); err != nil {
 				e.deps.Logger.Error("rls violation export failed", map[string]any{"error": err.Error()})
 			}
+		}
+	}
+}
+
+func (e *RLSViolationExporter) startWithRetry(ctx context.Context) bool {
+	delay := e.deps.RetryDelay
+	if delay <= 0 {
+		delay = defaultStartRetryDelay
+	}
+	for {
+		err := e.Start(ctx)
+		if err == nil {
+			return true
+		}
+		e.deps.Logger.Error("rls violation exporter not started, retrying", map[string]any{"error": err.Error(), "retry_in": delay.String()})
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(delay):
 		}
 	}
 }

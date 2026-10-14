@@ -93,7 +93,7 @@ func registerServiceMetrics() {
 		"event_type", "result"))
 	RLSViolationsTotal = must(gincommon.NewCounterVec(nil,
 		"workflow_definition_service_rls_violations_total",
-		"Sampled row-level-security violations recorded in rls_violation_log, by violation_type.",
+		"Sampled row-level-security violations recorded in rls_violation_log, by violation_type. Each replica counts the rows it sees, so alert on increase() above zero, not on a sum across replicas.",
 		"violation_type"))
 }
 

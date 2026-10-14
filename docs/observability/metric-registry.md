@@ -52,7 +52,7 @@ The registry defines no `workflow_*` metrics yet, so none are emitted.
 | `workflow_definition_service_promote_total` | counter | `status` | Total version promote attempts, labelled by outcome. |
 | `workflow_definition_service_publish_latency_seconds` | histogram | - | End-to-end latency of PublishVersion (compile + DB tx). |
 | `workflow_definition_service_publish_total` | counter | `status` | Total version publish attempts, labelled by outcome. |
-| `workflow_definition_service_rls_violations_total` | counter | `violation_type` | Sampled row-level-security violations recorded in rls_violation_log, by violation_type. |
+| `workflow_definition_service_rls_violations_total` | counter | `violation_type` | Sampled row-level-security violations recorded in rls_violation_log, by violation_type. Each replica counts the rows it sees, so alert on increase() above zero, not on a sum across replicas. |
 | `workflow_definition_service_submissions_total` | counter | `status` | Total workflow creation attempts, labelled by outcome. |
 | `workflow_definition_service_validation_failures_total` | counter | - | Total BPMN validation calls that returned at least one validation error. |
 

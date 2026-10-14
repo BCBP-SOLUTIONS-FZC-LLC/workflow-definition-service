@@ -67,3 +67,41 @@ func TestRLSViolationRepo_CountsAfterAndPrune(t *testing.T) {
 		t.Errorf("pruned = %d, want only the 48h-old row", pruned)
 	}
 }
+
+func TestRLSViolationRepo_OnlyOneReplicaPrunesAtATime(t *testing.T) {
+	pool := newTestPool(t)
+	repo := pgadapter.NewRLSViolationRepo(pool)
+	ctx := context.Background()
+
+	err := pool.WithConn(ctx, func(ctx context.Context, conn *pgxpool.Conn) error {
+		_, err := conn.Exec(ctx,
+			`INSERT INTO rls_violation_log (violation_type, row_tenant_id, table_name, occurred_at)
+			 VALUES ('cross_tenant_access', gen_random_uuid(), 'workflow', now() - interval '10 days')`)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("insert violation: %v", err)
+	}
+	cutoff := time.Now().Add(-24 * time.Hour)
+
+	err = pool.WithConn(ctx, func(ctx context.Context, other *pgxpool.Conn) error {
+		if _, err := other.Exec(ctx, `SELECT pg_advisory_lock($1)`, pgadapter.RLSViolationPruneLockID); err != nil {
+			return err
+		}
+		defer func() { _, _ = other.Exec(ctx, `SELECT pg_advisory_unlock($1)`, pgadapter.RLSViolationPruneLockID) }()
+
+		n, err := repo.PruneBefore(ctx, cutoff)
+		if err != nil || n != 0 {
+			t.Errorf("PruneBefore while another replica prunes = %d, %v; want it to skip, not wait and not delete", n, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("hold the lock: %v", err)
+	}
+
+	n, err := repo.PruneBefore(ctx, cutoff)
+	if err != nil || n != 1 {
+		t.Errorf("PruneBefore once the lock is free = %d, %v; want the old row deleted", n, err)
+	}
+}

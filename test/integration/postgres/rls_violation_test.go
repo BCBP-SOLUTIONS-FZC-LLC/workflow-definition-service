@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -84,5 +85,72 @@ func TestRLSViolationLog_OwnTenantRowsAreNeverLogged(t *testing.T) {
 		if got := violationCount(t, dsn, kind); got != 0 {
 			t.Errorf("%s rows = %d for own-tenant rows, want 0", kind, got)
 		}
+	}
+}
+
+func TestRLSHelpers_OpenNoSubtransactionPerRow(t *testing.T) {
+	pool, _ := fixtures.NewTestPoolAndDSN(t)
+	bodies := map[string]string{}
+	err := pool.WithConn(context.Background(), func(ctx context.Context, conn *pgxpool.Conn) error {
+		rows, err := conn.Query(ctx,
+			`SELECT proname, prosrc FROM pg_proc WHERE proname IN ('rls_check_tenant', 'rls_check_tenant_or_global', 'rls_app_tenant')`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name, body string
+			if err := rows.Scan(&name, &body); err != nil {
+				return err
+			}
+			bodies[name] = body
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Fatalf("read the helper functions: %v", err)
+	}
+	for _, name := range []string{"rls_check_tenant", "rls_check_tenant_or_global", "rls_app_tenant"} {
+		body, ok := bodies[name]
+		if !ok {
+			t.Errorf("function %s does not exist", name)
+			continue
+		}
+		if strings.Contains(strings.ToUpper(body), "EXCEPTION") {
+			t.Errorf("%s contains an exception block: every row it checks would open a subtransaction, and past 64 of them in one transaction every concurrent reader slows down", name)
+		}
+	}
+}
+
+func TestRLSHelpers_TwentyThousandOwnTenantRowsPass(t *testing.T) {
+	_, dsn := fixtures.NewTestPoolAndDSN(t)
+	tenantID, userID := uuid.New(), uuid.New()
+	pool := fixtures.NewRestrictedRolePool(t, dsn, false, &tenantID, &userID)
+
+	var visible int
+	err := pool.WithConn(context.Background(), func(ctx context.Context, conn *pgxpool.Conn) error {
+		return conn.QueryRow(ctx, `SELECT count(*) FROM generate_series(1, 20000) WHERE rls_check_tenant($1, 'workflow')`, tenantID).Scan(&visible)
+	})
+	if err != nil || visible != 20000 {
+		t.Errorf("visible rows = %d, %v; want all 20000 of the caller's own rows", visible, err)
+	}
+}
+
+func TestRLSHelpers_AMalformedTenantGUCIsDeniedAndLogged(t *testing.T) {
+	_, dsn := fixtures.NewTestPoolAndDSN(t)
+	pool := fixtures.NewRestrictedRolePool(t, dsn, false, nil, nil)
+
+	var visible int
+	err := pool.WithConn(context.Background(), func(ctx context.Context, conn *pgxpool.Conn) error {
+		if _, err := conn.Exec(ctx, `SELECT set_config('app.tenant_id', 'not-a-uuid', false)`); err != nil {
+			return err
+		}
+		return conn.QueryRow(ctx, sampledChecks).Scan(&visible)
+	})
+	if err != nil || visible != 0 {
+		t.Fatalf("a malformed tenant GUC showed %d rows, %v; want none and no error", visible, err)
+	}
+	if got := violationCount(t, dsn, "missing_or_invalid_guc"); got == 0 {
+		t.Error("missing_or_invalid_guc rows = 0 after 5000 checks with a malformed GUC, want a sample")
 	}
 }

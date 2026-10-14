@@ -5,11 +5,14 @@ import (
 	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
+
+const RLSViolationPruneLockID int64 = 7106100027
 
 var _ port.RLSViolationLog = (*RLSViolationRepo)(nil)
 
@@ -50,10 +53,14 @@ func (r *RLSViolationRepo) CountsAfter(ctx context.Context, afterID int64) ([]do
 
 func (r *RLSViolationRepo) PruneBefore(ctx context.Context, cutoff time.Time) (int64, error) {
 	var n int64
-	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		v, err := db.New(dbtx).PruneRLSViolationsBefore(ctx, cutoff)
-		n = v
+	err := pgcommon.RunInTx(ctx, r.pool, pgx.TxOptions{}, func(ctx context.Context, tx pgx.Tx) error {
+		queries := db.New(tx)
+		acquired, err := queries.TryRLSViolationPruneLock(ctx, RLSViolationPruneLockID)
+		if err != nil || !acquired {
+			return mapErr(err)
+		}
+		n, err = queries.PruneRLSViolationsBefore(ctx, cutoff)
 		return mapErr(err)
 	})
-	return n, err
+	return n, asUnavailable(err)
 }

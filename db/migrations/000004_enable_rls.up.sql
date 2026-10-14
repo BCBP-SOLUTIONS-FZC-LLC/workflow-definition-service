@@ -1,3 +1,20 @@
+-- The caller's tenant, or NULL when app.tenant_id is unset or not a UUID. A
+-- regex guard replaces a cast inside an exception block: that block opens a
+-- subtransaction for every row a policy checks, and past 64 of them in one
+-- transaction every concurrent reader slows down.
+CREATE OR REPLACE FUNCTION rls_app_tenant()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+SET search_path = public
+AS $$
+    SELECT CASE
+        WHEN current_setting('app.tenant_id', true) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        THEN current_setting('app.tenant_id', true)::uuid
+    END
+$$;
+
 -- Tenant checks with sampled violation logging. A row that fails a plain USING
 -- clause is silently filtered; these functions record 1% of such rows so a pool
 -- connection with no tenant GUC, a cross-tenant bug or a probe leaves a signal.
@@ -11,11 +28,7 @@ AS $$
 DECLARE
     app_tenant uuid;
 BEGIN
-    BEGIN
-        app_tenant := current_setting('app.tenant_id', true)::uuid;
-    EXCEPTION WHEN others THEN
-        app_tenant := NULL;
-    END;
+    app_tenant := rls_app_tenant();
 
     IF row_tenant_id = app_tenant THEN
         RETURN true;
@@ -51,11 +64,7 @@ BEGIN
         RETURN true;
     END IF;
 
-    BEGIN
-        app_tenant := current_setting('app.tenant_id', true)::uuid;
-    EXCEPTION WHEN others THEN
-        app_tenant := NULL;
-    END;
+    app_tenant := rls_app_tenant();
 
     IF row_tenant_id = app_tenant THEN
         RETURN true;

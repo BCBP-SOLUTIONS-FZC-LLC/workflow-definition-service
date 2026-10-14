@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,11 +22,25 @@ type fakeViolationLog struct {
 	afterIDs  []int64
 	pruned    []time.Time
 	countsErr error
+
+	latestErrs []error
+	mu         sync.Mutex
 }
 
-func (f *fakeViolationLog) LatestID(context.Context) (int64, error) { return f.latest, nil }
+func (f *fakeViolationLog) LatestID(context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.latestErrs) > 0 {
+		err := f.latestErrs[0]
+		f.latestErrs = f.latestErrs[1:]
+		return 0, err
+	}
+	return f.latest, nil
+}
 
 func (f *fakeViolationLog) CountsAfter(_ context.Context, afterID int64) ([]domain.RLSViolationCount, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.afterIDs = append(f.afterIDs, afterID)
 	if f.countsErr != nil {
 		return nil, afterID, f.countsErr
@@ -156,19 +171,52 @@ func TestRLSViolationExporter_RunExportsOnEveryIntervalUntilCancelled(t *testing
 	}
 }
 
-func TestRLSViolationExporter_RunDoesNotStartWhenThePositionIsUnreadable(t *testing.T) {
+func TestRLSViolationExporter_AnUnreadablePositionExportsNothingAndStopsWithTheContext(t *testing.T) {
 	exp := service.NewRLSViolationExporter(service.RLSViolationExporterDeps{
 		Log: &failingStartLog{}, Record: func(string, float64) { t.Error("nothing may be recorded") },
-		Interval: time.Millisecond, Retention: time.Hour, Logger: testkit.FakeLogger{},
+		Interval: time.Millisecond, Retention: time.Hour, RetryDelay: time.Millisecond, Logger: testkit.FakeLogger{},
 	})
+	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		exp.Run(context.Background())
+		exp.Run(ctx)
 		close(done)
 	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Run must return when Start fails")
+		t.Fatal("Run did not stop after the context ended while retrying")
 	}
+}
+
+func TestRLSViolationExporter_RunRetriesAFailedStart(t *testing.T) {
+	log := &fakeViolationLog{
+		latestErrs: []error{errors.New("db restarting"), errors.New("db restarting")},
+		newest:     5,
+		counts:     []domain.RLSViolationCount{{ViolationType: "cross_tenant_access", Count: 1}},
+	}
+	var mu sync.Mutex
+	var out []recorded
+	exporter := service.NewRLSViolationExporter(service.RLSViolationExporterDeps{
+		Log:        log,
+		Record:     func(kind string, n float64) { mu.Lock(); out = append(out, recorded{kind, n}); mu.Unlock() },
+		Interval:   5 * time.Millisecond,
+		Retention:  24 * time.Hour,
+		RetryDelay: time.Millisecond,
+		Logger:     testkit.FakeLogger{},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { exporter.Run(ctx); close(done) }()
+
+	require.Eventually(t, func() bool {
+		log.mu.Lock()
+		defer log.mu.Unlock()
+		return len(log.afterIDs) > 0
+	}, time.Second, 5*time.Millisecond, "a failed start must be retried: a pod that started while the database blinked would export nothing for its whole life")
+	cancel()
+	<-done
 }

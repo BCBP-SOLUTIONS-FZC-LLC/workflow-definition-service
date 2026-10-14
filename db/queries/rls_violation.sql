@@ -9,3 +9,6 @@ GROUP BY violation_type;
 
 -- name: PruneRLSViolationsBefore :execrows
 DELETE FROM rls_violation_log WHERE occurred_at < $1;
+
+-- name: TryRLSViolationPruneLock :one
+SELECT pg_try_advisory_xact_lock(sqlc.arg(lock_id)::bigint) AS acquired;
