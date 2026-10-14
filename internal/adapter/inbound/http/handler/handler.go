@@ -11,8 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
-
+	httpmiddleware "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/middleware"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
@@ -126,11 +125,11 @@ var adminRoles = map[string]bool{
 }
 
 func isAdmin(c *gin.Context) bool {
-	rc, ok := gincommon.RequestContext(c)
+	id, ok := httpmiddleware.IdentityFrom(c)
 	if !ok {
 		return false
 	}
-	for _, role := range rc.Roles {
+	for _, role := range id.Roles {
 		if adminRoles[role] {
 			return true
 		}
@@ -149,11 +148,11 @@ func requireAdmin(c *gin.Context) bool {
 const platformOperatorRole = "platform_operator"
 
 func isPlatformOperator(c *gin.Context) bool {
-	rc, ok := gincommon.RequestContext(c)
+	id, ok := httpmiddleware.IdentityFrom(c)
 	if !ok {
 		return false
 	}
-	for _, role := range rc.Roles {
+	for _, role := range id.Roles {
 		if role == platformOperatorRole {
 			return true
 		}
@@ -170,22 +169,12 @@ func requirePlatformOperator(c *gin.Context) bool {
 }
 
 func mustCtx(c *gin.Context) (tenantID, userID uuid.UUID, ok bool) {
-	rc, exists := gincommon.RequestContext(c)
+	id, exists := httpmiddleware.IdentityFrom(c)
 	if !exists {
 		writeProblem(c, http.StatusInternalServerError, CodeInternal, "missing request context", nil)
 		return uuid.Nil, uuid.Nil, false
 	}
-	tenantID, err := uuid.Parse(rc.TenantID)
-	if err != nil {
-		writeProblem(c, http.StatusInternalServerError, CodeInternal, "invalid tenant id in context", nil)
-		return uuid.Nil, uuid.Nil, false
-	}
-	userID, err = uuid.Parse(rc.UserID)
-	if err != nil {
-		writeProblem(c, http.StatusInternalServerError, CodeInternal, "invalid user id in context", nil)
-		return uuid.Nil, uuid.Nil, false
-	}
-	return tenantID, userID, true
+	return id.TenantID, id.UserID, true
 }
 
 func mustAdminCtx(c *gin.Context) (tenantID, userID uuid.UUID, ok bool) {
@@ -201,8 +190,8 @@ func (h *Handler) logForbiddenXML(c *gin.Context, err error) {
 		return
 	}
 	tenantID := "unknown"
-	if rc, ok := gincommon.RequestContext(c); ok {
-		tenantID = rc.TenantID
+	if id, ok := httpmiddleware.IdentityFrom(c); ok {
+		tenantID = id.TenantID.String()
 	}
 	h.log.Warn("forbidden XML construct rejected", map[string]any{
 		"client_ip": c.ClientIP(),

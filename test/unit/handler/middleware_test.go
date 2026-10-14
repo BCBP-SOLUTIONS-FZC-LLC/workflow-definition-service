@@ -25,23 +25,14 @@ func newMiddlewareRouter(mw ...gin.HandlerFunc) *gin.Engine {
 	return r
 }
 
-func TestInjectGUCSet_WithRequestContext_CallsNext(t *testing.T) {
+func TestRequireIdentity_WithRequestContext_CallsNext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{}) {
 		r.Use(mw)
 	}
-	r.Use(httpmiddleware.InjectGUCSet(nil))
+	r.Use(httpmiddleware.RequireIdentity(nil))
 	r.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
-
-	httpReq := httpReqWithCtx(http.MethodGet, "/test")
-	w := do(r, httpReq)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestInjectGUCSet_NoRequestContext_PassThrough(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := newMiddlewareRouter(httpmiddleware.InjectGUCSet(nil))
 
 	httpReq := httpReqWithCtx(http.MethodGet, "/test")
 	w := do(r, httpReq)
@@ -84,6 +75,7 @@ func TestLimitRequestBody_ExceedsLimit_Returns413(t *testing.T) {
 	for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{}) {
 		r.Use(mw)
 	}
+	r.Use(httpmiddleware.RequireIdentity(nil))
 	r.Use(httpmiddleware.LimitRequestBody())
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 	r.POST("/workflows", h.CreateWorkflow)
@@ -102,19 +94,41 @@ func TestLimitRequestBody_ExceedsLimit_Returns413(t *testing.T) {
 	assert.Equal(t, "PAYLOAD_TOO_LARGE", resp["code"])
 }
 
-func TestInjectGUCSet_MissingContext_LogsWarning(t *testing.T) {
+func TestRequireIdentity_MissingContext_FailsClosedAndLogs(t *testing.T) {
 	logger := &fakeLogger{}
 	gin.SetMode(gin.TestMode)
-	r := gin.New() // no ProtectedMiddlewares
-	r.Use(httpmiddleware.InjectGUCSet(logger))
+	r := gin.New()
+	r.Use(httpmiddleware.RequireIdentity(logger))
 	r.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
 
+	w := do(r, httpReqWithCtx(http.MethodGet, "/test"))
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code, "a route without the identity chain must not serve")
+	require.Len(t, logger.errorCalls, 1)
+	assert.Contains(t, logger.errorCalls[0], "RequireIdentity")
+}
+
+func TestRequireIdentity_StoresTheParsedIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{}) {
+		r.Use(mw)
+	}
+	r.Use(httpmiddleware.RequireIdentity(nil))
+	var got httpmiddleware.Identity
+	r.GET("/test", func(c *gin.Context) {
+		got, _ = httpmiddleware.IdentityFrom(c)
+		c.Status(http.StatusOK)
+	})
+
 	httpReq := httpReqWithCtx(http.MethodGet, "/test")
+	httpReq.Header.Set("x-tenant-roles", "tenant_admin")
 	w := do(r, httpReq)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	require.Len(t, logger.warnCalls, 1, "expected one warn log when RequestContext is absent")
-	assert.Contains(t, logger.warnCalls[0], "InjectGUCSet")
+	assert.Equal(t, testTenantID, got.TenantID)
+	assert.Equal(t, testUserID, got.UserID)
+	assert.Equal(t, []string{"tenant_admin"}, got.Roles)
 }
 
 func httpReqWithCtx(method, path string) *http.Request {

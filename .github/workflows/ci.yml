@@ -218,6 +218,7 @@ jobs:
       SYSTEM_DATABASE_URL: postgres://workflow_definition_migrator:devpassword@localhost:5432/workflow_definition?sslmode=disable
       DB_URL: postgres://workflow_definition_migrator:devpassword@localhost:5432/workflow_definition?sslmode=disable
       APP_ENV: test
+      VALKEY_ADDR: localhost:6379
       INTERNAL_API_TOKEN: smoke-internal-token
       INTERNAL_TOKEN: smoke-internal-token
       ORG_MEMBERSHIP_BASE_URL: http://localhost:8081

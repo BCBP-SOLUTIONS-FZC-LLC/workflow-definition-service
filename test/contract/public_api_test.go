@@ -23,6 +23,13 @@ import (
 
 const publicSpec = "../../docs/swagger/openapi.yaml"
 
+type workflowFake interface {
+	List(context.Context, uuid.UUID, port.WorkflowFilter) ([]*domain.Workflow, int64, error)
+	Create(context.Context, uuid.UUID, uuid.UUID, string, string, string, string, string) (*domain.Workflow, *domain.WorkflowVersion, error)
+	Get(context.Context, uuid.UUID, uuid.UUID, int) (*domain.Workflow, []*domain.WorkflowVersion, error)
+	Archive(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error
+}
+
 type createFake struct{ err error }
 
 func (createFake) List(context.Context, uuid.UUID, port.WorkflowFilter) ([]*domain.Workflow, int64, error) {
@@ -69,7 +76,7 @@ type downDB struct{}
 
 func (downDB) Health(context.Context) httpadapter.DBHealth { return httpadapter.DBHealth{} }
 
-func publicRouter(t *testing.T, wf createFake, cache port.CacheStore, db httpadapter.DBPinger, pinger httpadapter.Pinger) http.Handler {
+func publicRouter(t *testing.T, wf workflowFake, cache port.CacheStore, db httpadapter.DBPinger, pinger httpadapter.Pinger) http.Handler {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	return httpadapter.NewRouter(httpadapter.RouterConfig{
@@ -151,6 +158,42 @@ func TestPublicContract_Readiness(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body["cache"] != tc.cache {
 				t.Errorf("body %s, want cache %q", w.Body.String(), tc.cache)
 			}
+		})
+	}
+}
+
+type countingList struct {
+	createFake
+	calls *int
+}
+
+func (c countingList) List(context.Context, uuid.UUID, port.WorkflowFilter) ([]*domain.Workflow, int64, error) {
+	*c.calls++
+	return nil, 0, nil
+}
+
+func TestPublicContract_MalformedIdentityIsRefusedBeforeTheService(t *testing.T) {
+	spec := contract.Load(t, publicSpec)
+	for _, tc := range []struct{ name, tenant, user string }{
+		{"tenant is not a uuid", "x", uuid.NewString()},
+		{"user is not a uuid", uuid.NewString(), "x"},
+		{"tenant is missing", "", uuid.NewString()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			router := publicRouter(t, countingList{calls: &calls}, freeCache{}, upDB{}, upPinger{})
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows", nil)
+			req.Header.Set("x-tenant-id", tc.tenant)
+			req.Header.Set("x-user-id", tc.user)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("status %d, want 401: %s", w.Code, w.Body.String())
+			}
+			if calls != 0 {
+				t.Errorf("the service was called %d times", calls)
+			}
+			spec.Response(t, req, w.Code, w.Header(), w.Body.Bytes())
 		})
 	}
 }

@@ -110,7 +110,7 @@ func TestListWorkflows_InvalidTenantCtx(t *testing.T) {
 	r := req(http.MethodGet, "/api/v1/workflows", nil)
 	r.Header.Set("x-tenant-id", "not-a-uuid")
 	w := do(newRouter(h), r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestListWorkflows_InvalidUserCtx(t *testing.T) {
@@ -118,7 +118,7 @@ func TestListWorkflows_InvalidUserCtx(t *testing.T) {
 	r := req(http.MethodGet, "/api/v1/workflows", nil)
 	r.Header.Set("x-user-id", "not-a-uuid")
 	w := do(newRouter(h), r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestCreateWorkflow_Forbidden(t *testing.T) {

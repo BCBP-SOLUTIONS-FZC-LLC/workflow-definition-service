@@ -106,7 +106,7 @@ func NewRouter(cfg RouterConfig) *Router {
 	for _, mw := range gincommon.ProtectedMiddlewares(cfg.GinConfig) {
 		api.Use(mw)
 	}
-	api.Use(httpmiddleware.InjectGUCSet(cfg.Log))
+	api.Use(httpmiddleware.RequireIdentity(cfg.Log))
 	api.Use(httpmiddleware.LimitRequestBody())
 	api.Use(httpmiddleware.RequireJSONContentType())
 

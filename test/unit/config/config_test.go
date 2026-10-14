@@ -13,8 +13,7 @@ func TestLoad_Success(t *testing.T) {
 	envBackup := make(map[string]string)
 	keysToBackup := []string{
 		"DATABASE_URL", "APP_ENV", "BUILD_VERSION", "HTTP_PORT",
-		"OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_INSECURE",
-		"OTEL_TRACES_SAMPLER_RATIO", "VALKEY_ADDR", "VALKEY_PASSWORD",
+		"OTEL_SERVICE_NAME", "VALKEY_ADDR", "VALKEY_PASSWORD",
 		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
 		"INTERNAL_API_TOKEN", "OPENBAO_ADDR", "OPENBAO_TOKEN",
 	}
@@ -36,9 +35,6 @@ func TestLoad_Success(t *testing.T) {
 	_ = os.Setenv("BUILD_VERSION", "v1.2.3")
 	_ = os.Setenv("HTTP_PORT", "9000")
 	_ = os.Setenv("OTEL_SERVICE_NAME", "custom-service")
-	_ = os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel:4317")
-	_ = os.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "false")
-	_ = os.Setenv("OTEL_TRACES_SAMPLER_RATIO", "0.5")
 	_ = os.Setenv("VALKEY_ADDR", "valkey:6379")
 	_ = os.Setenv("VALKEY_PASSWORD", "secret")
 	_ = os.Setenv("ORG_MEMBERSHIP_BASE_URL", "http://org")
@@ -68,15 +64,6 @@ func TestLoad_Success(t *testing.T) {
 	if cfg.OTELServiceName != "custom-service" {
 		t.Errorf("OTELServiceName = %q, want custom-service", cfg.OTELServiceName)
 	}
-	if cfg.OTELExporterEndpoint != "otel:4317" {
-		t.Errorf("OTELExporterEndpoint = %q, want otel:4317", cfg.OTELExporterEndpoint)
-	}
-	if cfg.OTELExporterInsecure {
-		t.Errorf("OTELExporterInsecure = %t, want false", cfg.OTELExporterInsecure)
-	}
-	if cfg.OTELTracesSamplerRatio != 0.5 {
-		t.Errorf("OTELTracesSamplerRatio = %f, want 0.5", cfg.OTELTracesSamplerRatio)
-	}
 	if cfg.ValkeyAddr != "valkey:6379" {
 		t.Errorf("ValkeyAddr = %q, want valkey:6379", cfg.ValkeyAddr)
 	}
@@ -96,8 +83,8 @@ func TestLoad_ValidationFailures(t *testing.T) {
 		"DATABASE_URL", "APP_ENV",
 		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
 		"INTERNAL_API_TOKEN", "SYSTEM_DATABASE_URL", "OPENBAO_ADDR", "OPENBAO_TOKEN",
-		"HTTP_PORT",
-		"OTEL_TRACES_SAMPLER_RATIO", "EXECUTION_CLIENT_TIMEOUT",
+		"HTTP_PORT", "VALKEY_ADDR",
+		"EXECUTION_CLIENT_TIMEOUT",
 		"RLS_VIOLATION_EXPORT_INTERVAL", "RLS_VIOLATION_RETENTION",
 	}
 	envBackup := make(map[string]string)
@@ -249,16 +236,6 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "otel sampler ratio above 1",
-			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "OTEL_TRACES_SAMPLER_RATIO": "1.5"},
-			wantErr: true,
-		},
-		{
-			name:    "otel sampler ratio below 0",
-			env:     map[string]string{"DATABASE_URL": "postgres://localhost", "OTEL_TRACES_SAMPLER_RATIO": "-0.1"},
-			wantErr: true,
-		},
-		{
 			name:       "rls violation export interval zero",
 			env:        map[string]string{"DATABASE_URL": "postgres://localhost", "RLS_VIOLATION_EXPORT_INTERVAL": "0s"},
 			wantErr:    true,
@@ -282,6 +259,8 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			for _, k := range keysToBackup {
 				_ = os.Unsetenv(k)
 			}
+			_ = os.Setenv("APP_ENV", "dev")
+			_ = os.Setenv("VALKEY_ADDR", "valkey:6379")
 			for k, v := range tt.env {
 				_ = os.Setenv(k, v)
 			}
@@ -337,6 +316,7 @@ func TestMigrationDSN(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("APP_ENV", "dev")
 			_ = os.Setenv("DATABASE_URL", tt.databaseURL)
 			if tt.migrationURL == "" {
 				_ = os.Unsetenv("MIGRATION_DATABASE_URL")
@@ -351,47 +331,6 @@ func TestMigrationDSN(t *testing.T) {
 				t.Errorf("MigrationDSN() = %q, want %q", got, tt.wantDSN)
 			}
 		})
-	}
-}
-
-func TestLoad_InvalidValues_FallBackToDefaults(t *testing.T) {
-	keysToBackup := []string{"HTTP_PORT", "OTEL_EXPORTER_OTLP_INSECURE", "OTEL_TRACES_SAMPLER_RATIO", "EXECUTION_CLIENT_TIMEOUT"}
-	envBackup := make(map[string]string)
-	for _, k := range keysToBackup {
-		envBackup[k] = os.Getenv(k)
-	}
-	defer func() {
-		for k, v := range envBackup {
-			if v == "" {
-				_ = os.Unsetenv(k)
-			} else {
-				_ = os.Setenv(k, v)
-			}
-		}
-	}()
-
-	_ = os.Setenv("DATABASE_URL", "postgres://localhost")
-	_ = os.Setenv("HTTP_PORT", "not-an-int")
-	_ = os.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "not-a-bool")
-	_ = os.Setenv("OTEL_TRACES_SAMPLER_RATIO", "not-a-float")
-	_ = os.Setenv("EXECUTION_CLIENT_TIMEOUT", "not-a-duration")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load() unexpected error: %v", err)
-	}
-
-	if cfg.HTTPPort != 8080 {
-		t.Errorf("HTTPPort fallback = %d, want 8080", cfg.HTTPPort)
-	}
-	if !cfg.OTELExporterInsecure {
-		t.Errorf("OTELExporterInsecure fallback = %t, want true", cfg.OTELExporterInsecure)
-	}
-	if cfg.OTELTracesSamplerRatio != 1.0 {
-		t.Errorf("OTELTracesSamplerRatio fallback = %f, want 1.0", cfg.OTELTracesSamplerRatio)
-	}
-	if cfg.ExecutionClientTimeout != 5*time.Second {
-		t.Errorf("ExecutionClientTimeout fallback = %v, want 5s", cfg.ExecutionClientTimeout)
 	}
 }
 
@@ -410,6 +349,7 @@ func TestSystemDSN(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("APP_ENV", "dev")
 			t.Setenv("DATABASE_URL", tt.database)
 			t.Setenv("SYSTEM_DATABASE_URL", tt.system)
 			cfg, err := config.Load()
@@ -441,6 +381,7 @@ func TestLoad_ConnectorAliasAllowedHosts(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("APP_ENV", "dev")
 			t.Setenv("DATABASE_URL", "postgres://localhost")
 			t.Setenv("CONNECTOR_ALIAS_ALLOWED_HOSTS", tt.raw)
 			cfg, err := config.Load()

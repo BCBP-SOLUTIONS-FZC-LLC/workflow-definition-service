@@ -520,7 +520,7 @@ Sampled row-level-security violations written to `rls_violation_log` are exporte
 - **Tenant isolation:** every tenant table has row-level security forced on, with a policy that checks the tenant GUC through a function that logs sampled violations. The system pool connects as a `BYPASSRLS` role and serves only the global catalog and the violation exporter.
 - **Internal API:** `/api/v1/internal` requires `x-internal-token`, compared in constant time; request bodies are capped at 10 MiB on the internal and public API groups.
 - **Connector credentials:** written to OpenBao under `connectors/<tenant>/<type>/<field>`, with `connector_type` checked against the registry and `field_name` against an allowlist; `OPENBAO_ADDR` and `OPENBAO_TOKEN` are required outside dev.
-- **Configuration:** `APP_ENV` is one of `local`, `dev`, `test`, `staging`, `prod`; outside `dev` the service refuses to start without the internal token, the Org & Membership and Execution URLs and token, and OpenBao; `prod` also requires `SYSTEM_DATABASE_URL`.
+- **Configuration:** `APP_ENV` is required and is one of `local`, `dev`, `test`, `staging`, `prod`; `.env` is read in `local` and `dev` only. A value that does not parse (`HTTP_PORT=8080abc`, a malformed duration) or a duration of zero for a TTL or timeout fails startup, and every problem is listed in one error. Outside `dev` the service refuses to start without `VALKEY_ADDR`, the internal token, the Org & Membership and Execution URLs and token, and OpenBao; `prod` also requires `SYSTEM_DATABASE_URL`.
 - **Container:** distroless, non-root, read-only root filesystem, all capabilities dropped.
 
 ---

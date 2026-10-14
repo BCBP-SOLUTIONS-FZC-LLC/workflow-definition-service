@@ -15,6 +15,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
+	httpmiddleware "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/middleware"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
@@ -342,6 +343,7 @@ func newRouter(h *handler.Handler) *gin.Engine {
 	for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{}) {
 		r.Use(mw)
 	}
+	r.Use(httpmiddleware.RequireIdentity(nil))
 	registerRoutes(r, h)
 	return r
 }
@@ -407,12 +409,15 @@ func do(router *gin.Engine, r *http.Request) *httptest.ResponseRecorder {
 
 // fakeLogger is a port.Logger that records calls for test assertions.
 type fakeLogger struct {
-	warnCalls []string
+	warnCalls  []string
+	errorCalls []string
 }
 
 func (f *fakeLogger) Debug(string, map[string]any) { /* no-op */ }
 func (f *fakeLogger) Info(string, map[string]any)  { /* no-op */ }
-func (f *fakeLogger) Error(string, map[string]any) { /* no-op */ }
+func (f *fakeLogger) Error(msg string, _ map[string]any) {
+	f.errorCalls = append(f.errorCalls, msg)
+}
 func (f *fakeLogger) Fatal(string, map[string]any) { /* no-op */ }
 func (f *fakeLogger) Warn(msg string, _ map[string]any) {
 	f.warnCalls = append(f.warnCalls, msg)
