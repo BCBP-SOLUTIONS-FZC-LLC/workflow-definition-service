@@ -105,7 +105,7 @@ func TestWorkflowFromDB(t *testing.T) {
 	vID := uuid.New()
 	base := db.Workflow{
 		ID: uuid.New(), TenantID: uuid.New(), CreatedByUserID: uuid.New(),
-		BusinessKey: "key", Name: "Name",
+		TemplateKey: "key", Name: "Name",
 	}
 	tests := []struct {
 		name                string
@@ -118,7 +118,7 @@ func TestWorkflowFromDB(t *testing.T) {
 			"all columns populated",
 			db.Workflow{
 				ID: base.ID, TenantID: base.TenantID, CreatedByUserID: base.CreatedByUserID,
-				BusinessKey:     "my-key",
+				TemplateKey:     "my-key",
 				Name:            "My Workflow",
 				Description:     pgtype.Text{String: "desc", Valid: true},
 				ActiveVersionID: pgtype.UUID{Bytes: vID, Valid: true},

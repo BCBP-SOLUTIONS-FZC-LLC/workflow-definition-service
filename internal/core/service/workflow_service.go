@@ -61,7 +61,7 @@ func (s *WorkflowService) List(
 func (s *WorkflowService) Create(
 	ctx context.Context,
 	tenantID, userID uuid.UUID,
-	businessKey, name, description, bpmnXML, planTier string,
+	templateKey, name, description, bpmnXML, planTier string,
 ) (wf *domain.Workflow, v *domain.WorkflowVersion, err error) {
 	defer func() { observability.IncCounterVec(observability.WFSubmissionsTotal, observability.OutcomeLabel(err)) }()
 	if s.compiler != nil {
@@ -86,7 +86,7 @@ func (s *WorkflowService) Create(
 		ID:              wfID,
 		TenantID:        tenantID,
 		CreatedByUserID: userID,
-		BusinessKey:     businessKey,
+		TemplateKey:     templateKey,
 		Name:            name,
 		Description:     description,
 	}
@@ -115,7 +115,7 @@ func (s *WorkflowService) Create(
 		"user_id":     userID.String(),
 		"workflow_id": wf.ID.String(),
 		"version_id":  v.ID.String(),
-		"key":         businessKey,
+		"key":         templateKey,
 	})
 	return wf, v, nil
 }

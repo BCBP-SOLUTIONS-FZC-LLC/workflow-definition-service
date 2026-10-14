@@ -258,7 +258,7 @@ func (r *WorkflowVersionRepo) ListModuleUsages(ctx context.Context, tenantID, mo
 		for _, row := range rows {
 			result = append(result, &domain.ModuleUsage{
 				WorkflowID:          row.WorkflowID,
-				WorkflowKey:         row.BusinessKey,
+				WorkflowKey:         row.TemplateKey,
 				WorkflowName:        row.WorkflowName,
 				VersionID:           row.VersionID,
 				VersionNumber:       fromPgtypeInt4(row.VersionNumber),

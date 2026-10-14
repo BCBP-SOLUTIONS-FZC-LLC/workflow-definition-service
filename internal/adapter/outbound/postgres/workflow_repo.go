@@ -31,7 +31,7 @@ func (r *WorkflowRepo) Create(ctx context.Context, w *domain.Workflow) error {
 			ID:              w.ID,
 			TenantID:        w.TenantID,
 			CreatedByUserID: w.CreatedByUserID,
-			BusinessKey:     w.BusinessKey,
+			TemplateKey:     w.TemplateKey,
 			Name:            w.Name,
 			Description:     toNullableText(w.Description),
 			ActiveVersionID: toPgtypeUUID(w.ActiveVersionID),
@@ -56,7 +56,7 @@ func (r *WorkflowRepo) GetByID(
 			ID:              row.ID,
 			TenantID:        row.TenantID,
 			CreatedByUserID: row.CreatedByUserID,
-			BusinessKey:     row.BusinessKey,
+			TemplateKey:     row.TemplateKey,
 			Name:            row.Name,
 			Description:     row.Description,
 			ActiveVersionID: row.ActiveVersionID,
@@ -70,16 +70,16 @@ func (r *WorkflowRepo) GetByID(
 	return result, err
 }
 
-func (r *WorkflowRepo) GetByBusinessKey(
+func (r *WorkflowRepo) GetByTemplateKey(
 	ctx context.Context,
 	tenantID uuid.UUID,
-	businessKey string,
+	templateKey string,
 ) (*domain.Workflow, error) {
 	var result *domain.Workflow
 	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		row, err := db.New(dbtx).GetWorkflowByBusinessKey(ctx, db.GetWorkflowByBusinessKeyParams{
+		row, err := db.New(dbtx).GetWorkflowByTemplateKey(ctx, db.GetWorkflowByTemplateKeyParams{
 			TenantID:    tenantID,
-			BusinessKey: businessKey,
+			TemplateKey: templateKey,
 		})
 		if err != nil {
 			return mapErr(err)
@@ -208,8 +208,8 @@ func listWorkflows(
 		p := nextArg("%" + *f.Search + "%")
 		fmt.Fprintf(&where, "  AND w.name ILIKE %s\n", p)
 	}
-	if f.BusinessKey != nil {
-		fmt.Fprintf(&where, "  AND w.business_key = %s\n", nextArg(*f.BusinessKey))
+	if f.TemplateKey != nil {
+		fmt.Fprintf(&where, "  AND w.template_key = %s\n", nextArg(*f.TemplateKey))
 	}
 	if f.Archived != nil {
 		if *f.Archived {
@@ -250,7 +250,7 @@ func listWorkflows(
 	offset := (page - 1) * limit
 
 	dataSQL := fmt.Sprintf(
-		`SELECT w.id, w.tenant_id, w.created_by_user_id, w.business_key,
+		`SELECT w.id, w.tenant_id, w.created_by_user_id, w.template_key,
 		        w.name, w.description, w.active_version_id, w.created_at, w.updated_at,
 		        wv_active.version_number, (wv_draft.id IS NOT NULL) AS has_draft
 		 FROM workflow w
@@ -272,7 +272,7 @@ func listWorkflows(
 		var activeVersionNumber *int32
 		var hasDraft bool
 		if err := rows.Scan(
-			&row.ID, &row.TenantID, &row.CreatedByUserID, &row.BusinessKey,
+			&row.ID, &row.TenantID, &row.CreatedByUserID, &row.TemplateKey,
 			&row.Name, &row.Description, &row.ActiveVersionID, &row.CreatedAt, &row.UpdatedAt,
 			&activeVersionNumber, &hasDraft,
 		); err != nil {

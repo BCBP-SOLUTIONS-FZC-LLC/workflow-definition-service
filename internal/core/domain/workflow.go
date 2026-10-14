@@ -18,7 +18,7 @@ type Workflow struct {
 	ID                  uuid.UUID
 	TenantID            uuid.UUID
 	CreatedByUserID     uuid.UUID
-	BusinessKey         string
+	TemplateKey         string
 	Name                string
 	Description         string
 	ActiveVersionID     *uuid.UUID

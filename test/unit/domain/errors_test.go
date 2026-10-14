@@ -70,7 +70,7 @@ func TestSentinelErrors_AreDistinct(t *testing.T) {
 		{"ErrDraftAlreadyExists", domain.ErrDraftAlreadyExists},
 		{"ErrNoDraftExists", domain.ErrNoDraftExists},
 		{"ErrNoActiveVersion", domain.ErrNoActiveVersion},
-		{"ErrDuplicateBusinessKey", domain.ErrDuplicateBusinessKey},
+		{"ErrDuplicateTemplateKey", domain.ErrDuplicateTemplateKey},
 		{"ErrDraftConcurrency", domain.ErrDraftConcurrency},
 		{"ErrInvalidVersionStatus", domain.ErrInvalidVersionStatus},
 		{"ErrActiveInstancesExist", domain.ErrActiveInstancesExist},

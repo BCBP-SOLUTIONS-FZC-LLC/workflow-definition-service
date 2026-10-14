@@ -23,7 +23,7 @@ func TestAssigneeRepo_BulkInsert(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "assignee-bulk-insert", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "assignee-bulk-insert", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("Create workflow: %v", err)
@@ -62,7 +62,7 @@ func TestAssigneeRepo_BulkInsert_Empty(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "assignee-bulk-empty", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "assignee-bulk-empty", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("Create workflow: %v", err)
@@ -101,7 +101,7 @@ func TestAssigneeRepo_ListByUser(t *testing.T) {
 
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "assignee-list-user", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "assignee-list-user", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("Create workflow: %v", err)
@@ -154,7 +154,7 @@ func TestAssigneeRepo_DeleteByVersion(t *testing.T) {
 
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "assignee-delete-version", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "assignee-delete-version", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("Create workflow: %v", err)
@@ -194,7 +194,7 @@ func TestAssigneeRepo_CreatedAtIsTheInstantOfInsertWhateverTheSessionTimeZone(t 
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "assignee-tz", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "assignee-tz", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("Create workflow: %v", err)

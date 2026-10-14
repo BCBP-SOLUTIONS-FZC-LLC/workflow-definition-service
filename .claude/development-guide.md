@@ -37,7 +37,7 @@ All non-2xx HTTP responses use the RFC-9457 `problemDetails` envelope (`internal
 | `DRAFT_NOT_FOUND` | 404 | No draft exists for this workflow |
 | `NO_ACTIVE_VERSION` | 409 | Workflow has no active/published version |
 | `DRAFT_ALREADY_EXISTS` | 409 | Draft already exists for this workflow |
-| `DUPLICATE_BUSINESS_KEY` | 409 | Workflow key already in use |
+| `DUPLICATE_TEMPLATE_KEY` | 409 | Workflow key already in use |
 | `DRAFT_CONCURRENCY` | 409 | Stale `record_version` (optimistic lock) |
 | `INVALID_VERSION_STATUS` | 409 | Version not in the required DRAFT/PUBLISHED state for this operation |
 | `ACTIVE_INSTANCES_EXIST` | 409 | Cannot archive — Execution reports RUNNING/PAUSED instances |

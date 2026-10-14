@@ -84,11 +84,11 @@ func TestWorkflowService_Create_WorkflowCreateError(t *testing.T) {
 	})
 
 	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(0), nil)
-	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(domain.ErrDuplicateBusinessKey)
+	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(domain.ErrDuplicateTemplateKey)
 
 	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "")
-	if !errors.Is(err, domain.ErrDuplicateBusinessKey) {
-		t.Fatalf("expected ErrDuplicateBusinessKey, got %v", err)
+	if !errors.Is(err, domain.ErrDuplicateTemplateKey) {
+		t.Fatalf("expected ErrDuplicateTemplateKey, got %v", err)
 	}
 }
 

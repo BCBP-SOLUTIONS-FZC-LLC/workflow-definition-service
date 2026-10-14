@@ -27,7 +27,7 @@ const (
 	CodeDraftAlreadyExists   ErrCode = "DRAFT_ALREADY_EXISTS"
 	CodeDraftNotFound        ErrCode = "DRAFT_NOT_FOUND"
 	CodeNoActiveVersion      ErrCode = "NO_ACTIVE_VERSION"
-	CodeDuplicateKey         ErrCode = "DUPLICATE_BUSINESS_KEY"
+	CodeDuplicateKey         ErrCode = "DUPLICATE_TEMPLATE_KEY"
 	CodeDraftConcurrency     ErrCode = "DRAFT_CONCURRENCY"
 	CodeInvalidStatus        ErrCode = "INVALID_VERSION_STATUS"
 	CodeActiveInstances      ErrCode = "ACTIVE_INSTANCES_EXIST"
@@ -88,7 +88,7 @@ var codeTitles = map[ErrCode]string{
 	CodeDraftAlreadyExists:   "Draft Already Exists",
 	CodeDraftNotFound:        "Draft Not Found",
 	CodeNoActiveVersion:      "No Active Version",
-	CodeDuplicateKey:         "Duplicate Business Key",
+	CodeDuplicateKey:         "Duplicate Template Key",
 	CodeDraftConcurrency:     "Draft Concurrency Violation",
 	CodeInvalidStatus:        "Invalid Version Status",
 	CodeActiveInstances:      "Active Instances Exist",
@@ -222,7 +222,7 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 		return http.StatusForbidden, CodeForbidden, err.Error(), nil
 	case errors.Is(err, domain.ErrDraftAlreadyExists):
 		return http.StatusConflict, CodeDraftAlreadyExists, err.Error(), nil
-	case errors.Is(err, domain.ErrDuplicateBusinessKey):
+	case errors.Is(err, domain.ErrDuplicateTemplateKey):
 		return http.StatusConflict, CodeDuplicateKey, err.Error(), nil
 	case errors.Is(err, domain.ErrDraftConcurrency):
 		return http.StatusConflict, CodeDraftConcurrency, err.Error(), nil

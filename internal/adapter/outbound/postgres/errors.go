@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	constraintWorkflowBusinessKey      = "workflow_tenant_id_business_key_key"
+	constraintWorkflowTemplateKey      = "workflow_tenant_id_template_key_key"
 	constraintWorkflowVersionDraft     = "idx_wv_single_draft"
 	constraintWorkflowVersionPublished = "uq_workflow_version_published"
 	constraintModuleVersionDraft       = "idx_mv_single_draft"
@@ -31,8 +31,8 @@ func mapErr(err error) error {
 	}
 	if pgcommon.IsUniqueViolation(err) {
 		switch pgcommon.ConstraintName(err) {
-		case constraintWorkflowBusinessKey:
-			return domain.ErrDuplicateBusinessKey
+		case constraintWorkflowTemplateKey:
+			return domain.ErrDuplicateTemplateKey
 		case constraintWorkflowVersionDraft:
 			return domain.ErrDraftAlreadyExists
 		case constraintWorkflowVersionPublished:

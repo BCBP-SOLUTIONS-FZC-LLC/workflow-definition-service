@@ -51,8 +51,8 @@ func TestListWorkflows_Filters(t *testing.T) {
 
 	require.NotNil(t, capturedFilter.Search)
 	assert.Equal(t, "foo", *capturedFilter.Search)
-	require.NotNil(t, capturedFilter.BusinessKey)
-	assert.Equal(t, "wf-1", *capturedFilter.BusinessKey)
+	require.NotNil(t, capturedFilter.TemplateKey)
+	assert.Equal(t, "wf-1", *capturedFilter.TemplateKey)
 	require.NotNil(t, capturedFilter.IsValid)
 	assert.True(t, *capturedFilter.IsValid)
 	require.NotNil(t, capturedFilter.HasDraft)
@@ -142,7 +142,7 @@ func TestCreateWorkflow_BindError(t *testing.T) {
 func TestCreateWorkflow_DuplicateKey(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{
 		create: func(_ context.Context, _ uuid.UUID, _ uuid.UUID, _, _, _, _ string) (*domain.Workflow, *domain.WorkflowVersion, error) {
-			return nil, nil, domain.ErrDuplicateBusinessKey
+			return nil, nil, domain.ErrDuplicateTemplateKey
 		},
 	}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
 

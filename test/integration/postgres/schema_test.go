@@ -77,7 +77,7 @@ func execSuper(t *testing.T, pool interface {
 func TestSchema_AChildCannotNameAnotherTenantsParent(t *testing.T) {
 	pool := fixtures.NewTestPool(t)
 	tenantA, tenantB, wf, user := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	if err := execSuper(t, pool, `INSERT INTO workflow (id, tenant_id, created_by_user_id, business_key, name) VALUES ($1, $2, $3, 'k', 'n')`, wf, tenantA, user); err != nil {
+	if err := execSuper(t, pool, `INSERT INTO workflow (id, tenant_id, created_by_user_id, template_key, name) VALUES ($1, $2, $3, 'k', 'n')`, wf, tenantA, user); err != nil {
 		t.Fatal(err)
 	}
 	version := `INSERT INTO workflow_version (id, workflow_id, tenant_id, status, bpmn_xml, created_by_user_id) VALUES ($1, $2, $3, 'DRAFT', '<x/>', $4)`
@@ -100,7 +100,7 @@ func TestSchema_AChildCannotNameAnotherTenantsParent(t *testing.T) {
 
 func TestSchema_ARecordVersionOfZeroIsRefused(t *testing.T) {
 	pool := fixtures.NewTestPool(t)
-	err := execSuper(t, pool, `INSERT INTO workflow (id, tenant_id, created_by_user_id, business_key, name, record_version) VALUES ($1, $2, $3, 'k', 'n', 0)`, uuid.New(), uuid.New(), uuid.New())
+	err := execSuper(t, pool, `INSERT INTO workflow (id, tenant_id, created_by_user_id, template_key, name, record_version) VALUES ($1, $2, $3, 'k', 'n', 0)`, uuid.New(), uuid.New(), uuid.New())
 	if err == nil {
 		t.Error("record_version 0 was accepted")
 	}
@@ -109,7 +109,7 @@ func TestSchema_ARecordVersionOfZeroIsRefused(t *testing.T) {
 func TestSchema_DeletingAVersionClearsOnlyTheActivePointer(t *testing.T) {
 	pool := fixtures.NewTestPool(t)
 	tenant, wf, ver, user := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	if err := execSuper(t, pool, `INSERT INTO workflow (id, tenant_id, created_by_user_id, business_key, name) VALUES ($1, $2, $3, 'k', 'n')`, wf, tenant, user); err != nil {
+	if err := execSuper(t, pool, `INSERT INTO workflow (id, tenant_id, created_by_user_id, template_key, name) VALUES ($1, $2, $3, 'k', 'n')`, wf, tenant, user); err != nil {
 		t.Fatal(err)
 	}
 	if err := execSuper(t, pool, `INSERT INTO workflow_version (id, workflow_id, tenant_id, status, bpmn_xml, created_by_user_id, version_number) VALUES ($1, $2, $3, 'PUBLISHED', '<x/>', $4, 1)`, ver, wf, tenant, user); err != nil {

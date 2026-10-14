@@ -979,7 +979,7 @@ func TestVersionService_Export_OK(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, BPMNXML: "<bpmn/>", VersionNumber: &vNum}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
-		&domain.Workflow{BusinessKey: "tender-review"}, nil)
+		&domain.Workflow{TemplateKey: "tender-review"}, nil)
 
 	xml, filename, err := svc.Export(context.Background(), tenantID, wfID, vID)
 	if err != nil {
@@ -1003,7 +1003,7 @@ func TestVersionService_Export_Draft_Filename(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, BPMNXML: "<bpmn/>", VersionNumber: nil}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
-		&domain.Workflow{BusinessKey: "my-wf"}, nil)
+		&domain.Workflow{TemplateKey: "my-wf"}, nil)
 
 	_, filename, err := svc.Export(context.Background(), tenantID, wfID, vID)
 	if err != nil {

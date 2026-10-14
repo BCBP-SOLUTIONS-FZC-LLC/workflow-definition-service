@@ -20,7 +20,7 @@ func TestTransactor_RollbackOnError(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "tx-rollback", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "tx-rollback", Name: "X",
 	}
 
 	sentinel := errors.New("force rollback")
@@ -50,7 +50,7 @@ func TestTransactor_CommitOnSuccess(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "tx-commit", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "tx-commit", Name: "X",
 	}
 
 	if err := tx.RunInTx(ctx, func(txCtx context.Context) error {

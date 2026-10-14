@@ -18,7 +18,7 @@ func TestExportedErrorCodes(t *testing.T) {
 		{"CodeDraftAlreadyExists", handler.CodeDraftAlreadyExists, "DRAFT_ALREADY_EXISTS"},
 		{"CodeDraftNotFound", handler.CodeDraftNotFound, "DRAFT_NOT_FOUND"},
 		{"CodeNoActiveVersion", handler.CodeNoActiveVersion, "NO_ACTIVE_VERSION"},
-		{"CodeDuplicateKey", handler.CodeDuplicateKey, "DUPLICATE_BUSINESS_KEY"},
+		{"CodeDuplicateKey", handler.CodeDuplicateKey, "DUPLICATE_TEMPLATE_KEY"},
 		{"CodeDraftConcurrency", handler.CodeDraftConcurrency, "DRAFT_CONCURRENCY"},
 		{"CodeInvalidStatus", handler.CodeInvalidStatus, "INVALID_VERSION_STATUS"},
 		{"CodeActiveInstances", handler.CodeActiveInstances, "ACTIVE_INSTANCES_EXIST"},

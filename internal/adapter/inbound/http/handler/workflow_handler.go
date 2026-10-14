@@ -48,7 +48,7 @@ type versionSummary struct {
 func toWorkflowResp(w *domain.Workflow) workflowResp {
 	return workflowResp{
 		ID:                  w.ID,
-		Key:                 w.BusinessKey,
+		Key:                 w.TemplateKey,
 		Name:                w.Name,
 		Description:         w.Description,
 		ActiveVersionID:     w.ActiveVersionID,
@@ -87,7 +87,7 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		filter.Search = &s
 	}
 	if k := c.Query("key"); k != "" {
-		filter.BusinessKey = &k
+		filter.TemplateKey = &k
 	}
 	if v := c.Query("is_valid"); v != "" {
 		b := v == "true"

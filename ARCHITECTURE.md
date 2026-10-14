@@ -581,7 +581,7 @@ Domain sentinels defined in `internal/core/domain/errors.go`, mapped to HTTP res
 | `ErrPlanQuotaExceeded` | 403 | `PLAN_QUOTA_EXCEEDED` | Billing tier limit on workflow count |
 | `ErrNoActiveVersion` | 409 | `NO_ACTIVE_VERSION` | Resource exists but has no PUBLISHED version |
 | `ErrDraftAlreadyExists` | 409 | `DRAFT_ALREADY_EXISTS` | Partial-unique-index violation |
-| `ErrDuplicateBusinessKey` | 409 | `DUPLICATE_BUSINESS_KEY` | |
+| `ErrDuplicateTemplateKey` | 409 | `DUPLICATE_TEMPLATE_KEY` | |
 | `ErrDraftConcurrency` | 409 | `DRAFT_CONCURRENCY` | Concurrent publish attempted |
 | `ErrVersionNotDraft` / `ErrVersionNotPublished` / `ErrVersionAlreadyPublished` / `ErrInvalidVersionStatus` | 409 | `INVALID_VERSION_STATUS` | |
 | `ErrActiveInstancesExist` | 409 | `ACTIVE_INSTANCES_EXIST` | Cannot archive a running workflow |
@@ -1228,8 +1228,8 @@ Error helpers work with wrapped errors (`errors.As` internally):
 ```go
 if pgcommon.IsUniqueViolation(err) {
     switch pgcommon.ConstraintName(err) {
-    case "workflow_tenant_id_business_key_key":
-        return domain.ErrDuplicateBusinessKey
+    case "workflow_tenant_id_template_key_key":
+        return domain.ErrDuplicateTemplateKey
     case "idx_wv_single_draft":
         return domain.ErrDraftAlreadyExists
     }

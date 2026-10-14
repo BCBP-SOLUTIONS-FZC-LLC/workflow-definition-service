@@ -367,7 +367,7 @@ Validation errors include an `invalid_params` array:
 | `UNAUTHORIZED` | 401 | Missing or invalid `x-user-id` / `x-tenant-id` headers |
 | `FORBIDDEN` | 403 | Caller lacks `tenant_admin` or `tenant_owner` role |
 | `DRAFT_ALREADY_EXISTS` | 409 | A draft already exists; publish or discard it first |
-| `DUPLICATE_BUSINESS_KEY` | 409 | Business key already in use within the tenant |
+| `DUPLICATE_TEMPLATE_KEY` | 409 | Template key already in use within the tenant |
 | `DRAFT_CONCURRENCY` | 409 | Optimistic lock violation on draft save |
 | `INVALID_VERSION_STATUS` | 409 | Operation not valid for the version's current status |
 | `ACTIVE_INSTANCES_EXIST` | 409 | Cannot archive while running instances exist |
@@ -595,7 +595,7 @@ Database: PostgreSQL 18, schema `workflow_definition`. Multi-tenancy is enforced
 
 | Table | Purpose |
 | --- | --- |
-| `workflow` | Root template entity — business key, name, active version pointer |
+| `workflow` | Root template entity — template key, name, active version pointer |
 | `workflow_version` | Versioned snapshot — BPMN XML, compiled DSL, status lifecycle |
 | `workflow_node_assignee` | Denormalised reverse index: user → versions that reference them as default assignees |
 
@@ -637,7 +637,7 @@ On `RowsAffected() == 0` — either the record doesn't exist or it exists in the
 
 | Table | Constraint | Enforces |
 | --- | --- | --- |
-| `workflow` | `UNIQUE (tenant_id, business_key)` | No duplicate keys per tenant |
+| `workflow` | `UNIQUE (tenant_id, template_key)` | No duplicate keys per tenant |
 | `workflow_version` | `idx_wv_single_draft` (partial unique) | At most one DRAFT per workflow |
 | `workflow_version` | `uq_workflow_version_published` | Unique version numbers per workflow |
 | `workflow_version` | `chk_version_number_on_publish` | Published versions must have a version number |

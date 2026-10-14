@@ -95,7 +95,7 @@ WHERE tenant_id = $1 AND workflow_id = $2 AND status != 'DRAFT';
 -- name: ListModuleUsages :many
 -- A workflow version holds one module_refs entry per module version, so a
 -- module appears at most once per version unless two of its versions coexist.
-SELECT wv.id AS version_id, wv.workflow_id, w.business_key, w.name AS workflow_name,
+SELECT wv.id AS version_id, wv.workflow_id, w.template_key, w.name AS workflow_name,
        wv.version_number, wv.status,
        (ref ->> 'version_number')::int AS module_version_number
 FROM workflow_version wv

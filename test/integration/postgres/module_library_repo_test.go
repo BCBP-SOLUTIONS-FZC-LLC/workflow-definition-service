@@ -193,7 +193,7 @@ func TestWorkflowVersionRepo_ModuleRefsAndUsages(t *testing.T) {
 
 	publish := func(tenantID uuid.UUID, key string, refs []domain.ModuleRef) *domain.WorkflowVersion {
 		t.Helper()
-		wf := &domain.Workflow{ID: uuid.New(), TenantID: tenantID, CreatedByUserID: uuid.New(), BusinessKey: key, Name: key}
+		wf := &domain.Workflow{ID: uuid.New(), TenantID: tenantID, CreatedByUserID: uuid.New(), TemplateKey: key, Name: key}
 		if err := postgres.NewWorkflowRepo(pool).Create(ctx, wf); err != nil {
 			t.Fatalf("create workflow: %v", err)
 		}

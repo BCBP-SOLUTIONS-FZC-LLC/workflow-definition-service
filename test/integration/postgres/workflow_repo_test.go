@@ -20,7 +20,7 @@ func TestWorkflowRepo_CreateAndGet(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "tender-review",
+		CreatedByUserID: uuid.New(), TemplateKey: "tender-review",
 		Name: "Tender Review", Description: "Standard review process",
 	}
 
@@ -32,8 +32,8 @@ func TestWorkflowRepo_CreateAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
-	if got.BusinessKey != wf.BusinessKey {
-		t.Errorf("BusinessKey = %q, want %q", got.BusinessKey, wf.BusinessKey)
+	if got.TemplateKey != wf.TemplateKey {
+		t.Errorf("TemplateKey = %q, want %q", got.TemplateKey, wf.TemplateKey)
 	}
 	if got.Description != wf.Description {
 		t.Errorf("Description = %q, want %q", got.Description, wf.Description)
@@ -51,7 +51,7 @@ func TestWorkflowRepo_GetByID_NotFound(t *testing.T) {
 	}
 }
 
-func TestWorkflowRepo_DuplicateBusinessKey(t *testing.T) {
+func TestWorkflowRepo_DuplicateTemplateKey(t *testing.T) {
 	pool := newTestPool(t)
 	repo := postgres.NewWorkflowRepo(pool)
 	ctx := context.Background()
@@ -59,7 +59,7 @@ func TestWorkflowRepo_DuplicateBusinessKey(t *testing.T) {
 	tenantID := uuid.New()
 	base := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "dup-key", Name: "A",
+		CreatedByUserID: uuid.New(), TemplateKey: "dup-key", Name: "A",
 	}
 	if err := repo.Create(ctx, base); err != nil {
 		t.Fatalf("first Create: %v", err)
@@ -67,14 +67,14 @@ func TestWorkflowRepo_DuplicateBusinessKey(t *testing.T) {
 
 	dup := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "dup-key", Name: "B",
+		CreatedByUserID: uuid.New(), TemplateKey: "dup-key", Name: "B",
 	}
-	if err := repo.Create(ctx, dup); err != domain.ErrDuplicateBusinessKey {
-		t.Errorf("err = %v, want ErrDuplicateBusinessKey", err)
+	if err := repo.Create(ctx, dup); err != domain.ErrDuplicateTemplateKey {
+		t.Errorf("err = %v, want ErrDuplicateTemplateKey", err)
 	}
 }
 
-func TestWorkflowRepo_GetByBusinessKey(t *testing.T) {
+func TestWorkflowRepo_GetByTemplateKey(t *testing.T) {
 	pool := newTestPool(t)
 	repo := postgres.NewWorkflowRepo(pool)
 	ctx := context.Background()
@@ -82,15 +82,15 @@ func TestWorkflowRepo_GetByBusinessKey(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "bkey", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "bkey", Name: "X",
 	}
 	if err := repo.Create(ctx, wf); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	got, err := repo.GetByBusinessKey(ctx, tenantID, "bkey")
+	got, err := repo.GetByTemplateKey(ctx, tenantID, "bkey")
 	if err != nil {
-		t.Fatalf("GetByBusinessKey: %v", err)
+		t.Fatalf("GetByTemplateKey: %v", err)
 	}
 	if got.ID != wf.ID {
 		t.Errorf("ID = %v, want %v", got.ID, wf.ID)
@@ -107,7 +107,7 @@ func TestWorkflowRepo_CountByTenant(t *testing.T) {
 		wf := &domain.Workflow{
 			ID: uuid.New(), TenantID: tenantID,
 			CreatedByUserID: uuid.New(),
-			BusinessKey:     uuid.New().String()[:8] + "-" + string(rune('a'+i)),
+			TemplateKey:     uuid.New().String()[:8] + "-" + string(rune('a'+i)),
 			Name:            "W",
 		}
 		if err := repo.Create(ctx, wf); err != nil {
@@ -134,7 +134,7 @@ func TestWorkflowRepo_List_Pagination(t *testing.T) {
 		wf := &domain.Workflow{
 			ID: uuid.New(), TenantID: tenantID,
 			CreatedByUserID: uuid.New(),
-			BusinessKey:     uuid.New().String()[:8] + "-" + string(rune('a'+i)),
+			TemplateKey:     uuid.New().String()[:8] + "-" + string(rune('a'+i)),
 			Name:            "W",
 		}
 		if err := repo.Create(ctx, wf); err != nil {
@@ -154,7 +154,7 @@ func TestWorkflowRepo_List_Pagination(t *testing.T) {
 	}
 }
 
-func TestWorkflowRepo_List_BusinessKeyFilter(t *testing.T) {
+func TestWorkflowRepo_List_TemplateKeyFilter(t *testing.T) {
 	pool := newTestPool(t)
 	repo := postgres.NewWorkflowRepo(pool)
 	ctx := context.Background()
@@ -163,7 +163,7 @@ func TestWorkflowRepo_List_BusinessKeyFilter(t *testing.T) {
 	for _, key := range []string{"alpha", "beta", "gamma"} {
 		wf := &domain.Workflow{
 			ID: uuid.New(), TenantID: tenantID,
-			CreatedByUserID: uuid.New(), BusinessKey: key, Name: key,
+			CreatedByUserID: uuid.New(), TemplateKey: key, Name: key,
 		}
 		if err := repo.Create(ctx, wf); err != nil {
 			t.Fatalf("Create %s: %v", key, err)
@@ -172,12 +172,12 @@ func TestWorkflowRepo_List_BusinessKeyFilter(t *testing.T) {
 
 	bkey := "beta"
 	results, total, err := repo.List(ctx, tenantID, port.WorkflowFilter{
-		BusinessKey: &bkey, Page: 1, Limit: 10,
+		TemplateKey: &bkey, Page: 1, Limit: 10,
 	})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if total != 1 || len(results) != 1 || results[0].BusinessKey != "beta" {
+	if total != 1 || len(results) != 1 || results[0].TemplateKey != "beta" {
 		t.Errorf("unexpected results: total=%d len=%d", total, len(results))
 	}
 }
@@ -191,7 +191,7 @@ func TestWorkflowRepo_List_SearchFilter(t *testing.T) {
 	for _, key := range []string{"invoice-flow", "tender-review", "purchase-order"} {
 		wf := &domain.Workflow{
 			ID: uuid.New(), TenantID: tenantID,
-			CreatedByUserID: uuid.New(), BusinessKey: key,
+			CreatedByUserID: uuid.New(), TemplateKey: key,
 			Name: "Workflow " + key,
 		}
 		if err := repo.Create(ctx, wf); err != nil {
@@ -207,8 +207,8 @@ func TestWorkflowRepo_List_SearchFilter(t *testing.T) {
 	if total != 1 || len(results) != 1 {
 		t.Errorf("search 'tender': total=%d len=%d, want 1", total, len(results))
 	}
-	if results[0].BusinessKey != "tender-review" {
-		t.Errorf("wrong result: %q", results[0].BusinessKey)
+	if results[0].TemplateKey != "tender-review" {
+		t.Errorf("wrong result: %q", results[0].TemplateKey)
 	}
 }
 
@@ -223,7 +223,7 @@ func TestWorkflowRepo_List_ArchivedFilter(t *testing.T) {
 	// active: has an active version pointer
 	active := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "active-wf", Name: "Active",
+		CreatedByUserID: uuid.New(), TemplateKey: "active-wf", Name: "Active",
 	}
 	if err := repo.Create(ctx, active); err != nil {
 		t.Fatalf("create active workflow: %v", err)
@@ -242,7 +242,7 @@ func TestWorkflowRepo_List_ArchivedFilter(t *testing.T) {
 	// archived: no active version pointer
 	archived := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "archived-wf", Name: "Archived",
+		CreatedByUserID: uuid.New(), TemplateKey: "archived-wf", Name: "Archived",
 	}
 	if err := repo.Create(ctx, archived); err != nil {
 		t.Fatalf("create archived workflow: %v", err)
@@ -255,7 +255,7 @@ func TestWorkflowRepo_List_ArchivedFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List archived=true: %v", err)
 	}
-	if total != 1 || len(results) != 1 || results[0].BusinessKey != "archived-wf" {
+	if total != 1 || len(results) != 1 || results[0].TemplateKey != "archived-wf" {
 		t.Errorf("archived=true: total=%d len=%d key=%q", total, len(results), firstKey(results))
 	}
 
@@ -263,7 +263,7 @@ func TestWorkflowRepo_List_ArchivedFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List archived=false: %v", err)
 	}
-	if total != 1 || len(results) != 1 || results[0].BusinessKey != "active-wf" {
+	if total != 1 || len(results) != 1 || results[0].TemplateKey != "active-wf" {
 		t.Errorf("archived=false: total=%d len=%d key=%q", total, len(results), firstKey(results))
 	}
 }
@@ -279,7 +279,7 @@ func TestWorkflowRepo_List_HasDraftFilter(t *testing.T) {
 	// with draft
 	withDraft := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "has-draft", Name: "Has Draft",
+		CreatedByUserID: uuid.New(), TemplateKey: "has-draft", Name: "Has Draft",
 	}
 	if err := repo.Create(ctx, withDraft); err != nil {
 		t.Fatalf("create withDraft: %v", err)
@@ -292,7 +292,7 @@ func TestWorkflowRepo_List_HasDraftFilter(t *testing.T) {
 	// without draft
 	noDraft := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "no-draft", Name: "No Draft",
+		CreatedByUserID: uuid.New(), TemplateKey: "no-draft", Name: "No Draft",
 	}
 	if err := repo.Create(ctx, noDraft); err != nil {
 		t.Fatalf("create noDraft: %v", err)
@@ -305,7 +305,7 @@ func TestWorkflowRepo_List_HasDraftFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List has_draft=true: %v", err)
 	}
-	if total != 1 || len(results) != 1 || results[0].BusinessKey != "has-draft" {
+	if total != 1 || len(results) != 1 || results[0].TemplateKey != "has-draft" {
 		t.Errorf("has_draft=true: total=%d len=%d key=%q", total, len(results), firstKey(results))
 	}
 
@@ -313,7 +313,7 @@ func TestWorkflowRepo_List_HasDraftFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List has_draft=false: %v", err)
 	}
-	if total != 1 || len(results) != 1 || results[0].BusinessKey != "no-draft" {
+	if total != 1 || len(results) != 1 || results[0].TemplateKey != "no-draft" {
 		t.Errorf("has_draft=false: total=%d len=%d key=%q", total, len(results), firstKey(results))
 	}
 }
@@ -327,7 +327,7 @@ func TestWorkflowRepo_List_CombinedFilters(t *testing.T) {
 	for _, key := range []string{"tender-abc", "tender-xyz", "invoice-001"} {
 		wf := &domain.Workflow{
 			ID: uuid.New(), TenantID: tenantID,
-			CreatedByUserID: uuid.New(), BusinessKey: key, Name: "WF " + key,
+			CreatedByUserID: uuid.New(), TemplateKey: key, Name: "WF " + key,
 		}
 		if err := repo.Create(ctx, wf); err != nil {
 			t.Fatalf("Create %s: %v", key, err)
@@ -337,12 +337,12 @@ func TestWorkflowRepo_List_CombinedFilters(t *testing.T) {
 	q := "tender"
 	bkey := "tender-abc"
 	results, total, err := repo.List(ctx, tenantID, port.WorkflowFilter{
-		Search: &q, BusinessKey: &bkey, Page: 1, Limit: 10,
+		Search: &q, TemplateKey: &bkey, Page: 1, Limit: 10,
 	})
 	if err != nil {
 		t.Fatalf("List combined: %v", err)
 	}
-	if total != 1 || len(results) != 1 || results[0].BusinessKey != "tender-abc" {
+	if total != 1 || len(results) != 1 || results[0].TemplateKey != "tender-abc" {
 		t.Errorf("combined: total=%d len=%d key=%q", total, len(results), firstKey(results))
 	}
 }
@@ -356,7 +356,7 @@ func TestWorkflowRepo_UpdateActiveVersion(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "upd-av", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "upd-av", Name: "X",
 	}
 	if err := repo.Create(ctx, wf); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -403,7 +403,7 @@ func TestWorkflowRepo_UpdateMetadata(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "upd-meta", Name: "Original", Description: "old desc",
+		CreatedByUserID: uuid.New(), TemplateKey: "upd-meta", Name: "Original", Description: "old desc",
 	}
 	if err := repo.Create(ctx, wf); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -440,7 +440,7 @@ func firstKey(wfs []*domain.Workflow) string {
 	if len(wfs) == 0 {
 		return "<empty>"
 	}
-	return wfs[0].BusinessKey
+	return wfs[0].TemplateKey
 }
 
 func TestWorkflowRepo_UpdateActiveVersion_OnlyAPublishedVersionOfThatWorkflow(t *testing.T) {
@@ -451,7 +451,7 @@ func TestWorkflowRepo_UpdateActiveVersion_OnlyAPublishedVersionOfThatWorkflow(t 
 
 	tenantID := uuid.New()
 	newWorkflow := func(key string) *domain.Workflow {
-		wf := &domain.Workflow{ID: uuid.New(), TenantID: tenantID, CreatedByUserID: uuid.New(), BusinessKey: key, Name: key}
+		wf := &domain.Workflow{ID: uuid.New(), TenantID: tenantID, CreatedByUserID: uuid.New(), TemplateKey: key, Name: key}
 		if err := repo.Create(ctx, wf); err != nil {
 			t.Fatalf("create workflow %s: %v", key, err)
 		}
@@ -492,7 +492,7 @@ func TestWorkflowRepo_UpdateActiveVersion_RefusesARevokedVersion(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "upd-av-invalid", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "upd-av-invalid", Name: "X",
 	}
 	if err := repo.Create(ctx, wf); err != nil {
 		t.Fatalf("Create: %v", err)

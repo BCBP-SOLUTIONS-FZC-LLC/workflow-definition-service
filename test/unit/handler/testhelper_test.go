@@ -42,9 +42,9 @@ func (f *fakeWorkflowSvc) List(ctx context.Context, tenantID uuid.UUID, filter p
 	}
 	return nil, 0, nil
 }
-func (f *fakeWorkflowSvc) Create(ctx context.Context, tenantID, userID uuid.UUID, businessKey, name, description, bpmnXML, planTier string) (*domain.Workflow, *domain.WorkflowVersion, error) {
+func (f *fakeWorkflowSvc) Create(ctx context.Context, tenantID, userID uuid.UUID, templateKey, name, description, bpmnXML, planTier string) (*domain.Workflow, *domain.WorkflowVersion, error) {
 	if f.create != nil {
-		return f.create(ctx, tenantID, userID, businessKey, name, description, bpmnXML)
+		return f.create(ctx, tenantID, userID, templateKey, name, description, bpmnXML)
 	}
 	return nil, nil, nil
 }
@@ -432,7 +432,7 @@ func newWorkflow() *domain.Workflow {
 	return &domain.Workflow{
 		ID:          testWFID,
 		TenantID:    testTenantID,
-		BusinessKey: "test-wf",
+		TemplateKey: "test-wf",
 		Name:        "Test Workflow",
 		Description: "desc",
 		CreatedAt:   now,

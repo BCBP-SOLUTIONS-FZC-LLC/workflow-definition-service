@@ -670,7 +670,7 @@ erDiagram
         UUID id PK
         UUID tenant_id
         UUID created_by_user_id
-        VARCHAR business_key
+        VARCHAR template_key
         VARCHAR name
         TEXT description
         UUID active_version_id FK
@@ -802,7 +802,7 @@ The full database DDL migrations and RLS policies are documented in [Appendix A:
 | `id` | UUID | Primary key |
 | `tenant_id` | UUID | Tenant isolation key |
 | `created_by_user_id` | UUID | Creator (admin) |
-| `business_key` | VARCHAR(255) | Business identifier (e.g. `tender-review`) |
+| `template_key` | VARCHAR(255) | Business identifier (e.g. `tender-review`) |
 | `name` | VARCHAR(255) | Workflow template name |
 | `description` | TEXT | Optional description |
 | `active_version_id` | UUID | Foreign key pointing to the current published version |
@@ -812,7 +812,7 @@ The full database DDL migrations and RLS policies are documented in [Appendix A:
 
 **Constraints**:
 
-- Unique `(tenant_id, business_key)`
+- Unique `(tenant_id, template_key)`
 
 **Rules**:
 
@@ -886,7 +886,7 @@ A **denormalized reverse index** that inverts the compiled DSL's `default_assign
 
     created_by_user_id (UUID): The tenant admin who created the root workflow entity. Provides root-level lineage.
 
-    business_key (VARCHAR): The external business key serving as the canonical reference for the workflow across the overall system architecture (e.g., referencing process types like tender-123-abc across decoupled domain services). Ensures clean, human-readable lookups and strict multi-service alignment instead of relying solely on random UUIDs.
+    template_key (VARCHAR): The template's key within its tenant (e.g. `tender-review`), a human-readable handle that is unique per tenant. It names the template only: it never reaches the Execution Service, whose instance business key is a different identifier (an instance is addressed by its subject and business key, unique per tenant, subject and key among live instances).
 
     active_version_id (UUID): A nullable foreign key pointing to the currently active/published workflow_version. It names only a `PUBLISHED` version of the same workflow, or nothing; the database refuses any other value. This allows O(1) reads of the running template schema when spawning new workflow instances, bypassing sequential version scans.
 
@@ -894,7 +894,7 @@ A **denormalized reverse index** that inverts the compiled DSL's `default_assign
 
     updated_at (TIMESTAMPTZ): Last modification time, maintained automatically by the same `BEFORE UPDATE` trigger as `record_version`.
 
-    UNIQUE (tenant_id, business_key): Guarantees key uniqueness per tenant, allowing different tenants to declare identical keys without collision.
+    UNIQUE (tenant_id, template_key): Guarantees key uniqueness per tenant, allowing different tenants to declare identical keys without collision.
 
 2. workflow_version Table
 
@@ -1062,10 +1062,10 @@ Input validation is enforced at the service layer before any DB write. Violation
 | --- | --- | --- |
 | `workflow.name` | 255 chars | Matches VARCHAR(255) column |
 | `workflow.description` | 2 000 chars | TEXT column; cap enforced at service layer only |
-| `workflow.business_key` | 100 chars | Must match `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase slug, no leading/trailing/consecutive hyphens); enforced at service layer before the DB unique index |
+| `workflow.template_key` | 255 chars | Any string up to the column width; unique per tenant (`409 DUPLICATE_TEMPLATE_KEY`); a value over the limit is `422 INVALID_INPUT` |
 | `workflow_version.bpmn_xml` | 10 MB bytes | Governed by `LimitRequestBody` middleware; returns 413 before service layer |
 
-**`business_key` format**: lowercase ASCII letters and digits, with hyphens as separators only (no leading, trailing, or consecutive hyphens). Pattern: `^[a-z0-9]+(-[a-z0-9]+)*$`. Enforced in the service layer because the DB column is VARCHAR(255) with no regex constraint. Invalid format returns `400 BAD_REQUEST` before the uniqueness check.
+**`template_key` format**: free-form text up to 255 characters, with no slug pattern. It is never parsed or composed into anything else; the Execution Service's instance business key is a separate identifier.
 
 **Concurrency tokens**: `PATCH /workflows/:id` and `PUT /workflows/:id/draft` accept the lock token as `If-Match: "<record_version>"` header (preferred) or `record_version` in the JSON body. Header takes precedence when both are present. Omitting both is last-writer-wins (acceptable for single-admin tenants; the guard matters for concurrent admin edits). See §10.11.
 
@@ -1128,7 +1128,7 @@ Below is the complete registry of application-specific error codes returned insi
 | `PAYLOAD_TOO_LARGE` | `413 Payload Too Large` | Request Entity Too Large | The request payload exceeds the configured maximum transfer size limit (10MB). |
 | `UNSUPPORTED_MEDIA_TYPE` | `415 Unsupported Media Type` | Unsupported Media Type | A request carrying a body whose `Content-Type` is not `application/json`. Enforced by the `RequireJSONContentType` middleware on the authenticated API group. |
 | `RATE_LIMIT_EXCEEDED` | `429 Too Many Requests` | Rate Limit Exceeded | The tenant has exceeded their allocated rate limits (requests per second or monthly quota). _(gateway-enforced — not returned by this service) |
-| `DUPLICATE_BUSINESS_KEY` | `409 Conflict` | Workflow Key Conflict | A workflow with the specified `business_key` already exists within the tenant boundary. |
+| `DUPLICATE_TEMPLATE_KEY` | `409 Conflict` | Workflow Template Key Conflict | A workflow with the specified `template_key` already exists within the tenant boundary. |
 | `DRAFT_ALREADY_EXISTS` | `409 Conflict` | Draft Already Exists | An active workspace draft already exists for this workflow (must publish or discard it first). |
 | `DRAFT_CONCURRENCY` | `409 Conflict` | Draft Concurrency Violation | Stale draft update — client's `record_version` does not match the current value; another update has been applied since the draft was last read. |
 | `WORKFLOW_CONCURRENCY_VIOLATION` | `409 Conflict` | Workflow Concurrency Violation | Stale workflow metadata update — client's `record_version` on the `workflow` row does not match; another name/description update has been applied since the client last read. _(planned — pending `PATCH /workflows/:id` endpoint) |
@@ -1277,19 +1277,19 @@ Below is a detailed walkthrough of the endpoints, checks, and flow execution tra
     - **Database & Transaction Impact**: Blocked at gateway/middleware. Database is unaffected.
     - **Resolution**: Implement exponential backoff retry logic in client applications, or contact support to upgrade the API rate limit tier.
 
-11. **`DUPLICATE_BUSINESS_KEY`** (HTTP 409)
+11. **`DUPLICATE_TEMPLATE_KEY`** (HTTP 409)
     - **Endpoints**: `POST /workflows`, `POST /workflows/:id/versions/:version_id/clone`
     - **Trigger Scenario**: An admin tries to register a new workflow using a key (e.g., `tender-review`) that is already assigned to an existing workflow in the same tenant.
-    - **Technical Cause**: The database enforces a unique constraint on `(tenant_id, business_key)`. If an insert violates this constraint, PostgreSQL returns error code `23505` (unique violation).
+    - **Technical Cause**: The database enforces a unique constraint on `(tenant_id, template_key)`. If an insert violates this constraint, PostgreSQL returns error code `23505` (unique violation).
     - **Step-by-Step Flow**:
-      1. The admin submits a creation request with `business_key = 'procurement-check'`.
+      1. The admin submits a creation request with `template_key = 'procurement-check'`.
       2. The service starts a transaction.
-      3. The repository attempts to execute: `INSERT INTO workflow (tenant_id, business_key, ...) VALUES (:tenant, 'procurement-check', ...)`.
-      4. PostgreSQL detects a collision on the unique key constraint `uq_workflow_business_key`.
+      3. The repository attempts to execute: `INSERT INTO workflow (tenant_id, template_key, ...) VALUES (:tenant, 'procurement-check', ...)`.
+      4. PostgreSQL detects a collision on the unique key constraint `uq_workflow_template_key`.
       5. The database aborts the execution and returns code `23505`.
-      6. The transaction is rolled back, the handler catches the unique constraint violation, and maps it to `code: DUPLICATE_BUSINESS_KEY`.
+      6. The transaction is rolled back, the handler catches the unique constraint violation, and maps it to `code: DUPLICATE_TEMPLATE_KEY`.
     - **Database & Transaction Impact**: A transaction is opened, executes an insert, collides, aborts the insert statement, and is rolled back.
-    - **Resolution**: Choose a unique `business_key` or update the existing workflow using the `/draft` updates instead.
+    - **Resolution**: Choose a unique `template_key` or update the existing workflow using the `/draft` updates instead.
 
 12. **`DRAFT_ALREADY_EXISTS`** (HTTP 409)
     - **Endpoints**: `POST /workflows/:id/draft`
@@ -1670,7 +1670,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
   - `page` (default 1): Pagination page number.
   - `limit` (default 20): Page size (max 100).
   - `search` (optional): Fuzzy search on `name`.
-  - `key` (optional): Exact business key match (`business_key = :key`). Used by downstream services (e.g. Execution Service) to bootstrap a workflow start.
+  - `key` (optional): Exact template key match (`template_key = :key`). Used by downstream services (e.g. Execution Service) to bootstrap a workflow start.
   - `is_valid` (optional): Filters on `workflow_version.is_valid` of the workflow's active version (`workflow.active_version_id → workflow_version.id`). `true` returns workflows whose active version has all assignees valid; `false` returns those invalidated by a `DepartmentMembershipRevoked` event. Workflows with no active version (`active_version_id IS NULL`) are excluded when this filter is set because there is no active version to evaluate.
   - `status` (optional): Filters by workflow active-version state. `active` → `active_version_id IS NOT NULL` (has a published active version). `archived` → `active_version_id IS NULL` (no active published version — either the active version was archived via §3.3.8, or the workflow was never published and only has drafts). The `workflow` table has no status column; this filter is derived entirely from the presence or absence of `active_version_id`.
   - `has_draft` (optional, boolean): Filters workflows that have an active draft. Implemented as `EXISTS (SELECT 1 FROM workflow_version WHERE workflow_id = w.id AND status = 'DRAFT')`.
@@ -3379,7 +3379,7 @@ sequenceDiagram
         Core-->>API: Error: PLAN_QUOTA_EXCEEDED (403 Forbidden)
         API-->>Admin: 403 Forbidden (Problem Details JSON)
     else CurrentCount < PlanLimit
-        Core->>DB: INSERT INTO workflow (id, tenant_id, business_key, name) VALUES (...)
+        Core->>DB: INSERT INTO workflow (id, tenant_id, template_key, name) VALUES (...)
         Core->>DB: INSERT INTO workflow_version (id, workflow_id, status, status='DRAFT', ...)
         Core->>DB: COMMIT
         DB-->>Core: Transaction Committed
@@ -3434,7 +3434,7 @@ sequenceDiagram
     DB-->>API: Total active workflows
     Note over API: Compare count against plan template limit.<br/>If exceeded, rollback and return 403 (PLAN_QUOTA_EXCEEDED)
     
-    API->>DB: INSERT INTO workflow (id, tenant_id, business_key, name, created_by_user_id) VALUES (...)
+    API->>DB: INSERT INTO workflow (id, tenant_id, template_key, name, created_by_user_id) VALUES (...)
     API->>DB: INSERT INTO workflow_version (id, workflow_id, status='DRAFT', bpmn_xml, created_by_user_id) VALUES (...)
     API->>DB: COMMIT
     DB-->>API: Transaction Committed
@@ -4109,7 +4109,7 @@ All automated tests live under `test/` (black-box) or co-located `_test.go` file
 
 | Layer | Approach | Key scenarios |
 | --- | --- | --- |
-| Unit — `core/service`, `core/domain` | Pure Go; ports mocked with GoMock (`make mock`) | BPMN sub-error codes fire on correct invalid input; plan quota enforcement (Starter 5, Pro 50, Enterprise unlimited — skips DB count); optimistic `record_version` conflict → `ErrDraftConcurrency`; `business_key` pattern `^[a-z0-9]+(-[a-z0-9]+)*$`; `buildEnvelope` attaches `WithTraceID` only when OTel span is valid |
+| Unit — `core/service`, `core/domain` | Pure Go; ports mocked with GoMock (`make mock`) | BPMN sub-error codes fire on correct invalid input; plan quota enforcement (Starter 5, Pro 50, Enterprise unlimited — skips DB count); optimistic `record_version` conflict → `ErrDraftConcurrency`; `template_key` pattern `^[a-z0-9]+(-[a-z0-9]+)*$`; `buildEnvelope` attaches `WithTraceID` only when OTel span is valid |
 | Unit — BPMN compiler (`internal/bpmn_compiler`) | Pure Go; no DB or network | All 24 sub-error codes fire; cycle detection (SCC); split/join gateway pairing; well-formed BPMN produces expected DSL shape; XXE entity and XML token bomb rejected; empty process → `NO_START_EVENT` |
 | Unit — HTTP handlers (`test/unit/handler`) | Hand-rolled fakes; `gincommon.ProtectedMiddlewares` for request context | Each handler maps domain errors to correct HTTP status + RFC-9457 code; missing `x-tenant-id` → 401; non-admin role → 403; idempotency header absent → passes through; `record_version` absent on PUT /draft → 400 |
 | Unit — inbound event handler (`test/unit/handler`) | Hand-rolled `fakeMembershipRevoker` + `fakeLogger` | `HandleDepartmentMembershipRevoked` marks affected versions `is_valid=false`; silently skips version on `GetByID` error; a redelivered envelope reprocesses to the same result |
@@ -4145,14 +4145,14 @@ CREATE TABLE workflow (
     id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL,
     created_by_user_id UUID NOT NULL,
-    business_key VARCHAR(255) NOT NULL,
+    template_key VARCHAR(255) NOT NULL,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     active_version_id UUID,
     record_version BIGINT NOT NULL DEFAULT 1 CHECK (record_version > 0),  -- optimistic-lock counter
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (tenant_id, business_key),
+    UNIQUE (tenant_id, template_key),
     UNIQUE (id, tenant_id)
 );
 
@@ -4776,14 +4776,14 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 | Term | Category | Definition |
 | --- | --- | --- |
 | **Tenant** | Core Concept | The top-level organizational boundary. All workflows, versions, and assignments are strictly isolated by tenant ID. Multi-tenancy is enforced at the gateway (headers), database (RLS), and orchestrator (task queues) layers. |
-| **Workflow Template** | Core Concept | A versioned blueprint of a business process defining routing logic, department sequencing, and task assignment criteria. Each template is identified by a unique `business_key` within a tenant. |
+| **Workflow Template** | Core Concept | A versioned blueprint of a business process defining routing logic, department sequencing, and task assignment criteria. Each template is identified by a unique `template_key` within a tenant. |
 | **Workflow Version** | Core Concept | An immutable iteration of a workflow template. Versions are either `DRAFT` (editable), `PUBLISHED` (active for new instances), or `ARCHIVED` (no longer startable). Only one draft may exist per workflow at any time. |
 | **Workflow Instance** | Core Concept | A live, durable execution of a template linked to a specific business entity (e.g., tender ID). Instances are managed by the Execution Service and Temporal, not the Definition Service. |
 | **Node** | Core Concept | A single step in a workflow, represented as a `<bpmn:userTask>` in the BPMN XML. Each node is bound to a Department (from its lane membership), Stage Type (from `zeebe:taskDefinition type`), and Role Level (from `zeebe:assignmentDefinition candidateGroups`). |
 | **Stage** | Core Concept | A logical grouping of one or more nodes within a department, representing a phase of work (e.g., `prep`, `review`, `approve`). Stages are ordered topologically based on sequence flows. |
 | **Department** | Core Concept | A logical organizational unit (e.g., Design, Procurement, Legal) represented as a `<bpmn:lane>` in BPMN. Departments execute in parallel or sequentially based on gateway routing. |
 | **Execution DSL** | Core Concept | The high-performance JSON representation of a BPMN diagram compiled by the Definition Service. The DSL is consumed by the Execution Service and Temporal Workers for orchestration. Stored in `workflow_version.compiled_plan_json`. |
-| **Business Key** | Core Concept | An external, human-readable identifier (e.g., `tender-review`, `procurement-check`) used to uniquely identify a workflow template within a tenant. Must be unique per tenant. |
+| **Template Key** | Core Concept | A human-readable identifier (e.g., `tender-review`, `procurement-check`) that identifies a workflow template within a tenant. Unique per tenant; distinct from the Execution Service's instance business key. |
 | **Default Assignee** | Core Concept | A user ID pre-assigned to a node at template publish time, declared via `<zeebe:assignmentDefinition candidateUsers="..."/>`. Currently limited to one UUID v7 per node; multi-user support is planned. When a workflow instance reaches that node, this default is used unless overridden at runtime. Stored in `workflow_node_assignee` for fast invalidation lookup. Full concurrency semantics are defined in §4.5. |
 | **Side-by-Side Versioning** | Core Concept | The ability to run multiple versions of the same workflow template concurrently. Existing instances continue on their original version while new instances start on the latest published version. Enables safe template updates without disrupting active work. |
 
@@ -4956,6 +4956,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.45 | 2026-10-14 | **Schema-registry payloads on the event ingest** (§7.4.1). An envelope with a `dataschema` carries a base64 string of a registry-framed payload; the endpoint decodes it with the platform library's decode-only Glue codec and answers `502 EVENT_DECODE_FAILED` for a payload it cannot decode. Before this, any revocation published through a registry was answered `400`. |
 | 1.46 | 2026-10-14 | **Connector catalogue at `workflow-connectors/v2` v2.1.0** (§1.1, §2.2, §10.14, §10.15). The registry no longer lists `chat-notify`: a task naming it publishes with the `UNKNOWN_CONNECTOR_TYPE` warning and the template and credential endpoints refuse it. `storage` and `send-email` declare `provider` as required. The registry lists three types: `storage`, `send-email` and `rest-call`. |
 | 1.47 | 2026-10-14 | **The public spec and the docs follow the code** (§1.6.1.1, §3.4, §4.2, §10.8, Appendix A). Every body route declares `413` and `415`; a publish takes no required body; limits nothing enforced are removed; validation severities are lowercase; getDraft carries `updated_at`; the registry's `retry` includes `not-delivered`; the compiled-plan schemas carry `iam_department_id`, `connector_type`, `io_mapping`, `boundary_id` and boundary and branch `steps`. A module, starter or draft field over its column or documented limit (name 255, description 2000, starter category 64) is `422 INVALID_INPUT` with `invalid_params`; before, it reached the database and came back as `500`. A version diff sends `step_changes` in snake_case and never `null` for a department list. `MULTIPLE_END_EVENTS` is deprecated and never raised; the logger section describes `logger.NewLogger`; library pins are current. |
+| 1.48 | 2026-10-14 | **The template key is named for what it is** (§3, §4, §10, Appendix A). The workflow's key is `template_key`, error code `DUPLICATE_TEMPLATE_KEY`, constraint `uq_workflow_template_key`; the public field stays `key`. The Execution Service keeps its own instance business key (with the subject), so the two no longer share a name or an error code. The LLD no longer claims a slug pattern or a 100-character limit: the key is free-form up to 255 characters, over which it is `422 INVALID_INPUT`. |
 ---
 
 ## Appendix E: Open Items

@@ -99,7 +99,7 @@ func workflowFromDB(row db.Workflow) *domain.Workflow {
 		ID:              row.ID,
 		TenantID:        row.TenantID,
 		CreatedByUserID: row.CreatedByUserID,
-		BusinessKey:     row.BusinessKey,
+		TemplateKey:     row.TemplateKey,
 		Name:            row.Name,
 		Description:     fromPgtypeText(row.Description),
 		ActiveVersionID: fromPgtypeUUID(row.ActiveVersionID),

@@ -9,7 +9,7 @@ import (
 
 func TestCreateWorkflow_MissingCtx(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{})
-	body := map[string]any{"business_key": "x", "name": "y", "bpmn_xml": "<x/>"}
+	body := map[string]any{"template_key": "x", "name": "y", "bpmn_xml": "<x/>"}
 	w := do(newBareRouter(h), req(http.MethodPost, "/api/v1/workflows", body))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }

@@ -2,14 +2,14 @@ CREATE TABLE workflow (
     id                  UUID PRIMARY KEY,
     tenant_id           UUID NOT NULL,
     created_by_user_id  UUID NOT NULL,
-    business_key        VARCHAR(255) NOT NULL,
+    template_key        VARCHAR(255) NOT NULL,
     name                VARCHAR(255) NOT NULL,
     description         TEXT,
     active_version_id   UUID,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     record_version      BIGINT NOT NULL DEFAULT 1,
-    UNIQUE (tenant_id, business_key),
+    UNIQUE (tenant_id, template_key),
     UNIQUE (id, tenant_id),
     CONSTRAINT chk_workflow_record_version CHECK (record_version > 0)
 );

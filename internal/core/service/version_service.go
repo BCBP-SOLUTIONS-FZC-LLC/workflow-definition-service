@@ -170,7 +170,7 @@ func (s *VersionService) Clone(
 		ID:              newWFID,
 		TenantID:        tenantID,
 		CreatedByUserID: userID,
-		BusinessKey:     req.NewKey,
+		TemplateKey:     req.NewKey,
 		Name:            req.NewName,
 		Description:     req.NewDescription,
 	}
@@ -262,7 +262,7 @@ func (s *VersionService) Export(
 	if err != nil {
 		return "", "", fmt.Errorf(errGetWorkflow, err)
 	}
-	return v.BPMNXML, fmt.Sprintf("%s-v%s.bpmn", wf.BusinessKey, versionLabel(v)), nil
+	return v.BPMNXML, fmt.Sprintf("%s-v%s.bpmn", wf.TemplateKey, versionLabel(v)), nil
 }
 
 func (s *VersionService) Diff(

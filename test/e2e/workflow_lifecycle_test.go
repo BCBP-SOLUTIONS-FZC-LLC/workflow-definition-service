@@ -161,7 +161,7 @@ func TestE2E_RLSCrossTenantIsolation(t *testing.T) {
 
 	wfA := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantA, CreatedByUserID: userA,
-		BusinessKey: "rls-test-tenant-a",
+		TemplateKey: "rls-test-tenant-a",
 		Name:        "RLS Test Tenant A",
 	}
 	if err := superRepo.Create(ctx, wfA); err != nil {
@@ -170,7 +170,7 @@ func TestE2E_RLSCrossTenantIsolation(t *testing.T) {
 
 	wfB := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantB, CreatedByUserID: userB,
-		BusinessKey: "rls-test-tenant-b",
+		TemplateKey: "rls-test-tenant-b",
 		Name:        "RLS Test Tenant B",
 	}
 	if err := superRepo.Create(ctx, wfB); err != nil {

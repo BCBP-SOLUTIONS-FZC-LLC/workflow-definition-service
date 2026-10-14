@@ -69,7 +69,7 @@ func TestErrResponse_StatusAndCode(t *testing.T) {
 		// 409
 		{"ErrNoActiveVersion", domain.ErrNoActiveVersion, http.StatusConflict, CodeNoActiveVersion},
 		{"ErrDraftAlreadyExists", domain.ErrDraftAlreadyExists, http.StatusConflict, CodeDraftAlreadyExists},
-		{"ErrDuplicateBusinessKey", domain.ErrDuplicateBusinessKey, http.StatusConflict, CodeDuplicateKey},
+		{"ErrDuplicateTemplateKey", domain.ErrDuplicateTemplateKey, http.StatusConflict, CodeDuplicateKey},
 		{"ErrDraftConcurrency", domain.ErrDraftConcurrency, http.StatusConflict, CodeDraftConcurrency},
 		{"ErrInvalidVersionStatus", domain.ErrInvalidVersionStatus, http.StatusConflict, CodeInvalidStatus},
 		{"ErrVersionNotDraft", domain.ErrVersionNotDraft, http.StatusConflict, CodeInvalidStatus},

@@ -25,7 +25,7 @@ func TestWorkflowVersionRepo_CreateAndGet(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "wv-create", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "wv-create", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -68,7 +68,7 @@ func TestWorkflowVersionRepo_GetDraft(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "wv-draft", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "wv-draft", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -108,7 +108,7 @@ func TestWorkflowVersionRepo_DeleteDraft(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "wv-del", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "wv-del", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -159,7 +159,7 @@ func TestWorkflowVersionRepo_Archive_ExistsDraft_ReturnsVersionNotPublished(t *t
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "arc-draft", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "arc-draft", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -185,7 +185,7 @@ func TestWorkflowVersionRepo_DeleteDraft_ExistsPublished_ReturnsVersionNotDraft(
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "del-pub", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "del-pub", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -214,7 +214,7 @@ func TestWorkflowVersionRepo_Publish(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "wv-pub", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "wv-pub", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -260,7 +260,7 @@ func TestWorkflowVersionRepo_Publish_PgBouncerMode(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "wv-pub-bouncer", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "wv-pub-bouncer", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -286,7 +286,7 @@ func TestWorkflowVersionRepo_Publish_DraftEditedAfterRead_ReturnsDraftConcurrenc
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "wv-pub-stale", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "wv-pub-stale", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -329,7 +329,7 @@ func TestWorkflowVersionRepo_UpdateDraft_UnchangedSaveKeepsRecordVersionInSync(t
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "wv-noop-save", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "wv-noop-save", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -378,7 +378,7 @@ func TestWorkflowVersionRepo_DraftAlreadyExists(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "two-drafts", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "two-drafts", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -404,7 +404,7 @@ func TestWorkflowVersionRepo_SetInvalid(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "wv-inv", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "wv-inv", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -436,7 +436,7 @@ func TestWorkflowVersionRepo_SetInvalid_KeepsEveryRevocationsNodes(t *testing.T)
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "wv-inv-merge", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "wv-inv-merge", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -485,7 +485,7 @@ func TestWorkflowVersionRepo_NextVersionNumber(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "wv-nvn", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "wv-nvn", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -509,7 +509,7 @@ func TestWorkflowVersionRepo_ListByWorkflow(t *testing.T) {
 	tenantID := uuid.New()
 	wf := &domain.Workflow{
 		ID: uuid.New(), TenantID: tenantID,
-		CreatedByUserID: uuid.New(), BusinessKey: "wv-list", Name: "X",
+		CreatedByUserID: uuid.New(), TemplateKey: "wv-list", Name: "X",
 	}
 	if err := wfRepo.Create(ctx, wf); err != nil {
 		t.Fatalf("create workflow: %v", err)

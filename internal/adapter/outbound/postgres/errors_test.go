@@ -28,7 +28,7 @@ func TestMapErr(t *testing.T) {
 	}{
 		{"nil passthrough", nil, nil},
 		{"no-rows becomes ErrNotFound", pgx.ErrNoRows, domain.ErrNotFound},
-		{"business key constraint", uniqueViolation(constraintWorkflowBusinessKey), domain.ErrDuplicateBusinessKey},
+		{"template key constraint", uniqueViolation(constraintWorkflowTemplateKey), domain.ErrDuplicateTemplateKey},
 		{"draft constraint", uniqueViolation(constraintWorkflowVersionDraft), domain.ErrDraftAlreadyExists},
 		{"published constraint", uniqueViolation(constraintWorkflowVersionPublished), domain.ErrDraftConcurrency},
 		{"tenant module process id constraint", uniqueViolation(constraintModuleProcessIDTenant), domain.ErrModuleProcessIDTaken},

@@ -1155,7 +1155,7 @@ paths:
         - in: query
           name: key
           schema: { type: string }
-          description: Exact business key match (business_key = key).
+          description: Exact template key match.
         - in: query
           name: is_valid
           schema: { type: boolean }
@@ -1219,7 +1219,7 @@ paths:
                 key:
                   type: string
                   maxLength: 255
-                  description: Unique business key for this workflow within the tenant. Immutable after creation.
+                  description: Unique template key for this workflow within the tenant. Immutable after creation.
                   example: tender-review
                 name:
                   type: string
@@ -1254,17 +1254,17 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "409":
-          description: Business key already exists for this tenant, or idempotency key reused with a different payload.
+          description: Template key already exists for this tenant, or idempotency key reused with a different payload.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example:
                 type: "https://api.workflow.platform/errors/conflict"
-                title: "Duplicate Business Key"
+                title: "Duplicate Template Key"
                 status: 409
                 detail: "A workflow with key 'tender-review' already exists for this tenant."
                 instance: "/workflows"
-                code: "DUPLICATE_BUSINESS_KEY"
+                code: "DUPLICATE_TEMPLATE_KEY"
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
         "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
@@ -1802,7 +1802,7 @@ paths:
                 new_key:
                   type: string
                   maxLength: 255
-                  description: New unique business key for the cloned workflow. Must not already exist for this tenant.
+                  description: New unique template key for the cloned workflow. Must not already exist for this tenant.
                   example: tender-review-copy
                 new_name:
                   type: string
@@ -1830,7 +1830,7 @@ paths:
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
         "409":
-          description: Business key conflict (cloned key already exists), source version is not PUBLISHED or ARCHIVED, or idempotency key reused with a different payload.
+          description: Template key conflict (cloned key already exists), source version is not PUBLISHED or ARCHIVED, or idempotency key reused with a different payload.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1839,11 +1839,11 @@ paths:
                   summary: Cloned key already exists
                   value:
                     type: "https://api.workflow.platform/errors/conflict"
-                    title: "Duplicate Business Key"
+                    title: "Duplicate Template Key"
                     status: 409
                     detail: "A workflow with this key already exists for this tenant."
                     instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/versions/11abcc22-3844-42bc-938b-665cd42c1111/clone"
-                    code: "DUPLICATE_BUSINESS_KEY"
+                    code: "DUPLICATE_TEMPLATE_KEY"
                 invalid_status:
                   summary: Source version is not in PUBLISHED or ARCHIVED status
                   value:

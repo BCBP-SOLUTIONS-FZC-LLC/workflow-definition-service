@@ -11,7 +11,7 @@ import (
 type WorkflowRepository interface {
 	Create(ctx context.Context, w *domain.Workflow) error
 	GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.Workflow, error)
-	GetByBusinessKey(ctx context.Context, tenantID uuid.UUID, businessKey string) (*domain.Workflow, error)
+	GetByTemplateKey(ctx context.Context, tenantID uuid.UUID, templateKey string) (*domain.Workflow, error)
 	List(ctx context.Context, tenantID uuid.UUID, filter WorkflowFilter) ([]*domain.Workflow, int64, error)
 	UpdateActiveVersion(ctx context.Context, tenantID, workflowID uuid.UUID, versionID *uuid.UUID) error
 	UpdateMetadata(ctx context.Context, tenantID, workflowID uuid.UUID, name, description string) error
@@ -105,7 +105,7 @@ type StarterTemplateRepository interface {
 
 type WorkflowFilter struct {
 	Search      *string
-	BusinessKey *string
+	TemplateKey *string
 	IsValid     *bool
 	HasDraft    *bool
 	Archived    *bool

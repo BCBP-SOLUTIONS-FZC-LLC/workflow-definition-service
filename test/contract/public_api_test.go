@@ -46,7 +46,7 @@ func (f createFake) Create(_ context.Context, tenantID, _ uuid.UUID, key, name, 
 	if f.err != nil {
 		return nil, nil, f.err
 	}
-	wf := &domain.Workflow{ID: uuid.New(), TenantID: tenantID, BusinessKey: key, Name: name, Description: description}
+	wf := &domain.Workflow{ID: uuid.New(), TenantID: tenantID, TemplateKey: key, Name: name, Description: description}
 	return wf, &domain.WorkflowVersion{ID: uuid.New(), WorkflowID: wf.ID, Status: domain.VersionStatusDraft}, nil
 }
 
@@ -235,7 +235,7 @@ func TestPublicContract_GetWorkflow(t *testing.T) {
 	tenant := uuid.New()
 	n := int32(2)
 	published := time.Now().UTC()
-	wf := &domain.Workflow{ID: uuid.New(), TenantID: tenant, BusinessKey: "flow-one", Name: "Flow one", Description: "d", CreatedByUserID: uuid.New(), CreatedAt: published, UpdatedAt: published}
+	wf := &domain.Workflow{ID: uuid.New(), TenantID: tenant, TemplateKey: "flow-one", Name: "Flow one", Description: "d", CreatedByUserID: uuid.New(), CreatedAt: published, UpdatedAt: published}
 	versions := []*domain.WorkflowVersion{
 		{ID: uuid.New(), WorkflowID: wf.ID, Status: domain.VersionStatusPublished, VersionNumber: &n, IsValid: true, CreatedAt: published, PublishedAt: &published},
 		{ID: uuid.New(), WorkflowID: wf.ID, Status: domain.VersionStatusDraft, IsValid: true, CreatedAt: published},
@@ -325,7 +325,7 @@ func TestPublicContract_Versions(t *testing.T) {
 	n := int32(3)
 	at := time.Now().UTC()
 	version := &domain.WorkflowVersion{ID: uuid.New(), WorkflowID: uuid.New(), Status: domain.VersionStatusPublished, VersionNumber: &n, BPMNXML: "<bpmn/>", IsValid: true, CreatedAt: at, PublishedAt: &at, RecordVersion: 2}
-	workflow := &domain.Workflow{ID: uuid.New(), BusinessKey: "flow-copy", Name: "Flow copy", CreatedAt: at, UpdatedAt: at}
+	workflow := &domain.Workflow{ID: uuid.New(), TemplateKey: "flow-copy", Name: "Flow copy", CreatedAt: at, UpdatedAt: at}
 	diff := &service.DiffResult{WorkflowID: version.WorkflowID, BaseVersionID: version.ID, TargetVersionID: uuid.New(), ChangeType: service.ChangeTypeStructural, Changes: service.DiffChanges{
 		AddedDepartments: []string{"legal"}, StageChanges: []service.StageChange{{NodeKey: "legal/Review", Description: "added"}},
 		StepChanges: []service.StepChange{{Description: "step added", After: &dsl.ExecutionStep{Sequential: []string{"legal"}}}},
