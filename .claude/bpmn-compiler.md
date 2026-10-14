@@ -42,7 +42,7 @@ Cycles are not rejected outright. `classifyBackEdges` does a DFS; back-edges are
 
 The compiler walks **forward edges only** (skipping back-edges) so traversal always terminates. `validateMaxDepth` caps forward path length at 2000.
 
-All graph traversal is **iterative** (`bpmncore.IterativeDFS` + `DFSVisitor{OnEnter, OnExit}`). `OnEnter` returns false to prune children; `OnExit` enables onStack tracking for back-edge classification. Used by `ClassifyBackEdges`, `ValidateReachability`, and `ValidateMaxDepth`.
+All graph traversal is **iterative** (`bpmncore.IterativeDFS` + `DFSVisitor{OnEnter, OnExit}`) and a true depth-first walk: a node is entered when it is reached, and a frame holds only a child index, so memory stays O(V+E). `OnEnter` returns false to prune children; `OnExit` enables onStack tracking for back-edge classification, and a loop through sibling branches is found because the walk reaches each sibling through the path that loops back. Used by `ClassifyBackEdges`, `ValidateReachability`, and `ValidateMaxDepth`.
 
 ## Department Derived from Lane Membership
 

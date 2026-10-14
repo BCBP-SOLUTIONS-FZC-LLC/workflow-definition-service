@@ -27,6 +27,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Fixed
 
+- A lane that holds work needs a name, and lane names must differ without regard to case or surrounding space (`INVALID_LANE_NAME`); an unnamed lane without work stays valid.
+- A second membership revocation adds its nodes to a version's validation errors instead of replacing the first one's, and a redelivery changes nothing.
+- A revocation event leaves a default assignee added after the event time alone, so a reordered or redelivered event cannot invalidate a version published after the user was added back. A default assignee's `created_at` is a `timestamptz`, so the comparison holds whatever the database session time zone.
+- The compiled-plan cache holds only valid published plans and re-reads the version after each write, so a revocation that lands between the read and the write leaves no valid entry behind. A failed cache eviction on the revocation path is returned, after the user's tasks are paused, so the event is redelivered.
+- Module activation names only a published version of that module, workflow activation needs a valid version, and module-version publish and archive and starter delete are scoped to the caller's tenant in SQL.
+- A request with an `Idempotency-Key` that is still running gets `409` `IDEMPOTENCY_REQUEST_IN_PROGRESS` instead of running twice; the key is scoped to the user, limited to 256 characters (`400` above), and cache failures log a warning with the key hashed.
+- The depth-first walk enters a node when it is reached, so a loop through sibling branches is a back edge and the depth check counts the path through a cross edge.
+- A workflow that calls a library module is scanned for rejected elements as authored, so a `scriptTask` beside a call is refused like one in a workflow with no call.
+- `cancelActivity` must be `true`, `false`, `1` or `0` (`1` and `0` mean the same as `true` and `false`); sub-process bodies share the process's id space; a DOCTYPE or entity declaration is refused anywhere in the document.
 - A publish is refused with `DRAFT_CONCURRENCY` when the draft was saved after the publish read it, so the stored plan, hash, assignees and module references always belong to the stored BPMN.
 - A draft save that changes nothing returns the `record_version` the row holds instead of an incremented one, so the next save no longer fails as a concurrent edit.
 - Archiving a workflow or a module archives the version that is active when it commits, so a publish landing at the same moment cannot leave a published version nothing references.

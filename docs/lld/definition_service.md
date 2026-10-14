@@ -618,7 +618,8 @@ The service uses Valkey 8.0 (Redis-compatible, via `github.com/redis/go-redis/v9
 | Purpose | Key format | TTL | Invalidated by |
 | --- | --- | --- | --- |
 | Compiled workflow plan | `wf:plan:<tenantID>:<versionID>` | 1 h | Archive, or a membership revocation that marks the version invalid (key deleted); only published versions are cached |
-| Idempotency key | `idem:<tenantID>:<method>:<path>:<idempotency-key>` | 24 h | Not invalidated — expires naturally; only 2xx responses are cached |
+| Idempotency key | `idem:<tenantID>:<userID>:<method>:<path>:<idempotency-key>` | 24 h | Not invalidated — expires naturally; only 2xx responses are cached |
+| Idempotency pending marker | `idem:<tenantID>:<userID>:<method>:<path>:<idempotency-key>:pending` | 1 min | Taken before the handler runs and released when it finishes; a concurrent request with the same key is refused |
 | Draft-edit lock | `draft-lock:<tenantID>:<workflowID>` | 30 s | Taken for the duration of a save with a per-save token and released only by that token, so a save that outlived the lock cannot delete the next editor's |
 
 The compiled-plan cache is populated lazily: on the first internal compiled-plan read (§3.4.1) after a version is published, the plan is fetched from Postgres and written to Valkey. Subsequent requests on the same version hit the cache without a DB round-trip.
@@ -944,8 +945,10 @@ The Definition Service keeps no dedup registry. At-least-once delivery is absorb
 
 Both consumed types — `DepartmentMembershipRevoked` and `MembershipRevoked` (§7.4.2, §7.4.5) — reduce to two writes:
 
-- `SetVersionInvalid` replaces `is_valid` with `false` and replaces `validation_errors_json` with the same value. The payload is built from the revoked user's assignee rows, which a redelivery does not change, and `ListAssigneesByUser` orders by `(workflow_version_id, node_key)`, so each version's rendered array follows `node_key` order rather than the heap's.
+- `SetVersionInvalid` sets `is_valid` to `false` and adds the revoked user's nodes to `validation_errors_json`: the stored list first, then the new one, without repeating an entry. Two revocations on one version therefore leave both lists, and a redelivery changes nothing. The payload is built from the revoked user's assignee rows and `ListAssigneesByUser` orders by `(workflow_version_id, node_key)`, so each version's new entries follow `node_key` order rather than the heap's.
 - The Execution Service's pause-tasks call (§3.4.2) signals `instance-pause` only for instances it reads as `RUNNING`. The status transition is applied asynchronously by Temporal, so a redelivery arriving inside that window re-sends the signal; the interpreter's own pause handling absorbs the repeat.
+
+**A revocation applies to the assignees that existed when the event was produced.** An assignee row created after the envelope `time` is left alone, so a redelivered or reordered revocation that arrives after the user was added back and a new version was published with them as default assignee does not invalidate that version. The user's open tasks are still paused, since this service cannot tell whether the user was added back. An envelope without `time` applies to every assignee row. The version's compiled-plan cache entry is evicted after the write; if the eviction fails the handler still pauses the tasks and then answers `500`, so the consumer redelivers the event. The compiled-plan read caches only a published, valid version and re-reads it after writing the entry, evicting it when a revocation landed in between.
 
 **A redelivery cannot undo an operator's recovery.** Recovery from an invalidation is a new version (§7.4.3 Flow A), never a revalidation of the invalidated one: no query sets `is_valid = true` on a PUBLISHED row. `UpdateDraftVersion` is guarded on `status = 'DRAFT'`, `CreateWorkflowVersion` inserts only DRAFT rows, and `PublishVersion` does not touch the column.
 
@@ -1040,7 +1043,7 @@ The Envoy API Gateway performs JWT verification and injects standardized context
 - **Entity Expansion**: Disallowed in XML parser to prevent Billion Laughs / XXE attacks.
 - **Rate Limiting**: Enforced at the gateway (Envoy) level per tenant based on plan tier (burst limit `plans.api_rate_limit_rps` and monthly budget `plans.api_request_budget_monthly`).
 - **Plan Quotas & Entitlements**: During workflow creation (`POST /workflows`), the service parses the `x-plan` header and enforces limits on the maximum allowed workflow templates per tenant (e.g. Starter: 5 templates, Pro: 50, Enterprise: Unlimited). Requests exceeding this quota return a `403 Forbidden` with a plan limits block.
-- **Idempotency**: All mutating operations (`POST`, `PUT`) evaluate `Idempotency-Key` (UUID) headers using a Redis cache to prevent duplicate processing on network retries.
+- **Idempotency**: A mutating operation (`POST`, `PUT`) that carries an `Idempotency-Key` header of at most 256 characters (a longer one is `400`) runs once per key. The key is scoped to the tenant, the user, the method and the path, so one user's stored response is never served to another. A request whose key is still running is refused with `409` `IDEMPOTENCY_REQUEST_IN_PROGRESS` instead of running twice; the marker is released when the first request finishes, so a client retry after a failure runs. The key is optional and the cache fails open: an unavailable cache runs the request without the protection and logs a warning that names the key only by its hash.
 
 #### Input Validation Rules
 
@@ -1123,6 +1126,7 @@ Below is the complete registry of application-specific error codes returned insi
 | `DRAFT_CONCURRENCY` | `409 Conflict` | Draft Concurrency Violation | Stale draft update — client's `record_version` does not match the current value; another update has been applied since the draft was last read. |
 | `WORKFLOW_CONCURRENCY_VIOLATION` | `409 Conflict` | Workflow Concurrency Violation | Stale workflow metadata update — client's `record_version` on the `workflow` row does not match; another name/description update has been applied since the client last read. _(planned — pending `PATCH /workflows/:id` endpoint) |
 | `IDEMPOTENCY_KEY_REPLAY` | `409 Conflict` | Idempotent Request Replayed | The request was submitted with a previously processed `Idempotency-Key` but different parameters. |
+| `IDEMPOTENCY_REQUEST_IN_PROGRESS` | `409 Conflict` | Idempotency Request In Progress | A request with the same `Idempotency-Key` is still running; retry once it finishes. |
 | `NO_ACTIVE_VERSION` | `409 Conflict` | No Active Version | The operation (e.g. archiving or promoting) requires an active version, but none is set. |
 | `MODULE_PROCESS_ID_CONFLICT` | `409 Conflict` | Module Process Id Conflict | A new module's process id is already used by a module the tenant can call, or a new module version's process id differs from its module's. |
 | `STRUCTURAL_DIVERGENCE` | `409 Conflict` | Structural Divergence Detected | The compiled graph has structural shifts. Blocked unless `force_publish_structural` is `true`. |
@@ -1154,7 +1158,7 @@ Below is a detailed walkthrough of the endpoints, checks, and flow execution tra
 2. **`XXE_ENTITY_DETECTED`** (internal security-log signal — the client receives `400 INVALID_BPMN_XML`)
    - **Endpoints**: `POST /workflows`, `PUT /workflows/:id/draft`, `POST /workflows/validate`
    - **Trigger Scenario**: An attacker attempts to exploit the parser using an XML External Entity (XXE) injection or a nested entity expansion ("XML Bomb" or "Billion Laughs") to cause denial of service or read arbitrary local files.
-   - **Technical Cause**: `securityScan` rejects any `<!DOCTYPE>`/`<!ENTITY>` declaration outright, and a token-count cap guards against expansion; both tag the failure with `domain.ErrForbiddenXML`.
+   - **Technical Cause**: `securityScan` rejects a `<!DOCTYPE>`/`<!ENTITY>` declaration anywhere in the document outright, and a token-count cap guards against expansion; both tag the failure with `domain.ErrForbiddenXML`.
    - **Step-by-Step Flow**:
      1. The client sends a request with an XML payload that includes a `<!DOCTYPE ...>` block (or a token stream exceeding the cap).
      2. `securityScan`/`countTokens` reject it before unmarshal, wrapping `domain.ErrForbiddenXML` (which also satisfies `domain.ErrMalformedBPMN`).
@@ -1397,7 +1401,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
 
 1. **`REJECTED_ELEMENT`**
    - **Trigger Scenario**: The uploaded XML contains a Tier 3 element that will never be supported (§4.1.2 / §4.1.4). Examples: `<bpmn:serviceTask>`, `<bpmn:scriptTask>`, `<bpmn:complexGateway>`, data elements.
-   - **Trigger Logic**: The parser scans the raw XML token stream for tag names in the `rejectedElements` map (§4.1.4). One error per offending node ID is emitted. The scan runs before `encoding/xml` unmarshal so that elements the decoder silently drops are still surfaced.
+   - **Trigger Logic**: The parser scans the raw XML token stream for tag names in the `rejectedElements` map (§4.1.4). One error per offending node ID is emitted. The scan runs before `encoding/xml` unmarshal so that elements the decoder silently drops are still surfaced. A workflow that calls library modules is scanned as authored, before the modules are bundled into it, so a rejected element beside a call is reported the same as one in a workflow with no call.
 
 2. **`MISSING_NAMESPACE`**
    - **Trigger Scenario**: The uploaded XML lacks standard BPMN 2.0 namespaces or the Zeebe custom modeler extension namespaces in the root `<bpmn:definitions>` tag.
@@ -1486,7 +1490,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Logic**: The unified duration converter (`parseDuration`) is applied to the `timeDuration` value. Accepted formats: ISO 8601 (`P3D`, `PT72H`) or Go duration (`72h`, `3h30m`), and the duration must be positive and short enough for the Execution Service to run as a timer (about 292 years at most). Any other format, a zero or negative duration, or one too long emits this error against the boundary event or intermediate catch event node ID. The legacy `sla_duration` Zeebe property is not read; SLA is modelled exclusively via timer boundary events.
 
 22. **`INVALID_BOUNDARY_ATTACHMENT`**
-    - **Trigger Scenario**: A boundary event is attached to a node that does not legally host that boundary type. Specifically: an error boundary event attached to anything other than `bpmn:subProcess` or `bpmn:callActivity`, or a timer boundary event whose host is anything other than `bpmn:userTask` or `bpmn:subProcess`. Message boundary events may attach to `bpmn:userTask`, `bpmn:subProcess`, or `bpmn:callActivity`. A timer boundary event may also attach to `bpmn:callActivity`. A node has at most one timer boundary and at most one message boundary, and an error boundary's `errorRef` names a `bpmn:error` of the document.
+    - **Trigger Scenario**: A boundary event is attached to a node that does not legally host that boundary type, or its `cancelActivity` is not `true`, `false`, `1` or `0` (`1` and `0` mean the same as `true` and `false`). Specifically: an error boundary event attached to anything other than `bpmn:subProcess` or `bpmn:callActivity`, or a timer boundary event whose host is anything other than `bpmn:userTask` or `bpmn:subProcess`. Message boundary events may attach to `bpmn:userTask`, `bpmn:subProcess`, or `bpmn:callActivity`. A timer boundary event may also attach to `bpmn:callActivity`. A node has at most one timer boundary and at most one message boundary, and an error boundary's `errorRef` names a `bpmn:error` of the document.
     - **Trigger Logic**: `ValidateBoundaryEvents` in `bpmn_compiler/validator/boundary.go` iterates all boundary events. If `attachedToRef` resolves to an unsupported host element, a second timer or message boundary repeats a host, or an `errorRef` names no error, this error is emitted against the boundary event node ID.
 
 23. **`UNSUPPORTED_ELEMENT`**
@@ -1560,8 +1564,8 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Logic**: `ValidateDeptID` parses the value; it is the IAM department every task in the lane runs in.
 
 37. **`INVALID_LANE_NAME`**
-    - **Trigger Scenario**: A lane's `name` contains `/`, `::` or `~`.
-    - **Trigger Logic**: `ValidateLaneNames` in `bpmn_compiler/validator/process.go` checks every lane of every process in the document. A lane's name is the first part of its tasks' node keys, which consumers split at the first `/`; `::` separates the calls in a scoped key; `~` numbers a lane's later segments (§4.2).
+    - **Trigger Scenario**: A lane's `name` contains `/`, `::` or `~`; a lane that holds work has no name or a blank one; or two lanes have the same name, compared without case or surrounding space. A lane with no work may stay unnamed.
+    - **Trigger Logic**: `ValidateLaneNames` in `bpmn_compiler/validator/process.go` checks every lane of every process in the document. A lane's name is the first part of its tasks' node keys, which consumers split at the first `/`; `::` separates the calls in a scoped key; `~` numbers a lane's later segments (§4.2). A lane name is also its department key, so one name is one department: a blank name would key a task to no department, and a repeated name would merge two lanes into one.
 
 38. **`NO_RUNNABLE_PROCESS`**
     - **Trigger Scenario**: No process would run: every process is marked ignore, not executable, or called by another.
@@ -1586,7 +1590,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Logic**: An end event ends the path it is on, so the compiler stops there and drops whatever the flow leads to. The error is emitted on the end event, in sub-process bodies as well.
 
 43. **`DUPLICATE_ELEMENT_ID`**
-    - **Trigger Scenario**: Two elements of one process, flow nodes or sequence flows, share an `id`.
+    - **Trigger Scenario**: Two elements of one process, flow nodes or sequence flows, share an `id`, a sub-process body included: its elements share the process's id space.
     - **Trigger Logic**: The compiler identifies a node by its id, so a repeated id merges two elements into one stage. One error is emitted per repeated id.
 
 44. **`GATEWAY_BRANCH_WITHOUT_CONDITION`** *(warning)*
@@ -1820,7 +1824,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 - **POST** `/workflows/:id/versions/:version_id/promote`
 - **Semantics**: Atomic pointer swap to select an older published version as the active pointer (`active_version_id`).
   - **Status Constraint**: Only `PUBLISHED` versions can be promoted. Attempting to promote a version in `DRAFT` or `ARCHIVED` status returns `409 Conflict` (`INVALID_VERSION_STATUS`).
-  - **Validity Constraint**: A version with `is_valid = false`, one whose assignees lost a required department role, cannot be promoted and returns `409 Conflict` (`INVALID_VERSION_STATUS`).
+  - **Validity Constraint**: A version with `is_valid = false`, one whose assignees lost a required department role, cannot be promoted and returns `409 Conflict` (`INVALID_VERSION_STATUS`). The database enforces it with the status rule, so a revocation that lands after the check and before the write still cannot activate the version.
   - **No Active Version**: Promote is a pointer swap, so it also makes a published version active on a workflow with no active version, for example one that was archived.
   - **Already Active Pointer (Early Exit / Silent No-Op)**: If the target version is already set as the `active_version_id` for the workflow, the API returns a silent `200 OK` early exit without creating a new audit record.
   - **Event Emission**: None. Promote's own state transition (the atomic `active_version_id` pointer swap) commits without enqueueing any outbound event (§7.2, §10.7).
@@ -4919,6 +4923,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.38 | 2026-10-12 | **The version list is summaries, shutdown drains, and the review's smaller fixes** (§1.8, §1.9, §2.2, §3.1.4 codes 23 and 33, §3.3.3.1, §3.1.3). A page of versions carries summaries only; a page number is bounded. The pod fails readiness for `SHUTDOWN_DRAIN_DELAY` before it stops listening. The artifact hash covers messages, errors and message flows and ignores property order everywhere. A call inside a sub-process is `UNSUPPORTED_ELEMENT`, and a main process named like a called one is `DUPLICATE_PROCESS_ID`. The active-version pointer names only a published version of its workflow. The draft-edit lock is released only by the save that took it. The bounded windows that remain are stated: a stale cached plan up to the TTL, and a revocation between a publish's eligibility check and its commit. |
 | 1.39 | 2026-10-13 | **A task's due and follow-up dates must be RFC 3339** (§3.1.4 code 45). The validator refuses a `dueDate` or `followUpDate` that is not an RFC 3339 date-time, with the new code `INVALID_TASK_SCHEDULE`; the Execution Service dropped any other value and the task ran with no SLA. The plan-expansion budget of 1000 stages is a domain constant shared by the compiler and by the publish, node-read and module-contract paths, since `workflow-models` `v2.0.0` refuses a zero budget. Definition is on `workflow-models/v2` `v2.0.0`. |
 | 1.40 | 2026-10-13 | **Branch conditions are one comparison, parsed by the shared parser** (§3.1.4 code 46, §4). The validator parses every `conditionExpression` of a split with `workflow-models` `dsl.ParseCondition` and refuses anything but `[= ] field (=|==|!=) literal` with a string, number or boolean literal as `INVALID_CONDITION_EXPRESSION`, so the form the designer guide documents (`= decision = "bid"`) is the form the Execution Service evaluates and a comparison such as `score < 70` is refused at publish instead of failing the gateway at run time. The internal events and alias routes return 413 for a body over the limit, declared in the internal spec, and a contract test sends every route through the real router against `api/internal-openapi.yaml`. |
+| 1.41 | 2026-10-14 | **Data integrity: lanes, revocations, idempotency, back edges** (§3.1.4 codes 1, 22, 37 and 43, §3.3.11, §7.4, §9, §10.9, §12). A lane that holds work needs a name, and lane names are unique without regard to case (`INVALID_LANE_NAME`). A `cancelActivity` other than `true`, `false`, `1` or `0` is refused, and `1` and `0` are read as booleans. Sub-process bodies share the process's id space (`DUPLICATE_ELEMENT_ID`). A DOCTYPE or entity declaration is refused anywhere in the document, not only in its first 4 KiB. A workflow that calls a library module is scanned for rejected elements as authored, not after bundling. The depth-first walk enters a node when it is reached, so a loop through sibling branches is a back edge and the depth check counts the path through a cross edge. A second revocation adds to a version's validation errors instead of replacing them; a revocation leaves assignees added after the event time alone; the plan cache holds only valid published plans and is re-checked after each write; a failed eviction is retried by redelivery. Module activation names only a published version of that module, workflow activation also needs a valid version, and module-version publish and archive and starter delete are scoped to the caller's tenant in SQL. A default assignee's `created_at` is a `timestamptz`, so the revocation time filter compares instants whatever the session time zone. An `Idempotency-Key` is scoped to the user, capped at 256 characters, and a concurrent request with the same key gets `409` `IDEMPOTENCY_REQUEST_IN_PROGRESS`. |
 ---
 
 ## Appendix E: Open Items
