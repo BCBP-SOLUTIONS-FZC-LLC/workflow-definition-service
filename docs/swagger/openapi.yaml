@@ -486,11 +486,20 @@ components:
           type: string
           nullable: true
           description: "Advisory note set when stage type is not a registered engine class (IAM-owned passthrough). Absent for known types."
+        connector_type:
+          type: string
+          description: "The connector a connector stage runs, from zeebe:taskDefinition type connector:<name>. Set only on a connector stage."
+        io_mapping:
+          allOf: [{ $ref: '#/components/schemas/IOMapping' }]
+          nullable: true
+          description: "Variable input/output declarations of a connector stage."
         boundary_timer:
           type: object
           nullable: true
           description: "SLA deadline from a timer boundary event on the task. Null when no boundary timer is attached."
           properties:
+            boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
+            steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
             duration:     { type: string, description: "ISO 8601 duration (e.g. 'PT48H', 'P3D')." }
             interrupting: { type: boolean, description: "true = task cancelled on fire; false = escalation runs concurrently." }
             target_dept:  { type: string, nullable: true, description: "Department key to route the escalation path to." }
@@ -516,6 +525,7 @@ components:
           type: string
           description: "Department identifier from the BPMN lane name. Sourced from the lane name attribute; format is owned by the Profile Service."
         label:  { type: string }
+        iam_department_id: { type: string, format: uuid, description: "The IAM department that owns the lane's stages." }
         props:
           type: object
           nullable: true
@@ -596,6 +606,10 @@ components:
                 description: >
                   BPMN element name of the revert target. Present when revert_to_stage
                   is "sub_workflow" or empty, same rules as target_name.
+              steps:
+                type: array
+                description: "The steps the branch runs when it is taken."
+                items: { $ref: '#/components/schemas/ExecutionStep' }
         sub_workflow:
           allOf: [{ $ref: '#/components/schemas/SubWorkflowStep' }]
           nullable: true
@@ -603,26 +617,9 @@ components:
           allOf: [{ $ref: '#/components/schemas/CallPlanStep' }]
           nullable: true
         io_mapping:
-          type: object
+          allOf: [{ $ref: '#/components/schemas/IOMapping' }]
           nullable: true
           description: "Variable input/output declarations of a callActivity step (call_plan). The Depts and Assignees inputs compile to call_plan, not here."
-          properties:
-            inputs:
-              type: array
-              items:
-                type: object
-                required: [source, target]
-                properties:
-                  source: { type: string, description: "FEEL expression or literal variable name from the caller's context." }
-                  target: { type: string, description: "Variable name in the called process context." }
-            outputs:
-              type: array
-              items:
-                type: object
-                required: [source, target]
-                properties:
-                  source: { type: string }
-                  target: { type: string }
         extras:
           type: object
           nullable: true
@@ -635,6 +632,23 @@ components:
           description: "Message boundary events attached to this step."
       example:
         sequential: [design, planning, construction]
+
+    IOMapping:
+      type: object
+      properties:
+        inputs:
+          type: array
+          items: { $ref: '#/components/schemas/IOVar' }
+        outputs:
+          type: array
+          items: { $ref: '#/components/schemas/IOVar' }
+
+    IOVar:
+      type: object
+      required: [source, target]
+      properties:
+        source: { type: string, description: "FEEL expression or literal variable name from the caller's context." }
+        target: { type: string, description: "Variable name in the called process context." }
 
     ParallelBranch:
       type: object
@@ -704,28 +718,34 @@ components:
       type: object
       required: [short_circuit]
       properties:
+        boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
         error_code:   { type: string, nullable: true, description: "BPMN error code that triggers this path. Empty means catch-all." }
         short_circuit: { type: boolean, description: "true = bypass remaining stages and route directly to target_dept." }
         target_dept:  { type: string, nullable: true, description: "Department to route to on this error path." }
         terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
+        steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
 
     TimerPath:
       type: object
       required: [duration, interrupting]
       properties:
+        boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
         duration:     { type: string, description: "ISO 8601 duration string." }
         interrupting: { type: boolean, description: "true = task cancelled on fire; false = escalation runs concurrently." }
         target_dept:  { type: string, nullable: true, description: "Department to route to on this timer path." }
         terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
+        steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
 
     MessagePath:
       type: object
       required: [message_name, interrupting]
       properties:
+        boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
         message_name: { type: string, description: "Resolved message name used for runtime correlation. May be empty if the source BPMN's message flow/messageRef could not be resolved (see MISSING_MESSAGE_DEFINITION warning)." }
         interrupting: { type: boolean, description: "true = host activity cancelled on fire; false = escalation runs concurrently." }
         target_dept:  { type: string, nullable: true, description: "Department to route to on this message path." }
         terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
+        steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
 
     CompiledCollaboration:
       type: object
@@ -1018,6 +1038,18 @@ components:
             instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222"
             code: "NOT_FOUND"
 
+    PayloadTooLarge:
+      description: The request body exceeds the 10 MB limit.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+    UnsupportedMediaType:
+      description: A request with a body must carry `Content-Type` application/json.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+
     BadRequest:
       description: >
         Malformed request — unparseable JSON, a missing or invalid field, a page, limit or
@@ -1186,14 +1218,11 @@ paths:
               properties:
                 key:
                   type: string
-                  minLength: 2
-                  maxLength: 100
-                  pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
-                  description: Unique slug for this workflow within the tenant. Lowercase alphanumeric and hyphens only. Immutable after creation.
+                  maxLength: 255
+                  description: Unique business key for this workflow within the tenant. Immutable after creation.
                   example: tender-review
                 name:
                   type: string
-                  minLength: 2
                   maxLength: 255
                   example: Tender Document Review Process
                 description:
@@ -1202,9 +1231,7 @@ paths:
                   example: Standard review process for tender proposal documents
                 bpmn_xml:
                   type: string
-                  minLength: 50
-                  maxLength: 10485760
-                  description: Raw BPMN 2.0 XML string. Max 10 MB (10,485,760 chars). Must declare bpmn and zeebe namespaces.
+                  description: Raw BPMN 2.0 XML string. The request body is limited to 10 MB (413 above it). Must declare bpmn and zeebe namespaces.
                   example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
       responses:
         "201":
@@ -1238,16 +1265,8 @@ paths:
                 detail: "A workflow with key 'tender-review' already exists for this tenant."
                 instance: "/workflows"
                 code: "DUPLICATE_BUSINESS_KEY"
-        "413":
-          description: Payload exceeds 10 MB limit.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "415":
-          description: Content-Type is not application/json.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "500": { $ref: '#/components/responses/InternalError' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
@@ -1275,9 +1294,7 @@ paths:
               properties:
                 bpmn_xml:
                   type: string
-                  minLength: 50
-                  maxLength: 10485760
-                  description: Raw BPMN 2.0 XML. Max 10 MB. Must declare bpmn and zeebe namespaces.
+                  description: Raw BPMN 2.0 XML. The request body is limited to 10 MB (413 above it). Must declare bpmn and zeebe namespaces.
                   example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
       responses:
         "200":
@@ -1291,16 +1308,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401": { $ref: '#/components/responses/Unauthorized' }
-        "413":
-          description: Payload exceeds 10 MB limit.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "415":
-          description: Content-Type is not application/json.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -1421,6 +1430,7 @@ paths:
                   compiled_plan_json: { $ref: '#/components/schemas/CompiledCollaboration' }
                   created_by_user_id: { type: string, format: uuid }
                   created_at:         { type: string, format: date-time }
+                  updated_at:         { type: string, format: date-time }
                   published_at:       { type: string, format: date-time, nullable: true }
                   record_version:     { type: integer, format: int64, description: "Monotonic counter. Echo on PUT /draft requests." }
         "401": { $ref: '#/components/responses/Unauthorized' }
@@ -1505,18 +1515,13 @@ paths:
               properties:
                 name:
                   type: string
-                  minLength: 2
-                  maxLength: 128
                   example: Updated Tender Review Process
                 description:
                   type: string
-                  maxLength: 512
                   example: Updated standard review process
                 bpmn_xml:
                   type: string
-                  minLength: 50
-                  maxLength: 10485760
-                  description: Updated BPMN 2.0 XML. Max 10 MB. Must declare bpmn and zeebe namespaces.
+                  description: Updated BPMN 2.0 XML. The request body is limited to 10 MB (413 above it). Must declare bpmn and zeebe namespaces.
                 record_version:
                   type: integer
                   format: int64
@@ -1561,16 +1566,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "413":
-          description: Payload exceeds 10 MB limit.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "415":
-          description: Content-Type is not application/json.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -1727,7 +1724,7 @@ paths:
         - $ref: '#/components/parameters/VersionId'
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
@@ -1763,6 +1760,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }
         "503":
           description: Upstream service unavailable (Execution Service could not be notified).
@@ -1799,14 +1798,11 @@ paths:
               properties:
                 new_key:
                   type: string
-                  minLength: 2
-                  maxLength: 100
-                  pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
-                  description: New unique slug for the cloned workflow. Must not already exist for this tenant.
+                  maxLength: 255
+                  description: New unique business key for the cloned workflow. Must not already exist for this tenant.
                   example: tender-review-copy
                 new_name:
                   type: string
-                  minLength: 2
                   maxLength: 255
                   example: "Tender Document Review Process (Cloned)"
                 new_description:
@@ -1854,6 +1850,8 @@ paths:
                     detail: "Only PUBLISHED or ARCHIVED versions can be cloned."
                     instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/versions/11abcc22-3844-42bc-938b-665cd42c1111/clone"
                     code: "INVALID_VERSION_STATUS"
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -1946,11 +1944,12 @@ paths:
                     type: array
                     items:
                       type: object
+                      required: [node_id, code, message, severity]
                       properties:
                         node_id:  { type: string, example: Activity_0abc123 }
                         code:     { type: string, example: CANDIDATE_USERS_EMPTY }
                         message:  { type: string }
-                        severity: { type: string, enum: [ERROR, WARNING] }
+                        severity: { $ref: '#/components/schemas/BpmnValidationSeverity' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
@@ -2193,7 +2192,7 @@ paths:
                           items: { $ref: '#/components/schemas/ConnectorRegistryField' }
                         retry:
                           type: string
-                          enum: [safe, unsafe, conditional]
+                          enum: [safe, unsafe, conditional, not-delivered]
               example:
                 connectors:
                   rest-call:
@@ -2256,16 +2255,8 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "409": { $ref: '#/components/responses/Conflict' }
-        "413":
-          description: Payload exceeds 10 MB limit.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
-        "415":
-          description: Content-Type is not application/json.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }
         "503":
           description: The secret store (OpenBao) is unavailable.
@@ -2406,6 +2397,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }
         "400": { $ref: '#/components/responses/BadRequest' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
@@ -2589,6 +2582,9 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "400": { $ref: '#/components/responses/BadRequest' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/modules/{id}/versions/{version_id}:
@@ -2783,6 +2779,9 @@ paths:
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "400": { $ref: '#/components/responses/BadRequest' }
         "409": { $ref: '#/components/responses/Conflict' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/starters/from-workflow-version/{version_id}:
@@ -2833,6 +2832,9 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "400": { $ref: '#/components/responses/BadRequest' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedMediaType' }
+        "500": { $ref: '#/components/responses/InternalError' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/starters/{id}:

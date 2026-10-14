@@ -15,7 +15,7 @@ The **Workflow Definition Service** acts as the design-time control plane for th
 - **Database Driver**: `platform-pgcommon/v2 v2.0.1` — wraps `github.com/jackc/pgx/v5` with RLS GUC injection (`app.tenant_id`, `app.user_id`, `app.tenant_roles`), slow-query logging, OTel tracing, Prometheus pool metrics, transaction helpers, pool health check, and a golang-migrate-based `migrate.Runner`. See §1.7 for the full integration.
 - **Database Tooling**: `sqlc` for type-safe query generation, `platform-pgcommon/v2 migrate.Runner` for schema migrations.
 - **Distributed Cache / Store**: Valkey 8.0 (Redis-compatible), via `github.com/redis/go-redis/v9`. Used for: compiled-plan caching, idempotency key deduplication (`Idempotency-Key` header), and distributed draft-edit locking (prevents concurrent draft overwrites between sessions).
-- **Events**: this service publishes none and keeps no outbox. `platform-events v1.2.0` supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /api/v1/internal/events`. See §1.8 for the full integration.
+- **Events**: this service publishes none and keeps no outbox. `platform-events/v2` v2.1.0 supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /api/v1/internal/events`. See §1.8 for the full integration.
 - **Structured Logging**: `go.uber.org/zap` via `platform-gincommon/pkg/logger` — used by middleware chain and all application code. See `coding_style_rules.md §5.1`.
 - **Mocks**: `go.uber.org/mock` (GoMock / `mockgen`) — generates mocks for all `core/port/` interfaces. See §1.5.3.
 
@@ -296,7 +296,7 @@ Tracing starts once at startup, before the metrics identity is fixed and before 
 1. OS signal received
 2. Readiness fails (`/readyz` answers 503) and the pod waits `SHUTDOWN_DRAIN_DELAY` (default 5 s), so the gateway and the Execution Service drop it from their endpoint lists
 3. HTTP server: stop accepting new connections and finish in-flight requests, bounded by `SHUTDOWN_GRACE` (default 30 s)
-4. gincommon.Shutdown(logger)   — flushes OTel HTTP spans + Zap buffer (platform-gincommon v1.2.0)
+4. gincommon.Shutdown(logger)   — flushes OTel HTTP spans + Zap buffer (platform-gincommon v1.6.0)
 5. DB pools: each drains within its own `SHUTDOWN_POOL_DRAIN_TIMEOUT` (default 10 s), the application pool first, then the system pool
 ```
 
@@ -304,24 +304,9 @@ Step 4 must run before pool.Close() to ensure any in-flight DB-related spans are
 
 **Request deadline** (30 s): a request exceeding it is cancelled and returns 503, and `platform_http_request_timeouts_total` counts it separately from other 5xx errors. The deadline runs innermost in the middleware chain, so the metrics, the access log and the server span record the same 503 the client receives.
 
-#### 1.6.1.1 Logger Adapter (`portLogger`)
+#### 1.6.1.1 Logger
 
-`platform-gincommon`'s `Config.Logger` field requires a `port.Logger` interface (`Debug/Info/Warn/Error/Fatal(msg string, fields map[string]interface{})`). Application code and service layers use `*zap.Logger` directly for typed field calls (`zap.String(...)`, `zap.Error(...)`).
-
-To satisfy both contracts with a single logger instance, `cmd/server/main.go` constructs one `*zap.Logger` directly (via `zap.NewDevelopment()` or `zap.NewProduction()`) and wraps it in a thin `portLogger` adapter:
-
-```go
-type portLogger struct{ z *zap.Logger }
-
-func (p *portLogger) Info(msg string, fields map[string]interface{}) {
-    p.z.Info(msg, toZapFields(fields)...)
-}
-// ... Debug, Warn, Error, Fatal implemented the same way
-```
-
-The adapter converts `map[string]interface{}` to `[]zap.Field` via `zap.Any`. All logs — middleware and application — flow through the same `*zap.Logger` instance with consistent format and level configuration.
-
-> **Why not use `logger.NewLogger()`?** The `pkg/logger.NewLogger()` factory returns `port.Logger` (concrete type is an unexported `*ZapLogger` struct). There is no public accessor to retrieve the underlying `*zap.Logger`, making type assertion impossible. Building `*zap.Logger` directly and adapting it avoids this limitation.
+`logger.NewLogger(cfg.AppEnv)` from `platform-gincommon` builds the one `port.Logger` (`Debug/Info/Warn/Error/Fatal(msg string, fields map[string]any)`). The same instance is the gincommon `Config.Logger` and the logger of every service and adapter, so middleware and application logs share one format and level. No adapter type exists in this service.
 
 #### 1.6.2 gincommon Environment Variables (Definition Service)
 
@@ -1471,9 +1456,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Logic**: The process structure validator counts start event nodes. If `count > 1`, validation fails because execution cannot have ambiguous entry points.
 
 12. **`MULTIPLE_END_EVENTS`**
-    - **Trigger Scenario**: The XML defines more than one `<bpmn:endEvent>`.
-    - **Trigger Logic**: The process validator counts end event nodes. If `count > 1`, validation fails to keep the execution termination path deterministic in the MVP.
-
+    - **Deprecated**: the validator does not raise it. A process with more than one `<bpmn:endEvent>` is valid; the code is kept only so stored validation results that carry it still decode.
 13. **`NO_START_EVENT`**
     - **Trigger Scenario**: There is no `<bpmn:startEvent>` in the process.
     - **Trigger Logic**: The validator checks if a start event exists. If `count == 0`, the model is rejected.
@@ -4020,7 +4003,7 @@ This section captures the key architectural and design decisions made for the Wo
 
 - **Decision**: The publish transaction (`PublishVersion`) runs under `SERIALIZABLE` isolation and uses `pgcommon.RunInTxWithRetry` (or `RunInTxWithRetryOpts` with exponential backoff) to automatically retry on serialization failures (`SQLSTATE 40001`) and deadlocks (`SQLSTATE 40P01`).
 
-- **Rationale**: `platform-pgcommon` v1.1.1 includes `RunInTxWithRetry` and `RunInTxWithRetryOpts` in `retry.go` — both retry automatically on `40001`/`40P01`. The service layer uses the `Transactor` port (`internal/core/port/transactor.go`) which currently only wraps `RunInTx`. To expose retry semantics, the port interface needs a `RunInTxWithRetry` method (or a `TxOptions` parameter that enables retry). The publish path is the only transaction in this service that warrants it — all other transactions do not use `SERIALIZABLE` isolation. In practice, concurrent publishes on the same version are rare (only one DRAFT per workflow), but SERIALIZABLE failures are non-deterministic and should not surface as 500 errors to the caller.
+- **Rationale**: `platform-pgcommon/v2` v2.0.1 includes `RunInTxWithRetry` and `RunInTxWithRetryOpts` in `retry.go` — both retry automatically on `40001`/`40P01`. The service layer uses the `Transactor` port (`internal/core/port/transactor.go`) which exposes `RunInTx` and `RunInTxWithRetry`. The publish path is the only transaction in this service that warrants it — all other transactions do not use `SERIALIZABLE` isolation. In practice, concurrent publishes on the same version are rare (only one DRAFT per workflow), but SERIALIZABLE failures are non-deterministic and should not surface as 500 errors to the caller.
 
 ### 10.9 No Dedup Registry — Inbound Handlers Absorb Redelivery
 
@@ -4831,7 +4814,7 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 | **Artifact Hash** | Database | A canonical SHA-256 hash of every process in the bundled BPMN. Computed at publish time and stored in `workflow_version.artifact_hash`. |
 | **Workflow Node Assignee Table** | Database | A denormalized reverse index (`workflow_node_assignee`) mapping users to workflow versions. Enables fast lookup of affected templates when a user loses department membership. Populated atomically during publish; never updated independently. |
 | **sqlc** | Database | A Go code generator that produces type-safe database query functions from hand-written SQL. Eliminates runtime SQL errors and provides compile-time type checking. |
-| **migrate.Runner** | Database | `platform-pgcommon/v2/pkg/migrate.Runner` — a golang-migrate wrapper that applies service schema migrations (`db/migrations/NNNN_name.up.sql` / `.down.sql`) at process startup, tracked under `wf_definition_migrations`. |
+| **migrate.Runner** | Database | `platform-pgcommon/v2/pkg/migrate.Runner` — a golang-migrate wrapper that applies service schema migrations (`db/migrations/NNNN_name.up.sql` / `.down.sql`) as the chart's pre-install and pre-upgrade hook and through `make migrate`, tracked under `wf_definition_migrations`; the server does not migrate at boot. |
 
 ### Validation & Compilation
 
@@ -4972,6 +4955,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.44 | 2026-10-14 | **Schema integrity** (§2.1.1, §2.2). Every time column is `TIMESTAMPTZ` and every `created_at` and `updated_at` is `NOT NULL`. The parent key of a version, a module version and an assignee is `NOT NULL`, and each child names its parent together with its tenant, so a child cannot point at another tenant's parent. `record_version` must be positive. Both DBML files follow the migrations. |
 | 1.45 | 2026-10-14 | **Schema-registry payloads on the event ingest** (§7.4.1). An envelope with a `dataschema` carries a base64 string of a registry-framed payload; the endpoint decodes it with the platform library's decode-only Glue codec and answers `502 EVENT_DECODE_FAILED` for a payload it cannot decode. Before this, any revocation published through a registry was answered `400`. |
 | 1.46 | 2026-10-14 | **Connector catalogue at `workflow-connectors/v2` v2.1.0** (§1.1, §2.2, §10.14, §10.15). The registry no longer lists `chat-notify`: a task naming it publishes with the `UNKNOWN_CONNECTOR_TYPE` warning and the template and credential endpoints refuse it. `storage` and `send-email` declare `provider` as required. The registry lists three types: `storage`, `send-email` and `rest-call`. |
+| 1.47 | 2026-10-14 | **The public spec and the docs follow the code** (§1.6.1.1, §3.4, §4.2, §10.8, Appendix A). Every body route declares `413` and `415`; a publish takes no required body; limits nothing enforced are removed; validation severities are lowercase; getDraft carries `updated_at`; the registry's `retry` includes `not-delivered`; the compiled-plan schemas carry `iam_department_id`, `connector_type`, `io_mapping`, `boundary_id` and boundary and branch `steps`. A version diff sends `step_changes` in snake_case and never `null` for a department list. `MULTIPLE_END_EVENTS` is deprecated and never raised; the logger section describes `logger.NewLogger`; library pins are current. |
 ---
 
 ## Appendix E: Open Items

@@ -18,6 +18,10 @@ import (
 	"github.com/getkin/kin-openapi/routers/legacy"
 )
 
+func init() {
+	openapi3filter.RegisterBodyDecoder("application/xml", openapi3filter.FileBodyDecoder)
+}
+
 // Spec is a loaded, valid OpenAPI document.
 type Spec struct {
 	doc    *openapi3.T
@@ -206,4 +210,21 @@ func undeclaredFields(sc *openapi3.Schema, data any, path string) []string {
 		}
 	}
 	return out
+}
+
+// Operation is one method and path of the document.
+type Operation struct {
+	Method, Path string
+	HasBody      bool
+}
+
+// Operations lists every operation of the document that is not a documentation page.
+func (s *Spec) Operations() []Operation {
+	var ops []Operation
+	for path, item := range s.doc.Paths.Map() {
+		for method, op := range item.Operations() {
+			ops = append(ops, Operation{Method: method, Path: path, HasBody: op.RequestBody != nil})
+		}
+	}
+	return ops
 }

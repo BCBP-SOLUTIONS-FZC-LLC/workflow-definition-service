@@ -205,7 +205,6 @@ make help
 | `make metrics-lint` | Observability standard: collector naming, `metricslint` on a real scrape, alert and doc references, inventory drift |
 | `make metrics-inventory` | Regenerate `docs/observability/metric-registry.md` |
 | `make docker-build` / `make docker-lint` / `make docker-trivy` | Build the container image, lint the Dockerfile, scan for CVEs |
-| `make godoc` | Serve Go package documentation locally via pkgsite (`http://localhost:8080`) |
 | `make docker-up` | Start PostgreSQL + Valkey (+ PgBouncer) |
 | `make docker-down` | Stop infra |
 | `make clean` | Remove `bin/`, `gen/`, coverage, mock outputs |

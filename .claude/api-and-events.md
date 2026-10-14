@@ -20,6 +20,7 @@ The service does **not** consume SQS in-process. The shared workflow-events cons
 Route is on the `/internal` group guarded by `RequireInternalToken` (`x-internal-token` vs `INTERNAL_API_TOKEN`; required outside dev, skipped when unset in dev). Consumer retry contract:
 - `2xx` — handled (a redelivery reprocesses and converges; there is no dedup table)
 - `400` — malformed (non-retryable)
+- `502 EVENT_DECODE_FAILED` — the envelope names a `dataschema` and its payload is not a registry-framed JSON string `events.GlueDecodeCodec` can decode (the producer published through a schema registry; an envelope without `dataschema` is plain JSON and unaffected)
 - `5xx` — transient (consumer should retry)
 
 ## Outbound Event Topology

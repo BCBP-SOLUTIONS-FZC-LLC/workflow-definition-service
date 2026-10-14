@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 )
@@ -329,9 +331,9 @@ func (h *Handler) GetVersionDiff(c *gin.Context) {
 		"target_version_id": result.TargetVersionID,
 		"change_type":       result.ChangeType,
 		"changes": gin.H{
-			"added_departments":   result.Changes.AddedDepartments,
-			"removed_departments": result.Changes.RemovedDepartments,
-			"step_changes":        result.Changes.StepChanges,
+			"added_departments":   emptyIfNil(result.Changes.AddedDepartments),
+			"removed_departments": emptyIfNil(result.Changes.RemovedDepartments),
+			"step_changes":        toStepChangeResps(result.Changes.StepChanges),
 			"stage_changes":       toStageChangeResps(result.Changes.StageChanges),
 			"metadata_only":       result.Changes.MetadataOnly,
 		},
@@ -349,4 +351,25 @@ func toStageChangeResps(changes []service.StageChange) []stageChangeResp {
 		out[i] = stageChangeResp{NodeKey: c.NodeKey, Description: c.Description}
 	}
 	return out
+}
+
+type stepChangeResp struct {
+	Description string             `json:"description"`
+	Before      *dsl.ExecutionStep `json:"before,omitempty"`
+	After       *dsl.ExecutionStep `json:"after,omitempty"`
+}
+
+func toStepChangeResps(changes []service.StepChange) []stepChangeResp {
+	out := make([]stepChangeResp, len(changes))
+	for i, c := range changes {
+		out[i] = stepChangeResp{Description: c.Description, Before: c.Before, After: c.After}
+	}
+	return out
+}
+
+func emptyIfNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

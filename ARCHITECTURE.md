@@ -461,7 +461,7 @@ The happy path is always a single query. The probe only fires on the exceptional
 | --- | --- | --- |
 | Compiled plan cache | `wf:plan:{tenant_id}:{version_id}` | 1 h (configurable: `CACHE_COMPILED_PLAN_TTL`) |
 | Idempotency key | `idem:{tenant_id}:{method}:{path}:{key}` | 24 h (configurable: `IDEMPOTENCY_TTL`) |
-| Draft edit lock | `draft-lock:{tenant_id}:{workflow_id}` | 30 s (refreshed) |
+| Draft edit lock | `draft-lock:{tenant_id}:{workflow_id}` | 30 s (fixed; not refreshed) |
 
 When Valkey is unreachable the service stays up but degrades by purpose: compiled-plan reads fall through to Postgres, a duplicate-request replay is not detected and the request runs, and a draft save fails because the draft lock cannot be taken. `/readyz` reports not ready, since it pings Valkey as well as the database.
 
@@ -876,8 +876,8 @@ Optional scheduling hints for a user task:
 
 | Attribute | Required | Rules |
 |---|---|---|
-| `dueDate` | No | FEEL expression or ISO 8601 datetime; stored verbatim; evaluated by the Execution Service |
-| `followUpDate` | No | FEEL expression or ISO 8601 datetime; stored verbatim; evaluated by the Execution Service |
+| `dueDate` | No | RFC 3339 date-time, the only form accepted (`INVALID_TASK_SCHEDULE` otherwise); stored as written |
+| `followUpDate` | No | RFC 3339 date-time, the only form accepted (`INVALID_TASK_SCHEDULE` otherwise); stored as written |
 
 **System semantics**: extracted to `StageDef.DueDate` and `StageDef.FollowUpDate`. Both fields are absent from the JSON when the element is omitted. The compiler does not validate or interpret the values.
 
@@ -1114,7 +1114,7 @@ Message, timer and error boundary events on `callActivity` compile to the call s
 
 Back-edges are classified once via DFS from the start event (`classifyBackEdges`). A guarded loop compiles to an `exclusive` step whose revert branches carry `revert_to_dept` / `revert_to_stage`. Max forward-path depth capped at 100 for guarded loops (2000 overall, see Validation Limits).
 
-**Warnings.** These codes are emitted with `IsWarning: true`. The compiler still returns a compiled plan; HTTP callers receive `is_valid: true` alongside a non-empty `warnings` list.
+**Warnings.** These codes are emitted with `IsWarning: true`. The compiler still returns a compiled plan; HTTP callers receive `is_valid: true` with the warnings in the same `issues` list, each with `severity` `warning`.
 
 | Code | Trigger |
 | --- | --- |
@@ -1159,7 +1159,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `TASK_LIMIT_EXCEEDED` | User task count > 1000 in the process, a compile making more than 1000 stages or visiting more than 10000 nodes, or more than 1000 stages and calls once its calls are expanded |
 | `LANE_LIMIT_EXCEEDED` | Lane count > 100 |
 | `MULTIPLE_START_EVENTS` | More than one `startEvent` in the process |
-| `MULTIPLE_END_EVENTS` | More than one `endEvent` (only raised when collaboration is absent and single process has > 1 end events without guarded exits) |
+| `MULTIPLE_END_EVENTS` | Deprecated: the compiler does not raise it; more than one `endEvent` is valid |
 | `NO_START_EVENT` | Process has no `startEvent` |
 | `NO_END_EVENT` | Process has no `endEvent` |
 | `MULTIPLE_PROCESSES` | More than one process would run: executable, not called, not marked ignore |

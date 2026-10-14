@@ -10,10 +10,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Fixed
 
+- A version diff sent `step_changes` with Go field names (`Description`, `Before`, `After`) instead of `description`, `before` and `after`, and sent `null` for a department list with no entry.
 - A membership event published through a schema registry (a `dataschema` on the envelope and a base64 string of a registry-framed payload in `data`) was answered `400` and never reached the revocation handler. The ingest now decodes the frame with `events.GlueDecodeCodec` and answers `502 EVENT_DECODE_FAILED` for a payload it cannot decode. The internal spec declares `dataschema`, the string form of `data` and the `502`.
 
 ### Changed
 
+- The public spec follows the code further: every route with a body declares `413` and `415` through shared responses, a publish takes no body at all (the body is optional), the length and slug limits that nothing enforced are gone (a key, a name and a clone key are limited to 255 characters, a description to 2000, by the handlers), validation severities are lowercase, getDraft carries `updated_at`, the connector registry's `retry` includes `not-delivered`, and the compiled-plan schemas carry `iam_department_id`, connector `connector_type` and `io_mapping`, `boundary_id` and the `steps` of a boundary or branch.
+- Docs follow the code: the draft lock is a fixed 30 s, task dates are RFC 3339 only, warnings arrive in `issues` with `severity` `warning`, `MULTIPLE_END_EVENTS` is not raised, the LLD library pins and the logger section describe what is built, and there is no `make godoc`.
 - `workflow-connectors/v2` is v2.1.0. The registry no longer lists `chat-notify`, so a task naming it publishes with the `UNKNOWN_CONNECTOR_TYPE` warning and its template and credential endpoints are refused; `storage` and `send-email` declare `provider` as required.
 - The public spec follows the code: getVersion names its id `id` and carries `updated_at`; clone, promote and diff declare `400` with the bad-request body (they had pointed at the 422 body); the publish `409` is a problem document, not a schema with a `suggested_action` that nothing produced; task due and follow-up dates are RFC 3339, the only form the validator accepts. Contract tests send the version routes through the real router.
 - Docs follow the code: the internal events path is `/api/v1/internal/events` everywhere, `/metrics` is on the metrics port, the public spec's production server URL has no second `/v1`, `x-tenant-roles` is optional on reads, and the AsyncAPI page says events are received over HTTP, not published to an SNS topic.
