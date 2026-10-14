@@ -22,6 +22,8 @@ type fakeCache struct {
 	del   func(ctx context.Context, keys ...string) error
 	setnx func(ctx context.Context, key string, value string, ttl time.Duration) (bool, error)
 	ping  func(ctx context.Context) error
+
+	delIfEqual func(ctx context.Context, key, value string) error
 }
 
 func (f *fakeCache) Get(ctx context.Context, key string) (string, error) {
@@ -42,7 +44,12 @@ func (f *fakeCache) Del(ctx context.Context, keys ...string) error {
 	}
 	return nil
 }
-func (f *fakeCache) DelIfEqual(context.Context, string, string) error { return nil }
+func (f *fakeCache) DelIfEqual(ctx context.Context, key, value string) error {
+	if f.delIfEqual != nil {
+		return f.delIfEqual(ctx, key, value)
+	}
+	return nil
+}
 
 func (f *fakeCache) SetNX(ctx context.Context, key, value string, ttl time.Duration) (bool, error) {
 	if f.setnx != nil {
@@ -302,7 +309,7 @@ func TestWithIdempotency_CacheSetFails_ResponseStillReturned(t *testing.T) {
 	called := 0
 
 	cache := &fakeCache{
-		get: func(_ context.Context, _ string) (string, error) { return "", assert.AnError },
+		get: func(_ context.Context, _ string) (string, error) { return "", nil },
 		set: func(_ context.Context, _, _ string, _ time.Duration) error { return assert.AnError },
 	}
 
@@ -376,7 +383,7 @@ func TestWithIdempotency_CacheSetFails_LogsWarning(t *testing.T) {
 	logger := &fakeLogger{}
 
 	cache := &fakeCache{
-		get: func(_ context.Context, _ string) (string, error) { return "", assert.AnError },
+		get: func(_ context.Context, _ string) (string, error) { return "", nil },
 		set: func(_ context.Context, _, _ string, _ time.Duration) error { return assert.AnError },
 	}
 	h := func(c *gin.Context) {
@@ -396,4 +403,29 @@ func TestWithIdempotency_CacheSetFails_LogsWarning(t *testing.T) {
 	assert.Equal(t, 1, called)
 	require.Len(t, logger.warnCalls, 1, "expected one warn log for cache set failure")
 	assert.Contains(t, logger.warnCalls[0], "failed to cache response")
+}
+
+func TestWithIdempotency_CacheReadFails_LogsWarningWithTheKeyHashed(t *testing.T) {
+	logger := &fakeLogger{}
+	cache := &fakeCache{get: func(_ context.Context, _ string) (string, error) { return "", assert.AnError }}
+	called := 0
+	h := func(c *gin.Context) {
+		called++
+		c.JSON(http.StatusCreated, gin.H{"id": "xyz"})
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := newRouter(newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{}, &fakeValidationSvc{}))
+	r.POST("/read-warn-test", handler.WithIdempotency(cache, logger, 24*time.Hour, h))
+
+	httpReq := req(http.MethodPost, "/read-warn-test", nil)
+	httpReq.Header.Set("Idempotency-Key", "secret-client-key")
+	w := do(r, httpReq)
+
+	assert.Equal(t, http.StatusCreated, w.Code, "a cache read failure falls back to running the request")
+	assert.Equal(t, 1, called)
+	require.NotEmpty(t, logger.warnCalls)
+	for _, call := range logger.warnCalls {
+		assert.NotContains(t, call, "secret-client-key", "the client's key is not logged")
+	}
 }

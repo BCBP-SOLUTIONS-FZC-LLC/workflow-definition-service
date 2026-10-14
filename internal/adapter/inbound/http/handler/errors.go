@@ -33,6 +33,7 @@ const (
 	CodeAssigneeIneligible   ErrCode = "ASSIGNEE_INELIGIBLE"
 	CodeUpstream             ErrCode = "UPSTREAM_UNAVAILABLE"
 	CodeIdempotencyReplay    ErrCode = "IDEMPOTENCY_KEY_REPLAY"
+	CodeIdempotencyRunning   ErrCode = "IDEMPOTENCY_REQUEST_IN_PROGRESS"
 	CodeBPMNValidation       ErrCode = "BPMN_VALIDATION_FAILED"
 	CodeInvalidBPMNXML       ErrCode = "INVALID_BPMN_XML"
 	CodePayloadTooLarge      ErrCode = "PAYLOAD_TOO_LARGE"
@@ -91,6 +92,7 @@ var codeTitles = map[ErrCode]string{
 	CodeAssigneeIneligible:   "Assignee Ineligible",
 	CodeUpstream:             "Upstream Service Unavailable",
 	CodeIdempotencyReplay:    "Idempotency Key Replay",
+	CodeIdempotencyRunning:   "Idempotency Request In Progress",
 	CodeBPMNValidation:       "BPMN Validation Failed",
 	CodeInvalidBPMNXML:       "Invalid BPMN XML",
 	CodePayloadTooLarge:      "Payload Too Large",
@@ -185,6 +187,8 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 		return http.StatusConflict, CodeModuleProcessID, err.Error(), nil
 	case errors.Is(err, domain.ErrIdempotencyKeyReplay):
 		return http.StatusConflict, CodeIdempotencyReplay, err.Error(), nil
+	case errors.Is(err, domain.ErrIdempotencyInProgress):
+		return http.StatusConflict, CodeIdempotencyRunning, err.Error(), nil
 	case errors.Is(err, domain.ErrPlanQuotaExceeded):
 		return http.StatusForbidden, CodePlanQuota, err.Error(), nil
 	case errors.Is(err, domain.ErrAssigneeIneligible):

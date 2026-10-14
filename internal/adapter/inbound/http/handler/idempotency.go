@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
@@ -41,11 +43,20 @@ func (h *Handler) Idempotent(fn gin.HandlerFunc) gin.HandlerFunc {
 	return WithIdempotency(h.cache, h.log, h.idempotencyTTL, fn)
 }
 
+const (
+	maxIdempotencyKeyLength = 256
+	idempotencyPendingTTL   = time.Minute
+)
+
 func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, h gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := c.GetHeader("Idempotency-Key")
 		if key == "" || cache == nil {
 			h(c)
+			return
+		}
+		if len(key) > maxIdempotencyKeyLength {
+			writeProblem(c, http.StatusBadRequest, CodeBadRequest, "Idempotency-Key must be at most 256 characters", nil)
 			return
 		}
 		rc, exists := gincommon.RequestContext(c)
@@ -67,8 +78,17 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, 
 		}
 		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-		cacheKey := idempotencyCacheKey(rc.TenantID, c.Request.Method, c.Request.URL.Path, key)
-		if replayed := replayIfCached(c, cache, cacheKey, incomingHash); replayed {
+		cacheKey := idempotencyCacheKey(rc.TenantID, rc.UserID, c.Request.Method, c.Request.URL.Path, key)
+		if replayIfCached(c, cache, log, cacheKey, incomingHash) {
+			return
+		}
+
+		release, proceed := reserve(c, cache, log, cacheKey)
+		if !proceed {
+			return
+		}
+		defer release()
+		if replayIfCached(c, cache, log, cacheKey, incomingHash) {
 			return
 		}
 
@@ -79,8 +99,34 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, 
 	}
 }
 
-func idempotencyCacheKey(tenantID, method, path, key string) string {
-	return "idem:" + tenantID + ":" + method + ":" + path + ":" + key
+func reserve(c *gin.Context, cache port.CacheStore, log port.Logger, cacheKey string) (release func(), proceed bool) {
+	lockKey := cacheKey + ":pending"
+	token := uuid.NewString()
+	acquired, err := cache.SetNX(c.Request.Context(), lockKey, token, idempotencyPendingTTL)
+	if err != nil {
+		warnIdempotency(log, "idempotency: reservation unavailable, running without it", cacheKey, err)
+		return func() {}, true
+	}
+	if !acquired {
+		errResponse(c, log, domain.ErrIdempotencyInProgress)
+		return nil, false
+	}
+	return func() {
+		if err := cache.DelIfEqual(context.WithoutCancel(c.Request.Context()), lockKey, token); err != nil {
+			warnIdempotency(log, "idempotency: releasing the reservation failed, it expires on its own", cacheKey, err)
+		}
+	}, true
+}
+
+func warnIdempotency(log port.Logger, msg, cacheKey string, err error) {
+	if log == nil {
+		return
+	}
+	log.Warn(msg, map[string]any{"cache_key_hash": hashBody([]byte(cacheKey))[:16], "error": err.Error()})
+}
+
+func idempotencyCacheKey(tenantID, userID, method, path, key string) string {
+	return "idem:" + tenantID + ":" + userID + ":" + method + ":" + path + ":" + key
 }
 
 func drainBody(c *gin.Context) (body []byte, hash string, ok bool) {
@@ -91,9 +137,10 @@ func drainBody(c *gin.Context) (body []byte, hash string, ok bool) {
 	return b, hashBody(b), true
 }
 
-func replayIfCached(c *gin.Context, cache port.CacheStore, cacheKey, incomingHash string) bool {
+func replayIfCached(c *gin.Context, cache port.CacheStore, log port.Logger, cacheKey, incomingHash string) bool {
 	raw, err := cache.Get(c.Request.Context(), cacheKey)
 	if err != nil {
+		warnIdempotency(log, "idempotency: reading the stored response failed, running the request", cacheKey, err)
 		return false
 	}
 	var cr cachedResp

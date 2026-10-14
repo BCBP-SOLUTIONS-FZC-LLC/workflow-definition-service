@@ -21,6 +21,7 @@ var (
 	ErrAssigneeIneligible              = errors.New("assignee ineligible")
 	ErrUpstreamUnavailable             = errors.New("upstream service unavailable")
 	ErrIdempotencyKeyReplay            = errors.New("idempotency key replay with different payload")
+	ErrIdempotencyInProgress           = errors.New("a request with this idempotency key is still running")
 	ErrMalformedBPMN                   = errors.New("malformed BPMN document")
 	ErrForbiddenXML                    = errors.New("forbidden XML construct")
 	ErrInvalidConnectorCredentialInput = errors.New("invalid connector credential input")
