@@ -2556,7 +2556,7 @@ This subsection defines the canonical names that the compiled DSL writes into `a
 | Default (shared, non-isolated) | `wf-queue-default` | `wf-queue-default` |
 | Tenant-isolated (enterprise tier) | `wf-queue-<tenant_uuid>` | `wf-queue-7ca648b2-b432-4744-884c-35fd556a310c` |
 
-The `task_queue` field in the compiled DSL carries the resolved queue name. The Definition Service computes this at compile/publish time based on the tenant's plan tier (e.g. from the `x-plan` header). If the tenant is on the `enterprise` tier, it resolves to the tenant-isolated queue (`wf-queue-<tenant_uuid>`); otherwise (for `starter` or `pro` tiers), it defaults to the shared default queue (`wf-queue-default`).
+The `task_queue` field in the compiled DSL carries the resolved queue name. The Definition Service writes the shared default queue (`wf-queue-default`) and no tenant identity, so a plan stays valid when a tenant's plan changes. The Execution Service chooses the queue at instance start: the tenant-isolated queue (`wf-queue-<tenant_uuid>`) when the tenant has one registered, the plan's queue otherwise.
 
 ##### Activity Names (DSL `activity` Field)
 
@@ -4964,6 +4964,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.48 | 2026-10-14 | **The template key is named for what it is** (§3, §4, §10, Appendix A). The workflow's key is `template_key`, error code `DUPLICATE_TEMPLATE_KEY`, constraint `uq_workflow_template_key`; the public field stays `key`. The Execution Service keeps its own instance business key (with the subject), so the two no longer share a name or an error code. The LLD no longer claims a slug pattern or a 100-character limit: the key is free-form up to 255 characters, over which it is `422 INVALID_INPUT`. |
 | 1.49 | 2026-10-14 | **Two statements follow the code** (§1.6.1, §7.2). The request identity middleware parses both identity headers as UUIDs (it is no longer the gincommon `RequireAuth` length check), and the Execution Service keeps no `workflow_key → version_id` mapping. |
 | 1.50 | 2026-10-17 | **The template limit comes from the plan catalog and archiving frees a slot** (§3.1, §5.6, error catalogue). The limits were hard-coded (5, 50, unlimited) and chosen from the client's `x-plan` header, with any unknown value treated as `starter`; the count included archived workflows, so a tenant at its limit could never free a slot although §5.6.2 already described a count that left them out. The limit is read from the plan catalog by plan code, a missing or unknown plan code or an unread table answers `503 UPSTREAM_UNAVAILABLE`, and the count covers workflows with an active version or a draft, so an archived workflow with no draft frees its slot. |
+| 1.51 | 2026-10-17 | **The compiled plan names the shared queue only** (§ task queue naming). The text said the Definition Service resolved the tenant-isolated queue at publish time from the plan header; it never did, and a plan holding a tenant's identity would go stale when the plan changes. The Execution Service chooses the queue at instance start. |
 ---
 
 ## Appendix E: Open Items
