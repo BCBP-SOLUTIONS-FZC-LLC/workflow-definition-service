@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Fixed
 
+- The workflow template limit was hard-coded (5, 50, unlimited), chosen from the client's `x-plan` header, and any unknown value counted as `starter`. It is read from the catalog's plan table by plan code, and a missing or unknown code, or a table that was never read, answers `503 UPSTREAM_UNAVAILABLE`. The count covers workflows with a `DRAFT` or `PUBLISHED` version, so archiving a workflow frees its slot. `CATALOG_ADMIN_BASE_URL` is required outside dev, `PLAN_TABLE_TTL` and `CATALOG_CLIENT_TIMEOUT` are new, and `cmd/stub/catalog` serves the plan table for local runs, CI and the compatibility suite.
 - CI's first full run on this branch (earlier runs skipped every job on a draft) failed wherever the `generated` artifact was used: an upload of two paths is rooted at their common parent, `internal/`, so downloading it into the workspace root left the sqlc output and the mocks outside the tree. Every download now extracts into `internal/`.
 - A module or starter name, description or category, and a draft name or description, over its limit reached the database and came back as `500`. They are `422 INVALID_INPUT` with `invalid_params` now (name 255, description 2000, starter category 64), counted in characters, as the workflow create and clone limits are.
 - A version diff sent `step_changes` with Go field names (`Description`, `Before`, `After`) instead of `description`, `before` and `after`, and sent `null` for a department list with no entry.

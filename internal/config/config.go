@@ -42,6 +42,9 @@ type Config struct {
 
 	OrgMembershipBaseURL    string
 	MembershipClientTimeout time.Duration
+	CatalogAdminBaseURL     string
+	CatalogClientTimeout    time.Duration
+	PlanTableTTL            time.Duration
 	ExecutionServiceURL     string
 	ExecutionServiceToken   string
 	ExecutionClientTimeout  time.Duration
@@ -156,6 +159,9 @@ func Load() (*Config, error) {
 
 		OrgMembershipBaseURL:    r.str("ORG_MEMBERSHIP_BASE_URL", ""),
 		MembershipClientTimeout: r.duration("MEMBERSHIP_CLIENT_TIMEOUT", 10*time.Second),
+		CatalogAdminBaseURL:     r.str("CATALOG_ADMIN_BASE_URL", ""),
+		CatalogClientTimeout:    r.duration("CATALOG_CLIENT_TIMEOUT", 5*time.Second),
+		PlanTableTTL:            r.duration("PLAN_TABLE_TTL", 10*time.Minute),
 		ExecutionServiceURL:     r.str("EXECUTION_SERVICE_URL", ""),
 		ExecutionServiceToken:   r.str("EXECUTION_SERVICE_TOKEN", ""),
 		ExecutionClientTimeout:  r.duration("EXECUTION_CLIENT_TIMEOUT", 5*time.Second),
@@ -203,6 +209,8 @@ func (c *Config) validate() []error {
 	need(c.CacheCompiledPlanTTL > 0, "CACHE_COMPILED_PLAN_TTL must be > 0")
 	need(c.IdempotencyTTL > 0, "IDEMPOTENCY_TTL must be > 0")
 	need(c.MembershipClientTimeout > 0, "MEMBERSHIP_CLIENT_TIMEOUT must be > 0")
+	need(c.CatalogClientTimeout > 0, "CATALOG_CLIENT_TIMEOUT must be > 0")
+	need(c.PlanTableTTL > 0, "PLAN_TABLE_TTL must be > 0")
 	need(c.ExecutionClientTimeout > 0, "EXECUTION_CLIENT_TIMEOUT must be > 0")
 	need(c.ShutdownDrainDelay >= 0, "SHUTDOWN_DRAIN_DELAY must not be negative")
 	need(c.ShutdownGrace > 0, "SHUTDOWN_GRACE must be > 0")
@@ -214,6 +222,7 @@ func (c *Config) validate() []error {
 	need(c.AppEnv != "prod" || c.SystemDatabaseURL != "", "SYSTEM_DATABASE_URL is required in prod environment")
 	if nonDev {
 		need(c.OrgMembershipBaseURL != "", "ORG_MEMBERSHIP_BASE_URL is required in non-dev environments")
+		need(c.CatalogAdminBaseURL != "", "CATALOG_ADMIN_BASE_URL is required in non-dev environments")
 		need(c.ExecutionServiceURL != "", "EXECUTION_SERVICE_URL is required in non-dev environments")
 		need(c.ExecutionServiceToken != "", "EXECUTION_SERVICE_TOKEN is required in non-dev environments")
 		need(c.OpenBaoAddr != "", "OPENBAO_ADDR is required in non-dev environments")

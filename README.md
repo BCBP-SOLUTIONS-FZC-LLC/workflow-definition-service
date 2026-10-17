@@ -140,9 +140,10 @@ make migrate
 # 2. Start outbound service stubs (HTTP)
 go run ./cmd/stub/execution &    # :8083 (internal API + /control toggle)
 go run ./cmd/stub/membership &   # :8081 (HTTP + /control toggle)
+go run ./cmd/stub/catalog &      # :8084 (the plan table)
 
 # 3. Run the server against the stubs
-ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_URL=http://localhost:8083 \
+ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 CATALOG_ADMIN_BASE_URL=http://localhost:8084 EXECUTION_SERVICE_URL=http://localhost:8083 \
   go run ./cmd/server &
 
 # 4. Run the smoke test
@@ -285,7 +286,7 @@ Full OpenAPI schema: [`docs/swagger/openapi.yaml`](docs/swagger/openapi.yaml).
 | `x-user-id` | Yes | Executing user UUID |
 | `x-tenant-roles` | Yes | Comma-separated roles, e.g. `tenant_admin,member` |
 | `x-departments` | No | User department memberships |
-| `x-plan` | No | Subscription tier: `starter`, `pro`, `enterprise` |
+| `x-plan` | For workflow create and clone | The tenant's plan code (`starter`, `pro`, `enterprise`), set by the authorization layer. The template limit is looked up by it in the plan table read from the catalog; a missing or unknown code answers `503` |
 | `x-request-id` | No | Client correlation ID — echoed as `X-Request-ID` |
 | `traceparent` | No | W3C trace context — echoed as `X-Trace-ID` |
 
@@ -467,7 +468,7 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 - **`existingSecret: "<name>"`** (recommended beyond local testing) — points at a Secret already provisioned by External Secrets Operator, the AWS Secrets Manager CSI driver, or Sealed Secrets. The chart creates no Secret resource of its own. The render-time key checks do not run in this mode, so a key missing from that Secret shows as `CreateContainerConfigError` at pod start. Bump `rotationEpoch` (`--set rotationEpoch=$(date +%s)`) to force a rollout after the external secret rotates.
 - **`secretValues.*`** (dev/CI only) — pass real values via `--set` or a Helm secrets plugin. `secret.yaml` hard-fails the render if any key listed in `envFromSecret` (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `SYSTEM_DATABASE_URL`, `VALKEY_PASSWORD`, `INTERNAL_API_TOKEN`, `EXECUTION_SERVICE_TOKEN`, `OPENBAO_TOKEN`) is empty. These land in the Helm release history unencrypted (base64) — never use this mode against a shared cluster.
 
-**Networking.** `networkPolicy.enabled: true` by default. The gateway/ingress-controller rule and the named callers (the Execution Service) both reach `8080`; the gateway routes only the public path prefixes (`ingress.hosts[].paths`), so `/api/v1/internal` is reachable only in-cluster, and every internal route also requires `x-internal-token`. A separate rule scopes `/metrics` scraping to the monitoring namespace only. Egress allows DNS, HTTPS, Postgres/PgBouncer, Valkey, and OTel OTLP explicitly, plus same-namespace pod egress for `ORG_MEMBERSHIP_BASE_URL` and `EXECUTION_SERVICE_URL`.
+**Networking.** `networkPolicy.enabled: true` by default. The gateway/ingress-controller rule and the named callers (the Execution Service) both reach `8080`; the gateway routes only the public path prefixes (`ingress.hosts[].paths`), so `/api/v1/internal` is reachable only in-cluster, and every internal route also requires `x-internal-token`. A separate rule scopes `/metrics` scraping to the monitoring namespace only. Egress allows DNS, HTTPS, Postgres/PgBouncer, Valkey, and OTel OTLP explicitly, plus same-namespace pod egress for `ORG_MEMBERSHIP_BASE_URL`, `CATALOG_ADMIN_BASE_URL` and `EXECUTION_SERVICE_URL`.
 
 `ingress.type` supports either `HTTPRoute` (Gateway API — default) or classic `Ingress`. CORS and gateway-level rate limiting attach via an Envoy Gateway `SecurityPolicy` (`ingress.securityPolicy`) when enabled.
 
@@ -489,7 +490,7 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 
 `release.yml`'s `deploy-gate` job runs after the image is built, signed, and pushed, and before the GitHub Release is published:
 
-1. `helm upgrade workflow-definition-service ./deploy/helm --install --wait --timeout=5m --atomic`, passing `env.ORG_MEMBERSHIP_BASE_URL`, `env.OPENBAO_ADDR` and `env.VALKEY_ADDR` from the repository variables of the same names — `--atomic` rolls back automatically if the release fails to become healthy within the timeout. The chart refuses to render for a non-dev `APP_ENV` while any of `ORG_MEMBERSHIP_BASE_URL`, `EXECUTION_SERVICE_URL`, `OPENBAO_ADDR` or `VALKEY_ADDR` is empty, and CI runs `make helm-check` to prove it.
+1. `helm upgrade workflow-definition-service ./deploy/helm --install --wait --timeout=5m --atomic`, passing `env.ORG_MEMBERSHIP_BASE_URL`, `env.CATALOG_ADMIN_BASE_URL`, `env.OPENBAO_ADDR` and `env.VALKEY_ADDR` from the repository variables of the same names — `--atomic` rolls back automatically if the release fails to become healthy within the timeout. The chart refuses to render for a non-dev `APP_ENV` while any of `ORG_MEMBERSHIP_BASE_URL`, `CATALOG_ADMIN_BASE_URL`, `EXECUTION_SERVICE_URL`, `OPENBAO_ADDR` or `VALKEY_ADDR` is empty, and CI runs `make helm-check` to prove it.
 2. Verifies the running Deployment's image digest matches the digest that was actually signed and pushed.
 3. Waits for `kubectl rollout status` to confirm the new pods are ready.
 4. Runs a 2-minute Prometheus check on the 5xx ratio; if it exceeds 1%, `helm rollback` runs automatically and the job — and therefore the release — fails.

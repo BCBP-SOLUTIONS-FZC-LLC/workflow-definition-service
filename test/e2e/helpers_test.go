@@ -3,7 +3,9 @@
 package e2e_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 
@@ -82,6 +84,7 @@ func wireServices(t *testing.T, pool *pgcommon.Pool, cache port.CacheStore) serv
 	versions := pgadapter.NewWorkflowVersionRepo(pool)
 	assignees := pgadapter.NewAssigneeRepo(pool)
 	compiler := bpmn_compiler.New()
+	planLimits := service.NewPlanLimitService(service.PlanLimitDeps{Reader: staticPlanTable{}, TTL: time.Hour})
 
 	return services{
 		workflow: service.NewWorkflowService(service.WorkflowDeps{
@@ -90,6 +93,7 @@ func wireServices(t *testing.T, pool *pgcommon.Pool, cache port.CacheStore) serv
 			Versions:   versions,
 			Cache:      cache,
 			Compiler:   compiler,
+			PlanLimits: planLimits,
 		}),
 		version: service.NewVersionService(service.VersionDeps{
 			Transactor: transactor,
@@ -98,6 +102,7 @@ func wireServices(t *testing.T, pool *pgcommon.Pool, cache port.CacheStore) serv
 			Assignees:  assignees,
 			Compiler:   compiler,
 			Cache:      cache,
+			PlanLimits: planLimits,
 		}),
 		draft: service.NewDraftService(service.DraftDeps{
 			Transactor: transactor,
@@ -108,4 +113,11 @@ func wireServices(t *testing.T, pool *pgcommon.Pool, cache port.CacheStore) serv
 			Compiler:   compiler,
 		}),
 	}
+}
+
+type staticPlanTable struct{}
+
+func (staticPlanTable) ReadPlanTable(context.Context) (map[string]*int64, error) {
+	five := int64(5)
+	return map[string]*int64{"starter": &five, "enterprise": nil}, nil
 }

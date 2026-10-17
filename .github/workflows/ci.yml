@@ -224,6 +224,7 @@ jobs:
       INTERNAL_API_TOKEN: smoke-internal-token
       INTERNAL_TOKEN: smoke-internal-token
       ORG_MEMBERSHIP_BASE_URL: http://localhost:8081
+      CATALOG_ADMIN_BASE_URL: http://localhost:8084
       EXECUTION_SERVICE_URL: http://localhost:8083
       EXECUTION_SERVICE_TOKEN: smoke-execution-token
       OPENBAO_ADDR: http://localhost:8200

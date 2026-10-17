@@ -1039,7 +1039,7 @@ The Envoy API Gateway performs JWT verification and injects standardized context
 - `x-user-id` (UUID, Required): Denotes the executing administrative user. Subject to the same validation rules as `x-tenant-id`. Constant: `gincommon.HeaderUserID`. Both must parse as UUIDs; a value that does not is `401 UNAUTHORIZED` before any handler or database work.
 - `x-tenant-roles` (String, Required): Comma-separated roles (e.g. `tenant_admin`, `tenant_owner`). Validated as `[a-zA-Z0-9_-]+` per role token; mutating calls require administrative access. Constant: `gincommon.HeaderTenantRoles`.
 - `x-departments` (String, Optional): Comma-separated `<department-uuid>:<role>` pairs — e.g. `018e1f2a-0000-7000-8000-000000000001:reviewer,018e1f2a-0000-7000-8000-000000000002:approver`. Each pair names one of the user's department memberships and their role level within it. IAM's HLD (`iam_1.41.md` §5.4) now documents this same `<department_id>:<role_level>` format explicitly, confirming `dept_uuid:role` is correct — the earlier cross-team discrepancy is resolved at the HLD level. IAM's own org-membership LLD reportedly still describes a bare-UUID variant; that residual HLD-vs-LLD inconsistency is IAM's own follow-up to reconcile, tracked in `Notes/conf.md`, not this document's concern.
-- `x-plan` (String, Optional): Subscription level (e.g., `enterprise`, `pro`).
+- `x-plan` (String, set by the authorization layer): the tenant's plan code (`starter`, `pro` or `enterprise`). Workflow creation and clone look up the plan's template limit by it; a missing or unknown code fails the request with `503 UPSTREAM_UNAVAILABLE`.
 - `x-feature-flags` (String, Optional): Encoded feature flags.
 - `x-request-id` (UUID, Optional): Client-supplied correlation ID. If absent or invalid, `gincommon.RequestIDMiddleware` generates a fresh UUID. Echoed back on the response as `X-Request-ID`. Constant: `gincommon.HeaderRequestID`.
 - `traceparent` (W3C, Optional): Upstream OTel trace context. If present, `gincommon.TracingMiddleware` links the server span to the parent; otherwise a new root span is created. Echoed back as `X-Trace-ID`.
@@ -1049,7 +1049,7 @@ The Envoy API Gateway performs JWT verification and injects standardized context
 - **Payload Limits**: Capped at `10MB` for all payload-bearing endpoints using a `MaxBytesReader` middleware.
 - **Entity Expansion**: Disallowed in XML parser to prevent Billion Laughs / XXE attacks.
 - **Rate Limiting**: Enforced at the gateway (Envoy) level per tenant based on plan tier (burst limit `plans.api_rate_limit_rps` and monthly budget `plans.api_request_budget_monthly`).
-- **Plan Quotas & Entitlements**: During workflow creation (`POST /workflows`), the service parses the `x-plan` header and enforces limits on the maximum allowed workflow templates per tenant (e.g. Starter: 5 templates, Pro: 50, Enterprise: Unlimited). Requests exceeding this quota return a `403 Forbidden` with a plan limits block.
+- **Plan Quotas & Entitlements**: During workflow creation (`POST /workflows`), the service reads the plan code from the `x-plan` header, takes that plan's `workflow_template_limit` from the plan catalog owned by Catalog / Admin Config (§5.6.4), and enforces it against the tenant's workflow templates that are in use: those with an active version or a draft. A null limit means unlimited and `0` is a hard cap. Requests exceeding this quota return a `403 Forbidden` with a plan limits block. When the limit cannot be determined — no plan code, an unknown plan code, or no plan table ever read — the request returns `503 UPSTREAM_UNAVAILABLE`, never a default tier.
 - **Idempotency**: A mutating operation (`POST`, `PUT`) that carries an `Idempotency-Key` header of at most 256 characters (a longer one is `400`) runs once per key. The key is scoped to the tenant, the user, the method and the path, so one user's stored response is never served to another. A request whose key is still running is refused with `409` `IDEMPOTENCY_REQUEST_IN_PROGRESS` instead of running twice; the marker is released when the first request finishes, so a client retry after a failure runs. The key is optional and the cache fails open: an unavailable cache runs the request without the protection and logs a warning that names the key only by its hash.
 
 #### Input Validation Rules
@@ -1215,16 +1215,16 @@ Below is a detailed walkthrough of the endpoints, checks, and flow execution tra
 6. **`PLAN_QUOTA_EXCEEDED`** (HTTP 403)
     - **Endpoints**: `POST /workflows`
     - **Trigger Scenario**: A tenant on a limited subscription tier (e.g. "Starter", which is capped at 5 workflow templates) attempts to register a new workflow key.
-    - **Technical Cause**: The workflow creation handler counts the active definitions in a database transaction with a serializable isolation level to prevent parallel bypasses. If the count meets or exceeds the limits defined for the tier in the `x-plan` header, the request is blocked.
+    - **Technical Cause**: The workflow creation handler counts the active definitions in a database transaction with a serializable isolation level to prevent parallel bypasses. If the count meets or exceeds the limit the plan catalog defines for the plan code in the `x-plan` header, the request is blocked.
     - **Step-by-Step Flow**:
       1. The admin posts a template creation request.
-      2. The service extracts the `x-plan` tier (e.g. `starter`).
+      2. The service extracts the `x-plan` plan code (e.g. `starter`) and resolves its template limit from the plan catalog before the transaction opens.
       3. The handler starts a transaction with `db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})`.
-      4. The handler counts the tenant's definitions: `SELECT COUNT(*) FROM workflow WHERE tenant_id = :tenant_id`.
+      4. The handler counts the tenant's definitions that are in use: the workflows with an active version or a `DRAFT` version. An archived workflow has neither, so it is not counted.
       5. The handler determines the count exceeds the threshold (e.g., 5).
       6. The transaction is rolled back immediately, and the handler returns `code: PLAN_QUOTA_EXCEEDED`.
     - **Database & Transaction Impact**: A database transaction is opened under `SERIALIZABLE` isolation, reads the count, and is rolled back without modifying any rows.
-    - **Resolution**: The tenant must upgrade their subscription tier (e.g. to "Pro" or "Enterprise") or delete existing, unused workflow templates to free up quota.
+    - **Resolution**: The tenant must upgrade their subscription tier (e.g. to "Pro" or "Enterprise") or archive existing, unused workflow templates, which frees their slot.
 
 7. **`NOT_FOUND`** (HTTP 404)
     - **Endpoints**: All REST endpoints targeting specific resource IDs.
@@ -3341,15 +3341,15 @@ To enforce platform monetization and subscription tiers, the Definition Service 
 
 #### 5.6.1 Subscription Tiers and Constraints
 
-The system maps the plan information received in the `x-plan` header to specific operational quotas:
+The plan code received in the `x-plan` header selects the plan's `workflow_template_limit` in the plan catalog. The catalog ships these limits, and the catalog, not this service, is their source of truth:
 
 | Plan Tier (`x-plan`) | Maximum Workflow Definitions | Enforced Limit Type |
 | --- | --- | --- |
-| `starter` (Default) | 5 | Hard limit (Template count) |
+| `starter` | 5 | Hard limit (Template count) |
 | `pro` | 50 | Hard limit (Template count) |
 | `enterprise` | Unlimited | No limit enforced |
 
-*Note: If the `x-plan` header is missing or unrecognized, the system automatically falls back to the `starter` tier quotas.*
+*Note: If the `x-plan` header is missing or names no plan in the catalog, or no plan table has ever been read, the request fails with `503 UPSTREAM_UNAVAILABLE`; no tier is assumed. The count covers workflows with an active version or a draft, so archiving a workflow, which clears its active version, frees its slot once it has no draft. Older versions that are no longer active do not hold a slot. The list's `archived` filter, which means only "no active version", is a separate notion: a workflow that was never published is listed as archived there and still counts here, because its draft is in use.*
 
 #### 5.6.2 Verification Flow & Database Concurrency Safety
 
@@ -3370,7 +3370,7 @@ sequenceDiagram
     Core->>DB: BEGIN TRANSACTION (Serializable Isolation)
     
     Note over Core,DB: Row Count & Lock Check
-    Core->>DB: SELECT COUNT(*) FROM workflow w WHERE w.tenant_id = :tenant_id AND EXISTS (SELECT 1 FROM workflow_version wv WHERE wv.workflow_id = w.id AND wv.status IN ('DRAFT', 'PUBLISHED'))
+    Core->>DB: SELECT COUNT(*) FROM workflow w WHERE w.tenant_id = :tenant_id AND (w.active_version_id IS NOT NULL OR EXISTS (SELECT 1 FROM workflow_version wv WHERE wv.workflow_id = w.id AND wv.status = 'DRAFT'))
     DB-->>Core: CurrentCount (e.g. 5)
     
     alt CurrentCount >= PlanLimit
@@ -3410,6 +3410,11 @@ If the count check fails, the API immediately aborts and returns an HTTP `403 Fo
 ```
 
 ---
+
+
+#### 5.6.4 Plan Table Source
+
+The Definition Service reads the plan table from Catalog / Admin Config's internal plans read, authenticating with the reserved internal-system identity that route requires. It keeps the table in memory per replica for a bounded freshness window (`PLAN_TABLE_TTL`). One read runs at a time per replica, independent of any single request's cancellation: requests that arrive during a read wait for it when the replica holds no table, and use the held table otherwise. When a refresh fails the replica keeps using the last table it read, logs the failure, and does not read again for a short backoff; it never answers from a built-in table. A replica that has never read the table answers `503 UPSTREAM_UNAVAILABLE` on every request that needs a limit until a read succeeds. A plan code absent from a table that is more than a few seconds old triggers one re-read, so a plan added to the catalog is found without waiting for the freshness window. The read goes through the shared outbound client: traced, response-capped, and recorded in the dependency metric. The plan table is global, so one read serves every tenant. Per-tenant overrides of a plan's limit, when the Commercial service's effective-entitlements read exists, replace this source behind the same boundary.
 
 ### 5.7 Version Cloning Flow (§3.3.10)
 
@@ -4958,6 +4963,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.47 | 2026-10-14 | **The public spec and the docs follow the code** (§1.6.1.1, §3.4, §4.2, §10.8, Appendix A). Every body route declares `413` and `415`; a publish takes no required body; limits nothing enforced are removed; validation severities are lowercase; getDraft carries `updated_at`; the registry's `retry` includes `not-delivered`; the compiled-plan schemas carry `iam_department_id`, `connector_type`, `io_mapping`, `boundary_id` and boundary and branch `steps`. A module, starter or draft field over its column or documented limit (name 255, description 2000, starter category 64) is `422 INVALID_INPUT` with `invalid_params`; before, it reached the database and came back as `500`. A version diff sends `step_changes` in snake_case and never `null` for a department list. `MULTIPLE_END_EVENTS` is deprecated and never raised; the logger section describes `logger.NewLogger`; library pins are current. |
 | 1.48 | 2026-10-14 | **The template key is named for what it is** (§3, §4, §10, Appendix A). The workflow's key is `template_key`, error code `DUPLICATE_TEMPLATE_KEY`, constraint `uq_workflow_template_key`; the public field stays `key`. The Execution Service keeps its own instance business key (with the subject), so the two no longer share a name or an error code. The LLD no longer claims a slug pattern or a 100-character limit: the key is free-form up to 255 characters, over which it is `422 INVALID_INPUT`. |
 | 1.49 | 2026-10-14 | **Two statements follow the code** (§1.6.1, §7.2). The request identity middleware parses both identity headers as UUIDs (it is no longer the gincommon `RequireAuth` length check), and the Execution Service keeps no `workflow_key → version_id` mapping. |
+| 1.50 | 2026-10-17 | **The template limit comes from the plan catalog and archiving frees a slot** (§3.1, §5.6, error catalogue). The limits were hard-coded (5, 50, unlimited) and chosen from the client's `x-plan` header, with any unknown value treated as `starter`; the count included archived workflows, so a tenant at its limit could never free a slot although §5.6.2 already described a count that left them out. The limit is read from the plan catalog by plan code, a missing or unknown plan code or an unread table answers `503 UPSTREAM_UNAVAILABLE`, and the count covers workflows with an active version or a draft, so an archived workflow with no draft frees its slot. |
 ---
 
 ## Appendix E: Open Items

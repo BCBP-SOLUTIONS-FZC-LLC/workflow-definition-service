@@ -9,7 +9,8 @@
 #   make migrate
 #   go run ./cmd/stub/execution &              # HTTP stub :8083 (internal API + /control)
 #   go run ./cmd/stub/membership &             # HTTP stub :8081
-#   ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 EXECUTION_SERVICE_URL=http://localhost:8083 \
+#   go run ./cmd/stub/catalog &                # HTTP stub :8084 (plan table)
+#   ORG_MEMBERSHIP_BASE_URL=http://localhost:8081 CATALOG_ADMIN_BASE_URL=http://localhost:8084 EXECUTION_SERVICE_URL=http://localhost:8083 \
 #     go run ./cmd/server &                    # definition service :8080
 #
 # PgBouncer note:
@@ -88,17 +89,17 @@ TENANT_ID="${TENANT_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 USER_ID="${USER_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 TENANT_ROLES="${TENANT_ROLES:-tenant_admin}"
 
-api_get()    { curl -sf -X GET    "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}"; }
-api_post()   { curl -sf -X POST   "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" \
+api_get()    { curl -sf -X GET    "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" -H "x-plan: enterprise"; }
+api_post()   { curl -sf -X POST   "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" -H "x-plan: enterprise" \
                     -H "Content-Type: application/json" -d "$2"; }
-api_put()    { curl -sf -X PUT    "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" \
+api_put()    { curl -sf -X PUT    "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" -H "x-plan: enterprise" \
                     -H "Content-Type: application/json" -d "$2"; }
-api_delete() { curl -sf -X DELETE "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}"; }
+api_delete() { curl -sf -X DELETE "$1" -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" -H "x-plan: enterprise"; }
 
 # Returns HTTP status code only, does not fail on 4xx/5xx.
 api_status() {
   curl -s -o /dev/null -w "%{http_code}" -X "${1}" "${2}" \
-    -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" \
+    -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" -H "x-plan: enterprise" \
     -H "Content-Type: application/json" ${3:+-d "$3"}
 }
 
@@ -392,7 +393,7 @@ STATUS=$(api_status GET "${API}/workflows/${WF_ID}/versions/00000000-0000-0000-0
 
 # Export BPMN
 EXPORT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" \
+  -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" -H "x-plan: enterprise" \
   "${API}/workflows/${WF_ID}/versions/${V1_ID}/export")
 [ "$EXPORT_STATUS" = "200" ] && pass "GET /versions/:id/export → 200" || fail "GET /versions/:id/export → $EXPORT_STATUS"
 
@@ -447,7 +448,7 @@ STATUS=$(api_status POST "${API}/workflows/${CLONE_WF_ID}/versions/${CLONE_V_ID}
 # Diff within the original workflow (need two versions — publish a second one)
 # Use V1 as both sides of the diff for simplicity; result should be empty diff
 DIFF_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" \
+  -H "x-tenant-id: ${TENANT_ID}" -H "x-user-id: ${USER_ID}" -H "x-tenant-roles: ${TENANT_ROLES}" -H "x-plan: enterprise" \
   "${API}/workflows/${WF_ID}/versions/${V1_ID}/diff/${V1_ID}")
 [ "$DIFF_STATUS" = "200" ] \
   && pass "GET /versions/:version_id/diff/:target_version_id → 200 (self-diff)" \

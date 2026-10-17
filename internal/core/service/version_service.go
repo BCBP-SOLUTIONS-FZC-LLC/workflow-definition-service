@@ -29,6 +29,7 @@ type VersionDeps struct {
 	Compiler       port.PlanCompiler
 	ModuleVersions port.ModuleVersionRepository
 	Cache          port.CacheStore
+	PlanLimits     port.PlanLimits
 	Log            port.Logger
 }
 
@@ -42,6 +43,7 @@ type VersionService struct {
 	compiler   port.PlanCompiler
 	modules    moduleResolver
 	cache      port.CacheStore
+	planLimits port.PlanLimits
 	log        port.Logger
 }
 
@@ -56,6 +58,7 @@ func NewVersionService(d VersionDeps) *VersionService {
 		compiler:   d.Compiler,
 		modules:    moduleResolver{compiler: d.Compiler, versions: d.ModuleVersions},
 		cache:      d.Cache,
+		planLimits: d.PlanLimits,
 		log:        logOrNoop(d.Log),
 	}
 }
@@ -143,7 +146,7 @@ func (s *VersionService) Publish(
 func (s *VersionService) Clone(
 	ctx context.Context,
 	tenantID, userID, workflowID, versionID uuid.UUID,
-	planTier string,
+	planCode string,
 	req CloneReq,
 ) (wf *domain.Workflow, v *domain.WorkflowVersion, err error) {
 	defer func() { observability.IncCounterVec(observability.WFCloneTotal, observability.OutcomeLabel(err)) }()
@@ -183,8 +186,12 @@ func (s *VersionService) Clone(
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
+	limit, err := resolveTemplateLimit(ctx, s.planLimits, planCode)
+	if err != nil {
+		return nil, nil, err
+	}
 	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
-		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, planTier); err != nil {
+		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, limit); err != nil {
 			return err
 		}
 		if err := s.workflows.Create(ctx, newWF); err != nil {

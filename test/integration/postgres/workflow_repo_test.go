@@ -100,6 +100,7 @@ func TestWorkflowRepo_GetByTemplateKey(t *testing.T) {
 func TestWorkflowRepo_CountByTenant(t *testing.T) {
 	pool := newTestPool(t)
 	repo := postgres.NewWorkflowRepo(pool)
+	vRepo := postgres.NewWorkflowVersionRepo(pool)
 	ctx := context.Background()
 
 	tenantID := uuid.New()
@@ -113,6 +114,9 @@ func TestWorkflowRepo_CountByTenant(t *testing.T) {
 		if err := repo.Create(ctx, wf); err != nil {
 			t.Fatalf("Create %d: %v", i, err)
 		}
+		if err := vRepo.Create(ctx, newDraftVersion(wf.ID, tenantID)); err != nil {
+			t.Fatalf("Create version %d: %v", i, err)
+		}
 	}
 
 	count, err := repo.CountByTenant(ctx, tenantID)
@@ -121,6 +125,79 @@ func TestWorkflowRepo_CountByTenant(t *testing.T) {
 	}
 	if count != 3 {
 		t.Errorf("count = %d, want 3", count)
+	}
+}
+
+func TestWorkflowRepo_CountByTenant_CountsOnlyWorkflowsWithAnActiveVersionOrADraft(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewWorkflowRepo(pool)
+	vRepo := postgres.NewWorkflowVersionRepo(pool)
+	ctx := context.Background()
+	tenantID := uuid.New()
+
+	newWorkflow := func(key string) (*domain.Workflow, *domain.WorkflowVersion) {
+		wf := &domain.Workflow{ID: uuid.New(), TenantID: tenantID, CreatedByUserID: uuid.New(), TemplateKey: key, Name: key}
+		if err := repo.Create(ctx, wf); err != nil {
+			t.Fatalf("create %s: %v", key, err)
+		}
+		v := newDraftVersion(wf.ID, tenantID)
+		if err := vRepo.Create(ctx, v); err != nil {
+			t.Fatalf("create version of %s: %v", key, err)
+		}
+		return wf, v
+	}
+
+	newWorkflow("only-a-draft")
+
+	published, pv := newWorkflow("published")
+	if err := vRepo.Publish(ctx, tenantID, pv.ID, 1, 1, `{}`, "h", nil); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if err := repo.UpdateActiveVersion(ctx, tenantID, published.ID, &pv.ID); err != nil {
+		t.Fatalf("set active version: %v", err)
+	}
+
+	archived, av := newWorkflow("archived")
+	if err := vRepo.Publish(ctx, tenantID, av.ID, 1, 1, `{}`, "h", nil); err != nil {
+		t.Fatalf("publish archived: %v", err)
+	}
+	if err := repo.UpdateActiveVersion(ctx, tenantID, archived.ID, &av.ID); err != nil {
+		t.Fatalf("set active version: %v", err)
+	}
+	if err := vRepo.Archive(ctx, tenantID, av.ID); err != nil {
+		t.Fatalf("archive version: %v", err)
+	}
+	if err := repo.UpdateActiveVersion(ctx, tenantID, archived.ID, nil); err != nil {
+		t.Fatalf("clear active version: %v", err)
+	}
+
+	older, ov1 := newWorkflow("archived-with-an-older-published-version")
+	if err := vRepo.Publish(ctx, tenantID, ov1.ID, 1, 1, `{}`, "h", nil); err != nil {
+		t.Fatalf("publish older: %v", err)
+	}
+	ov2 := newDraftVersion(older.ID, tenantID)
+	if err := vRepo.Create(ctx, ov2); err != nil {
+		t.Fatalf("create second version: %v", err)
+	}
+	if err := vRepo.Publish(ctx, tenantID, ov2.ID, 1, 2, `{}`, "h", nil); err != nil {
+		t.Fatalf("publish second: %v", err)
+	}
+	if err := repo.UpdateActiveVersion(ctx, tenantID, older.ID, &ov2.ID); err != nil {
+		t.Fatalf("set active version: %v", err)
+	}
+	if err := vRepo.Archive(ctx, tenantID, ov2.ID); err != nil {
+		t.Fatalf("archive active version: %v", err)
+	}
+	if err := repo.UpdateActiveVersion(ctx, tenantID, older.ID, nil); err != nil {
+		t.Fatalf("clear active version: %v", err)
+	}
+
+	count, err := repo.CountByTenant(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("CountByTenant: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("count = %d, want 2 (a workflow with no active version and no draft frees its slot, whatever older versions it keeps)", count)
 	}
 }
 

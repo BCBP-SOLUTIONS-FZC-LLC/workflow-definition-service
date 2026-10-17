@@ -219,7 +219,7 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 		return
 	}
 
-	wf, version, err := h.versions.Clone(c.Request.Context(), tenantID, userID, workflowID, versionID, normalizePlanTier(c.GetHeader("x-plan")), service.CloneReq{
+	wf, version, err := h.versions.Clone(c.Request.Context(), tenantID, userID, workflowID, versionID, c.GetHeader("x-plan"), service.CloneReq{
 		NewKey:         req.NewKey,
 		NewName:        req.NewName,
 		NewDescription: req.NewDescription,

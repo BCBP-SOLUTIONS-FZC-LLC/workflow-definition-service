@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
 )
@@ -76,7 +77,7 @@ func TestLoad_AppEnvIsRequired(t *testing.T) {
 func TestLoad_ValkeyAddressIsRequiredOutsideDev(t *testing.T) {
 	staging := map[string]string{
 		"APP_ENV": "staging", "DATABASE_URL": "postgres://localhost/db", "INTERNAL_API_TOKEN": "t",
-		"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution", "EXECUTION_SERVICE_TOKEN": "t",
+		"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "http://execution", "EXECUTION_SERVICE_TOKEN": "t",
 		"OPENBAO_ADDR": "http://bao", "OPENBAO_TOKEN": "t",
 	}
 	isolateEnv(t, staging)
@@ -108,7 +109,7 @@ func TestLoad_DotEnvIsReadInDevOnly(t *testing.T) {
 
 	isolateEnv(t, map[string]string{
 		"APP_ENV": "staging", "DATABASE_URL": "postgres://localhost/db", "INTERNAL_API_TOKEN": "t",
-		"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution", "EXECUTION_SERVICE_TOKEN": "t",
+		"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "http://execution", "EXECUTION_SERVICE_TOKEN": "t",
 		"OPENBAO_ADDR": "http://bao", "OPENBAO_TOKEN": "t", "VALKEY_ADDR": "valkey:6379",
 	})
 	cfg, err = config.Load()
@@ -117,5 +118,33 @@ func TestLoad_DotEnvIsReadInDevOnly(t *testing.T) {
 	}
 	if cfg.HTTPPort != 8080 {
 		t.Errorf("staging HTTPPort = %d, want 8080: .env must not be read", cfg.HTTPPort)
+	}
+}
+
+func TestLoad_CatalogAdminIsRequiredOutsideDevAndTunedByDefault(t *testing.T) {
+	staging := map[string]string{
+		"APP_ENV": "staging", "DATABASE_URL": "postgres://localhost/db", "INTERNAL_API_TOKEN": "t",
+		"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution", "EXECUTION_SERVICE_TOKEN": "t",
+		"OPENBAO_ADDR": "http://bao", "OPENBAO_TOKEN": "t", "VALKEY_ADDR": "valkey:6379",
+	}
+	isolateEnv(t, staging)
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "CATALOG_ADMIN_BASE_URL") {
+		t.Fatalf("Load() error = %v, want one naming CATALOG_ADMIN_BASE_URL", err)
+	}
+
+	staging["CATALOG_ADMIN_BASE_URL"] = "http://catalog"
+	isolateEnv(t, staging)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() with a catalog address: %v", err)
+	}
+	if cfg.CatalogAdminBaseURL != "http://catalog" || cfg.CatalogClientTimeout != 5*time.Second || cfg.PlanTableTTL != 10*time.Minute {
+		t.Errorf("catalog config = %q %v %v", cfg.CatalogAdminBaseURL, cfg.CatalogClientTimeout, cfg.PlanTableTTL)
+	}
+
+	staging["PLAN_TABLE_TTL"] = "0s"
+	isolateEnv(t, staging)
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "PLAN_TABLE_TTL") {
+		t.Fatalf("Load() error = %v, want one naming PLAN_TABLE_TTL", err)
 	}
 }

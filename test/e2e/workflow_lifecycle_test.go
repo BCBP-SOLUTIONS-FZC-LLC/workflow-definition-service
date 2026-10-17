@@ -38,7 +38,7 @@ func TestE2E_WorkflowLifecycle(t *testing.T) {
 
 	// 1. Create workflow + initial DRAFT
 	wf, _, err := svcs.workflow.Create(ctx, tenantID, userID,
-		"e2e-lifecycle-test", "E2E Lifecycle Test", "", minimalBPMN, "")
+		"e2e-lifecycle-test", "E2E Lifecycle Test", "", minimalBPMN, "enterprise")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

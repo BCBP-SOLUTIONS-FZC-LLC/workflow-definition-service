@@ -250,6 +250,7 @@ jobs:
           IMAGE_VERSION: ${{ needs.docker.outputs.version }}
           K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'workflow-app' }}
           ORG_MEMBERSHIP_BASE_URL: ${{ vars.ORG_MEMBERSHIP_BASE_URL }}
+          CATALOG_ADMIN_BASE_URL: ${{ vars.CATALOG_ADMIN_BASE_URL }}
           OPENBAO_ADDR: ${{ vars.OPENBAO_ADDR }}
           VALKEY_ADDR: ${{ vars.VALKEY_ADDR }}
         run: |
@@ -261,6 +262,7 @@ jobs:
             --set image.tag="$IMAGE_VERSION" \
             --set existingSecret=workflow-definition-service-secrets \
             --set env.ORG_MEMBERSHIP_BASE_URL="$ORG_MEMBERSHIP_BASE_URL" \
+            --set env.CATALOG_ADMIN_BASE_URL="$CATALOG_ADMIN_BASE_URL" \
             --set env.OPENBAO_ADDR="$OPENBAO_ADDR" \
             --set env.VALKEY_ADDR="$VALKEY_ADDR" \
             --atomic

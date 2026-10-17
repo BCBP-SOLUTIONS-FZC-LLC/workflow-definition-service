@@ -346,7 +346,7 @@ func TestWorkflowService_Create_ResolvesLibraryCallsAndWarningsDoNotBlock(t *tes
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	modules := mocks.NewMockModuleVersionRepository(ctrl)
-	svc := service.NewWorkflowService(service.WorkflowDeps{
+	svc := service.NewWorkflowService(service.WorkflowDeps{PlanLimits: stdPlanLimits(),
 		Transactor: txPassthrough(ctrl), Workflows: wfRepo, Versions: vRepo,
 		Compiler: bpmn_compiler.New(), ModuleVersions: modules,
 	})
@@ -360,7 +360,7 @@ func TestWorkflowService_Create_ResolvesLibraryCallsAndWarningsDoNotBlock(t *tes
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
-	if _, _, err := svc.Create(context.Background(), tenantID, uuid.New(), "key", "name", "", libraryCallerBPMN, ""); err != nil {
+	if _, _, err := svc.Create(context.Background(), tenantID, uuid.New(), "key", "name", "", libraryCallerBPMN, "starter"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 }

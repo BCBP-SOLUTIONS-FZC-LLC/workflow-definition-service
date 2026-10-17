@@ -36,7 +36,7 @@ func TestE2E_Valkey_CacheIntegration(t *testing.T) {
 
 	// 1. Create workflow + publish + promote
 	wf, _, err := svcs.workflow.Create(ctx, tenantID, userID,
-		"e2e-cache-test", "E2E Cache Test", "", minimalBPMN, "")
+		"e2e-cache-test", "E2E Cache Test", "", minimalBPMN, "enterprise")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

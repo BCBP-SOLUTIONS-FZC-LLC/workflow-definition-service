@@ -145,7 +145,7 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 	wf, version, err := h.workflows.Create(
 		c.Request.Context(),
 		tenantID, userID,
-		req.Key, req.Name, req.Description, req.BPMNXML, normalizePlanTier(c.GetHeader("x-plan")),
+		req.Key, req.Name, req.Description, req.BPMNXML, c.GetHeader("x-plan"),
 	)
 	if err != nil {
 		h.logForbiddenXML(c, err)
@@ -215,13 +215,4 @@ func (h *Handler) ArchiveWorkflow(c *gin.Context) {
 		"status":      "ARCHIVED",
 		"message":     "Workflow archived successfully",
 	})
-}
-
-func normalizePlanTier(plan string) string {
-	switch plan {
-	case "starter", "pro", "enterprise":
-		return plan
-	default:
-		return "starter"
-	}
 }

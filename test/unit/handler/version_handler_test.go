@@ -309,8 +309,8 @@ func TestCloneVersion_OK(t *testing.T) {
 	assert.Equal(t, "Version cloned", resp["message"])
 }
 
-func TestCloneVersion_PlanTierIsNormalizedLikeCreate(t *testing.T) {
-	for header, want := range map[string]string{"PRO": "starter", "pro": "pro", "": "starter", "enterprise": "enterprise"} {
+func TestCloneVersion_PassesThePlanHeaderUntouched(t *testing.T) {
+	for header, want := range map[string]string{"PRO": "PRO", "pro": "pro", "": "", "enterprise": "enterprise"} {
 		t.Run(header, func(t *testing.T) {
 			var got string
 			h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{

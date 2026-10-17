@@ -91,9 +91,9 @@ spec:
         - port: 4317
           protocol: TCP
 
-    # Named same-namespace egress targets — covers ORG_MEMBERSHIP_BASE_URL and
-    # EXECUTION_SERVICE_URL, this service's only same-namespace outbound
-    # dependencies. Not a blanket podSelector: {} allow. If either target
+    # Named same-namespace egress targets — covers ORG_MEMBERSHIP_BASE_URL,
+    # CATALOG_ADMIN_BASE_URL and EXECUTION_SERVICE_URL, this service's only
+    # same-namespace outbound dependencies. Not a blanket podSelector: {} allow. If either target
     # moves to a different namespace, add a scoped rule via
     # networkPolicy.additionalEgressRules instead of widening this one.
     {{- range .Values.networkPolicy.allowedEgressTargets }}

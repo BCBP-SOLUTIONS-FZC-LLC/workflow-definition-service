@@ -549,6 +549,9 @@ All configuration is read from environment variables via `internal/config.Config
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `ORG_MEMBERSHIP_BASE_URL` | When `APP_ENV != dev` | *(empty)* | Base URL of the Org & Membership Service for assignee eligibility checks |
+| `CATALOG_ADMIN_BASE_URL` | When `APP_ENV != dev` | *(empty)* | Base URL of the Catalog / Admin Config Service, whose internal plans read supplies each plan's workflow template limit |
+| `CATALOG_CLIENT_TIMEOUT` | No | `5s` | Timeout of one plan table read |
+| `PLAN_TABLE_TTL` | No | `10m` | How long a plan table read stays fresh. The last table read is kept when a refresh fails; with none read, workflow create and clone answer `503` |
 | `MEMBERSHIP_CLIENT_TIMEOUT` | No | `10s` | HTTP client timeout for the Org & Membership Service |
 | `EXECUTION_SERVICE_URL` | When `APP_ENV != dev` | *(empty)* | The Execution Service's internal HTTP base URL (archive guard, pause-tasks); empty builds no client |
 | `EXECUTION_SERVICE_TOKEN` | When `APP_ENV != dev` | *(empty)* | The Execution Service's `INTERNAL_API_TOKEN`, sent as `x-internal-token` |

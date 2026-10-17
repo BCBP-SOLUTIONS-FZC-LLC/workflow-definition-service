@@ -99,7 +99,7 @@ func TestE2E_StarterFromWorkflowVersion_SnapshotsNotLinks(t *testing.T) {
 	svcs := wireServices(t, tenantPool, nil)
 	starterSvc := wireStarterService(tenantPool, systemPool)
 
-	wf, draft, err := svcs.workflow.Create(ctx, tenantID, userID, "source-wf", "Source Workflow", "", minimalBPMN, "")
+	wf, draft, err := svcs.workflow.Create(ctx, tenantID, userID, "source-wf", "Source Workflow", "", minimalBPMN, "enterprise")
 	if err != nil {
 		t.Fatalf("Create workflow: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestE2E_StarterFromWorkflowVersion_RejectsDraftSource(t *testing.T) {
 	svcs := wireServices(t, tenantPool, nil)
 	starterSvc := wireStarterService(tenantPool, systemPool)
 
-	_, draft, err := svcs.workflow.Create(ctx, tenantID, userID, "draft-source-wf", "Draft Source", "", minimalBPMN, "")
+	_, draft, err := svcs.workflow.Create(ctx, tenantID, userID, "draft-source-wf", "Draft Source", "", minimalBPMN, "enterprise")
 	if err != nil {
 		t.Fatalf("Create workflow: %v", err)
 	}

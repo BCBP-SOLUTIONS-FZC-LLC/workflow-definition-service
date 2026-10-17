@@ -79,7 +79,7 @@ components:
       required: false
       schema:
         type: string
-      description: Tenant billing plan tier injected by Envoy.
+      description: The tenant's plan code (starter, pro or enterprise), set by the authorization layer. Workflow creation and clone look up the plan's template limit by it; a missing or unknown code answers 503.
 
     FeatureFlags:
       name: x-feature-flags

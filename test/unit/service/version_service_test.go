@@ -734,7 +734,7 @@ func TestVersionService_Clone_OK(t *testing.T) {
 	tx := mocks.NewMockTransactor(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{
+	svc := service.NewVersionService(service.VersionDeps{PlanLimits: stdPlanLimits(),
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
@@ -1560,7 +1560,7 @@ func TestVersionService_Clone_CreateWorkflowError(t *testing.T) {
 	tx := mocks.NewMockTransactor(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{
+	svc := service.NewVersionService(service.VersionDeps{PlanLimits: stdPlanLimits(),
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
@@ -1582,7 +1582,7 @@ func TestVersionService_Clone_CreateVersionError(t *testing.T) {
 	tx := mocks.NewMockTransactor(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{
+	svc := service.NewVersionService(service.VersionDeps{PlanLimits: stdPlanLimits(),
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
@@ -1766,7 +1766,7 @@ func TestVersionService_Clone_QuotaNotExceeded(t *testing.T) {
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 
-	svc := service.NewVersionService(service.VersionDeps{
+	svc := service.NewVersionService(service.VersionDeps{PlanLimits: stdPlanLimits(),
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
@@ -1790,7 +1790,7 @@ func TestVersionService_Clone_QuotaExceeded(t *testing.T) {
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 
-	svc := service.NewVersionService(service.VersionDeps{Transactor: tx, Workflows: wfRepo, Versions: vRepo})
+	svc := service.NewVersionService(service.VersionDeps{PlanLimits: stdPlanLimits(), Transactor: tx, Workflows: wfRepo, Versions: vRepo})
 
 	// Source is fetched before the (serializable) tx; the quota COUNT now runs inside it.
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
@@ -1811,7 +1811,7 @@ func TestVersionService_Clone_QuotaCountError(t *testing.T) {
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 
-	svc := service.NewVersionService(service.VersionDeps{Transactor: tx, Workflows: wfRepo, Versions: vRepo})
+	svc := service.NewVersionService(service.VersionDeps{PlanLimits: stdPlanLimits(), Transactor: tx, Workflows: wfRepo, Versions: vRepo})
 
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
@@ -1821,5 +1821,35 @@ func TestVersionService_Clone_QuotaCountError(t *testing.T) {
 		service.CloneReq{NewKey: "k", NewName: "n"})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestVersionService_Clone_NoLimitSourceIsUnavailableNeverAFreeTier(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
+	svc := service.NewVersionService(service.VersionDeps{Transactor: txPassthrough(ctrl), Workflows: mocks.NewMockWorkflowRepository(ctrl), Versions: vRepo})
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
+		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
+
+	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, "starter", service.CloneReq{NewKey: "k", NewName: "n"})
+	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
+		t.Fatalf("expected ErrUpstreamUnavailable, got %v", err)
+	}
+}
+
+func TestVersionService_Clone_UnknownPlanCodeIsUnavailable(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
+	svc := service.NewVersionService(service.VersionDeps{
+		PlanLimits: stdPlanLimits(), Transactor: txPassthrough(ctrl), Workflows: mocks.NewMockWorkflowRepository(ctrl), Versions: vRepo,
+	})
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
+		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished}, nil)
+
+	_, _, err := svc.Clone(context.Background(), tenantID, uuid.New(), wfID, vID, "", service.CloneReq{NewKey: "k", NewName: "n"})
+	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
+		t.Fatalf("expected ErrUpstreamUnavailable, got %v", err)
 	}
 }

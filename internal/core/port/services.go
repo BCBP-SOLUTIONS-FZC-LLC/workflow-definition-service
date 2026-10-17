@@ -14,6 +14,14 @@ type MembershipService interface {
 	CheckEligibility(ctx context.Context, tenantID, userID uuid.UUID, departmentID, role string) (bool, error)
 }
 
+type PlanTableReader interface {
+	ReadPlanTable(ctx context.Context) (map[string]*int64, error)
+}
+
+type PlanLimits interface {
+	WorkflowTemplateLimit(ctx context.Context, planCode string) (*int64, error)
+}
+
 type ExecutionService interface {
 	CheckActiveInstances(ctx context.Context, tenantID, workflowID uuid.UUID) (hasActive bool, count int32, err error)
 	PauseUserTasks(ctx context.Context, tenantID, userID uuid.UUID) error

@@ -19,6 +19,7 @@ type WorkflowDeps struct {
 	Execution      port.ExecutionService
 	Compiler       port.PlanCompiler
 	ModuleVersions port.ModuleVersionRepository
+	PlanLimits     port.PlanLimits
 	Log            port.Logger
 }
 
@@ -30,6 +31,7 @@ type WorkflowService struct {
 	execution  port.ExecutionService
 	compiler   port.PlanCompiler
 	modules    moduleResolver
+	planLimits port.PlanLimits
 	log        port.Logger
 }
 
@@ -42,6 +44,7 @@ func NewWorkflowService(d WorkflowDeps) *WorkflowService {
 		execution:  d.Execution,
 		compiler:   d.Compiler,
 		modules:    moduleResolver{compiler: d.Compiler, versions: d.ModuleVersions},
+		planLimits: d.PlanLimits,
 		log:        logOrNoop(d.Log),
 	}
 }
@@ -61,7 +64,7 @@ func (s *WorkflowService) List(
 func (s *WorkflowService) Create(
 	ctx context.Context,
 	tenantID, userID uuid.UUID,
-	templateKey, name, description, bpmnXML, planTier string,
+	templateKey, name, description, bpmnXML, planCode string,
 ) (wf *domain.Workflow, v *domain.WorkflowVersion, err error) {
 	defer func() { observability.IncCounterVec(observability.WFSubmissionsTotal, observability.OutcomeLabel(err)) }()
 	if s.compiler != nil {
@@ -99,8 +102,12 @@ func (s *WorkflowService) Create(
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
+	limit, err := resolveTemplateLimit(ctx, s.planLimits, planCode)
+	if err != nil {
+		return nil, nil, err
+	}
 	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
-		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, planTier); err != nil {
+		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, limit); err != nil {
 			return err
 		}
 		if err := s.workflows.Create(ctx, wf); err != nil {

@@ -24,7 +24,15 @@ LIMIT $2
 OFFSET $3;
 
 -- name: CountWorkflowsByTenant :one
-SELECT COUNT(*) FROM workflow WHERE tenant_id = $1;
+SELECT COUNT(*) FROM workflow w
+WHERE w.tenant_id = $1
+  AND (
+    w.active_version_id IS NOT NULL
+    OR EXISTS (
+      SELECT 1 FROM workflow_version wv
+      WHERE wv.workflow_id = w.id AND wv.status = 'DRAFT'
+    )
+  );
 
 -- name: UpdateActiveVersion :execresult
 -- The pointer may only name a PUBLISHED, valid version of this workflow, or be cleared.

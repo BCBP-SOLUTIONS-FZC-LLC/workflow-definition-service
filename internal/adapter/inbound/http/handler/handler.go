@@ -24,7 +24,7 @@ import (
 
 type workflowSvc interface {
 	List(ctx context.Context, tenantID uuid.UUID, filter port.WorkflowFilter) ([]*domain.Workflow, int64, error)
-	Create(ctx context.Context, tenantID, userID uuid.UUID, templateKey, name, description, bpmnXML, planTier string) (*domain.Workflow, *domain.WorkflowVersion, error)
+	Create(ctx context.Context, tenantID, userID uuid.UUID, templateKey, name, description, bpmnXML, planCode string) (*domain.Workflow, *domain.WorkflowVersion, error)
 	Get(ctx context.Context, tenantID, id uuid.UUID, versionsLimit int) (*domain.Workflow, []*domain.WorkflowVersion, error)
 	Archive(ctx context.Context, tenantID, userID, id uuid.UUID) error
 }
@@ -40,7 +40,7 @@ type versionSvc interface {
 	List(ctx context.Context, tenantID, workflowID uuid.UUID, page, limit int) ([]*domain.WorkflowVersion, int64, error)
 	Get(ctx context.Context, tenantID, workflowID, versionID uuid.UUID) (*domain.WorkflowVersion, error)
 	Publish(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID, forcePublishStructural bool) (*domain.WorkflowVersion, error)
-	Clone(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID, planTier string, req service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error)
+	Clone(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID, planCode string, req service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error)
 	Promote(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID) (*domain.WorkflowVersion, error)
 	Export(ctx context.Context, tenantID, workflowID, versionID uuid.UUID) (string, string, error)
 	Diff(ctx context.Context, tenantID, workflowID, baseVersionID, targetVersionID uuid.UUID) (*service.DiffResult, error)

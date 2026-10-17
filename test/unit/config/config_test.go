@@ -14,7 +14,7 @@ func TestLoad_Success(t *testing.T) {
 	keysToBackup := []string{
 		"DATABASE_URL", "APP_ENV", "BUILD_VERSION", "HTTP_PORT",
 		"OTEL_SERVICE_NAME", "VALKEY_ADDR", "VALKEY_PASSWORD",
-		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
+		"ORG_MEMBERSHIP_BASE_URL", "CATALOG_ADMIN_BASE_URL", "PLAN_TABLE_TTL", "CATALOG_CLIENT_TIMEOUT", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
 		"INTERNAL_API_TOKEN", "OPENBAO_ADDR", "OPENBAO_TOKEN",
 	}
 	for _, k := range keysToBackup {
@@ -38,6 +38,7 @@ func TestLoad_Success(t *testing.T) {
 	_ = os.Setenv("VALKEY_ADDR", "valkey:6379")
 	_ = os.Setenv("VALKEY_PASSWORD", "secret")
 	_ = os.Setenv("ORG_MEMBERSHIP_BASE_URL", "http://org")
+	_ = os.Setenv("CATALOG_ADMIN_BASE_URL", "http://catalog")
 	_ = os.Setenv("EXECUTION_SERVICE_URL", "http://execution:8080")
 	_ = os.Setenv("EXECUTION_SERVICE_TOKEN", "execution-token")
 	_ = os.Setenv("OPENBAO_ADDR", "http://openbao:8200")
@@ -81,7 +82,7 @@ func TestLoad_Success(t *testing.T) {
 func TestLoad_ValidationFailures(t *testing.T) {
 	keysToBackup := []string{
 		"DATABASE_URL", "APP_ENV",
-		"ORG_MEMBERSHIP_BASE_URL", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
+		"ORG_MEMBERSHIP_BASE_URL", "CATALOG_ADMIN_BASE_URL", "PLAN_TABLE_TTL", "CATALOG_CLIENT_TIMEOUT", "EXECUTION_SERVICE_URL", "EXECUTION_SERVICE_TOKEN",
 		"INTERNAL_API_TOKEN", "SYSTEM_DATABASE_URL", "OPENBAO_ADDR", "OPENBAO_TOKEN",
 		"HTTP_PORT", "VALKEY_ADDR",
 		"EXECUTION_CLIENT_TIMEOUT",
@@ -119,7 +120,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			name: "missing openbao address outside dev",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "APP_ENV": "staging", "INTERNAL_API_TOKEN": "t",
-				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
 				"OPENBAO_ADDR": "", "OPENBAO_TOKEN": "t",
 			},
 			wantErr:    true,
@@ -129,7 +130,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			name: "missing openbao token outside dev",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "APP_ENV": "staging", "INTERNAL_API_TOKEN": "t",
-				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
 				"OPENBAO_ADDR": "http://openbao:8200", "OPENBAO_TOKEN": "",
 			},
 			wantErr:    true,
@@ -145,7 +146,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "APP_ENV": "staging",
 				"INTERNAL_API_TOKEN":      "t",
-				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
 				"OPENBAO_ADDR": "http://openbao:8200", "OPENBAO_TOKEN": "t",
 			},
 			wantErr: false,
@@ -165,7 +166,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost",
 				"APP_ENV":      "staging", "INTERNAL_API_TOKEN": "t",
-				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "", "EXECUTION_SERVICE_TOKEN": "t",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "", "EXECUTION_SERVICE_TOKEN": "t",
 			},
 			wantErr:    true,
 			wantErrVar: "EXECUTION_SERVICE_URL",
@@ -175,7 +176,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost",
 				"APP_ENV":      "staging", "INTERNAL_API_TOKEN": "t",
-				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "",
 			},
 			wantErr:    true,
 			wantErrVar: "EXECUTION_SERVICE_TOKEN",
@@ -212,7 +213,7 @@ func TestLoad_ValidationFailures(t *testing.T) {
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost", "APP_ENV": "prod",
 				"INTERNAL_API_TOKEN": "secret-token", "SYSTEM_DATABASE_URL": "postgres://system-host/db",
-				"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
+				"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "http://execution:8080", "EXECUTION_SERVICE_TOKEN": "t",
 				"OPENBAO_ADDR": "http://openbao:8200", "OPENBAO_TOKEN": "t",
 			},
 			wantErr: false,

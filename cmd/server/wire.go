@@ -77,6 +77,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	cache, redisClient := newCacheStore(context.Background(), cfg, log)
 
 	membershipSvc := newMembershipService(cfg)
+	planLimits := newPlanLimits(cfg, log)
 	executionSvc := newExecutionService(cfg)
 	var secretsSvc port.SecretsClient
 
@@ -106,6 +107,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		Execution:      executionSvc,
 		Compiler:       compiler,
 		ModuleVersions: moduleVersionRepo,
+		PlanLimits:     planLimits,
 		Log:            log,
 	})
 	draftSvc := service.NewDraftService(service.DraftDeps{
@@ -127,6 +129,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		Compiler:       compiler,
 		ModuleVersions: moduleVersionRepo,
 		Cache:          cache,
+		PlanLimits:     planLimits,
 		Log:            log,
 	})
 

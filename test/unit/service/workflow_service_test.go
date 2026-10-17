@@ -58,7 +58,7 @@ func TestWorkflowService_Create_OK(t *testing.T) {
 	tx := txPassthrough(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewWorkflowService(service.WorkflowDeps{
+	svc := service.NewWorkflowService(service.WorkflowDeps{PlanLimits: stdPlanLimits(),
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
@@ -66,7 +66,7 @@ func TestWorkflowService_Create_OK(t *testing.T) {
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
-	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>", "")
+	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>", "starter")
 	if err != nil || wf == nil || v == nil {
 		t.Fatalf("unexpected: %v %v %v", wf, v, err)
 	}
@@ -79,14 +79,14 @@ func TestWorkflowService_Create_WorkflowCreateError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tx := txPassthrough(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
-	svc := service.NewWorkflowService(service.WorkflowDeps{
+	svc := service.NewWorkflowService(service.WorkflowDeps{PlanLimits: stdPlanLimits(),
 		Transactor: tx, Workflows: wfRepo,
 	})
 
 	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(0), nil)
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(domain.ErrDuplicateTemplateKey)
 
-	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "")
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "starter")
 	if !errors.Is(err, domain.ErrDuplicateTemplateKey) {
 		t.Fatalf("expected ErrDuplicateTemplateKey, got %v", err)
 	}
@@ -97,7 +97,7 @@ func TestWorkflowService_Create_VersionCreateError(t *testing.T) {
 	tx := txPassthrough(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewWorkflowService(service.WorkflowDeps{
+	svc := service.NewWorkflowService(service.WorkflowDeps{PlanLimits: stdPlanLimits(),
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
@@ -105,7 +105,7 @@ func TestWorkflowService_Create_VersionCreateError(t *testing.T) {
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(errors.New("version error"))
 
-	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "")
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "starter")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -117,7 +117,7 @@ func TestWorkflowService_Create_WithCompiler_ValidationOK(t *testing.T) {
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
-	svc := service.NewWorkflowService(service.WorkflowDeps{
+	svc := service.NewWorkflowService(service.WorkflowDeps{PlanLimits: stdPlanLimits(),
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo, Compiler: compiler,
 	})
 
@@ -127,7 +127,7 @@ func TestWorkflowService_Create_WithCompiler_ValidationOK(t *testing.T) {
 	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
-	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>", "")
+	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "desc", "<bpmn/>", "starter")
 	if err != nil || wf == nil || v == nil {
 		t.Fatalf("unexpected: err=%v wf=%v v=%v", err, wf, v)
 	}
@@ -167,7 +167,7 @@ func TestWorkflowService_Create_QuotaExceeded(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	// Quota COUNT now runs inside the (serializable) tx.
-	svc := service.NewWorkflowService(service.WorkflowDeps{Transactor: txPassthrough(ctrl), Workflows: wfRepo})
+	svc := service.NewWorkflowService(service.WorkflowDeps{PlanLimits: stdPlanLimits(), Transactor: txPassthrough(ctrl), Workflows: wfRepo})
 
 	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(5), nil)
 
@@ -180,7 +180,7 @@ func TestWorkflowService_Create_QuotaExceeded(t *testing.T) {
 func TestWorkflowService_Create_CountByTenantError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
-	svc := service.NewWorkflowService(service.WorkflowDeps{Transactor: txPassthrough(ctrl), Workflows: wfRepo})
+	svc := service.NewWorkflowService(service.WorkflowDeps{PlanLimits: stdPlanLimits(), Transactor: txPassthrough(ctrl), Workflows: wfRepo})
 
 	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(0), errors.New("db error"))
 
@@ -195,7 +195,7 @@ func TestWorkflowService_Create_EnterpriseNoQuota(t *testing.T) {
 	tx := txPassthrough(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewWorkflowService(service.WorkflowDeps{
+	svc := service.NewWorkflowService(service.WorkflowDeps{PlanLimits: stdPlanLimits(),
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
@@ -532,7 +532,7 @@ func TestWorkflowService_Create_ProPlan_BelowLimit_OK(t *testing.T) {
 	tx := txPassthrough(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewWorkflowService(service.WorkflowDeps{
+	svc := service.NewWorkflowService(service.WorkflowDeps{PlanLimits: stdPlanLimits(),
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
@@ -552,7 +552,7 @@ func TestWorkflowService_Create_StarterPlan_BelowLimit_OK(t *testing.T) {
 	tx := txPassthrough(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewWorkflowService(service.WorkflowDeps{
+	svc := service.NewWorkflowService(service.WorkflowDeps{PlanLimits: stdPlanLimits(),
 		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
 	})
 
@@ -564,5 +564,56 @@ func TestWorkflowService_Create_StarterPlan_BelowLimit_OK(t *testing.T) {
 	wf, v, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "starter")
 	if err != nil || wf == nil || v == nil {
 		t.Fatalf("unexpected: %v %v %v", wf, v, err)
+	}
+}
+
+func TestWorkflowService_Create_NoLimitSourceIsUnavailableNeverAFreeTier(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := service.NewWorkflowService(service.WorkflowDeps{Transactor: txPassthrough(ctrl), Workflows: mocks.NewMockWorkflowRepository(ctrl)})
+
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "starter")
+	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
+		t.Fatalf("expected ErrUpstreamUnavailable, got %v", err)
+	}
+}
+
+func TestWorkflowService_Create_UnknownPlanCodeIsUnavailable(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := service.NewWorkflowService(service.WorkflowDeps{
+		PlanLimits: stdPlanLimits(), Transactor: txPassthrough(ctrl), Workflows: mocks.NewMockWorkflowRepository(ctrl),
+	})
+
+	for _, code := range []string{"", "platinum"} {
+		_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", code)
+		if !errors.Is(err, domain.ErrUpstreamUnavailable) {
+			t.Fatalf("plan %q: expected ErrUpstreamUnavailable, got %v", code, err)
+		}
+	}
+}
+
+func TestWorkflowService_Create_ALimitOfZeroIsAHardCap(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{
+		PlanLimits: staticLimits{"frozen": limitOf(0)}, Transactor: txPassthrough(ctrl), Workflows: wfRepo,
+	})
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), gomock.Any()).Return(int64(0), nil)
+
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "frozen")
+	if !errors.Is(err, domain.ErrPlanQuotaExceeded) {
+		t.Fatalf("expected ErrPlanQuotaExceeded, got %v", err)
+	}
+}
+
+func TestWorkflowService_Create_AnUnlimitedPlanNeverCounts(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := service.NewWorkflowService(service.WorkflowDeps{PlanLimits: stdPlanLimits(), Transactor: txPassthrough(ctrl), Workflows: wfRepo, Versions: vRepo})
+	wfRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	vRepo.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	if _, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "key", "name", "", "<bpmn/>", "enterprise"); err != nil {
+		t.Fatalf("unexpected: %v", err)
 	}
 }
