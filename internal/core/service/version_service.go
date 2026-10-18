@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -215,6 +216,7 @@ func (s *VersionService) Clone(
 func (s *VersionService) Promote(
 	ctx context.Context,
 	tenantID, userID, workflowID, versionID uuid.UUID,
+	planCode string,
 ) (v *domain.WorkflowVersion, err error) {
 	defer func() { observability.IncCounterVec(observability.WFPromoteTotal, observability.OutcomeLabel(err)) }()
 	v, err = s.versions.GetByID(ctx, tenantID, versionID)
@@ -239,7 +241,20 @@ func (s *VersionService) Promote(
 		return v, nil
 	}
 
-	if err := s.transactor.RunInTx(ctx, func(ctx context.Context) error {
+	var limit *int64
+	reactivating := wf.ActiveVersionID == nil
+	if reactivating {
+		limit, err = resolveTemplateLimit(ctx, s.planLimits, planCode)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
+		if reactivating {
+			if err := s.enforceQuotaUnlessCounted(ctx, tenantID, workflowID, limit); err != nil {
+				return err
+			}
+		}
 		return s.workflows.UpdateActiveVersion(ctx, tenantID, workflowID, &versionID)
 	}); err != nil {
 		return nil, fmt.Errorf("promote version: %w", err)
@@ -252,6 +267,17 @@ func (s *VersionService) Promote(
 		"version_id":  versionID.String(),
 	})
 	return v, nil
+}
+
+func (s *VersionService) enforceQuotaUnlessCounted(ctx context.Context, tenantID, workflowID uuid.UUID, limit *int64) error {
+	_, err := s.versions.GetDraft(ctx, tenantID, workflowID)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		return fmt.Errorf(errGetDraft, err)
+	}
+	return enforceWorkflowQuota(ctx, s.workflows, tenantID, limit)
 }
 
 func (s *VersionService) Export(

@@ -1863,6 +1863,11 @@ paths:
     post:
       operationId: promoteVersion
       summary: Promote a published version to active (rollback / rollforward)
+      description: >-
+        Making a published version active on a workflow that has no active
+        version and no draft counts that workflow against the plan's template
+        limit, as a new workflow is, and fails with `PLAN_QUOTA_EXCEEDED` at the
+        limit.
       tags: [Versions]
       security:
         - GatewayTenantContext: []

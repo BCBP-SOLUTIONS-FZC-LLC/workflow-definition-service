@@ -55,7 +55,7 @@ idx_wv_single_draft ON workflow_version(workflow_id) WHERE status = 'DRAFT'
 `UpdateDraftReq.RecordVersion` (0 = unchecked) is the client token.
 
 ### Plan quota + SERIALIZABLE TOCTOU guard
-`WorkflowService.Create` and `VersionService.Clone` run the quota `CountByTenant` **inside** `RunInTxWithRetry` (SERIALIZABLE, retries on 40001/40P01) so two concurrent creates cannot both pass. The count covers workflows with a `DRAFT` or `PUBLISHED` version, so archiving frees a slot. The limit comes from the plan table (`PlanLimitService`, read from catalog-admin and cached per replica) by the `x-plan` code, resolved before the transaction opens; a null limit skips the count. A missing or unknown code, or no table ever read, is `ErrUpstreamUnavailable` → 503, never a default tier. Returns `ErrPlanQuotaExceeded` → 403 `PLAN_QUOTA_EXCEEDED`.
+`WorkflowService.Create`, `VersionService.Clone` and the reactivating case of `VersionService.Promote` (no active version, no draft) run the quota `CountByTenant` **inside** `RunInTxWithRetry` (SERIALIZABLE, retries on 40001/40P01) so two concurrent creates cannot both pass. The count covers workflows with a `DRAFT` or `PUBLISHED` version, so archiving frees a slot. The limit comes from the plan table (`PlanLimitService`, read from catalog-admin and cached per replica) by the `x-plan` code, resolved before the transaction opens; a null limit skips the count. A missing or unknown code, or no table ever read, is `ErrUpstreamUnavailable` → 503, never a default tier. Returns `ErrPlanQuotaExceeded` → 403 `PLAN_QUOTA_EXCEEDED`.
 
 ## Migrations
 

@@ -113,10 +113,10 @@ func TestPlanLimitService_RefreshesAfterTheFreshnessWindow(t *testing.T) {
 	reader.table = map[string]*int64{"starter": limitOf(8)}
 	clock.now = clock.now.Add(2 * time.Minute)
 
-	got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.Equal(t, int64(8), *got)
+	assert.Eventually(t, func() bool {
+		got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		return err == nil && got != nil && *got == 8
+	}, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, 2, reader.callCount())
 }
 
@@ -169,7 +169,73 @@ func TestPlanLimitService_AFailedRefreshIsNotRetriedInsideTheBackoffEither(t *te
 		_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
 		require.NoError(t, err)
 	}
-	assert.Equal(t, 2, reader.callCount(), "one failed refresh, then the backoff holds")
+	assert.Eventually(t, func() bool { return reader.callCount() == 2 }, 2*time.Second, 5*time.Millisecond, "one failed refresh")
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 2, reader.callCount(), "then the backoff holds")
+}
+
+func TestPlanLimitService_AnExpiredTableIsServedWhileTheRefreshRuns(t *testing.T) {
+	reader := &fakePlanTableReader{table: map[string]*int64{"starter": limitOf(5)}}
+	clock := &planClock{now: time.Unix(0, 0)}
+	svc := newPlanLimits(reader, clock)
+	_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	require.NoError(t, err)
+
+	release := make(chan struct{})
+	reader.mu.Lock()
+	reader.release = release
+	reader.table = map[string]*int64{"starter": limitOf(8)}
+	reader.mu.Unlock()
+	clock.now = clock.now.Add(2 * time.Minute)
+
+	answered := make(chan *int64, 1)
+	go func() {
+		got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		if err != nil {
+			answered <- nil
+			return
+		}
+		answered <- got
+	}()
+	select {
+	case got := <-answered:
+		require.NotNil(t, got)
+		assert.Equal(t, int64(5), *got, "the held table answers while the catalog is slow")
+	case <-time.After(time.Second):
+		t.Fatal("the request that found the table expired waited for the catalog")
+	}
+
+	close(release)
+	assert.Eventually(t, func() bool {
+		got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		return err == nil && got != nil && *got == 8
+	}, 2*time.Second, 5*time.Millisecond, "the refresh lands for later requests")
+}
+
+func TestPlanLimitService_APanickingReaderDoesNotWedgeTheRefresh(t *testing.T) {
+	var once sync.Once
+	reader := &fakePlanTableReader{table: map[string]*int64{"starter": limitOf(5)}}
+	reader.onRead = func() { once.Do(func() { panic("reader bug") }) }
+	clock := &planClock{now: time.Unix(0, 0)}
+	svc := newPlanLimits(reader, clock)
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("a reader panic escaped: %v", r)
+			}
+		}()
+		_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		assert.ErrorIs(t, err, domain.ErrUpstreamUnavailable)
+	}()
+
+	clock.now = clock.now.Add(10 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, err := svc.WorkflowTemplateLimit(ctx, "starter")
+	require.NoError(t, err, "the next read after the backoff must not wait on the panicked one")
+	require.NotNil(t, got)
+	assert.Equal(t, int64(5), *got)
 }
 
 type staticLimits map[string]*int64
@@ -241,11 +307,10 @@ func TestPlanLimitService_ACancelledCallerDoesNotFailTheReadForOthers(t *testing
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := svc.WorkflowTemplateLimit(cancelled, "starter")
-	require.NoError(t, err, "the shared read does not run under one caller's context")
+	_, _ = svc.WorkflowTemplateLimit(cancelled, "starter")
 
 	got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
-	require.NoError(t, err)
+	require.NoError(t, err, "the shared read does not run under one caller's context")
 	require.NotNil(t, got)
 }
 

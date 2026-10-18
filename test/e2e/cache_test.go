@@ -49,7 +49,7 @@ func TestE2E_Valkey_CacheIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	if _, err := svcs.version.Promote(ctx, tenantID, userID, wf.ID, published.ID); err != nil {
+	if _, err := svcs.version.Promote(ctx, tenantID, userID, wf.ID, published.ID, "enterprise"); err != nil {
 		t.Fatalf("Promote: %v", err)
 	}
 

@@ -254,7 +254,7 @@ func (h *Handler) PromoteVersion(c *gin.Context) {
 		return
 	}
 
-	promoted, err := h.versions.Promote(c.Request.Context(), tenantID, userID, workflowID, versionID)
+	promoted, err := h.versions.Promote(c.Request.Context(), tenantID, userID, workflowID, versionID, c.GetHeader("x-plan"))
 	if err != nil {
 		errResponse(c, h.log, err)
 		return

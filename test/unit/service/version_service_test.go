@@ -816,11 +816,11 @@ func TestVersionService_Promote_OK(t *testing.T) {
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: true}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
 		&domain.Workflow{ID: wfID, ActiveVersionID: &prevID}, nil)
-	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
-	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err != nil {
+	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -838,7 +838,7 @@ func TestVersionService_Promote_AlreadyActive(t *testing.T) {
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
 		&domain.Workflow{ID: wfID, ActiveVersionID: &vID}, nil)
 
-	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err != nil {
+	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -852,7 +852,7 @@ func TestVersionService_Promote_NotPublished(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: wfID, Status: domain.VersionStatusDraft}, nil)
 
-	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID)
+	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise")
 	if !errors.Is(err, domain.ErrVersionNotPublished) {
 		t.Fatalf("expected ErrVersionNotPublished, got %v", err)
 	}
@@ -868,7 +868,7 @@ func TestVersionService_Promote_VersionMarkedInvalid_IsRefused(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: false}, nil)
 
-	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID)
+	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise")
 	if !errors.Is(err, domain.ErrInvalidVersionStatus) {
 		t.Fatalf("expected ErrInvalidVersionStatus for a version whose assignees are revoked, got %v", err)
 	}
@@ -883,7 +883,7 @@ func TestVersionService_Promote_WorkflowMismatch(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{WorkflowID: uuid.New(), Status: domain.VersionStatusPublished, IsValid: true}, nil)
 
-	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID)
+	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise")
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -900,7 +900,7 @@ func TestVersionService_Promote_WorkflowGetError(t *testing.T) {
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: true}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(nil, errors.New("db error"))
 
-	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err == nil {
+	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise"); err == nil {
 		t.Fatal("expected error from workflow GetByID failure")
 	}
 }
@@ -912,7 +912,7 @@ func TestVersionService_Promote_GetVersionError(t *testing.T) {
 
 	vRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrNotFound)
 
-	if _, err := svc.Promote(context.Background(), uuid.New(), uuid.New(), uuid.New(), uuid.New()); err == nil {
+	if _, err := svc.Promote(context.Background(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), "enterprise"); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -923,7 +923,7 @@ func TestVersionService_Promote_UpdateError(t *testing.T) {
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
-		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo, PlanLimits: stdPlanLimits(),
 	})
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
@@ -931,11 +931,12 @@ func TestVersionService_Promote_UpdateError(t *testing.T) {
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: true}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
 		&domain.Workflow{ID: wfID}, nil)
-	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
+	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(&domain.WorkflowVersion{}, nil)
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(errors.New("db error"))
 
-	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err == nil {
+	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise"); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -946,7 +947,7 @@ func TestVersionService_Promote_WithVersionNumberAndPlan(t *testing.T) {
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	svc := service.NewVersionService(service.VersionDeps{
-		Transactor: tx, Workflows: wfRepo, Versions: vRepo,
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo, PlanLimits: stdPlanLimits(),
 	})
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
@@ -959,12 +960,85 @@ func TestVersionService_Promote_WithVersionNumberAndPlan(t *testing.T) {
 	// No active version on the target workflow.
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
 		&domain.Workflow{ID: wfID}, nil)
-	tx.EXPECT().RunInTx(gomock.Any(), gomock.Any()).DoAndReturn(
+	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(&domain.WorkflowVersion{}, nil)
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
-	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID); err != nil {
+	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "enterprise"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func promoteReactivationFixture(t *testing.T) (*service.VersionService, *mocks.MockTransactor, *mocks.MockWorkflowRepository, *mocks.MockWorkflowVersionRepository, uuid.UUID, uuid.UUID, uuid.UUID) {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	tx := mocks.NewMockTransactor(ctrl)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := service.NewVersionService(service.VersionDeps{
+		Transactor: tx, Workflows: wfRepo, Versions: vRepo, PlanLimits: stdPlanLimits(),
+	})
+	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
+		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: true}, nil)
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ID: wfID}, nil)
+	return svc, tx, wfRepo, vRepo, tenantID, wfID, vID
+}
+
+func runTx(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) }
+
+func TestVersionService_Promote_ReactivationAtTheLimitIsRefused(t *testing.T) {
+	svc, tx, wfRepo, vRepo, tenantID, wfID, vID := promoteReactivationFixture(t)
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(runTx)
+	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(nil, domain.ErrNotFound)
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), tenantID).Return(int64(5), nil)
+
+	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "starter")
+	if !errors.Is(err, domain.ErrPlanQuotaExceeded) {
+		t.Fatalf("err = %v, want ErrPlanQuotaExceeded", err)
+	}
+}
+
+func TestVersionService_Promote_ReactivationUnderTheLimitSucceeds(t *testing.T) {
+	svc, tx, wfRepo, vRepo, tenantID, wfID, vID := promoteReactivationFixture(t)
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(runTx)
+	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(nil, domain.ErrNotFound)
+	wfRepo.EXPECT().CountByTenant(gomock.Any(), tenantID).Return(int64(4), nil)
+	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
+
+	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "starter"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVersionService_Promote_ReactivationOfAWorkflowWithADraftIsNotCountedAgain(t *testing.T) {
+	svc, tx, wfRepo, vRepo, tenantID, wfID, vID := promoteReactivationFixture(t)
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(runTx)
+	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(&domain.WorkflowVersion{}, nil)
+	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
+
+	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "starter"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVersionService_Promote_ReactivationWithAnUnknownPlanIsUnavailable(t *testing.T) {
+	svc, _, _, _, tenantID, wfID, vID := promoteReactivationFixture(t)
+
+	_, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "platinum")
+	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
+		t.Fatalf("err = %v, want ErrUpstreamUnavailable", err)
+	}
+}
+
+func TestVersionService_Promote_ReactivationDraftLookupFailureIsReturned(t *testing.T) {
+	svc, tx, _, vRepo, tenantID, wfID, vID := promoteReactivationFixture(t)
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(runTx)
+	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(nil, errors.New("db down"))
+
+	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "starter"); err == nil {
+		t.Fatal("expected error")
 	}
 }
 

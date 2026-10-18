@@ -286,7 +286,7 @@ Full OpenAPI schema: [`docs/swagger/openapi.yaml`](docs/swagger/openapi.yaml).
 | `x-user-id` | Yes | Executing user UUID |
 | `x-tenant-roles` | Yes | Comma-separated roles, e.g. `tenant_admin,member` |
 | `x-departments` | No | User department memberships |
-| `x-plan` | For workflow create and clone | The tenant's plan code (`starter`, `pro`, `enterprise`), set by the authorization layer. The template limit is looked up by it in the plan table read from the catalog; a missing or unknown code answers `503` |
+| `x-plan` | For workflow create, clone, and promote of a version on a workflow with no active version | The tenant's plan code (`starter`, `pro`, `enterprise`), set by the authorization layer. The template limit is looked up by it in the plan table read from the catalog; a missing or unknown code answers `503` |
 | `x-request-id` | No | Client correlation ID — echoed as `X-Request-ID` |
 | `traceparent` | No | W3C trace context — echoed as `X-Trace-ID` |
 

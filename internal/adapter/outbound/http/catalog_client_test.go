@@ -49,6 +49,12 @@ func TestCatalogClient_AFailureIsUpstreamUnavailable(t *testing.T) {
 		"forbidden":    func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) },
 		"not json":     func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("<html>")) },
 		"no plans":     func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"plans":[]}`)) },
+		"a plan without the limit field": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"plans":[{"code":"starter","workflow_template_limit":5},{"code":"pro"}]}`))
+		},
+		"a plan without a code": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"plans":[{"workflow_template_limit":5}]}`))
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := httptest.NewServer(handler)

@@ -89,20 +89,37 @@ func (s *PlanLimitService) currentTable(ctx context.Context, force bool) (map[st
 		defer s.mu.Unlock()
 		return s.heldTableOrLastError()
 	}
-	if read := s.inflight; read != nil {
-		held := s.table
-		s.mu.Unlock()
-		if held != nil {
-			return held, nil
-		}
-		return s.awaitRead(ctx, read)
+	read := s.startReadLocked(ctx)
+	if s.table != nil && !force {
+		defer s.mu.Unlock()
+		return s.table, nil
+	}
+	s.mu.Unlock()
+	return s.awaitRead(ctx, read)
+}
+
+func (s *PlanLimitService) startReadLocked(ctx context.Context) *planTableRead {
+	if s.inflight != nil {
+		return s.inflight
 	}
 	read := &planTableRead{done: make(chan struct{})}
 	s.inflight = read
-	s.mu.Unlock()
+	go s.runRead(context.WithoutCancel(ctx), read)
+	return read
+}
 
-	read.table, read.err = s.reader.ReadPlanTable(context.WithoutCancel(ctx))
+func (s *PlanLimitService) runRead(ctx context.Context, read *planTableRead) {
+	defer s.settleRead(read)
+	defer func() {
+		if r := recover(); r != nil {
+			read.table = nil
+			read.err = fmt.Errorf("%w: reading the plan table panicked: %v", domain.ErrUpstreamUnavailable, r)
+		}
+	}()
+	read.table, read.err = s.reader.ReadPlanTable(ctx)
+}
 
+func (s *PlanLimitService) settleRead(read *planTableRead) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.inflight = nil
@@ -119,7 +136,6 @@ func (s *PlanLimitService) currentTable(ctx context.Context, force bool) (map[st
 		s.lastErr = nil
 	}
 	close(read.done)
-	return s.heldTableOrLastError()
 }
 
 func (s *PlanLimitService) awaitRead(ctx context.Context, read *planTableRead) (map[string]*int64, error) {

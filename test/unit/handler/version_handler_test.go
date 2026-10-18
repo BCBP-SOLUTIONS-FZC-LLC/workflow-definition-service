@@ -364,7 +364,7 @@ func TestPromoteVersion_Forbidden(t *testing.T) {
 
 func TestPromoteVersion_OK(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
-		promote: func(_ context.Context, _, _, _, _ uuid.UUID) (*domain.WorkflowVersion, error) {
+		promote: func(_ context.Context, _, _, _, _ uuid.UUID, _ string) (*domain.WorkflowVersion, error) {
 			return &domain.WorkflowVersion{}, nil
 		},
 	}, &fakeValidationSvc{})
@@ -372,6 +372,23 @@ func TestPromoteVersion_OK(t *testing.T) {
 	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/promote"
 	w := do(newRouter(h), adminReq(http.MethodPost, path, nil))
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestPromoteVersion_PassesThePlanCodeFromTheGateway(t *testing.T) {
+	var got string
+	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
+		promote: func(_ context.Context, _, _, _, _ uuid.UUID, planCode string) (*domain.WorkflowVersion, error) {
+			got = planCode
+			return &domain.WorkflowVersion{}, nil
+		},
+	}, &fakeValidationSvc{})
+
+	path := "/api/v1/workflows/" + testWFID.String() + "/versions/" + testVerID.String() + "/promote"
+	r := adminReq(http.MethodPost, path, nil)
+	r.Header.Set("x-plan", "pro")
+	w := do(newRouter(h), r)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "pro", got)
 }
 
 func TestPromoteVersion_InvalidWorkflowUUID(t *testing.T) {
@@ -388,7 +405,7 @@ func TestPromoteVersion_InvalidVersionUUID(t *testing.T) {
 
 func TestPromoteVersion_VersionNotPublished(t *testing.T) {
 	h := newHandler(&fakeWorkflowSvc{}, &fakeDraftSvc{}, &fakeVersionSvc{
-		promote: func(_ context.Context, _, _, _, _ uuid.UUID) (*domain.WorkflowVersion, error) {
+		promote: func(_ context.Context, _, _, _, _ uuid.UUID, _ string) (*domain.WorkflowVersion, error) {
 			return nil, domain.ErrVersionNotPublished
 		},
 	}, &fakeValidationSvc{})

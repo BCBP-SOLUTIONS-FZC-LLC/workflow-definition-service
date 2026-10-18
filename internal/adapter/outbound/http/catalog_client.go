@@ -60,8 +60,8 @@ func (c *CatalogClient) readPlanTable(ctx context.Context) (map[string]*int64, e
 
 	var body struct {
 		Plans []struct {
-			Code                  string `json:"code"`
-			WorkflowTemplateLimit *int64 `json:"workflow_template_limit"`
+			Code                  string          `json:"code"`
+			WorkflowTemplateLimit json.RawMessage `json:"workflow_template_limit"`
 		} `json:"plans"`
 	}
 	if err := json.NewDecoder(limitedBody(resp.Body)).Decode(&body); err != nil {
@@ -72,7 +72,18 @@ func (c *CatalogClient) readPlanTable(ctx context.Context) (map[string]*int64, e
 	}
 	table := make(map[string]*int64, len(body.Plans))
 	for _, p := range body.Plans {
-		table[strings.ToLower(p.Code)] = p.WorkflowTemplateLimit
+		code := strings.ToLower(strings.TrimSpace(p.Code))
+		if code == "" {
+			return nil, fmt.Errorf("%w: catalog returned a plan without a code", domain.ErrUpstreamUnavailable)
+		}
+		if p.WorkflowTemplateLimit == nil {
+			return nil, fmt.Errorf("%w: catalog plan %q has no workflow_template_limit", domain.ErrUpstreamUnavailable, code)
+		}
+		var limit *int64
+		if err := json.Unmarshal(p.WorkflowTemplateLimit, &limit); err != nil {
+			return nil, fmt.Errorf("%w: catalog plan %q has an unreadable workflow_template_limit: %w", domain.ErrUpstreamUnavailable, code, err)
+		}
+		table[code] = limit
 	}
 	return table, nil
 }

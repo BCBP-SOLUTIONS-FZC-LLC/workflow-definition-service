@@ -99,7 +99,7 @@ type fakeVersionSvc struct {
 	get     func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error)
 	publish func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, bool) (*domain.WorkflowVersion, error)
 	clone   func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string, service.CloneReq) (*domain.Workflow, *domain.WorkflowVersion, error)
-	promote func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error)
+	promote func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string) (*domain.WorkflowVersion, error)
 	export  func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (string, string, error)
 	diff    func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*service.DiffResult, error)
 	nodes   func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*service.VersionNodes, error)
@@ -136,9 +136,9 @@ func (f *fakeVersionSvc) Clone(ctx context.Context, tenantID, userID, workflowID
 	}
 	return nil, nil, nil
 }
-func (f *fakeVersionSvc) Promote(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID) (*domain.WorkflowVersion, error) {
+func (f *fakeVersionSvc) Promote(ctx context.Context, tenantID, userID, workflowID, versionID uuid.UUID, planCode string) (*domain.WorkflowVersion, error) {
 	if f.promote != nil {
-		return f.promote(ctx, tenantID, userID, workflowID, versionID)
+		return f.promote(ctx, tenantID, userID, workflowID, versionID, planCode)
 	}
 	return &domain.WorkflowVersion{}, nil
 }

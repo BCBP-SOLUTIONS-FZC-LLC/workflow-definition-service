@@ -294,7 +294,7 @@ func (f versionFake) Clone(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uui
 	return f.workflow, f.version, f.cloneErr
 }
 
-func (f versionFake) Promote(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.WorkflowVersion, error) {
+func (f versionFake) Promote(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string) (*domain.WorkflowVersion, error) {
 	return f.version, nil
 }
 
