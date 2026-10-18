@@ -242,15 +242,29 @@ func (s *VersionService) Promote(
 	}
 
 	var limit *int64
-	reactivating := wf.ActiveVersionID == nil
-	if reactivating {
+	limitResolved := false
+	if wf.ActiveVersionID == nil {
 		limit, err = resolveTemplateLimit(ctx, s.planLimits, planCode)
 		if err != nil {
 			return nil, err
 		}
+		limitResolved = true
 	}
 	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
-		if reactivating {
+		current, err := s.workflows.GetByID(ctx, tenantID, workflowID)
+		if err != nil {
+			return fmt.Errorf(errGetWorkflow, err)
+		}
+		if current.ActiveVersionID != nil && *current.ActiveVersionID == versionID {
+			return nil
+		}
+		if current.ActiveVersionID == nil {
+			if !limitResolved {
+				if limit, err = resolveTemplateLimit(ctx, s.planLimits, planCode); err != nil {
+					return err
+				}
+				limitResolved = true
+			}
 			if err := s.enforceQuotaUnlessCounted(ctx, tenantID, workflowID, limit); err != nil {
 				return err
 			}

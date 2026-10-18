@@ -815,7 +815,7 @@ func TestVersionService_Promote_OK(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: true}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
-		&domain.Workflow{ID: wfID, ActiveVersionID: &prevID}, nil)
+		&domain.Workflow{ID: wfID, ActiveVersionID: &prevID}, nil).Times(2)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
@@ -930,7 +930,7 @@ func TestVersionService_Promote_UpdateError(t *testing.T) {
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
 		&domain.WorkflowVersion{ID: vID, WorkflowID: wfID, Status: domain.VersionStatusPublished, IsValid: true}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
-		&domain.Workflow{ID: wfID}, nil)
+		&domain.Workflow{ID: wfID}, nil).Times(2)
 	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(&domain.WorkflowVersion{}, nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
@@ -959,7 +959,7 @@ func TestVersionService_Promote_WithVersionNumberAndPlan(t *testing.T) {
 	}, nil)
 	// No active version on the target workflow.
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(
-		&domain.Workflow{ID: wfID}, nil)
+		&domain.Workflow{ID: wfID}, nil).Times(2)
 	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(&domain.WorkflowVersion{}, nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
@@ -986,10 +986,15 @@ func promoteReactivationFixture(t *testing.T) (*service.VersionService, *mocks.M
 	return svc, tx, wfRepo, vRepo, tenantID, wfID, vID
 }
 
+func promoteInTxRead(wfRepo *mocks.MockWorkflowRepository, tenantID, wfID uuid.UUID, wf *domain.Workflow) {
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(wf, nil)
+}
+
 func runTx(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) }
 
 func TestVersionService_Promote_ReactivationAtTheLimitIsRefused(t *testing.T) {
 	svc, tx, wfRepo, vRepo, tenantID, wfID, vID := promoteReactivationFixture(t)
+	promoteInTxRead(wfRepo, tenantID, wfID, &domain.Workflow{ID: wfID})
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(runTx)
 	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(nil, domain.ErrNotFound)
 	wfRepo.EXPECT().CountByTenant(gomock.Any(), tenantID).Return(int64(5), nil)
@@ -1002,6 +1007,7 @@ func TestVersionService_Promote_ReactivationAtTheLimitIsRefused(t *testing.T) {
 
 func TestVersionService_Promote_ReactivationUnderTheLimitSucceeds(t *testing.T) {
 	svc, tx, wfRepo, vRepo, tenantID, wfID, vID := promoteReactivationFixture(t)
+	promoteInTxRead(wfRepo, tenantID, wfID, &domain.Workflow{ID: wfID})
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(runTx)
 	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(nil, domain.ErrNotFound)
 	wfRepo.EXPECT().CountByTenant(gomock.Any(), tenantID).Return(int64(4), nil)
@@ -1014,12 +1020,23 @@ func TestVersionService_Promote_ReactivationUnderTheLimitSucceeds(t *testing.T) 
 
 func TestVersionService_Promote_ReactivationOfAWorkflowWithADraftIsNotCountedAgain(t *testing.T) {
 	svc, tx, wfRepo, vRepo, tenantID, wfID, vID := promoteReactivationFixture(t)
+	promoteInTxRead(wfRepo, tenantID, wfID, &domain.Workflow{ID: wfID})
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(runTx)
 	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(&domain.WorkflowVersion{}, nil)
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
 	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "starter"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVersionService_Promote_ARetryThatFindsTheVersionAlreadyActiveSucceedsWithoutRecounting(t *testing.T) {
+	svc, tx, wfRepo, _, tenantID, wfID, vID := promoteReactivationFixture(t)
+	promoteInTxRead(wfRepo, tenantID, wfID, &domain.Workflow{ID: wfID, ActiveVersionID: &vID})
+	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(runTx)
+
+	if _, err := svc.Promote(context.Background(), tenantID, uuid.New(), wfID, vID, "starter"); err != nil {
+		t.Fatalf("a concurrent promote of the same version already won: %v", err)
 	}
 }
 
@@ -1033,7 +1050,8 @@ func TestVersionService_Promote_ReactivationWithAnUnknownPlanIsUnavailable(t *te
 }
 
 func TestVersionService_Promote_ReactivationDraftLookupFailureIsReturned(t *testing.T) {
-	svc, tx, _, vRepo, tenantID, wfID, vID := promoteReactivationFixture(t)
+	svc, tx, wfRepo, vRepo, tenantID, wfID, vID := promoteReactivationFixture(t)
+	promoteInTxRead(wfRepo, tenantID, wfID, &domain.Workflow{ID: wfID})
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(runTx)
 	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(nil, errors.New("db down"))
 
