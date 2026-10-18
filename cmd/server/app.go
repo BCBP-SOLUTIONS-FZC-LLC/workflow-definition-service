@@ -28,6 +28,7 @@ type app struct {
 	httpServer    *http.Server
 	metricsServer *http.Server
 	rlsExporter   *service.RLSViolationExporter
+	tenantPurger  *service.TenantPurger
 	cancelExport  context.CancelFunc
 	shutdown      func()
 	beginDrain    func()
@@ -64,6 +65,9 @@ func (a *app) startServers(fatal chan<- error) {
 	exportCtx, cancel := context.WithCancel(context.Background())
 	a.cancelExport = cancel
 	goSafeRestart(exportCtx, "rls-exporter", a.log, time.Second, func() { a.rlsExporter.Run(exportCtx) })
+	if a.tenantPurger != nil {
+		goSafeRestart(exportCtx, "tenant-purger", a.log, time.Second, func() { a.tenantPurger.Run(exportCtx) })
+	}
 
 	serve("http", a.httpServer, a.log, fatal)
 	serve("metrics", a.metricsServer, a.log, fatal)

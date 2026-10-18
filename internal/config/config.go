@@ -45,6 +45,11 @@ type Config struct {
 	CatalogAdminBaseURL     string
 	CatalogClientTimeout    time.Duration
 	PlanTableTTL            time.Duration
+
+	TenantPurgeEnabled      bool
+	TenantArtifactRetention time.Duration
+	TenantPurgeInterval     time.Duration
+	TenantPurgeBatch        int
 	ExecutionServiceURL     string
 	ExecutionServiceToken   string
 	ExecutionClientTimeout  time.Duration
@@ -84,6 +89,19 @@ func (r *reader) integer(key string, fallback int) int {
 		return fallback
 	}
 	return i
+}
+
+func (r *reader) boolean(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		r.fail("%s must be true or false, got %q", key, v)
+		return fallback
+	}
+	return b
 }
 
 func (r *reader) duration(key string, fallback time.Duration) time.Duration {
@@ -162,6 +180,10 @@ func Load() (*Config, error) {
 		CatalogAdminBaseURL:     r.str("CATALOG_ADMIN_BASE_URL", ""),
 		CatalogClientTimeout:    r.duration("CATALOG_CLIENT_TIMEOUT", 5*time.Second),
 		PlanTableTTL:            r.duration("PLAN_TABLE_TTL", 10*time.Minute),
+		TenantPurgeEnabled:      r.boolean("TENANT_PURGE_ENABLED", true),
+		TenantArtifactRetention: r.duration("TENANT_ARTIFACT_RETENTION", 30*24*time.Hour),
+		TenantPurgeInterval:     r.duration("TENANT_PURGE_INTERVAL", 24*time.Hour),
+		TenantPurgeBatch:        r.integer("TENANT_PURGE_BATCH", 100),
 		ExecutionServiceURL:     r.str("EXECUTION_SERVICE_URL", ""),
 		ExecutionServiceToken:   r.str("EXECUTION_SERVICE_TOKEN", ""),
 		ExecutionClientTimeout:  r.duration("EXECUTION_CLIENT_TIMEOUT", 5*time.Second),
@@ -211,6 +233,9 @@ func (c *Config) validate() []error {
 	need(c.MembershipClientTimeout > 0, "MEMBERSHIP_CLIENT_TIMEOUT must be > 0")
 	need(c.CatalogClientTimeout > 0, "CATALOG_CLIENT_TIMEOUT must be > 0")
 	need(c.PlanTableTTL > 0, "PLAN_TABLE_TTL must be > 0")
+	need(!c.TenantPurgeEnabled || c.TenantArtifactRetention > 0, "TENANT_ARTIFACT_RETENTION must be > 0 when TENANT_PURGE_ENABLED is true")
+	need(c.TenantPurgeInterval > 0, "TENANT_PURGE_INTERVAL must be > 0")
+	need(c.TenantPurgeBatch > 0, "TENANT_PURGE_BATCH must be > 0")
 	need(c.ExecutionClientTimeout > 0, "EXECUTION_CLIENT_TIMEOUT must be > 0")
 	need(c.ShutdownDrainDelay >= 0, "SHUTDOWN_DRAIN_DELAY must not be negative")
 	need(c.ShutdownGrace > 0, "SHUTDOWN_GRACE must be > 0")

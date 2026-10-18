@@ -234,6 +234,19 @@ groups:
             either the shared workflow-events consumer's envelope contract has drifted,
             or the downstream HandleDepartmentMembershipRevoked call is failing.
 
+      - alert: WorkflowDefinitionServiceTenantPurgeFailing
+        expr: |
+          sum(increase(workflow_definition_service_tenant_purge_failures_total{job="workflow-definition-service"}[1h])) > 0
+        for: 1h
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: A departed tenant's data purge keeps failing
+          description: >-
+            A tenant's workflows, modules, starters or connector credentials could not be
+            fully deleted after its retention period; the sweep retries on its next run (LLD §7.4.6).
+
   - name: workflow_definition_service_database
     rules:
 

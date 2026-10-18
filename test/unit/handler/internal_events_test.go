@@ -253,3 +253,78 @@ func TestInternalEvents_UnknownTypes_ShareOneMetricLabel(t *testing.T) {
 		"event types an outside producer chooses must not become metric series")
 	assert.Equal(t, float64(3), testutil.ToFloat64(observability.InternalEventsIngestTotal.WithLabelValues("unknown", "ok")))
 }
+
+type fakeOffboarder struct {
+	recorded []uuid.UUID
+	gotAt    []time.Time
+	err      error
+}
+
+func (f *fakeOffboarder) RecordOffboarded(_ context.Context, tenantID uuid.UUID, at time.Time) error {
+	f.recorded = append(f.recorded, tenantID)
+	f.gotAt = append(f.gotAt, at)
+	return f.err
+}
+
+func postTenantEvent(off *fakeOffboarder, body any) *httptest.ResponseRecorder {
+	gin.SetMode(gin.TestMode)
+	h := handler.New(handler.Services{Membership: &fakeMembershipRevoker{}, Offboarding: off, Log: testkit.FakeLogger{}})
+	r := gin.New()
+	httpadapter.RegisterInternalRoutes(r.Group("/api/v1/internal"), h)
+	raw, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/events", bytes.NewReader(raw))
+	httpReq.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, httpReq)
+	return w
+}
+
+func TestInternalEvents_TenantMembershipsPurged_RecordsTheTenant(t *testing.T) {
+	off := &fakeOffboarder{}
+	w := postTenantEvent(off, envelope("TenantMembershipsPurged", ieEventID.String(), ieTenantID.String(), map[string]string{}))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, []uuid.UUID{ieTenantID}, off.recorded)
+	assert.True(t, ieEventTime.Equal(off.gotAt[0]), "the envelope time anchors the retention period, got %s", off.gotAt[0])
+}
+
+func TestInternalEvents_TenantStateChanged_OffboardedRecordsTheTenant(t *testing.T) {
+	off := &fakeOffboarder{}
+	w := postTenantEvent(off, envelope("TenantStateChanged", ieEventID.String(), ieTenantID.String(),
+		map[string]string{"tenant_id": ieTenantID.String(), "status": "offboarded", "previous_status": "cancelled"}))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, []uuid.UUID{ieTenantID}, off.recorded)
+}
+
+func TestInternalEvents_TenantStateChanged_OtherStatusesAreAcknowledgedAndIgnored(t *testing.T) {
+	for _, status := range []string{"active", "suspended", "cancelled", "trial_expired", "past_due"} {
+		t.Run(status, func(t *testing.T) {
+			off := &fakeOffboarder{}
+			w := postTenantEvent(off, envelope("TenantStateChanged", ieEventID.String(), ieTenantID.String(),
+				map[string]string{"status": status}))
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Empty(t, off.recorded)
+		})
+	}
+}
+
+func TestInternalEvents_TenantOffboarding_BadInputIsRefusedAndAFailureIsRetried(t *testing.T) {
+	t.Run("a tenant id that is not a UUID", func(t *testing.T) {
+		off := &fakeOffboarder{}
+		w := postTenantEvent(off, envelope("TenantMembershipsPurged", ieEventID.String(), "not-a-uuid", map[string]string{}))
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Empty(t, off.recorded)
+	})
+	t.Run("a state change whose payload is not an object", func(t *testing.T) {
+		off := &fakeOffboarder{}
+		w := postTenantEvent(off, envelope("TenantStateChanged", ieEventID.String(), ieTenantID.String(), "oops"))
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Empty(t, off.recorded)
+	})
+	t.Run("a recording failure is a 500 so the event is redelivered", func(t *testing.T) {
+		off := &fakeOffboarder{err: errors.New("db down")}
+		w := postTenantEvent(off, envelope("TenantMembershipsPurged", ieEventID.String(), ieTenantID.String(), map[string]string{}))
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}

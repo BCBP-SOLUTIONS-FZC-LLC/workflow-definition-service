@@ -85,6 +85,7 @@ type Handler struct {
 	modules        moduleSvc
 	starters       starterSvc
 	membership     membershipRevoker
+	offboarding    tenantOffboarder
 	connectors     connectorSvc
 	compiledPlans  compiledPlanSvc
 	cache          port.CacheStore
@@ -100,6 +101,7 @@ type Services struct {
 	Modules        moduleSvc
 	Starters       starterSvc
 	Membership     membershipRevoker
+	Offboarding    tenantOffboarder
 	Connectors     connectorSvc
 	CompiledPlans  compiledPlanSvc
 	Cache          port.CacheStore
@@ -117,6 +119,7 @@ func New(s Services) *Handler {
 		modules:        s.Modules,
 		starters:       s.Starters,
 		membership:     s.Membership,
+		offboarding:    s.Offboarding,
 		connectors:     s.Connectors,
 		compiledPlans:  s.CompiledPlans,
 		cache:          s.Cache,

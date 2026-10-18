@@ -321,7 +321,7 @@ rctx := gincommon.RequestContext(c)
 | `GET` | `/healthz` | Public | Liveness probe |
 | `GET` | `/readyz` | Public | Readiness probe (database; a Valkey outage is reported as `cache: degraded`, not unready) |
 | `GET` | `/metrics` | Metrics port `9091` | Prometheus metrics |
-| `POST` | `/api/v1/internal/events` | Internal | Ingest a domain-event envelope from the shared workflow-events consumer (e.g. `DepartmentMembershipRevoked`) |
+| `POST` | `/api/v1/internal/events` | Internal | Ingest a domain-event envelope from the shared workflow-events consumer (`DepartmentMembershipRevoked`, `MembershipRevoked`, and the tenant offboarding events `TenantMembershipsPurged` and `TenantStateChanged`) |
 
 **Admin** = requires `tenant_admin` or `tenant_owner` in `x-tenant-roles`. **Internal** = service-to-service only; not exposed on the public gateway. Authenticated with `x-internal-token` (`INTERNAL_API_TOKEN`, required outside dev); the handler sets the RLS tenant from the envelope `tenant_id`. Returns 2xx (incl. idempotent no-op), 400 (malformed — non-retryable), or 500 (transient — retried).
 
@@ -391,7 +391,7 @@ Service-to-service routes under `/api/v1/internal`, specified in [`api/internal-
 | Method | Path | Caller | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/internal/workflow-versions/{version_id}/compiled-plan?tenant_id=` | Execution Service | A workflow version and its stored compiled plan (any status), from a fail-open Valkey cache in front of Postgres |
-| `POST` | `/api/v1/internal/events` | workflow-events consumer | Ingest a domain-event envelope (e.g. `DepartmentMembershipRevoked`) |
+| `POST` | `/api/v1/internal/events` | workflow-events consumer | Ingest a domain-event envelope (membership revocations and tenant offboarding) |
 | `GET` / `POST` / `DELETE` | `/api/v1/internal/connector-aliases…` | Execution's connector-worker, operators | The connector alias registry |
 
 ```bash

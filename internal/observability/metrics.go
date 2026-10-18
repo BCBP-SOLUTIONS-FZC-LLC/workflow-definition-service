@@ -36,6 +36,9 @@ var (
 
 	RLSViolationsTotal *prometheus.CounterVec
 
+	TenantPurgeRowsDeletedTotal *prometheus.CounterVec
+	TenantPurgeFailuresTotal    prometheus.Counter
+
 	DependencyRequestSeconds *prometheus.HistogramVec
 )
 
@@ -99,11 +102,24 @@ func registerServiceMetrics() {
 		"workflow_definition_service_rls_violations_total",
 		"Sampled row-level-security violations recorded in rls_violation_log, by violation_type. Each replica counts the rows it sees, so alert on increase() above zero, not on a sum across replicas.",
 		"violation_type"))
+	TenantPurgeRowsDeletedTotal = must(gincommon.NewCounterVec(nil,
+		"workflow_definition_service_tenant_purge_rows_deleted_total",
+		"Rows the tenant data purge deleted, by table (workflow, workflow_module or workflow_template).",
+		"table"))
+	TenantPurgeFailuresTotal = must(gincommon.NewCounter(nil,
+		"workflow_definition_service_tenant_purge_failures_total",
+		"Tenant purges that failed part-way and will be retried on the next sweep."))
 }
 
 func AddRLSViolations(violationType string, n float64) {
 	if RLSViolationsTotal != nil {
 		RLSViolationsTotal.WithLabelValues(violationType).Add(n)
+	}
+}
+
+func AddTenantPurgeRows(table string, n int64) {
+	if TenantPurgeRowsDeletedTotal != nil {
+		TenantPurgeRowsDeletedTotal.WithLabelValues(table).Add(float64(n))
 	}
 }
 

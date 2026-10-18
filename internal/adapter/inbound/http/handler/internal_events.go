@@ -20,15 +20,23 @@ import (
 const (
 	eventDepartmentMembershipRevoked = "DepartmentMembershipRevoked"
 	eventMembershipRevoked           = "MembershipRevoked"
+	eventTenantMembershipsPurged     = "TenantMembershipsPurged"
+	eventTenantStateChanged          = "TenantStateChanged"
+
+	tenantStatusOffboarded = "offboarded"
 )
 
 func HandledEventTypes() []string {
-	return []string{eventDepartmentMembershipRevoked, eventMembershipRevoked}
+	return []string{eventDepartmentMembershipRevoked, eventMembershipRevoked, eventTenantMembershipsPurged, eventTenantStateChanged}
 }
 
 type membershipRevoker interface {
 	HandleDepartmentMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID, departmentID string, occurredAt time.Time) error
 	HandleTenantMembershipRevoked(ctx context.Context, eventID, tenantID, userID uuid.UUID, occurredAt time.Time) error
+}
+
+type tenantOffboarder interface {
+	RecordOffboarded(ctx context.Context, tenantID uuid.UUID, at time.Time) error
 }
 
 type membershipRevokedPayload struct {
@@ -61,6 +69,10 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 		h.handleDepartmentMembershipRevoked(c, env)
 	case eventMembershipRevoked:
 		h.handleTenantMembershipRevoked(c, env)
+	case eventTenantMembershipsPurged:
+		h.handleTenantOffboarding(c, env, eventTenantMembershipsPurged, true)
+	case eventTenantStateChanged:
+		h.handleTenantOffboarding(c, env, eventTenantStateChanged, false)
 	default:
 		h.acknowledgeUnknownEventType(c, env.Type)
 	}
@@ -168,4 +180,32 @@ func (h *Handler) handleTenantMembershipRevoked(c *gin.Context, env events.Envel
 	}
 	err := h.membership.HandleTenantMembershipRevoked(in.ctx, in.eventID, in.tenantID, in.userID, in.occurredAt)
 	h.finishRevocation(c, evtType, "internal events: HandleTenantMembershipRevoked failed", err)
+}
+
+type tenantStateChangedPayload struct {
+	Status string `json:"status"`
+}
+
+func (h *Handler) handleTenantOffboarding(c *gin.Context, env events.Envelope[json.RawMessage], evtType string, always bool) {
+	if !always {
+		var p tenantStateChangedPayload
+		if err := json.Unmarshal(env.Payload, &p); err != nil {
+			observability.IncCounterVec(observability.InternalEventsIngestTotal, evtType, "bad_payload")
+			writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid "+evtType+" payload", nil)
+			return
+		}
+		if p.Status != tenantStatusOffboarded {
+			observability.IncCounterVec(observability.InternalEventsIngestTotal, evtType, "ok")
+			c.Status(http.StatusOK)
+			return
+		}
+	}
+	tenantID, err := uuid.Parse(env.TenantID)
+	if err != nil {
+		observability.IncCounterVec(observability.InternalEventsIngestTotal, evtType, "bad_payload")
+		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid tenant_id", nil)
+		return
+	}
+	ctx := pgcommon.WithGUCSet(c.Request.Context(), pgdomain.GUCSet{TenantID: env.TenantID})
+	h.finishRevocation(c, evtType, "internal events: recording the offboarded tenant failed", h.offboarding.RecordOffboarded(ctx, tenantID, env.Timestamp))
 }

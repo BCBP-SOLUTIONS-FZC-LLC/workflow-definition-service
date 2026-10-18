@@ -70,6 +70,8 @@ func TestRegister_EveryMetricIsScrapable(t *testing.T) {
 	observability.IncCounter(observability.WFCacheHitsTotal)
 	observability.IncCounter(observability.WFCacheMissesTotal)
 	observability.IncCounterVec(observability.InternalEventsIngestTotal, "DepartmentMembershipRevoked", "ok")
+	observability.AddTenantPurgeRows("workflow", 1)
+	observability.IncCounter(observability.TenantPurgeFailuresTotal)
 
 	body := scrape(t)
 
@@ -85,6 +87,8 @@ func TestRegister_EveryMetricIsScrapable(t *testing.T) {
 		"workflow_definition_service_cache_hits_total",
 		"workflow_definition_service_cache_misses_total",
 		"workflow_definition_service_internal_events_ingest_total",
+		"workflow_definition_service_tenant_purge_rows_deleted_total",
+		"workflow_definition_service_tenant_purge_failures_total",
 	}
 
 	for _, name := range metricNames {

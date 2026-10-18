@@ -168,15 +168,34 @@ func newApp(cfg *config.Config) (*app, error) {
 		Log:                  log,
 	})
 
+	retentionRepo := pgadapter.NewTenantRetentionRepo(pool)
+	offboardingSvc := service.NewTenantOffboardingService(service.TenantOffboardingDeps{
+		Retention: retentionRepo, ArtifactRetention: cfg.TenantArtifactRetention,
+	})
+	var tenantPurger *service.TenantPurger
+	if cfg.TenantPurgeEnabled {
+		tenantPurger = service.NewTenantPurger(service.TenantPurgerDeps{
+			Retention: retentionRepo,
+			Data:      retentionRepo,
+			Secrets:   secretsSvc,
+			Batch:     cfg.TenantPurgeBatch,
+			Interval:  cfg.TenantPurgeInterval,
+			Record:    observability.AddTenantPurgeRows,
+			Failed:    func() { observability.IncCounter(observability.TenantPurgeFailuresTotal) },
+			Logger:    log,
+		})
+	}
+
 	h := httphandler.New(httphandler.Services{
-		Workflows:  workflowSvc,
-		Drafts:     draftSvc,
-		Versions:   versionSvc,
-		Validation: validationSvc,
-		Modules:    moduleSvc,
-		Starters:   starterSvc,
-		Membership: versionSvc,
-		Connectors: connectorSvc,
+		Workflows:   workflowSvc,
+		Drafts:      draftSvc,
+		Versions:    versionSvc,
+		Validation:  validationSvc,
+		Modules:     moduleSvc,
+		Starters:    starterSvc,
+		Membership:  versionSvc,
+		Offboarding: offboardingSvc,
+		Connectors:  connectorSvc,
 		CompiledPlans: service.NewCompiledPlanService(service.CompiledPlanDeps{
 			Versions: versionRepo, Cache: cache, CacheTTL: cfg.CacheCompiledPlanTTL, Log: log,
 		}),
@@ -210,6 +229,7 @@ func newApp(cfg *config.Config) (*app, error) {
 		httpServer:    srv,
 		metricsServer: metricsSrv,
 		rlsExporter:   rlsExporter,
+		tenantPurger:  tenantPurger,
 		shutdown:      tracingShutdown,
 		beginDrain:    router.BeginDrain,
 		cacheClose:    redisClient,

@@ -54,5 +54,6 @@ The registry defines no `workflow_*` metrics yet, so none are emitted.
 | `workflow_definition_service_publish_total` | counter | `status` | Total version publish attempts, labelled by outcome. |
 | `workflow_definition_service_rls_violations_total` | counter | `violation_type` | Sampled row-level-security violations recorded in rls_violation_log, by violation_type. Each replica counts the rows it sees, so alert on increase() above zero, not on a sum across replicas. |
 | `workflow_definition_service_submissions_total` | counter | `status` | Total workflow creation attempts, labelled by outcome. |
+| `workflow_definition_service_tenant_purge_failures_total` | counter | - | Tenant purges that failed part-way and will be retried on the next sweep. |
 | `workflow_definition_service_validation_failures_total` | counter | - | Total BPMN validation calls that returned at least one validation error. |
 

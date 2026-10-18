@@ -15,7 +15,7 @@ metadata:
 
 ## Inbound Events: `POST /api/v1/internal/events`
 
-The service does **not** consume SQS in-process. The shared workflow-events consumer (separate service) forwards each `events.Envelope[json.RawMessage]` to this endpoint, which dispatches by `env.Type` to `versionSvc.HandleDepartmentMembershipRevoked` or `versionSvc.HandleTenantMembershipRevoked`.
+The service does **not** consume SQS in-process. The shared workflow-events consumer (separate service) forwards each `events.Envelope[json.RawMessage]` to this endpoint, which dispatches by `env.Type` to `versionSvc.HandleDepartmentMembershipRevoked` or `versionSvc.HandleTenantMembershipRevoked`, and `TenantMembershipsPurged` and `TenantStateChanged` (status `offboarded` only) to `TenantOffboardingService.RecordOffboarded`, which records the tenant for the purge sweep (`TenantPurger`, LLD §7.4.6). Any other type is acknowledged with 200.
 
 Route is on the `/internal` group guarded by `RequireInternalToken` (`x-internal-token` vs `INTERNAL_API_TOKEN`; required outside dev, skipped when unset in dev). Consumer retry contract:
 - `2xx` — handled (a redelivery reprocesses and converges; there is no dedup table)

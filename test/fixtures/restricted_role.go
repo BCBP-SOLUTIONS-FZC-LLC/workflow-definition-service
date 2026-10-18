@@ -63,3 +63,35 @@ func restrictedRoleDSN(superDSN, roleName string) string {
 	scheme, _, _ := strings.Cut(before, "://")
 	return fmt.Sprintf("%s://%s:restricted@%s", scheme, roleName, after)
 }
+
+func NewContextGUCRolePool(t *testing.T, superDSN string) *pgcommon.Pool {
+	t.Helper()
+	ctx := context.Background()
+
+	admin, err := sql.Open("pgx", superDSN)
+	if err != nil {
+		t.Fatalf("fixtures.NewContextGUCRolePool: open admin connection: %v", err)
+	}
+	defer func() { _ = admin.Close() }()
+
+	roleName := "ctxguc_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	for _, stmt := range []string{
+		fmt.Sprintf(`CREATE ROLE %s LOGIN PASSWORD 'restricted' NOBYPASSRLS`, roleName),
+		fmt.Sprintf(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %s`, roleName),
+	} {
+		if _, err := admin.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("fixtures.NewContextGUCRolePool: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = admin.ExecContext(context.Background(), fmt.Sprintf(`DROP OWNED BY %s`, roleName))
+		_, _ = admin.ExecContext(context.Background(), fmt.Sprintf(`DROP ROLE IF EXISTS %s`, roleName))
+	})
+
+	pool, err := pgcommon.NewPool(ctx, pgcommon.Config{DSN: restrictedRoleDSN(superDSN, roleName), GUCProvider: pgcommon.GUCSetFromContext})
+	if err != nil {
+		t.Fatalf("fixtures.NewContextGUCRolePool: create pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}

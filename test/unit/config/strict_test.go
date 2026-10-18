@@ -148,3 +148,52 @@ func TestLoad_CatalogAdminIsRequiredOutsideDevAndTunedByDefault(t *testing.T) {
 		t.Fatalf("Load() error = %v, want one naming PLAN_TABLE_TTL", err)
 	}
 }
+
+func TestLoad_TenantPurgeDefaultsKeepArtifactsForAMonthAndRunDaily(t *testing.T) {
+	isolateEnv(t, devEnv(nil))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.TenantPurgeEnabled || cfg.TenantArtifactRetention != 720*time.Hour || cfg.TenantPurgeInterval != 24*time.Hour || cfg.TenantPurgeBatch != 100 {
+		t.Errorf("tenant purge = enabled %v, retention %v, every %v, batch %d; want on, 720h, daily, 100",
+			cfg.TenantPurgeEnabled, cfg.TenantArtifactRetention, cfg.TenantPurgeInterval, cfg.TenantPurgeBatch)
+	}
+}
+
+func TestLoad_TenantPurgeCanBeSwitchedOffAndTuned(t *testing.T) {
+	isolateEnv(t, devEnv(map[string]string{
+		"TENANT_PURGE_ENABLED": "false", "TENANT_ARTIFACT_RETENTION": "48h", "TENANT_PURGE_INTERVAL": "1h", "TENANT_PURGE_BATCH": "7",
+	}))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TenantPurgeEnabled || cfg.TenantArtifactRetention != 48*time.Hour || cfg.TenantPurgeInterval != time.Hour || cfg.TenantPurgeBatch != 7 {
+		t.Errorf("tenant purge = enabled %v, retention %v, every %v, batch %d", cfg.TenantPurgeEnabled, cfg.TenantArtifactRetention, cfg.TenantPurgeInterval, cfg.TenantPurgeBatch)
+	}
+}
+
+func TestLoad_TenantPurgeRefusesMisreadValues(t *testing.T) {
+	for _, tc := range []struct{ name, key, value string }{
+		{"enabled that is not a boolean", "TENANT_PURGE_ENABLED", "maybe"},
+		{"retention of zero while on", "TENANT_ARTIFACT_RETENTION", "0s"},
+		{"interval of zero", "TENANT_PURGE_INTERVAL", "0s"},
+		{"batch of zero", "TENANT_PURGE_BATCH", "0"},
+		{"batch that is not a number", "TENANT_PURGE_BATCH", "many"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateEnv(t, devEnv(map[string]string{tc.key: tc.value}))
+			if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("Load() error = %v, want one naming %s", err, tc.key)
+			}
+		})
+	}
+}
+
+func TestLoad_TenantPurgeRetentionMayBeZeroWhileOff(t *testing.T) {
+	isolateEnv(t, devEnv(map[string]string{"TENANT_PURGE_ENABLED": "false", "TENANT_ARTIFACT_RETENTION": "0s"}))
+	if _, err := config.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+}

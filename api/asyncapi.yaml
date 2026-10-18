@@ -1,13 +1,14 @@
 asyncapi: 3.0.0
 info:
   title: workflow-definition-service events
-  version: 1.1.0
+  version: 1.2.0
   description: >
-    Inbound only. The shared Workflow-Events Consumer forwards two
-    Org & Membership events to POST /api/v1/internal/events:
-    DepartmentMembershipRevoked and MembershipRevoked. Their payload schemas
-    are owned and registered by the producing service and are not
-    re-registered here. Any other event type is acknowledged with 200 and
+    Inbound only. The shared Workflow-Events Consumer forwards four events
+    to POST /api/v1/internal/events: DepartmentMembershipRevoked and
+    MembershipRevoked (Org & Membership), and TenantMembershipsPurged and
+    TenantStateChanged (IAM), the last two only to record a departed tenant
+    for the template purge. Their payload schemas are owned and registered
+    by the producing service and are not re-registered here. Any other event type is acknowledged with 200 and
     ignored. This service publishes no events.
 
 channels:
@@ -25,6 +26,8 @@ channels:
     messages:
       DepartmentMembershipRevoked: { $ref: '#/components/messages/DepartmentMembershipRevokedInbound' }
       MembershipRevoked: { $ref: '#/components/messages/MembershipRevokedInbound' }
+      TenantMembershipsPurged: { $ref: '#/components/messages/TenantMembershipsPurgedInbound' }
+      TenantStateChanged: { $ref: '#/components/messages/TenantStateChangedInbound' }
 
 operations:
   receiveMembershipEvents:
@@ -34,6 +37,11 @@ operations:
       A revocation invalidates every workflow version whose default-assignee
       node targets the revoked user, and pauses the user's active tasks in
       Execution. A redelivery reprocesses and converges on the same state.
+      An offboarding event (TenantMembershipsPurged, or TenantStateChanged
+      whose status is offboarded) records the tenant for the purge of its
+      templates and credentials after the artifact retention; a redelivery
+      keeps the first recorded dates, and any other TenantStateChanged status
+      is acknowledged and ignored.
       2xx means handled, 400 means malformed (not retried), 500 and 502
       mean transient (retried). A message that carries a dataschema holds a
       schema-registry framed payload, which the service decodes first; 502
@@ -61,6 +69,29 @@ components:
         user, and pauses the user's active Execution tasks.
       x-schema-owner: iam-org-membership
       payload: { $ref: '#/components/schemas/MembershipRevokedInbound' }
+
+    TenantMembershipsPurgedInbound:
+      name: TenantMembershipsPurged
+      x-lifecycle: { status: active }
+      title: Tenant memberships purged (owned by IAM)
+      description: >
+        IAM's tenant offboarding cascade signal. The tenant is recorded for
+        the purge of its workflows, modules, starters and connector
+        credentials once the artifact retention has passed. The payload is
+        not read; the tenant is the envelope's tenant_id.
+      x-schema-owner: iam-org-membership
+      payload: { $ref: '#/components/schemas/TenantMembershipsPurgedInbound' }
+
+    TenantStateChangedInbound:
+      name: TenantStateChanged
+      x-lifecycle: { status: active }
+      title: Tenant state changed (owned by IAM)
+      description: >
+        Read only for a status of offboarded, which records the tenant as
+        TenantMembershipsPurged does. Every other status is acknowledged and
+        ignored here; the Execution Service acts on them.
+      x-schema-owner: iam-org-membership
+      payload: { $ref: '#/components/schemas/TenantStateChangedInbound' }
 
   schemas:
     EventEnvelope:
@@ -122,3 +153,28 @@ components:
         user_id:
           type: string
           format: uuid
+
+    TenantMembershipsPurgedInbound:
+      type: object
+      additionalProperties: true
+      description: Not read.
+
+    TenantStateChangedInbound:
+      type: object
+      additionalProperties: true
+      required: [status]
+      properties:
+        status:
+          type: string
+          description: The tenant's new status; only offboarded is acted on.
+        previous_status:
+          type: string
+        plan:
+          type: string
+        previous_plan:
+          type: string
+        changed_at:
+          type: string
+          format: date-time
+        cause:
+          type: string
