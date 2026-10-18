@@ -46,20 +46,23 @@ func (p *TenantPurger) Tick(ctx context.Context) error {
 		return fmt.Errorf("list tenants due for purge: %w", err)
 	}
 	var failures []error
-	for _, tenantID := range due {
-		if err := p.purgeTenant(ctx, tenantID); err != nil {
-			p.deps.Failed()
-			p.log.Error("tenant purge failed", map[string]any{"tenant_id": tenantID.String(), "error": err.Error()})
-			failures = append(failures, err)
+	for _, d := range due {
+		for _, err := range []error{p.purgeCredentials(ctx, d), p.purgeArtifacts(ctx, d)} {
+			if err != nil {
+				p.deps.Failed()
+				p.log.Error("tenant purge failed", map[string]any{"tenant_id": d.TenantID.String(), "error": err.Error()})
+				failures = append(failures, err)
+			}
 		}
 	}
 	return errors.Join(failures...)
 }
 
-func (p *TenantPurger) purgeTenant(ctx context.Context, tenantID uuid.UUID) error {
-	if err := p.purgeCredentials(ctx, tenantID); err != nil {
-		return fmt.Errorf("purge tenant %s: %w", tenantID, err)
+func (p *TenantPurger) purgeArtifacts(ctx context.Context, d port.TenantPurgeDue) error {
+	if !d.Artifacts {
+		return nil
 	}
+	tenantID := d.TenantID
 	for {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("purge tenant %s: %w", tenantID, err)
@@ -69,6 +72,13 @@ func (p *TenantPurger) purgeTenant(ctx context.Context, tenantID uuid.UUID) erro
 			return fmt.Errorf("purge tenant %s: %w", tenantID, err)
 		}
 		if len(deleted) == 0 {
+			remaining, err := p.deps.Data.HasRows(ctx, tenantID)
+			if err != nil {
+				return fmt.Errorf("check tenant %s for remaining rows: %w", tenantID, err)
+			}
+			if remaining {
+				return fmt.Errorf("purge tenant %s: rows remain after a pass that deleted none, another replica may be purging it", tenantID)
+			}
 			break
 		}
 		for table, n := range deleted {
@@ -82,14 +92,19 @@ func (p *TenantPurger) purgeTenant(ctx context.Context, tenantID uuid.UUID) erro
 	return nil
 }
 
-func (p *TenantPurger) purgeCredentials(ctx context.Context, tenantID uuid.UUID) error {
-	if p.deps.Secrets == nil {
+func (p *TenantPurger) purgeCredentials(ctx context.Context, d port.TenantPurgeDue) error {
+	if !d.Credentials {
 		return nil
 	}
-	for _, path := range tenantCredentialPaths(tenantID) {
-		if err := p.deps.Secrets.Delete(ctx, path); err != nil {
-			return fmt.Errorf("delete credential %s: %w", path, err)
+	if p.deps.Secrets != nil {
+		for _, path := range tenantCredentialPaths(d.TenantID) {
+			if err := p.deps.Secrets.Delete(ctx, path); err != nil {
+				return fmt.Errorf("purge tenant %s: delete credential %s: %w", d.TenantID, path, err)
+			}
 		}
+	}
+	if err := p.deps.Retention.MarkCredentialsPurged(ctx, d.TenantID, p.deps.Now()); err != nil {
+		return fmt.Errorf("mark tenant %s credentials purged: %w", d.TenantID, err)
 	}
 	return nil
 }

@@ -73,7 +73,8 @@ env:
   RLS_VIOLATION_EXPORT_INTERVAL: "30s"
   RLS_VIOLATION_RETENTION: "168h"
   TENANT_PURGE_ENABLED: "true"                     # purge a departed tenant's workflows, modules, starters and credentials after the retention
-  TENANT_ARTIFACT_RETENTION: "720h"
+  TENANT_CREDENTIAL_RETENTION: "720h"
+  TENANT_ARTIFACT_RETENTION: "61320h"
   TENANT_PURGE_INTERVAL: "24h"
   TENANT_PURGE_BATCH: "100"
 

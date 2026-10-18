@@ -11,37 +11,49 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 )
 
 type fakeRetention struct {
-	due       []uuid.UUID
+	due       []port.TenantPurgeDue
 	listErr   error
 	listedAt  time.Time
 	onList    func()
 	purged    []uuid.UUID
+	credsDone []uuid.UUID
 	markErr   error
+	credsErr  error
 	recorded  []recordedOffboard
 	recordErr error
 }
 
 type recordedOffboard struct {
-	tenantID     uuid.UUID
-	offboardedAt time.Time
-	purgeAfter   time.Time
+	tenantID         uuid.UUID
+	offboardedAt     time.Time
+	credentialsAfter time.Time
+	artifactsAfter   time.Time
 }
 
-func (f *fakeRetention) RecordOffboarded(_ context.Context, tenantID uuid.UUID, offboardedAt, purgeAfter time.Time) error {
-	f.recorded = append(f.recorded, recordedOffboard{tenantID, offboardedAt, purgeAfter})
+func (f *fakeRetention) RecordOffboarded(_ context.Context, tenantID uuid.UUID, offboardedAt, credentialsAfter, artifactsAfter time.Time) error {
+	f.recorded = append(f.recorded, recordedOffboard{tenantID, offboardedAt, credentialsAfter, artifactsAfter})
 	return f.recordErr
 }
 
-func (f *fakeRetention) ListDue(_ context.Context, now time.Time, _ int) ([]uuid.UUID, error) {
+func (f *fakeRetention) ListDue(_ context.Context, now time.Time, _ int) ([]port.TenantPurgeDue, error) {
 	f.listedAt = now
 	if f.onList != nil {
 		f.onList()
 	}
 	return f.due, f.listErr
+}
+
+func (f *fakeRetention) MarkCredentialsPurged(_ context.Context, tenantID uuid.UUID, _ time.Time) error {
+	if f.credsErr != nil {
+		return f.credsErr
+	}
+	f.credsDone = append(f.credsDone, tenantID)
+	return nil
 }
 
 func (f *fakeRetention) MarkPurged(_ context.Context, tenantID uuid.UUID, _ time.Time) error {
@@ -52,10 +64,24 @@ func (f *fakeRetention) MarkPurged(_ context.Context, tenantID uuid.UUID, _ time
 	return nil
 }
 
+func bothDue(ids ...uuid.UUID) []port.TenantPurgeDue {
+	var out []port.TenantPurgeDue
+	for _, id := range ids {
+		out = append(out, port.TenantPurgeDue{TenantID: id, Credentials: true, Artifacts: true})
+	}
+	return out
+}
+
 type fakeDataPurger struct {
-	script map[uuid.UUID][]map[string]int64
-	errFor map[uuid.UUID]error
-	calls  map[uuid.UUID]int
+	script  map[uuid.UUID][]map[string]int64
+	errFor  map[uuid.UUID]error
+	calls   map[uuid.UUID]int
+	rows    map[uuid.UUID]bool
+	rowsErr error
+}
+
+func (f *fakeDataPurger) HasRows(_ context.Context, tenantID uuid.UUID) (bool, error) {
+	return f.rows[tenantID], f.rowsErr
 }
 
 func (f *fakeDataPurger) PurgeBatch(_ context.Context, tenantID uuid.UUID, _ int) (map[string]int64, error) {
@@ -105,7 +131,7 @@ func newPurger(r *fakeRetention, d *fakeDataPurger, s *fakeSecrets, rec map[stri
 
 func TestTenantPurger_DeletesTheCredentialsTheRegistryDefinesThenThePlanningDataThenMarks(t *testing.T) {
 	tenant := uuid.New()
-	r := &fakeRetention{due: []uuid.UUID{tenant}}
+	r := &fakeRetention{due: bothDue(tenant)}
 	d := &fakeDataPurger{script: map[uuid.UUID][]map[string]int64{tenant: {{"workflow": 50}, {"workflow": 3}, {"workflow_module": 1}}}}
 	s := &fakeSecrets{}
 	rec, failed := map[string]int64{}, 0
@@ -123,23 +149,62 @@ func TestTenantPurger_DeletesTheCredentialsTheRegistryDefinesThenThePlanningData
 	assert.Zero(t, failed)
 }
 
-func TestTenantPurger_ACredentialFailureStopsThatTenantBeforeItsRowsAreTouched(t *testing.T) {
+func TestTenantPurger_ACredentialFailureLeavesTheCredentialsDueAndDoesNotBlockTheWorkflows(t *testing.T) {
 	tenant := uuid.New()
-	r := &fakeRetention{due: []uuid.UUID{tenant}}
+	r := &fakeRetention{due: bothDue(tenant)}
 	d := &fakeDataPurger{script: map[uuid.UUID][]map[string]int64{tenant: {{"workflow": 1}}}}
 	s := &fakeSecrets{err: errors.New("openbao down")}
 	rec, failed := map[string]int64{}, 0
 
 	require.Error(t, newPurger(r, d, s, rec, &failed).Tick(context.Background()))
 
-	assert.Empty(t, r.purged)
-	assert.Empty(t, d.calls, "the rows stay until the credentials are gone, so a retry still knows what to delete")
+	assert.Empty(t, r.credsDone, "the credentials stay due, so the next run retries them")
+	assert.Equal(t, []uuid.UUID{tenant}, r.purged, "the workflows have their own period and their own mark")
 	assert.Equal(t, 1, failed)
+}
+
+func TestTenantPurger_OnlyThePartThatIsDueIsPurged(t *testing.T) {
+	credsOnly, artifactsOnly := uuid.New(), uuid.New()
+	r := &fakeRetention{due: []port.TenantPurgeDue{{TenantID: credsOnly, Credentials: true}, {TenantID: artifactsOnly, Artifacts: true}}}
+	d := &fakeDataPurger{}
+	s := &fakeSecrets{}
+	rec, failed := map[string]int64{}, 0
+
+	require.NoError(t, newPurger(r, d, s, rec, &failed).Tick(context.Background()))
+
+	assert.Equal(t, []uuid.UUID{credsOnly}, r.credsDone)
+	assert.Equal(t, []uuid.UUID{artifactsOnly}, r.purged)
+	assert.NotContains(t, d.calls, credsOnly, "a tenant whose workflows are not due keeps them")
+	for _, p := range s.deleted {
+		assert.Contains(t, p, credsOnly.String(), "no credential of the other tenant is touched")
+	}
+}
+
+func TestTenantPurger_ATenantWithRowsLeftIsNotMarkedPurged(t *testing.T) {
+	tenant := uuid.New()
+	r := &fakeRetention{due: bothDue(tenant)}
+	d := &fakeDataPurger{rows: map[uuid.UUID]bool{tenant: true}}
+	rec, failed := map[string]int64{}, 0
+
+	err := newPurger(r, d, nil, rec, &failed).Tick(context.Background())
+
+	require.Error(t, err, "a batch that deleted nothing can mean another replica took the rows, not that none are left")
+	assert.Empty(t, r.purged)
+	assert.Equal(t, 1, failed)
+}
+
+func TestTenantPurger_AFailureToCheckForRemainingRowsIsReturned(t *testing.T) {
+	tenant := uuid.New()
+	r := &fakeRetention{due: bothDue(tenant)}
+	d := &fakeDataPurger{rowsErr: errors.New("db down")}
+	rec, failed := map[string]int64{}, 0
+	require.Error(t, newPurger(r, d, nil, rec, &failed).Tick(context.Background()))
+	assert.Empty(t, r.purged)
 }
 
 func TestTenantPurger_WithoutAVaultTheCredentialStepIsSkipped(t *testing.T) {
 	tenant := uuid.New()
-	r := &fakeRetention{due: []uuid.UUID{tenant}}
+	r := &fakeRetention{due: bothDue(tenant)}
 	rec, failed := map[string]int64{}, 0
 
 	require.NoError(t, newPurger(r, &fakeDataPurger{}, nil, rec, &failed).Tick(context.Background()))
@@ -148,7 +213,7 @@ func TestTenantPurger_WithoutAVaultTheCredentialStepIsSkipped(t *testing.T) {
 
 func TestTenantPurger_AFailingTenantDoesNotStopTheOthers(t *testing.T) {
 	bad, good := uuid.New(), uuid.New()
-	r := &fakeRetention{due: []uuid.UUID{bad, good}}
+	r := &fakeRetention{due: bothDue(bad, good)}
 	d := &fakeDataPurger{errFor: map[uuid.UUID]error{bad: errors.New("fk violation")}}
 	rec, failed := map[string]int64{}, 0
 
@@ -165,7 +230,7 @@ func TestTenantPurger_NothingDueAndListFailure(t *testing.T) {
 
 func TestTenantPurger_ACancelledRunLeavesTheTenantUnmarked(t *testing.T) {
 	tenant := uuid.New()
-	r := &fakeRetention{due: []uuid.UUID{tenant}}
+	r := &fakeRetention{due: bothDue(tenant)}
 	d := &fakeDataPurger{script: map[uuid.UUID][]map[string]int64{tenant: {{"workflow": 50}}}}
 	rec, failed := map[string]int64{}, 0
 	ctx, cancel := context.WithCancel(context.Background())
@@ -177,7 +242,7 @@ func TestTenantPurger_ACancelledRunLeavesTheTenantUnmarked(t *testing.T) {
 
 func TestTenantPurger_AFailureToMarkIsReturned(t *testing.T) {
 	tenant := uuid.New()
-	r := &fakeRetention{due: []uuid.UUID{tenant}, markErr: errors.New("db down")}
+	r := &fakeRetention{due: bothDue(tenant), markErr: errors.New("db down")}
 	rec, failed := map[string]int64{}, 0
 	require.Error(t, newPurger(r, &fakeDataPurger{}, nil, rec, &failed).Tick(context.Background()))
 	assert.Equal(t, 1, failed)
@@ -202,7 +267,7 @@ func TestTenantPurger_RunSweepsAndStopsWhenCancelled(t *testing.T) {
 
 func TestTenantPurger_DefaultsTheClockAndLoggerWhenNoneAreGiven(t *testing.T) {
 	tenant := uuid.New()
-	r := &fakeRetention{due: []uuid.UUID{tenant}}
+	r := &fakeRetention{due: bothDue(tenant)}
 	p := service.NewTenantPurger(service.TenantPurgerDeps{
 		Retention: r, Data: &fakeDataPurger{}, Batch: 10, Interval: time.Hour,
 		Record: func(string, int64) {}, Failed: func() {},
@@ -211,23 +276,25 @@ func TestTenantPurger_DefaultsTheClockAndLoggerWhenNoneAreGiven(t *testing.T) {
 	assert.WithinDuration(t, time.Now(), r.listedAt, time.Minute)
 }
 
-func TestTenantOffboardingService_RecordsThePurgeDateAfterTheRetention(t *testing.T) {
+func TestTenantOffboardingService_RecordsBothPurgeDatesAfterTheirOwnRetention(t *testing.T) {
 	r := &fakeRetention{}
 	now := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
 	at := time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)
-	svc := service.NewTenantOffboardingService(service.TenantOffboardingDeps{Retention: r, ArtifactRetention: 72 * time.Hour, Now: func() time.Time { return now }})
+	svc := service.NewTenantOffboardingService(service.TenantOffboardingDeps{
+		Retention: r, CredentialRetention: 72 * time.Hour, ArtifactRetention: 240 * time.Hour, Now: func() time.Time { return now },
+	})
 	tenant := uuid.New()
 
 	require.NoError(t, svc.RecordOffboarded(context.Background(), tenant, at))
 	require.NoError(t, svc.RecordOffboarded(context.Background(), tenant, time.Time{}))
 
 	require.Len(t, r.recorded, 2)
-	assert.Equal(t, recordedOffboard{tenant, at, at.Add(72 * time.Hour)}, r.recorded[0], "the event time anchors the period")
-	assert.Equal(t, recordedOffboard{tenant, now, now.Add(72 * time.Hour)}, r.recorded[1], "an event without a time is anchored at receipt")
+	assert.Equal(t, recordedOffboard{tenant, at, at.Add(72 * time.Hour), at.Add(240 * time.Hour)}, r.recorded[0], "the event time anchors both periods")
+	assert.Equal(t, recordedOffboard{tenant, now, now.Add(72 * time.Hour), now.Add(240 * time.Hour)}, r.recorded[1], "an event without a time is anchored at receipt")
 }
 
 func TestTenantOffboardingService_ARecordFailureIsReturned(t *testing.T) {
 	r := &fakeRetention{recordErr: errors.New("db down")}
-	svc := service.NewTenantOffboardingService(service.TenantOffboardingDeps{Retention: r, ArtifactRetention: time.Hour})
+	svc := service.NewTenantOffboardingService(service.TenantOffboardingDeps{Retention: r, CredentialRetention: time.Hour, ArtifactRetention: time.Hour})
 	require.Error(t, svc.RecordOffboarded(context.Background(), uuid.New(), time.Now()))
 }

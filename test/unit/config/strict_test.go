@@ -149,35 +149,40 @@ func TestLoad_CatalogAdminIsRequiredOutsideDevAndTunedByDefault(t *testing.T) {
 	}
 }
 
-func TestLoad_TenantPurgeDefaultsKeepArtifactsForAMonthAndRunDaily(t *testing.T) {
+func TestLoad_TenantPurgeDefaultsKeepWorkflowsForTheAuditPeriodAndCredentialsForAMonth(t *testing.T) {
 	isolateEnv(t, devEnv(nil))
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if !cfg.TenantPurgeEnabled || cfg.TenantArtifactRetention != 720*time.Hour || cfg.TenantPurgeInterval != 24*time.Hour || cfg.TenantPurgeBatch != 100 {
-		t.Errorf("tenant purge = enabled %v, retention %v, every %v, batch %d; want on, 720h, daily, 100",
-			cfg.TenantPurgeEnabled, cfg.TenantArtifactRetention, cfg.TenantPurgeInterval, cfg.TenantPurgeBatch)
+	if !cfg.TenantPurgeEnabled || cfg.TenantCredentialRetention != 720*time.Hour || cfg.TenantArtifactRetention != 7*365*24*time.Hour ||
+		cfg.TenantPurgeInterval != 24*time.Hour || cfg.TenantPurgeBatch != 100 {
+		t.Errorf("tenant purge = enabled %v, credentials %v, workflows %v, every %v, batch %d; want on, 720h, 7 years, daily, 100",
+			cfg.TenantPurgeEnabled, cfg.TenantCredentialRetention, cfg.TenantArtifactRetention, cfg.TenantPurgeInterval, cfg.TenantPurgeBatch)
 	}
 }
 
 func TestLoad_TenantPurgeCanBeSwitchedOffAndTuned(t *testing.T) {
 	isolateEnv(t, devEnv(map[string]string{
-		"TENANT_PURGE_ENABLED": "false", "TENANT_ARTIFACT_RETENTION": "48h", "TENANT_PURGE_INTERVAL": "1h", "TENANT_PURGE_BATCH": "7",
+		"TENANT_PURGE_ENABLED": "false", "TENANT_CREDENTIAL_RETENTION": "24h", "TENANT_ARTIFACT_RETENTION": "48h",
+		"TENANT_PURGE_INTERVAL": "1h", "TENANT_PURGE_BATCH": "7",
 	}))
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.TenantPurgeEnabled || cfg.TenantArtifactRetention != 48*time.Hour || cfg.TenantPurgeInterval != time.Hour || cfg.TenantPurgeBatch != 7 {
-		t.Errorf("tenant purge = enabled %v, retention %v, every %v, batch %d", cfg.TenantPurgeEnabled, cfg.TenantArtifactRetention, cfg.TenantPurgeInterval, cfg.TenantPurgeBatch)
+	if cfg.TenantPurgeEnabled || cfg.TenantCredentialRetention != 24*time.Hour || cfg.TenantArtifactRetention != 48*time.Hour ||
+		cfg.TenantPurgeInterval != time.Hour || cfg.TenantPurgeBatch != 7 {
+		t.Errorf("tenant purge = enabled %v, credentials %v, workflows %v, every %v, batch %d", cfg.TenantPurgeEnabled,
+			cfg.TenantCredentialRetention, cfg.TenantArtifactRetention, cfg.TenantPurgeInterval, cfg.TenantPurgeBatch)
 	}
 }
 
 func TestLoad_TenantPurgeRefusesMisreadValues(t *testing.T) {
 	for _, tc := range []struct{ name, key, value string }{
 		{"enabled that is not a boolean", "TENANT_PURGE_ENABLED", "maybe"},
-		{"retention of zero while on", "TENANT_ARTIFACT_RETENTION", "0s"},
+		{"credential retention of zero", "TENANT_CREDENTIAL_RETENTION", "0s"},
+		{"artifact retention of zero", "TENANT_ARTIFACT_RETENTION", "0s"},
 		{"interval of zero", "TENANT_PURGE_INTERVAL", "0s"},
 		{"batch of zero", "TENANT_PURGE_BATCH", "0"},
 		{"batch that is not a number", "TENANT_PURGE_BATCH", "many"},
@@ -191,9 +196,9 @@ func TestLoad_TenantPurgeRefusesMisreadValues(t *testing.T) {
 	}
 }
 
-func TestLoad_TenantPurgeRetentionMayBeZeroWhileOff(t *testing.T) {
+func TestLoad_TenantPurgeRetentionIsCheckedEvenWhileTheSweepIsOff(t *testing.T) {
 	isolateEnv(t, devEnv(map[string]string{"TENANT_PURGE_ENABLED": "false", "TENANT_ARTIFACT_RETENTION": "0s"}))
-	if _, err := config.Load(); err != nil {
-		t.Fatalf("Load() error = %v", err)
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "TENANT_ARTIFACT_RETENTION") {
+		t.Fatalf("Load() error = %v: offboarding is recorded while the sweep is off, so a zero period would purge everything the moment it is switched on", err)
 	}
 }

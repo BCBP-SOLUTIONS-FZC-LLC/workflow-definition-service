@@ -39,7 +39,7 @@ operations:
       Execution. A redelivery reprocesses and converges on the same state.
       An offboarding event (TenantMembershipsPurged, or TenantStateChanged
       whose status is offboarded) records the tenant for the purge of its
-      templates and credentials after the artifact retention; a redelivery
+      templates after the artifact retention and its credentials after the credential retention; a redelivery
       keeps the first recorded dates, and any other TenantStateChanged status
       is acknowledged and ignored.
       2xx means handled, 400 means malformed (not retried), 500 and 502
@@ -77,7 +77,7 @@ components:
       description: >
         IAM's tenant offboarding cascade signal. The tenant is recorded for
         the purge of its workflows, modules, starters and connector
-        credentials once the artifact retention has passed. The payload is
+        credentials once their retention periods have passed. The payload is
         not read; the tenant is the envelope's tenant_id.
       x-schema-owner: iam-org-membership
       payload: { $ref: '#/components/schemas/TenantMembershipsPurgedInbound' }

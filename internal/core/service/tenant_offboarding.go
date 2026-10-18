@@ -11,9 +11,10 @@ import (
 )
 
 type TenantOffboardingDeps struct {
-	Retention         port.TenantRetentionRepository
-	ArtifactRetention time.Duration
-	Now               func() time.Time
+	Retention           port.TenantRetentionRepository
+	CredentialRetention time.Duration
+	ArtifactRetention   time.Duration
+	Now                 func() time.Time
 }
 
 type TenantOffboardingService struct {
@@ -31,7 +32,7 @@ func (s *TenantOffboardingService) RecordOffboarded(ctx context.Context, tenantI
 	if at.IsZero() {
 		at = s.deps.Now()
 	}
-	if err := s.deps.Retention.RecordOffboarded(ctx, tenantID, at, at.Add(s.deps.ArtifactRetention)); err != nil {
+	if err := s.deps.Retention.RecordOffboarded(ctx, tenantID, at, at.Add(s.deps.CredentialRetention), at.Add(s.deps.ArtifactRetention)); err != nil {
 		return fmt.Errorf("record offboarded tenant: %w", err)
 	}
 	return nil

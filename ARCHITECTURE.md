@@ -553,7 +553,8 @@ All configuration is read from environment variables via `internal/config.Config
 | `CATALOG_CLIENT_TIMEOUT` | No | `5s` | Timeout of one plan table read |
 | `PLAN_TABLE_TTL` | No | `10m` | How long a plan table read stays fresh. The last table read is kept when a refresh fails; with none read, workflow create and clone answer `503` |
 | `TENANT_PURGE_ENABLED` | No | `true` | Whether the sweep that deletes a departed tenant's workflows, modules, starters and connector credentials runs |
-| `TENANT_ARTIFACT_RETENTION` | No | `720h` | How long after the offboarding event a tenant's data is kept before the purge (must be > 0 while the purge is on) |
+| `TENANT_CREDENTIAL_RETENTION` | No | `720h` | How long after the offboarding event a tenant's connector credentials are kept before they are destroyed (must be > 0) |
+| `TENANT_ARTIFACT_RETENTION` | No | `61320h` | How long after the offboarding event its workflows, modules and starters are kept before they are deleted (7 years, the audit period; must be > 0) |
 | `TENANT_PURGE_INTERVAL` / `TENANT_PURGE_BATCH` | No | `24h` / `100` | Cadence of the purge sweep and workflows deleted per batch |
 | `MEMBERSHIP_CLIENT_TIMEOUT` | No | `10s` | HTTP client timeout for the Org & Membership Service |
 | `EXECUTION_SERVICE_URL` | When `APP_ENV != dev` | *(empty)* | The Execution Service's internal HTTP base URL (archive guard, pause-tasks); empty builds no client |

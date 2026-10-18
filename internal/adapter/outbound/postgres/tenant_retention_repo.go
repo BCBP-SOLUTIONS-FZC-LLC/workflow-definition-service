@@ -28,25 +28,33 @@ func NewTenantRetentionRepo(pool *pgcommon.Pool) *TenantRetentionRepo {
 	return &TenantRetentionRepo{pool: pool}
 }
 
-func (r *TenantRetentionRepo) RecordOffboarded(ctx context.Context, tenantID uuid.UUID, offboardedAt, purgeAfter time.Time) error {
+func (r *TenantRetentionRepo) RecordOffboarded(ctx context.Context, tenantID uuid.UUID, offboardedAt, credentialsAfter, artifactsAfter time.Time) error {
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		return db.New(dbtx).RecordTenantOffboarded(ctx, db.RecordTenantOffboardedParams{
-			TenantID: tenantID, OffboardedAt: offboardedAt, ArtifactsPurgeAfter: purgeAfter,
+			TenantID: tenantID, OffboardedAt: offboardedAt, CredentialsPurgeAfter: credentialsAfter, ArtifactsPurgeAfter: artifactsAfter,
 		})
 	})
 }
 
-func (r *TenantRetentionRepo) ListDue(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error) {
-	var ids []uuid.UUID
+func (r *TenantRetentionRepo) ListDue(ctx context.Context, now time.Time, limit int) ([]port.TenantPurgeDue, error) {
+	var due []port.TenantPurgeDue
 	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		rows, err := db.New(dbtx).ListTenantsDueForPurge(ctx, db.ListTenantsDueForPurgeParams{ArtifactsPurgeAfter: now, Limit: int32(limit)})
+		rows, err := db.New(dbtx).ListTenantsDueForPurge(ctx, db.ListTenantsDueForPurgeParams{CredentialsPurgeAfter: now, Limit: int32(limit)})
 		if err != nil {
 			return err
 		}
-		ids = rows
+		for _, row := range rows {
+			due = append(due, port.TenantPurgeDue{TenantID: row.TenantID, Credentials: row.CredentialsDue, Artifacts: row.ArtifactsDue})
+		}
 		return nil
 	})
-	return ids, err
+	return due, err
+}
+
+func (r *TenantRetentionRepo) MarkCredentialsPurged(ctx context.Context, tenantID uuid.UUID, at time.Time) error {
+	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		return db.New(dbtx).MarkTenantCredentialsPurged(ctx, db.MarkTenantCredentialsPurgedParams{TenantID: tenantID, CredentialsPurgedAt: pgtype.Timestamptz{Time: at, Valid: true}})
+	})
 }
 
 func (r *TenantRetentionRepo) MarkPurged(ctx context.Context, tenantID uuid.UUID, at time.Time) error {
@@ -90,4 +98,18 @@ func (r *TenantRetentionRepo) PurgeBatch(ctx context.Context, tenantID uuid.UUID
 		return nil
 	})
 	return deleted, err
+}
+
+func (r *TenantRetentionRepo) HasRows(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	ctx = pgcommon.WithGUCSet(ctx, pgdomain.GUCSet{TenantID: tenantID.String()})
+	var has bool
+	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		v, err := db.New(dbtx).TenantHasRows(ctx, tenantID)
+		if err != nil {
+			return err
+		}
+		has = v
+		return nil
+	})
+	return has, err
 }

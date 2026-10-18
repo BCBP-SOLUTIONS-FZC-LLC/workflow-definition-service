@@ -170,7 +170,7 @@ func newApp(cfg *config.Config) (*app, error) {
 
 	retentionRepo := pgadapter.NewTenantRetentionRepo(pool)
 	offboardingSvc := service.NewTenantOffboardingService(service.TenantOffboardingDeps{
-		Retention: retentionRepo, ArtifactRetention: cfg.TenantArtifactRetention,
+		Retention: retentionRepo, CredentialRetention: cfg.TenantCredentialRetention, ArtifactRetention: cfg.TenantArtifactRetention,
 	})
 	var tenantPurger *service.TenantPurger
 	if cfg.TenantPurgeEnabled {

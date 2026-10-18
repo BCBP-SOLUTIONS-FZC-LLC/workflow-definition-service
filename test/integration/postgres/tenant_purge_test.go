@@ -15,6 +15,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/fixtures"
 )
@@ -87,8 +88,8 @@ func TestTenantPurge_AsTheTenantUnderRLSDeletesADueTenantAndLeavesEveryoneElse(t
 		return err
 	}))
 	now := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, repo.RecordOffboarded(ctx, due, now.Add(-48*time.Hour), now.Add(-time.Hour)))
-	require.NoError(t, repo.RecordOffboarded(ctx, notDue, now.Add(-48*time.Hour), now.Add(24*time.Hour)))
+	require.NoError(t, repo.RecordOffboarded(ctx, due, now.Add(-48*time.Hour), now.Add(-time.Hour), now.Add(-time.Hour)))
+	require.NoError(t, repo.RecordOffboarded(ctx, notDue, now.Add(-48*time.Hour), now.Add(24*time.Hour), now.Add(24*time.Hour)))
 
 	recorded := map[string]int64{}
 	purger := service.NewTenantPurger(service.TenantPurgerDeps{
@@ -135,10 +136,40 @@ func TestTenantRetentionRepo_ARedeliveredOffboardingKeepsTheFirstDates(t *testin
 	tenant := uuid.New()
 	first := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 
-	require.NoError(t, repo.RecordOffboarded(ctx, tenant, first, first.Add(24*time.Hour)))
-	require.NoError(t, repo.RecordOffboarded(ctx, tenant, first.Add(72*time.Hour), first.Add(96*time.Hour)))
+	require.NoError(t, repo.RecordOffboarded(ctx, tenant, first, first.Add(24*time.Hour), first.Add(48*time.Hour)))
+	require.NoError(t, repo.RecordOffboarded(ctx, tenant, first.Add(72*time.Hour), first.Add(96*time.Hour), first.Add(120*time.Hour)))
 
 	due, err := repo.ListDue(ctx, first.Add(25*time.Hour), 10)
 	require.NoError(t, err)
-	assert.Equal(t, []uuid.UUID{tenant}, due, "the first purge date still applies")
+	assert.Equal(t, []port.TenantPurgeDue{{TenantID: tenant, Credentials: true}}, due, "only the credentials are due at 25 hours, on the first dates")
+
+	due, err = repo.ListDue(ctx, first.Add(49*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Equal(t, []port.TenantPurgeDue{{TenantID: tenant, Credentials: true, Artifacts: true}}, due)
+
+	require.NoError(t, repo.MarkCredentialsPurged(ctx, tenant, first.Add(50*time.Hour)))
+	due, err = repo.ListDue(ctx, first.Add(51*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Equal(t, []port.TenantPurgeDue{{TenantID: tenant, Artifacts: true}}, due, "a purged part is not due again")
+
+	require.NoError(t, repo.MarkPurged(ctx, tenant, first.Add(52*time.Hour)))
+	due, err = repo.ListDue(ctx, first.Add(53*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Empty(t, due)
+}
+
+func TestTenantRetentionRepo_HasRowsSeesOnlyTheTenantsOwnRows(t *testing.T) {
+	superPool, superDSN := fixtures.NewTestPoolAndDSN(t)
+	appPool := fixtures.NewContextGUCRolePool(t, superDSN)
+	repo := pgadapter.NewTenantRetentionRepo(appPool)
+	ctx := context.Background()
+	withRows, empty := uuid.New(), uuid.New()
+	seedPurgeTenant(t, superPool, withRows, 1)
+
+	has, err := repo.HasRows(ctx, withRows)
+	require.NoError(t, err)
+	assert.True(t, has)
+	has, err = repo.HasRows(ctx, empty)
+	require.NoError(t, err)
+	assert.False(t, has)
 }
