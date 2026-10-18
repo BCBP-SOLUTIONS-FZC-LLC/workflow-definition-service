@@ -31,8 +31,10 @@ func NewTestValkey(t *testing.T) port.CacheStore {
 	req := testcontainers.ContainerRequest{
 		Image:        "valkey/valkey:8-alpine",
 		ExposedPorts: []string{"6379/tcp"},
-		WaitingFor: wait.ForLog("Ready to accept connections").
-			WithStartupTimeout(60 * time.Second),
+		WaitingFor: wait.ForAll(
+			wait.ForLog("Ready to accept connections"),
+			wait.ForListeningPort("6379/tcp"),
+		).WithDeadline(60 * time.Second),
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
