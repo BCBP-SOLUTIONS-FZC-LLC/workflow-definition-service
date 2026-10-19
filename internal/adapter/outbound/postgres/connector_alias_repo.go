@@ -50,7 +50,7 @@ func (r *ConnectorAliasRepo) UpsertRest(ctx context.Context, a domain.ConnectorR
 			Method:       a.Method,
 			BaseUrl:      a.BaseURL,
 			PathTemplate: a.PathTemplate,
-			TimeoutMs:    int32(a.Timeout.Milliseconds()),
+			TimeoutMs:    clampInt32(a.Timeout.Milliseconds()),
 		}))
 	})
 }

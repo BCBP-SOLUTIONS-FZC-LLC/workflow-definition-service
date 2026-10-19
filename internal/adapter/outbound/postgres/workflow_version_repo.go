@@ -90,7 +90,7 @@ func (r *WorkflowVersionRepo) ListByWorkflow(
 	if limit < 1 {
 		limit = 20
 	}
-	offset := int32((page - 1) * limit)
+	offset := clampInt32((page - 1) * limit)
 
 	var (
 		results []*domain.WorkflowVersion
@@ -109,7 +109,7 @@ func (r *WorkflowVersionRepo) ListByWorkflow(
 		rows, err := q.ListVersionsByWorkflow(ctx, db.ListVersionsByWorkflowParams{
 			TenantID:   tenantID,
 			WorkflowID: workflowID,
-			Limit:      int32(limit),
+			Limit:      clampInt32(limit),
 			Offset:     offset,
 		})
 		if err != nil {

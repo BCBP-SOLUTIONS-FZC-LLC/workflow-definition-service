@@ -17,7 +17,7 @@ func activeInstances(w http.ResponseWriter, r *http.Request) {
 	if hasActive {
 		count = 1
 	}
-	log.Printf("active-instances tenant=%s workflow=%s → has_active=%v count=%d",
+	log.Printf("active-instances tenant=%q workflow=%q → has_active=%v count=%d",
 		r.URL.Query().Get("tenant_id"), r.PathValue("workflow_id"), hasActive, count)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"has_active": hasActive, "count": count})
@@ -28,7 +28,7 @@ func pauseTasks(w http.ResponseWriter, r *http.Request) {
 		TenantID string `json:"tenant_id"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	log.Printf("pause-tasks tenant=%s user=%s → ok", body.TenantID, r.PathValue("user_id"))
+	log.Printf("pause-tasks tenant=%q user=%q → ok", body.TenantID, r.PathValue("user_id"))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -58,7 +58,7 @@ func main() {
 	mux.HandleFunc("POST /api/v1/internal/users/{user_id}/pause-tasks", pauseTasks)
 	mux.HandleFunc("POST /control", control)
 
-	log.Printf("execution stub listening on %s (HAS_ACTIVE=%s)", addr, os.Getenv("HAS_ACTIVE"))
+	log.Printf("execution stub listening on %q (HAS_ACTIVE=%q)", addr, os.Getenv("HAS_ACTIVE"))
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("serve: %v", err)

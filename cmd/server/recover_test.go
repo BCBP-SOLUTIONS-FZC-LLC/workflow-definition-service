@@ -123,8 +123,8 @@ func TestDrainWithTimeout_EachDrainGetsItsOwnBudget(t *testing.T) {
 	}
 
 	begin := time.Now()
-	drainWithTimeout(log, "db pool", 100*time.Millisecond, stuck)
-	drainWithTimeout(log, "system db pool", 100*time.Millisecond, stuck)
+	drainWithTimeout(context.Background(), log, "db pool", 100*time.Millisecond, stuck)
+	drainWithTimeout(context.Background(), log, "system db pool", 100*time.Millisecond, stuck)
 	elapsed := time.Since(begin)
 
 	if elapsed < 180*time.Millisecond {

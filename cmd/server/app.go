@@ -82,8 +82,8 @@ func (a *app) stopServers(ctx context.Context) {
 		a.log.Error("metrics server shutdown error", map[string]any{"error": err.Error()})
 	}
 
-	drainWithTimeout(a.log, "db pool", a.cfg.ShutdownPoolDrainTimeout, a.pool.DrainAndClose)
-	drainWithTimeout(a.log, "system db pool", a.cfg.ShutdownPoolDrainTimeout, a.systemPool.DrainAndClose)
+	drainWithTimeout(ctx, a.log, "db pool", a.cfg.ShutdownPoolDrainTimeout, a.pool.DrainAndClose)
+	drainWithTimeout(ctx, a.log, "system db pool", a.cfg.ShutdownPoolDrainTimeout, a.systemPool.DrainAndClose)
 	if err := a.cacheClose.Close(); err != nil {
 		a.log.Error("valkey close error", map[string]any{"error": err.Error()})
 	}

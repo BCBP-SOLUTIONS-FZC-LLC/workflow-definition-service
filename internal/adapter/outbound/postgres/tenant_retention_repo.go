@@ -39,7 +39,7 @@ func (r *TenantRetentionRepo) RecordOffboarded(ctx context.Context, tenantID uui
 func (r *TenantRetentionRepo) ListDue(ctx context.Context, now time.Time, limit int) ([]port.TenantPurgeDue, error) {
 	var due []port.TenantPurgeDue
 	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		rows, err := db.New(dbtx).ListTenantsDueForPurge(ctx, db.ListTenantsDueForPurgeParams{CredentialsPurgeAfter: now, Limit: int32(limit)})
+		rows, err := db.New(dbtx).ListTenantsDueForPurge(ctx, db.ListTenantsDueForPurgeParams{CredentialsPurgeAfter: now, Limit: clampInt32(limit)})
 		if err != nil {
 			return err
 		}
@@ -86,7 +86,7 @@ func (r *TenantRetentionRepo) PurgeBatch(ctx context.Context, tenantID uuid.UUID
 	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		q := db.New(dbtx)
 		for _, step := range tenantPurgeSteps {
-			n, err := step.run(ctx, q, tenantID, int32(limit))
+			n, err := step.run(ctx, q, tenantID, clampInt32(limit))
 			if err != nil {
 				return fmt.Errorf("purge %s: %w", step.table, err)
 			}

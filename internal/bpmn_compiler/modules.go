@@ -36,7 +36,7 @@ func (c *Compiler) ModuleCalls(ctx context.Context, bpmnXML string) ([]domain.Mo
 		return nil, nil, fmt.Errorf("bpmn module calls: %w", err)
 	}
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, nil //nolint:nilerr // an unparsable document has no module calls; compiling it reports why
 	}
 	var calls []domain.ModuleCall
 	var issues []domain.BPMNValidationError

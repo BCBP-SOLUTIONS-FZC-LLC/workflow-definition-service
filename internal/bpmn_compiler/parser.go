@@ -122,7 +122,7 @@ func classifyElement(dec *xml.Decoder, se xml.StartElement) (elemErr *domain.BPM
 func classifyServiceTask(dec *xml.Decoder, se xml.StartElement) (elemErr *domain.BPMNValidationError, abort bool) {
 	_, isConnector, scanErr := scanServiceTaskConnectorType(dec)
 	if scanErr != nil {
-		return nil, true
+		return nil, true //nolint:nilerr // a malformed document ends this scan of rejected elements; parsing reports the syntax error
 	}
 	if isConnector {
 		return nil, false

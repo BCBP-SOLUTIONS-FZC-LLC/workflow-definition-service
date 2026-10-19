@@ -70,9 +70,9 @@ func (c *Compiler) Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNV
 	callGraphErrs := validator.ValidateCallGraph(defs)
 	root, rootErr := runnableRoot(defs)
 	if rootErr != nil {
-		return append(callGraphErrs, *rootErr), nil
+		return append(callGraphErrs, *rootErr), nil //nolint:nilerr // a root that cannot run is reported as a validation issue, not as a failure of the call
 	}
-	return append(callGraphErrs, c.validateSingleRoot(bpmnXML, root, defs)...), nil
+	return slices.Concat(callGraphErrs, c.validateSingleRoot(bpmnXML, root, defs)), nil
 }
 
 func (c *Compiler) ValidateForPublish(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error) {
@@ -278,7 +278,7 @@ func (c *Compiler) compileSingleRoot(ctx context.Context, bpmnXML string) (plan 
 		return nil, nil, nil, &domain.ValidationFailedError{Errors: append(callGraphErrs, *rootErr)}
 	}
 
-	errs := append(callGraphErrs, c.validateSingleRoot(bpmnXML, root, defs)...)
+	errs := slices.Concat(callGraphErrs, c.validateSingleRoot(bpmnXML, root, defs))
 	if hasBlockingErrors(errs) {
 		return nil, nil, nil, &domain.ValidationFailedError{Errors: errs}
 	}

@@ -44,7 +44,7 @@ func TestMembershipClient_CheckEligibility(t *testing.T) {
 						t.Errorf("expected POST, got %s", r.Method)
 					}
 					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck
+					json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck // a test handler has nowhere to report a failed write
 				}
 			},
 			dept:         "dept-1",
@@ -61,7 +61,7 @@ func TestMembershipClient_CheckEligibility(t *testing.T) {
 						return
 					}
 					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck
+					json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck // a test handler has nowhere to report a failed write
 				}
 			},
 			dept:         "dept-1",
@@ -110,7 +110,7 @@ func TestMembershipClient_CheckEligibility(t *testing.T) {
 			makeHandler: func(_ *testing.T, _ *int) http.HandlerFunc {
 				return func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
-					w.Write([]byte("not-json")) //nolint:errcheck
+					w.Write([]byte("not-json")) //nolint:errcheck // a test handler has nowhere to report a failed write
 				}
 			},
 			dept:    "dept-1",
@@ -162,7 +162,7 @@ func TestMembershipClient_CheckEligibility(t *testing.T) {
 						t.Errorf("level = %q, want %q", got, "role=admin&x=y")
 					}
 					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck
+					json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck // a test handler has nowhere to report a failed write
 				}
 			},
 			dept:         "dept&special=1",

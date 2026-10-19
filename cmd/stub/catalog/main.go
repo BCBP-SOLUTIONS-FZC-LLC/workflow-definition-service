@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 )
 
 type plan struct {
@@ -26,17 +27,18 @@ func main() {
 	}
 
 	http.HandleFunc("/api/v1/internal/plans", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.Path)
+		log.Printf("%q %q", r.Method, r.URL.Path)
 		if r.Header.Get("x-tenant-roles") != "iam-system" {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"plans": plans}) //nolint:errcheck
+		_ = json.NewEncoder(w).Encode(map[string]any{"plans": plans})
 	})
 
-	log.Printf("catalog stub listening on %s", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	log.Printf("catalog stub listening on %q", addr)
+	srv := &http.Server{Addr: addr, ReadHeaderTimeout: 5 * time.Second}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("serve: %v", err)
 	}
 }

@@ -77,8 +77,8 @@ func waitForStop(sig <-chan os.Signal, fatal <-chan error) (reason string, faile
 	}
 }
 
-func drainWithTimeout(log port.Logger, name string, timeout time.Duration, drain func(context.Context) error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func drainWithTimeout(ctx context.Context, log port.Logger, name string, timeout time.Duration, drain func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 	if err := drain(ctx); err != nil {
 		log.Warn(name+" drain timed out", map[string]any{"error": err.Error(), "timeout": timeout.String()})

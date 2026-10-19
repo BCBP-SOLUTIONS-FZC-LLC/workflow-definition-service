@@ -2,6 +2,7 @@ package validator
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
@@ -60,12 +61,13 @@ func sccHasGuardedExit(scc []string, g *bpmncore.Graph) bool {
 	return false
 }
 
+var sccExitNodeTypes = []bpmncore.FlowNodeType{
+	bpmncore.NodeTypeExclusiveGateway,
+	bpmncore.NodeTypeInclusiveGateway,
+	bpmncore.NodeTypeParallelGateway,
+	bpmncore.NodeTypeReceiveTask,
+}
+
 func canExitSCCViaOutgoingEdge(t bpmncore.FlowNodeType) bool {
-	switch t { //nolint:exhaustive // deliberate allowlist: every other node type can't exit an SCC via an outgoing edge
-	case bpmncore.NodeTypeExclusiveGateway, bpmncore.NodeTypeInclusiveGateway,
-		bpmncore.NodeTypeParallelGateway, bpmncore.NodeTypeReceiveTask:
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(sccExitNodeTypes, t)
 }

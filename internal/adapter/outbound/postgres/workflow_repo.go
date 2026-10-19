@@ -257,7 +257,7 @@ func listWorkflows(
 		 %s%sORDER BY w.created_at DESC
 		 LIMIT %s OFFSET %s`,
 		joins.String(), where.String(),
-		nextArg(int32(limit)), nextArg(int32(offset)),
+		nextArg(clampInt32(limit)), nextArg(clampInt32(offset)),
 	)
 
 	rows, err := dbtx.Query(ctx, dataSQL, args...)

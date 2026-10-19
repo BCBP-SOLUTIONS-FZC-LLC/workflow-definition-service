@@ -69,7 +69,7 @@ func (s *Spec) Request(t testing.TB, req *http.Request) {
 	body := readBody(t, req)
 	restore(req, body)
 	defer restore(req, body)
-	if err := openapi3filter.ValidateRequest(context.Background(), s.input(t, req)); err != nil {
+	if err := openapi3filter.ValidateRequest(req.Context(), s.input(t, req)); err != nil {
 		t.Errorf("request %s %s breaks the spec: %v", req.Method, req.URL.Path, err)
 	}
 }

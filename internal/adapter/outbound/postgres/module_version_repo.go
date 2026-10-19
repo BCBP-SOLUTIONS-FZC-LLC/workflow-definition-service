@@ -70,7 +70,7 @@ func (r *ModuleVersionRepo) ListByModule(
 	if limit < 1 {
 		limit = 20
 	}
-	offset := int32((page - 1) * limit)
+	offset := clampInt32((page - 1) * limit)
 
 	var (
 		results []*domain.ModuleVersion
@@ -90,7 +90,7 @@ func (r *ModuleVersionRepo) ListByModule(
 		rows, err := q.ListModuleVersionsByModule(ctx, db.ListModuleVersionsByModuleParams{
 			ModuleID: params.ModuleID,
 			TenantID: params.TenantID,
-			Limit:    int32(limit),
+			Limit:    clampInt32(limit),
 			Offset:   offset,
 		})
 		if err != nil {

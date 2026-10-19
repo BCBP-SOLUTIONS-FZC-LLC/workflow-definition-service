@@ -82,7 +82,7 @@ func (c *MembershipClient) tryCheckEligibility(ctx context.Context, rawURL strin
 	if err != nil {
 		return false, true, fmt.Errorf("%w: membership eligibility check: %w", domain.ErrUpstreamUnavailable, err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer resp.Body.Close() //nolint:errcheck // a failed close of a fully read response body is not actionable
 
 	switch {
 	case resp.StatusCode == notEligibleStatusCode:

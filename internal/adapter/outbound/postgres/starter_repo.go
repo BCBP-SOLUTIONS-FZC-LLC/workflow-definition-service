@@ -136,7 +136,7 @@ func listStarters(
 		 FROM workflow_template
 		 %sORDER BY created_at DESC
 		 LIMIT %s OFFSET %s`,
-		where.String(), nextArg(int32(limit)), nextArg(int32(offset)),
+		where.String(), nextArg(clampInt32(limit)), nextArg(clampInt32(offset)),
 	)
 
 	rows, err := dbtx.Query(ctx, dataSQL, args...)

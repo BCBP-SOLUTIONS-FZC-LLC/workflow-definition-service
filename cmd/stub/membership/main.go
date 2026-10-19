@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"sync/atomic"
+	"time"
 )
 
 var ineligible atomic.Bool
@@ -38,18 +39,19 @@ func main() {
 	})
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.String())
+		log.Printf("%q %q", r.Method, r.URL.String())
 
 		if ineligible.Load() {
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"eligible": true}) //nolint:errcheck
+		_ = json.NewEncoder(w).Encode(map[string]any{"eligible": true})
 	})
 
-	log.Printf("membership stub listening on %s (ELIGIBLE=%s)", addr, os.Getenv("ELIGIBLE"))
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	log.Printf("membership stub listening on %q (ELIGIBLE=%q)", addr, os.Getenv("ELIGIBLE"))
+	srv := &http.Server{Addr: addr, ReadHeaderTimeout: 5 * time.Second}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("serve: %v", err)
 	}
 }
