@@ -862,9 +862,19 @@ components:
         code:
           type: string
           description: Service-specific error code for programmatic handling.
+        trace_id:
+          type: string
+          description: The OpenTelemetry trace id of the request, equal to the X-Trace-ID response header.
+        request_id:
+          type: string
+          description: The request id, equal to the X-Request-ID response header.
+        current_record_version:
+          type: integer
+          format: int64
+          description: Present on DRAFT_CONCURRENCY. The draft's current record_version, to retry with after reconciling.
         invalid_params:
           type: array
-          description: Details about specific fields that failed validation.
+          description: Details about specific fields that failed validation, including a request field the endpoint does not define (reason "is not a known field").
           items:
             type: object
             required: [name, reason]
@@ -999,23 +1009,22 @@ components:
         shared HTTP library with `GatewayAuthError`; an identity that is present but is not a
         UUID is refused with a problem document.
       content:
-        application/json:
-          schema:
-            oneOf:
-              - { $ref: '#/components/schemas/ProblemDetails' }
-              - { $ref: '#/components/schemas/GatewayAuthError' }
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
           example:
             type: "https://api.workflow.platform/errors/unauthorized"
             title: "Unauthorized Access"
             status: 401
-            detail: "x-tenant-id header is missing or could not be resolved to a valid tenant."
+            detail: "x-tenant-id header is not a valid UUID."
             instance: "/workflows"
             code: "UNAUTHORIZED"
+        application/json:
+          schema: { $ref: '#/components/schemas/GatewayAuthError' }
 
     Forbidden:
       description: Caller lacks the required role or plan limits were exceeded.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
           example:
             type: "https://api.workflow.platform/errors/forbidden"
@@ -1028,7 +1037,7 @@ components:
     NotFound:
       description: Resource not found or tenant boundary breached (security through obscurity).
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
           example:
             type: "https://api.workflow.platform/errors/not-found"
@@ -1041,13 +1050,13 @@ components:
     PayloadTooLarge:
       description: The request body exceeds the 10 MB limit.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
 
     UnsupportedMediaType:
       description: A request with a body must carry `Content-Type` application/json.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
 
     BadRequest:
@@ -1056,7 +1065,7 @@ components:
         versions_limit outside its range, or an Idempotency-Key longer than 256 characters.
         Fields and parameters are named in `invalid_params`; values are never echoed.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
           example:
             type: "https://api.workflow.platform/errors/bad-request"
@@ -1071,7 +1080,7 @@ components:
         A dependency is temporarily unavailable — the database, the lock store, the secret
         store or Execution. The request changed nothing and is safe to retry.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
           example:
             type: "https://api.workflow.platform/errors/service-unavailable"
@@ -1084,7 +1093,7 @@ components:
     Conflict:
       description: State conflict — see error body for detail.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
           example:
             type: "https://api.workflow.platform/errors/conflict"
@@ -1097,7 +1106,7 @@ components:
     UnprocessableEntity:
       description: Semantically invalid BPMN — see errors array for per-node details.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
           example:
             type: "https://api.workflow.platform/errors/validation-failed"
@@ -1117,7 +1126,7 @@ components:
     InternalError:
       description: Unexpected server error.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
           example:
             type: "https://api.workflow.platform/errors/internal-error"
@@ -1214,6 +1223,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [key, name, bpmn_xml]
               properties:
                 key:
@@ -1249,14 +1259,14 @@ paths:
         "400":
           description: Malformed request body — unparseable JSON or missing required field.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "409":
           description: Template key already exists for this tenant, or idempotency key reused with a different payload.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example:
                 type: "https://api.workflow.platform/errors/conflict"
@@ -1290,6 +1300,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [bpmn_xml]
               properties:
                 bpmn_xml:
@@ -1305,7 +1316,7 @@ paths:
         "400":
           description: Malformed XML payload.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
@@ -1437,7 +1448,7 @@ paths:
         "404":
           description: Draft not found.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example:
                 type: "https://api.workflow.platform/errors/not-found"
@@ -1484,7 +1495,7 @@ paths:
         "409":
           description: Draft already exists or idempotency key reused with different payload.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
         "400": { $ref: '#/components/responses/BadRequest' }
@@ -1506,12 +1517,18 @@ paths:
         - $ref: '#/components/parameters/FeatureFlags'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: If-Match
+          in: header
+          required: false
+          description: The draft's record_version, optionally quoted. Takes precedence over the record_version body field; a value that is not an integer is ignored. One of the two is required.
+          schema: { type: string, example: '"3"' }
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 name:
                   type: string
@@ -1527,7 +1544,7 @@ paths:
                 record_version:
                   type: integer
                   format: int64
-                  description: "Monotonic optimistic-lock counter. Echo the value received in the last GET/PUT response. If another update has been applied since you read, RowsAffected=0 triggers DRAFT_CONCURRENCY (409)."
+                  description: "Monotonic optimistic-lock counter. Echo the value received in the last GET/PUT response. Required unless the If-Match header is sent; a request with neither is 400 BAD_REQUEST. If another update has been applied since you read, the save is DRAFT_CONCURRENCY (409) and the problem carries current_record_version."
                   example: 3
       responses:
         "200":
@@ -1546,7 +1563,7 @@ paths:
         "400":
           description: Malformed request body or unparseable XML.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
         "401": { $ref: '#/components/responses/Unauthorized' }
@@ -1554,7 +1571,7 @@ paths:
         "404":
           description: Workflow or draft version not found.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example:
                 type: https://api.workflow.platform/errors/not-found
@@ -1566,7 +1583,7 @@ paths:
         "409":
           description: Optimistic concurrency conflict or idempotency key reused with a different payload.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
@@ -1598,7 +1615,7 @@ paths:
         "404":
           description: Workflow or draft version not found.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example:
                 type: https://api.workflow.platform/errors/not-found
@@ -1610,7 +1627,7 @@ paths:
         "409":
           description: Idempotency key reused with a different payload.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
         "400": { $ref: '#/components/responses/BadRequest' }
@@ -1651,14 +1668,14 @@ paths:
         "409":
           description: Workflow already archived or idempotency key reused with a different payload.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
         "400": { $ref: '#/components/responses/BadRequest' }
         "503":
           description: Upstream service unavailable (Execution Service could not be notified).
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   # 3.4
@@ -1732,6 +1749,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 force_publish_structural:
                   type: boolean
@@ -1752,7 +1770,7 @@ paths:
         "400":
           description: Malformed request body — unparseable JSON or missing required field.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
@@ -1760,7 +1778,7 @@ paths:
         "409":
           description: Structural divergence detected (`STRUCTURAL_DIVERGENCE`; `force_publish_structural` accepts it), the draft was saved after the publish read it (`DRAFT_CONCURRENCY`; publish again), or idempotency key reused with a different payload.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
@@ -1769,7 +1787,7 @@ paths:
         "503":
           description: Upstream service unavailable (Execution Service could not be notified).
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   # 3.10
@@ -1797,6 +1815,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [new_key, new_name]
               properties:
                 new_key:
@@ -1832,7 +1851,7 @@ paths:
         "409":
           description: Template key conflict (cloned key already exists), source version is not PUBLISHED or ARCHIVED, or idempotency key reused with a different payload.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               examples:
                 duplicate_key:
@@ -1901,7 +1920,7 @@ paths:
         "409":
           description: Version is not in PUBLISHED status, or idempotency key reused with a different payload.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example:
                 type: "https://api.workflow.platform/errors/conflict"
@@ -1986,14 +2005,14 @@ paths:
         "400":
           description: An id in the path is not a UUID.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "409":
           description: The version is a DRAFT, which has no stored plan (INVALID_VERSION_STATUS).
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
@@ -2241,6 +2260,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [connector_type, field_name, value]
               properties:
                 connector_type: { type: string, description: Must match a registered connector type. }
@@ -2258,7 +2278,7 @@ paths:
         "400":
           description: Missing required field, unrecognized connector_type, or invalid field_name.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
@@ -2269,7 +2289,7 @@ paths:
         "503":
           description: The secret store (OpenBao) is unavailable.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   /api/v1/connectors/credentials/{connector_type}/{field_name}:
@@ -2305,7 +2325,7 @@ paths:
         "400":
           description: Unrecognized connector_type, or an invalid field_name.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
@@ -2313,7 +2333,7 @@ paths:
         "503":
           description: The secret store (OpenBao) is unavailable.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   /api/v1/modules:
@@ -2375,6 +2395,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [name, bpmn_xml]
               properties:
                 name:        { type: string, maxLength: 255 }
@@ -2402,7 +2423,7 @@ paths:
         "409":
           description: MODULE_PROCESS_ID_CONFLICT — the process id is used by a module the caller can call, or a new version's process id differs from its module's.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
@@ -2467,7 +2488,7 @@ paths:
         "409":
           description: The module has no active version to archive.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "400": { $ref: '#/components/responses/BadRequest' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
@@ -2563,6 +2584,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 bpmn_xml: { type: string, nullable: true }
       responses:
@@ -2586,7 +2608,7 @@ paths:
             or MODULE_PROCESS_ID_CONFLICT: the process id is used by a module the
             caller can call, or a new version's process id differs from its module's.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "400": { $ref: '#/components/responses/BadRequest' }
@@ -2652,7 +2674,7 @@ paths:
         "400":
           description: An id in the path is not a UUID.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
@@ -2700,7 +2722,7 @@ paths:
         "409":
           description: The version is not in DRAFT status.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "400": { $ref: '#/components/responses/BadRequest' }
@@ -2767,6 +2789,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [name, bpmn_xml]
               properties:
                 name:        { type: string, maxLength: 255 }
@@ -2820,6 +2843,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [name]
               properties:
                 name:        { type: string, maxLength: 255 }
@@ -2837,7 +2861,7 @@ paths:
         "409":
           description: The source version is still in DRAFT status.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "400": { $ref: '#/components/responses/BadRequest' }
         "422": { $ref: '#/components/responses/UnprocessableEntity' }

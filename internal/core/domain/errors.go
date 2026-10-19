@@ -11,6 +11,7 @@ var (
 	ErrNoActiveVersion                 = errors.New("no active version")
 	ErrDuplicateTemplateKey            = errors.New("workflow template key already exists")
 	ErrDraftConcurrency                = errors.New("draft concurrency violation")
+	ErrRecordVersionRequired           = errors.New("record_version is required")
 	ErrInvalidVersionStatus            = errors.New("invalid version status for this operation")
 	ErrVersionNotDraft                 = errors.New("workflow version is not in DRAFT status")
 	ErrVersionNotPublished             = errors.New("workflow version is not in PUBLISHED status")
@@ -112,3 +113,11 @@ type ValidationFailedError struct {
 func (e *ValidationFailedError) Error() string {
 	return "BPMN validation failed"
 }
+
+type DraftConcurrencyError struct {
+	Current int64
+}
+
+func (e *DraftConcurrencyError) Error() string { return ErrDraftConcurrency.Error() }
+
+func (e *DraftConcurrencyError) Unwrap() error { return ErrDraftConcurrency }

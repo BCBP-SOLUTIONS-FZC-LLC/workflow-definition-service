@@ -16,14 +16,8 @@ func RequireInternalToken(token string) gin.HandlerFunc {
 			return
 		}
 		if subtle.ConstantTimeCompare([]byte(c.GetHeader(InternalTokenHeader)), []byte(token)) != 1 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"type":     "https://api.workflow.platform/errors/unauthorized",
-				"title":    "Unauthorized",
-				"status":   http.StatusUnauthorized,
-				"detail":   "missing or invalid " + InternalTokenHeader,
-				"instance": c.Request.URL.Path,
-				"code":     "UNAUTHORIZED",
-			})
+			abortProblem(c, http.StatusUnauthorized, "https://api.workflow.platform/errors/unauthorized",
+				"Unauthorized", "UNAUTHORIZED", "missing or invalid "+InternalTokenHeader)
 			return
 		}
 		c.Next()

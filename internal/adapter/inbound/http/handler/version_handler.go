@@ -169,7 +169,7 @@ func (h *Handler) PublishVersion(c *gin.Context) {
 	}
 
 	var req publishVersionReq
-	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+	if err := bindStrictJSON(c, &req); err != nil && !errors.Is(err, io.EOF) {
 		h.bindErrResponse(c, err)
 		return
 	}
@@ -206,7 +206,7 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 	}
 
 	var req cloneVersionReq
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := bindStrictJSON(c, &req); err != nil {
 		h.bindErrResponse(c, err)
 		return
 	}

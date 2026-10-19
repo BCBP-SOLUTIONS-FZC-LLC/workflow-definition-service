@@ -44,7 +44,7 @@ type writeRestAliasReq struct {
 
 func (h *Handler) WriteConnectorRestAlias(c *gin.Context) {
 	var req writeRestAliasReq
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := bindStrictJSON(c, &req); err != nil {
 		h.bindErrResponse(c, err)
 		return
 	}

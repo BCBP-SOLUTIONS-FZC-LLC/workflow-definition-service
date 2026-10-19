@@ -26,7 +26,7 @@ func (h *Handler) ValidateBPMN(c *gin.Context) {
 	}
 
 	var req validateBPMNReq
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := bindStrictJSON(c, &req); err != nil {
 		h.bindErrResponse(c, err)
 		return
 	}

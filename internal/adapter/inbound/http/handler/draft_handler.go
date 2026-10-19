@@ -73,7 +73,7 @@ func (h *Handler) UpdateDraft(c *gin.Context) {
 	}
 
 	var req updateDraftReq
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := bindStrictJSON(c, &req); err != nil {
 		h.bindErrResponse(c, err)
 		return
 	}
@@ -83,6 +83,10 @@ func (h *Handler) UpdateDraft(c *gin.Context) {
 		lengthLimit{"description", deref(req.Description), 2000},
 	) {
 		return
+	}
+
+	if version, ok := recordVersionFromIfMatch(c.GetHeader("If-Match")); ok {
+		req.RecordVersion = version
 	}
 
 	draft, err := h.drafts.Update(c.Request.Context(), tenantID, userID, workflowID, service.UpdateDraftReq{

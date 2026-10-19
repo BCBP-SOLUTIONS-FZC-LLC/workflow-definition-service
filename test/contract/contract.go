@@ -155,6 +155,10 @@ func (s *Spec) Undeclared(t testing.TB, req *http.Request, status int, body []by
 		return
 	}
 	media := resp.Value.Content.Get("application/json")
+	problem := resp.Value.Content.Get("application/problem+json")
+	if media == nil {
+		media = problem
+	}
 	if media == nil || media.Schema == nil || media.Schema.Value == nil {
 		return
 	}
@@ -162,6 +166,9 @@ func (s *Spec) Undeclared(t testing.TB, req *http.Request, status int, body []by
 	if err := json.Unmarshal(body, &data); err != nil {
 		t.Errorf("response is not JSON: %v", err)
 		return
+	}
+	if problem != nil && problem != media && isProblem(data) {
+		media = problem
 	}
 	for _, path := range undeclaredFields(media.Schema.Value, data, "$") {
 		t.Errorf("%s %s %d: %s is not declared in the spec", req.Method, req.URL.Path, status, path)
@@ -227,4 +234,17 @@ func (s *Spec) Operations() []Operation {
 		}
 	}
 	return ops
+}
+
+func isProblem(data any) bool {
+	doc, ok := data.(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, member := range []string{"type", "title", "status", "detail", "instance", "code"} {
+		if _, present := doc[member]; !present {
+			return false
+		}
+	}
+	return true
 }

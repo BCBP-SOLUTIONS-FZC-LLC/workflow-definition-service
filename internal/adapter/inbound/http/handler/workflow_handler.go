@@ -129,7 +129,7 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 	}
 
 	var req createWorkflowReq
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := bindStrictJSON(c, &req); err != nil {
 		h.bindErrResponse(c, err)
 		return
 	}

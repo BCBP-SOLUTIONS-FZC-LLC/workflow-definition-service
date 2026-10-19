@@ -181,11 +181,11 @@ func TestWriteProblem(t *testing.T) {
 		wantType        string
 	}{
 		{
-			name:            "sets JSON content type",
+			name:            "sets the problem content type",
 			status:          http.StatusNotFound,
 			code:            CodeNotFound,
 			detail:          "test detail",
-			wantContentType: "application/json; charset=utf-8",
+			wantContentType: "application/problem+json",
 		},
 		{
 			name:     "unknown status falls back to internal-error type",

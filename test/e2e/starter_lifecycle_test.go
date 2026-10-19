@@ -131,7 +131,7 @@ func TestE2E_StarterFromWorkflowVersion_SnapshotsNotLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get second draft: %v", err)
 	}
-	if _, err := svcs.draft.Update(ctx, tenantID, userID, wf.ID, service.UpdateDraftReq{BPMNXML: &mutatedXML}); err != nil {
+	if _, err := svcs.draft.Update(ctx, tenantID, userID, wf.ID, service.UpdateDraftReq{BPMNXML: &mutatedXML, RecordVersion: draft2.RecordVersion}); err != nil {
 		t.Fatalf("Update second draft: %v", err)
 	}
 	if _, err := svcs.version.Publish(ctx, tenantID, userID, wf.ID, draft2.ID, false); err != nil {

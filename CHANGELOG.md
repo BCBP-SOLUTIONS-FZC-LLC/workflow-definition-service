@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+### Changed
+
+- Errors are `application/problem+json` documents and carry `trace_id` and `request_id` (the values of the `X-Trace-ID` and `X-Request-ID` response headers), including the refusals written by the identity, content-type and internal-token middleware. The responses the shared HTTP library writes before a handler runs (a missing identity, the request timeout) keep the library's flat envelope.
+- Request bodies are strict: a field the endpoint does not define is `400 BAD_REQUEST` naming it, instead of being ignored. The public spec declares `additionalProperties: false` on every request body and the internal spec on the connector-alias write (the event ingest envelope stays open, so a newer sender's added field is not refused), and both declare the new problem members.
+- `PUT /workflows/{id}/draft` requires its lock token, from the `record_version` body field or an `If-Match` header (the header wins; the LLD already offered it and the code read only the body). A request with neither answered by overwriting whatever was stored, the early return that skipped the check; it is now `400 BAD_REQUEST` naming `record_version`. A stale save answers `409 DRAFT_CONCURRENCY` with `current_record_version`. LLD rev 1.54. Breaking for any client, and none exists yet.
+
 ### Fixed
 
 - Promoting a published version on an archived workflow put it back among the tenant's templates without a limit check, so a tenant at its limit could create another template and then reactivate the archived one. Promote applies the creation count, plan lookup and refusal when the workflow has no active version and no draft, reading the workflow again inside the transaction so a concurrent promote of the same version is a success.

@@ -18,14 +18,8 @@ func RequireJSONContentType() gin.HandlerFunc {
 			ct = ct[:i]
 		}
 		if strings.TrimSpace(ct) != "application/json" {
-			c.AbortWithStatusJSON(http.StatusUnsupportedMediaType, gin.H{
-				"type":     "https://api.workflow.platform/errors/unsupported-media-type",
-				"title":    "Unsupported Media Type",
-				"status":   http.StatusUnsupportedMediaType,
-				"detail":   "Content-Type must be application/json",
-				"instance": c.Request.URL.Path,
-				"code":     "UNSUPPORTED_MEDIA_TYPE",
-			})
+			abortProblem(c, http.StatusUnsupportedMediaType, "https://api.workflow.platform/errors/unsupported-media-type",
+				"Unsupported Media Type", "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json")
 			return
 		}
 		c.Next()

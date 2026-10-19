@@ -189,7 +189,7 @@ func TestDraftService_Update_OK_MetadataOnly(t *testing.T) {
 	svc := newDraftSvc(ctrl, cache, wfRepo, vRepo)
 
 	tenantID, userID, wfID := uuid.New(), uuid.New(), uuid.New()
-	draft := &domain.WorkflowVersion{ID: uuid.New()}
+	draft := &domain.WorkflowVersion{ID: uuid.New(), RecordVersion: 1}
 
 	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
 	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -201,7 +201,8 @@ func TestDraftService_Update_OK_MetadataOnly(t *testing.T) {
 
 	newName := "new-name"
 	_, err := svc.Update(context.Background(), tenantID, userID, wfID, service.UpdateDraftReq{
-		Name: &newName,
+		Name:          &newName,
+		RecordVersion: 1,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -216,7 +217,7 @@ func TestDraftService_Update_OK_DescriptionOnly(t *testing.T) {
 	svc := newDraftSvc(ctrl, cache, wfRepo, vRepo)
 
 	tenantID, userID, wfID := uuid.New(), uuid.New(), uuid.New()
-	draft := &domain.WorkflowVersion{ID: uuid.New()}
+	draft := &domain.WorkflowVersion{ID: uuid.New(), RecordVersion: 1}
 
 	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
 	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -228,7 +229,8 @@ func TestDraftService_Update_OK_DescriptionOnly(t *testing.T) {
 	vRepo.EXPECT().UpdateDraft(gomock.Any(), gomock.Any()).Return(nil)
 
 	_, err := svc.Update(context.Background(), tenantID, userID, wfID, service.UpdateDraftReq{
-		Description: &newDesc,
+		Description:   &newDesc,
+		RecordVersion: 1,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -330,10 +332,10 @@ func TestDraftService_Update_NilCache_OK(t *testing.T) {
 	svc := newDraftSvc(ctrl, nil, nil, vRepo)
 
 	vRepo.EXPECT().GetDraft(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&domain.WorkflowVersion{}, nil)
+		Return(&domain.WorkflowVersion{RecordVersion: 1}, nil)
 	vRepo.EXPECT().UpdateDraft(gomock.Any(), gomock.Any()).Return(nil)
 
-	_, err := svc.Update(context.Background(), uuid.New(), uuid.New(), uuid.New(), service.UpdateDraftReq{})
+	_, err := svc.Update(context.Background(), uuid.New(), uuid.New(), uuid.New(), service.UpdateDraftReq{RecordVersion: 1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -349,7 +351,7 @@ func TestDraftService_Update_UpdateMetadataError(t *testing.T) {
 	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
 	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	vRepo.EXPECT().GetDraft(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&domain.WorkflowVersion{}, nil)
+		Return(&domain.WorkflowVersion{RecordVersion: 1}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&domain.Workflow{Name: "n", Description: "d"}, nil)
 	wfRepo.EXPECT().UpdateMetadata(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -357,7 +359,7 @@ func TestDraftService_Update_UpdateMetadataError(t *testing.T) {
 
 	newName := "x"
 	_, err := svc.Update(context.Background(), uuid.New(), uuid.New(), uuid.New(),
-		service.UpdateDraftReq{Name: &newName})
+		service.UpdateDraftReq{Name: &newName, RecordVersion: 1})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -369,10 +371,10 @@ func TestDraftService_Update_UpdateDraftError(t *testing.T) {
 	svc := newDraftSvc(ctrl, nil, nil, vRepo)
 
 	vRepo.EXPECT().GetDraft(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&domain.WorkflowVersion{}, nil)
+		Return(&domain.WorkflowVersion{RecordVersion: 1}, nil)
 	vRepo.EXPECT().UpdateDraft(gomock.Any(), gomock.Any()).Return(errors.New("update error"))
 
-	_, err := svc.Update(context.Background(), uuid.New(), uuid.New(), uuid.New(), service.UpdateDraftReq{})
+	_, err := svc.Update(context.Background(), uuid.New(), uuid.New(), uuid.New(), service.UpdateDraftReq{RecordVersion: 1})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -388,12 +390,12 @@ func TestDraftService_Update_GetWorkflowForMetaError(t *testing.T) {
 	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
 	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	vRepo.EXPECT().GetDraft(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&domain.WorkflowVersion{}, nil)
+		Return(&domain.WorkflowVersion{RecordVersion: 1}, nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrNotFound)
 
 	newDesc := "desc"
 	_, err := svc.Update(context.Background(), uuid.New(), uuid.New(), uuid.New(),
-		service.UpdateDraftReq{Description: &newDesc})
+		service.UpdateDraftReq{Description: &newDesc, RecordVersion: 1})
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -476,5 +478,71 @@ func TestDraftService_Update_ReleasesTheLockWithTheTokenItTookItWith(t *testing.
 	}
 	if taken[0] == taken[1] || taken[0] == "" {
 		t.Errorf("tokens %v must be unique per save, or a late release can delete another editor's lock", taken)
+	}
+}
+
+func TestDraftService_Update_ARequestWithoutAPositiveRecordVersionIsRefused(t *testing.T) {
+	for _, version := range []int64{0, -1} {
+		ctrl := gomock.NewController(t)
+		cache := mocks.NewMockCacheStore(ctrl)
+		vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+		svc := newDraftSvc(ctrl, cache, nil, vRepo)
+
+		tenantID, wfID := uuid.New(), uuid.New()
+		cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
+		cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(&domain.WorkflowVersion{RecordVersion: 4}, nil)
+
+		newXML := "<overwrites-whatever-is-stored/>"
+		_, err := svc.Update(context.Background(), tenantID, uuid.New(), wfID, service.UpdateDraftReq{BPMNXML: &newXML, RecordVersion: version})
+		if !errors.Is(err, domain.ErrRecordVersionRequired) {
+			t.Fatalf("record_version %d: expected ErrRecordVersionRequired, got %v", version, err)
+		}
+	}
+}
+
+func TestDraftService_Update_AStaleSaveCarriesTheCurrentRecordVersion(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cache := mocks.NewMockCacheStore(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := newDraftSvc(ctrl, cache, nil, vRepo)
+
+	tenantID, wfID := uuid.New(), uuid.New()
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
+	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(&domain.WorkflowVersion{RecordVersion: 5}, nil)
+
+	_, err := svc.Update(context.Background(), tenantID, uuid.New(), wfID, service.UpdateDraftReq{RecordVersion: 2})
+
+	var conflict *domain.DraftConcurrencyError
+	if !errors.As(err, &conflict) || conflict.Current != 5 {
+		t.Fatalf("expected a DraftConcurrencyError carrying 5, got %v", err)
+	}
+	if !errors.Is(err, domain.ErrDraftConcurrency) {
+		t.Fatalf("the conflict must still be ErrDraftConcurrency, got %v", err)
+	}
+}
+
+func TestDraftService_Update_AConflictFoundWhileSavingCarriesTheCurrentRecordVersion(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cache := mocks.NewMockCacheStore(ctrl)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	svc := newDraftSvc(ctrl, cache, nil, vRepo)
+
+	tenantID, wfID := uuid.New(), uuid.New()
+	cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
+	cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	gomock.InOrder(
+		vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(&domain.WorkflowVersion{RecordVersion: 3}, nil),
+		vRepo.EXPECT().UpdateDraft(gomock.Any(), gomock.Any()).Return(domain.ErrDraftConcurrency),
+		vRepo.EXPECT().GetDraft(gomock.Any(), tenantID, wfID).Return(&domain.WorkflowVersion{RecordVersion: 8}, nil),
+	)
+
+	newXML := "<bpmn/>"
+	_, err := svc.Update(context.Background(), tenantID, uuid.New(), wfID, service.UpdateDraftReq{BPMNXML: &newXML, RecordVersion: 3})
+
+	var conflict *domain.DraftConcurrencyError
+	if !errors.As(err, &conflict) || conflict.Current != 8 {
+		t.Fatalf("expected a DraftConcurrencyError carrying 8, got %v", err)
 	}
 }

@@ -58,7 +58,8 @@ func TestE2E_WorkflowLifecycle(t *testing.T) {
 	// 2. Update the draft metadata
 	updatedName := "E2E Lifecycle Test (updated)"
 	if _, err := svcs.draft.Update(ctx, tenantID, userID, wf.ID, service.UpdateDraftReq{
-		Name: &updatedName,
+		Name:          &updatedName,
+		RecordVersion: draft.RecordVersion,
 	}); err != nil {
 		t.Fatalf("Update draft: %v", err)
 	}

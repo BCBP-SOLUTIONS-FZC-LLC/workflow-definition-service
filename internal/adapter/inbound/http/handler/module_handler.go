@@ -167,7 +167,7 @@ func (h *Handler) CreateModule(c *gin.Context) {
 	}
 
 	var req createModuleReq
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := bindStrictJSON(c, &req); err != nil {
 		h.bindErrResponse(c, err)
 		return
 	}
@@ -345,7 +345,7 @@ func (h *Handler) AddModuleVersion(c *gin.Context) {
 	}
 
 	var req addModuleVersionReq
-	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+	if err := bindStrictJSON(c, &req); err != nil && !errors.Is(err, io.EOF) {
 		h.bindErrResponse(c, err)
 		return
 	}

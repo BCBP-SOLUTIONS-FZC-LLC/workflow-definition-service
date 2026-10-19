@@ -104,7 +104,7 @@ func (h *Handler) CreateStarter(c *gin.Context) {
 	}
 
 	var req createStarterReq
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := bindStrictJSON(c, &req); err != nil {
 		h.bindErrResponse(c, err)
 		return
 	}
@@ -149,7 +149,7 @@ func (h *Handler) CreateStarterFromWorkflowVersion(c *gin.Context) {
 	}
 
 	var req createStarterFromWorkflowVersionReq
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := bindStrictJSON(c, &req); err != nil {
 		h.bindErrResponse(c, err)
 		return
 	}

@@ -125,6 +125,12 @@ components:
         code:
           type: string
           description: Service-specific error code for programmatic handling.
+        trace_id:
+          type: string
+          description: The OpenTelemetry trace id of the request, equal to the X-Trace-ID response header.
+        request_id:
+          type: string
+          description: The request id, equal to the X-Request-ID response header.
         invalid_params:
           type: array
           description: Details about specific fields that failed validation.
@@ -151,31 +157,31 @@ components:
     BadRequest:
       description: A path or query parameter is missing or malformed.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
 
     Unauthorized:
       description: Missing or wrong x-internal-token.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
 
     NotFound:
       description: No such resource for this tenant.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
 
     PayloadTooLarge:
       description: The request body exceeds the 10 MB limit. Not retryable.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
 
     InternalError:
       description: Unexpected server error.
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
           example:
             type: "https://api.workflow.platform/errors/internal-error"
@@ -243,18 +249,18 @@ paths:
         "400":
           description: Malformed envelope or payload (non-retryable — the consumer routes to its DLQ).
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401":
           description: Missing or invalid internal service credential.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
         "500":
           description: Transient processing failure (DB/transaction). The consumer retries and eventually DLQs.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "502":
           description: >
@@ -263,7 +269,7 @@ paths:
             frame. Retryable, so the consumer retries it and does not route it to its DLQ as a
             malformed event.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   /api/v1/internal/connector-aliases:
@@ -292,7 +298,7 @@ paths:
         "401":
           description: Missing or invalid internal service credential.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
 
@@ -309,6 +315,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [alias, method, baseURL, pathTemplate]
               properties:
                 alias:        { type: string, minLength: 1, maxLength: 64, pattern: '^[a-zA-Z0-9_-]+$' }
@@ -344,12 +351,12 @@ paths:
             alias, method or pathTemplate, a timeoutMs over the limit, or a
             baseURL whose scheme, credentials, host or port the allowlist rejects.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401":
           description: Missing or invalid internal service credential.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
         "500": { $ref: '#/components/responses/InternalError' }
@@ -372,7 +379,7 @@ paths:
         "401":
           description: Missing or invalid internal service credential.
           content:
-            application/json:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         "500": { $ref: '#/components/responses/InternalError' }
 

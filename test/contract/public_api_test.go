@@ -586,3 +586,57 @@ func TestPublicContract_CompiledPlansMatchTheirSchema(t *testing.T) {
 		t.Fatalf("%d fixtures compiled, want at least 8 of %d", compiled, len(files))
 	}
 }
+
+func TestPublicContract_ProblemsAreProblemDocumentsCarryingTheCorrelationIds(t *testing.T) {
+	spec := contract.Load(t, publicSpec)
+	router := publicRouter(t, countingList{calls: new(int)}, freeCache{}, upDB{}, upPinger{})
+
+	cases := []struct {
+		name   string
+		build  func() *http.Request
+		status int
+	}{
+		{"refused by the identity middleware", func() *http.Request {
+			r := httptest.NewRequest(http.MethodGet, "/api/v1/workflows", nil)
+			r.Header.Set("x-tenant-id", "x")
+			r.Header.Set("x-user-id", uuid.NewString())
+			return r
+		}, http.StatusUnauthorized},
+		{"refused by the content-type middleware", func() *http.Request {
+			r := createRequest("")
+			r.Header.Set("Content-Type", "text/plain")
+			return r
+		}, http.StatusUnsupportedMediaType},
+		{"written by a handler", func() *http.Request {
+			r := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/not-a-uuid", nil)
+			r.Header.Set("x-tenant-id", uuid.NewString())
+			r.Header.Set("x-user-id", uuid.NewString())
+			return r
+		}, http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := tc.build()
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != tc.status {
+				t.Fatalf("status %d, want %d: %s", w.Code, tc.status, w.Body.String())
+			}
+			if got := strings.Split(w.Header().Get("Content-Type"), ";")[0]; got != "application/problem+json" {
+				t.Errorf("Content-Type %q, want application/problem+json", got)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("body is not JSON: %v", err)
+			}
+			if traceID := w.Header().Get("X-Trace-ID"); traceID == "" || body["trace_id"] != traceID {
+				t.Errorf("trace_id %v, want the X-Trace-ID header %q", body["trace_id"], traceID)
+			}
+			if requestID := w.Header().Get("X-Request-ID"); requestID == "" || body["request_id"] != requestID {
+				t.Errorf("request_id %v, want the X-Request-ID header %q", body["request_id"], requestID)
+			}
+			spec.Undeclared(t, req, w.Code, w.Body.Bytes())
+		})
+	}
+}

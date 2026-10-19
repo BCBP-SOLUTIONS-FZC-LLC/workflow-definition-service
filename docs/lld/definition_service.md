@@ -1067,13 +1067,13 @@ Input validation is enforced at the service layer before any DB write. Violation
 
 **`template_key` format**: free-form text up to 255 characters, with no slug pattern. It is never parsed or composed into anything else; the Execution Service's instance business key is a separate identifier.
 
-**Concurrency tokens**: `PATCH /workflows/:id` and `PUT /workflows/:id/draft` accept the lock token as `If-Match: "<record_version>"` header (preferred) or `record_version` in the JSON body. Header takes precedence when both are present. Omitting both is last-writer-wins (acceptable for single-admin tenants; the guard matters for concurrent admin edits). See §10.11.
+**Concurrency tokens**: `PATCH /workflows/:id` and `PUT /workflows/:id/draft` accept the lock token as `If-Match: "<record_version>"` header (preferred) or `record_version` in the JSON body. Header takes precedence when both are present. `PUT /workflows/:id/draft` requires the token: a request that supplies neither, or a value that is not a positive integer, is `400 BAD_REQUEST` naming `record_version`, since a save without it would silently overwrite another administrator's edit. See §10.11.
 
 **Pagination params** (every list endpoint): `page` ∈ [1, 100000] (default 1), `limit` ∈ [1, 100] (default 20). `versions_limit` on `GET /workflows/:id` is in [1, 100] (default 20). A value that is not an integer or is out of range is `400 INVALID_INPUT` with every offending parameter named in `invalid_params`; nothing is clamped.
 
 #### Standard Error Patterns (RFC-9457)
 
-All error responses adhere to the RFC-9457 (formerly RFC-7807) Problem Details schema. This standard provides a consistent, machine-readable format for API errors. The base structure is defined as:
+All error responses adhere to the RFC-9457 (formerly RFC-7807) Problem Details schema and are sent as `application/problem+json`. This standard provides a consistent, machine-readable format for API errors. Every problem also carries `trace_id` and `request_id`, equal to the `X-Trace-ID` and `X-Request-ID` response headers, so a client can quote them when reporting a failure. The responses the shared HTTP library produces before a handler runs, a missing identity and the request timeout, keep the library's flat envelope (`error`, `status`, `trace_id`, `request_id`) as `application/json`. The base structure is defined as:
 
 ```json
 {
@@ -1117,7 +1117,7 @@ Below is the complete registry of application-specific error codes returned insi
 
 | Error Code | HTTP Status | Problem Title | Description & Context |
 | --- | --- | --- | --- |
-| `BAD_REQUEST` | `400 Bad Request` | Bad Request | JSON request body could not be bound — missing required fields or incorrect field types. `invalid_params` names the fields by their JSON names; the response never repeats a submitted value or an internal type name, and the underlying error is logged. |
+| `BAD_REQUEST` | `400 Bad Request` | Bad Request | JSON request body could not be bound — missing required fields, incorrect field types, or a field the endpoint does not define (reason `is not a known field`; request bodies are strict, so a misspelt field is refused rather than ignored). `invalid_params` names the fields by their JSON names; the response never repeats a submitted value or an internal type name, and the underlying error is logged. |
 | `INVALID_BPMN_XML` | `400 Bad Request` | Invalid BPMN XML | The BPMN document cannot be parsed — not valid XML, a forbidden `DOCTYPE`/entity, or the XML-bomb token cap. (Distinct from `BPMN_VALIDATION_FAILED` 422, which is a parseable-but-invalid document.) |
 | `XXE_ENTITY_DETECTED` | _(internal log signal — not returned)_ | External Entities Prohibited | A forbidden `DOCTYPE`/external-entity or XML-bomb attempt. The client receives the generic `400 INVALID_BPMN_XML` (detection is not disclosed); the service emits an internal security-alert log with the client IP and tenant. |
 | `UNAUTHORIZED` | `401 Unauthorized` | Unauthorized | Missing, expired, or invalid gateway-injected identity headers (`x-tenant-id`, `x-user-id`). |
@@ -1130,7 +1130,7 @@ Below is the complete registry of application-specific error codes returned insi
 | `RATE_LIMIT_EXCEEDED` | `429 Too Many Requests` | Rate Limit Exceeded | The tenant has exceeded their allocated rate limits (requests per second or monthly quota). _(gateway-enforced — not returned by this service) |
 | `DUPLICATE_TEMPLATE_KEY` | `409 Conflict` | Workflow Template Key Conflict | A workflow with the specified `template_key` already exists within the tenant boundary. |
 | `DRAFT_ALREADY_EXISTS` | `409 Conflict` | Draft Already Exists | An active workspace draft already exists for this workflow (must publish or discard it first). |
-| `DRAFT_CONCURRENCY` | `409 Conflict` | Draft Concurrency Violation | Stale draft update — client's `record_version` does not match the current value; another update has been applied since the draft was last read. |
+| `DRAFT_CONCURRENCY` | `409 Conflict` | Draft Concurrency Violation | Stale draft update — client's `record_version` does not match the current value; another update has been applied since the draft was last read. The problem carries `current_record_version`, the value to retry with after the client has reconciled. |
 | `WORKFLOW_CONCURRENCY_VIOLATION` | `409 Conflict` | Workflow Concurrency Violation | Stale workflow metadata update — client's `record_version` on the `workflow` row does not match; another name/description update has been applied since the client last read. _(planned — pending `PATCH /workflows/:id` endpoint) |
 | `IDEMPOTENCY_KEY_REPLAY` | `409 Conflict` | Idempotent Request Replayed | The request was submitted with a previously processed `Idempotency-Key` but different parameters. |
 | `IDEMPOTENCY_REQUEST_IN_PROGRESS` | `409 Conflict` | Idempotency Request In Progress | A request with the same `Idempotency-Key` is still running; retry once it finishes. |
@@ -1260,7 +1260,7 @@ Below is a detailed walkthrough of the endpoints, checks, and flow execution tra
      1. The client sends a request carrying a non-empty body.
      2. The middleware checks `Content-Length` (body-less GET/DELETE and empty-body POSTs pass through untouched).
      3. It reads the `Content-Type` header; if (after stripping `;charset`) it is not `application/json`, it aborts.
-     4. The middleware returns an RFC-9457 `415` with `code: UNSUPPORTED_MEDIA_TYPE`.
+     4. The middleware returns an RFC-9457 `415` (`application/problem+json`, with the same `trace_id` and `request_id` members as every problem) with `code: UNSUPPORTED_MEDIA_TYPE`.
    - **Database & Transaction Impact**: Request rejected at boundary. Database is not contacted.
    - **Resolution**: Send the HTTP header `Content-Type: application/json`.
 
@@ -1313,7 +1313,7 @@ Below is a detailed walkthrough of the endpoints, checks, and flow execution tra
       2. The service starts a transaction.
       3. The repository executes: `UPDATE workflow_version SET bpmn_xml = :xml WHERE workflow_id = :id AND status = 'DRAFT' AND record_version = 3`. The `record_version` increment and `updated_at` refresh are applied automatically by the `BEFORE UPDATE` trigger.
       4. Because Admin A already saved, the database row's `record_version` is now `4`. The query updates `0` rows.
-      5. The repository detects `0` rows affected, rolls back the transaction, and returns `code: DRAFT_CONCURRENCY`.
+      5. The repository detects `0` rows affected, rolls back the transaction, and returns `code: DRAFT_CONCURRENCY` with `current_record_version` read back from the draft.
     - **Database & Transaction Impact**: A transaction is opened, executes an update that matches 0 rows, determines optimistic locking failure, and rolls back.
     - **Resolution**: The client UI must prompt the user that the draft has changed, fetch the latest draft version (which includes the new `record_version`), display a merge/overwrite diff, and retry with the updated `record_version`.
 
@@ -1789,7 +1789,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
   }
   ```
 
-- **Semantics**: Updates the active workspace draft. Implements optimistic concurrency control via `record_version` (a monotonic counter): the caller supplies the token via `If-Match: "<record_version>"` header (preferred) or the `record_version` body field — header takes precedence when both are present (§10.11). The update query filters on `AND record_version = :client_version`; if another update has been applied in the interim, `RowsAffected = 0` → `409 Conflict` (`DRAFT_CONCURRENCY`). The response includes the new `record_version` value. Using a monotonic counter rather than `last_updated_at` avoids false conflicts from sub-millisecond concurrent clock resolution. Validates that the input is well-formed XML on save, but defers semantic graph validation and compilation to the explicit **publish** or **validate** actions.
+- **Semantics**: Updates the active workspace draft. Implements optimistic concurrency control via `record_version` (a monotonic counter): the caller supplies the token via `If-Match: "<record_version>"` header (preferred) or the `record_version` body field — header takes precedence when both are present, and one of them is required (§10.11). The update query filters on `AND record_version = :client_version`; if another update has been applied in the interim, `RowsAffected = 0` → `409 Conflict` (`DRAFT_CONCURRENCY`). The response includes the new `record_version` value. Using a monotonic counter rather than `last_updated_at` avoids false conflicts from sub-millisecond concurrent clock resolution. Validates that the input is well-formed XML on save, but defers semantic graph validation and compilation to the explicit **publish** or **validate** actions.
 
 #### 3.3.7 Publish Workflow Version
 
@@ -4038,7 +4038,7 @@ This section captures the key architectural and design decisions made for the Wo
 
 - **Decision**: Mutating endpoints that enforce optimistic concurrency accept the lock token via either the `If-Match: "<record_version>"` HTTP header or the `record_version` field in the JSON body. The header takes precedence if both are present. Consistent with `user_service.md` §9.1.
 
-- **Rationale**: The `If-Match` header is the RFC 7232 standard for conditional updates and is idiomatic REST — it keeps the concurrency token out of the business payload and is compatible with HTTP caches and standards-compliant clients. Supporting both the header and the body field matches the user_service pattern and avoids breaking existing clients that pass the token in the body. Handler extraction is a one-liner (`c.GetHeader("If-Match")`) before DTO binding; if non-empty and parseable as an integer, it overrides the body field value. Clients that omit both get last-writer-wins semantics (acceptable for single-admin tenants).
+- **Rationale**: The `If-Match` header is the RFC 7232 standard for conditional updates and is idiomatic REST — it keeps the concurrency token out of the business payload and is compatible with HTTP caches and standards-compliant clients. Supporting both the header and the body field matches the user_service pattern and avoids breaking existing clients that pass the token in the body. Handler extraction is a one-liner (`c.GetHeader("If-Match")`) before DTO binding; if non-empty and parseable as an integer, it overrides the body field value. A request that supplies neither is refused with `400 BAD_REQUEST` naming `record_version`, since an unconditional save loses another administrator's edit; a header value that is not an integer is ignored in favour of the body field.
 
 ### 10.12 ~~AWS Glue Schema Registry for Event Contracts~~ — Removed
 
@@ -4977,6 +4977,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.51 | 2026-10-17 | **The compiled plan names the shared queue only** (§ task queue naming). The text said the Definition Service resolved the tenant-isolated queue at publish time from the plan header; it never did, and a plan holding a tenant's identity would go stale when the plan changes. The Execution Service chooses the queue at instance start. |
 | 1.52 | 2026-10-18 | **Reactivating an archived workflow is counted against the template limit** (§3.3.11, §5.6). Archiving cleared the active version and so freed the slot, but Promote could point a workflow with no active version and no draft at an older published version without any check, so a tenant at its limit could create another template and then reactivate the archived one, ending above the limit. Promote now applies the same count, plan lookup and refusal as creation, in one serializable transaction, only when the workflow is not already counted. The plan table is also served stale while it refreshes in the background, and a catalog entry without a limit field fails the read instead of reading as unlimited (§5.6.4). |
 | 1.53 | 2026-10-18 | **A tenant data purge for departed tenants** (§7.4.4, §7.4.6, §10.15, Appendix E). The service consumed no tenant lifecycle event, so after IAM's tenant wipe its workflows, modules, starters and connector credentials stayed for ever, with user UUIDs in the assignees and stored plans. It now records a tenant when `TenantMembershipsPurged` or `TenantStateChanged` to `offboarded` arrives (idempotent) and a sweep deletes the tenant's credentials, workflows, modules and starters in batches, as the tenant under row-level security, after `TENANT_CREDENTIAL_RETENTION` (30 days by default) for the credentials and `TENANT_ARTIFACT_RETENTION` (7 years by default) for the workflows, modules and starters, each part with its own completion mark; the periods, the interval and the batch are settings and the sweep can be switched off. A tenant is marked purged only after a check finds no row left. `event_consumer` routes both events here as well as to Execution. |
+| 1.54 | 2026-10-19 | **Errors are problem documents with correlation ids, request bodies are strict, and a draft save needs its token** (§3.3.6, §10.11, the error catalog and standard patterns). Errors were sent as `application/json` without the trace and request ids the response headers already carried, unknown request fields were silently accepted, and a draft save that supplied no `record_version` skipped the check and overwrote whatever was stored, although §10.11 offered `If-Match` and the code read only the body. Every problem is `application/problem+json` and carries `trace_id` and `request_id`; a body with a field the endpoint does not define is `400 BAD_REQUEST` naming it; `PUT /workflows/:id/draft` takes the token from `If-Match` or the body, refuses a request with neither, and a stale save answers `409` with `current_record_version`. The library's own flat 401 and timeout bodies are unchanged. Breaking for any client, and none exists yet. |
 ---
 
 ## Appendix E: Open Items

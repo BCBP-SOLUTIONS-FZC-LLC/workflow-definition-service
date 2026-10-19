@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -129,6 +130,11 @@ func (s *DraftService) Update(
 	}
 
 	if err := s.runUpdateTx(ctx, tenantID, workflowID, draft, req); err != nil {
+		if errors.Is(err, domain.ErrDraftConcurrency) {
+			if current, readErr := s.versions.GetDraft(ctx, tenantID, workflowID); readErr == nil {
+				return nil, &domain.DraftConcurrencyError{Current: current.RecordVersion}
+			}
+		}
 		return nil, fmt.Errorf("update draft: %w", err)
 	}
 	s.log.Info("draft updated", map[string]any{
@@ -183,11 +189,11 @@ func (s *DraftService) acquireDraftLock(ctx context.Context, tenantID, workflowI
 }
 
 func failFastOnStaleRecordVersion(draft *domain.WorkflowVersion, recordVersion int64) error {
-	if recordVersion == 0 {
-		return nil
+	if recordVersion <= 0 {
+		return domain.ErrRecordVersionRequired
 	}
 	if draft.RecordVersion != recordVersion {
-		return domain.ErrDraftConcurrency
+		return &domain.DraftConcurrencyError{Current: draft.RecordVersion}
 	}
 	draft.RecordVersion = recordVersion
 	return nil

@@ -67,3 +67,32 @@ func TestRequireJSONContentType(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireJSONContentType_TheRefusalIsAProblemDocumentWithTheCorrelationIds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Header("X-Trace-ID", "trace-abc")
+		c.Header("X-Request-ID", "request-xyz")
+	})
+	r.Use(middleware.RequireJSONContentType())
+	r.POST("/x", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader("hello"))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("status = %d, want 415", w.Code)
+	}
+	if got := strings.Split(w.Header().Get("Content-Type"), ";")[0]; got != "application/problem+json" {
+		t.Errorf("Content-Type = %q, want application/problem+json", got)
+	}
+	body := w.Body.String()
+	for _, want := range []string{`"trace_id":"trace-abc"`, `"request_id":"request-xyz"`, `"code":"UNSUPPORTED_MEDIA_TYPE"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body %s lacks %s", body, want)
+		}
+	}
+}

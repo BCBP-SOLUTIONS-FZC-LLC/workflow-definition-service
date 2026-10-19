@@ -73,12 +73,5 @@ func abortIdentity(c *gin.Context, status int, code, title, detail string) {
 	if status == http.StatusInternalServerError {
 		typeURI = "https://api.workflow.platform/errors/internal-error"
 	}
-	c.AbortWithStatusJSON(status, gin.H{
-		"type":     typeURI,
-		"title":    title,
-		"status":   status,
-		"detail":   detail,
-		"instance": c.Request.URL.Path,
-		"code":     code,
-	})
+	abortProblem(c, status, typeURI, title, code, detail)
 }
