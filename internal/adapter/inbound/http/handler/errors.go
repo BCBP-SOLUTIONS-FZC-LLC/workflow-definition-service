@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -291,6 +292,8 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 	}
 }
 
+var errTrailingData = errors.New("request body has data after its JSON value")
+
 const unknownFieldPrefix = "json: unknown field "
 
 const maxEchoedFieldName = 64
@@ -320,6 +323,9 @@ func bindStrictJSON(c *gin.Context, obj any) error {
 	if err := dec.Decode(obj); err != nil {
 		return fmt.Errorf("decode request body: %w", err)
 	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return errTrailingData
+	}
 	if err := binding.Validator.ValidateStruct(obj); err != nil {
 		return fmt.Errorf("validate request body: %w", err)
 	}
@@ -327,8 +333,10 @@ func bindStrictJSON(c *gin.Context, obj any) error {
 }
 
 func recordVersionFromIfMatch(header string) (int64, bool) {
-	value := strings.TrimPrefix(strings.TrimSpace(header), "W/")
-	value = strings.Trim(value, `"`)
+	value := strings.TrimSpace(header)
+	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+		value = value[1 : len(value)-1]
+	}
 	n, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return 0, false

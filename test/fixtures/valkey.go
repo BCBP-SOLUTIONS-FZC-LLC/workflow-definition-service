@@ -35,26 +35,14 @@ func NewTestValkey(t *testing.T) port.CacheStore {
 			WithStartupTimeout(60 * time.Second),
 	}
 
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
+	container, host, port, err := startWithMappedPort(ctx, req, func(ctx context.Context, c testcontainers.Container) (string, error) {
+		p, err := c.MappedPort(ctx, "6379")
+		return p.Port(), err
 	})
 	if err != nil {
 		t.Fatalf("fixtures.NewTestValkey: start container: %v", err)
 	}
 	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
-
-	host, err := container.Host(ctx)
-	if err != nil {
-		t.Fatalf("fixtures.NewTestValkey: container host: %v", err)
-	}
-	port, err := mappedPort(func() (string, error) {
-		p, err := container.MappedPort(ctx, "6379")
-		return p.Port(), err
-	})
-	if err != nil {
-		t.Fatalf("fixtures.NewTestValkey: mapped port: %v", err)
-	}
 
 	addr := fmt.Sprintf("%s:%s", host, port)
 	client := redis.NewClient(&redis.Options{Addr: addr})

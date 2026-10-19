@@ -134,7 +134,7 @@ func drainBody(c *gin.Context) (body []byte, hash string, ok bool) {
 	if err != nil {
 		return nil, "", false
 	}
-	return b, hashBody(b), true
+	return b, hashBody(append(append(b[:len(b):len(b)], "\nIf-Match: "...), c.GetHeader("If-Match")...)), true
 }
 
 func replayIfCached(c *gin.Context, cache port.CacheStore, log port.Logger, cacheKey, incomingHash string) bool {
