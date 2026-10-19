@@ -82,7 +82,7 @@ Common starting points:
 
 **Meaning.** A transaction hit deadlock or serialization conflicts repeatedly and gave up; the caller received an error and nothing was committed.
 
-**Triage.** Look for a burst of concurrent publishes against one workflow (a script, or a double submit). The caller can retry; the state is unchanged.
+**Triage.** The metric covers every transaction that runs with retry: workflow create, module publish and version operations. Look for a burst of concurrent writes against one workflow or module (a script, or a double submit). The caller can retry; the state is unchanged.
 
 ## Events
 
@@ -103,7 +103,7 @@ Common starting points:
 
 **Meaning.** A departed tenant's workflows, modules, starters or connector credentials could not be fully deleted after the retention period. The sweep retries on its next run.
 
-**Triage.** The `tenant purge failed` log line names the tenant and the error; the purge removes connector credentials first and then the rows, so the error text says which store failed. Nothing needs doing once a later run succeeds.
+**Triage.** The `tenant purge failed` log line names the tenant and the error. Connector credentials (30 days after departure) and workflows, modules and starters (7 years) are two independent steps of the same sweep with separate completion marks, so the error text says which store failed and the other step is not held up. Nothing needs doing once a later run succeeds.
 
 ## Dependencies
 
@@ -139,7 +139,7 @@ Common starting points:
 
 **Meaning.** A connection queried a tenant table without a valid tenant setting. The count is a 1% sample.
 
-**Triage.** A route registered without the tenant middleware, or a raw pool session. Find the route in the logs of the sampled event.
+**Triage.** The sampled rows are in the `rls_violation_log` table (query text and violation type); they are pruned after the retention period, so read them early. A route registered without the tenant middleware, or a raw pool session, is the usual cause.
 
 ### WorkflowDefinitionServiceRLSCrossTenantAccess
 
@@ -147,4 +147,4 @@ Common starting points:
 
 **Meaning.** Row-level security blocked a session that touched another tenant's rows. The count is a 1% sample.
 
-**Triage.** Treat as a security event: identify the caller from the log entry, check for a service bug that passes the wrong tenant, and for probing from the caller.
+**Triage.** Treat as a security event: read the sampled row in `rls_violation_log`, and check for a service bug that passes the wrong tenant and for probing.
