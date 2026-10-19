@@ -62,9 +62,14 @@ make cover-html             # open HTML coverage report
 # Code quality
 make arch-lint              # go-arch-lint: enforce import direction rules
 make metrics-lint           # observability standard: collector naming, metricslint, inventory drift (make metrics-inventory regenerates docs/observability/metric-registry.md)
-make lint                   # golangci-lint (read-only)
+make lint                   # golangci-lint (read-only; the eight defect-class linters, build-tagged tests included)
+make contract-check         # checked-in copies of Execution's internal contracts equal their source
+make contract-breaking      # oasdiff: no breaking change to this service's own specs
+make design-sync-check      # repo/design copies equal; DESIGN_DIR=<design checkout> or GH_TOKEN reads Haroon-BCBP/design (CI skips it until the DESIGN_REPO_TOKEN secret exists)
+make design-sync-check-test # the script's own test
+make helm-check             # lint + render the chart
 make fix                    # gofmt + golangci-lint --fix (auto-fix formatting and lint)
-make check                  # gofmt check + lint + vet + arch-lint + metrics-lint + test + coverage gate (full local CI, read-only)
+make check                  # gofmt check + lint + vet + arch-lint + metrics-lint + contract-breaking + design-sync-check-test + test + coverage gate (full local CI, read-only)
 
 # Container checks (run 'make tools' first to install hadolint + trivy)
 make docker-lint            # lint Dockerfile with Hadolint (native binary, no image needed)
@@ -103,7 +108,7 @@ test/
 
 **Import rules:** `core/domain` → stdlib only. `core/port` → domain only. `core/service` → domain + port. `adapter/*` → port + domain. Nothing in `core/` imports from `adapter/`. Enforced by `go-arch-lint` (`.go-arch-lint.yml`).
 
-`cmd/server/app.go` starts: HTTP (`:8080`, the internal API at `/api/v1/internal` included), and metrics (`:9091`). Both stop gracefully on OS signal with a 30-second timeout.
+`cmd/server/app.go` starts: HTTP (`:8080`, the internal API at `/api/v1/internal` included), metrics (`:9091`), the RLS violation exporter and, unless switched off, the tenant purger. The servers stop gracefully on OS signal with a 30-second timeout.
 
 ---
 

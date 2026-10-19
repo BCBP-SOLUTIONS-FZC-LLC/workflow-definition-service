@@ -94,7 +94,7 @@ Common starting points:
 
 **Triage.**
 1. `bad_payload` means the envelope or payload does not decode: compare the event type's schema with the consumer's copy; the consumer dead-letters the message once its receive threshold is spent.
-2. `error` means the handler failed (database, or the departure handler); the consumer redelivers, so the message is not lost while the queue's redrive count is not spent.
+2. `error` means the handler failed (database, or the departure handler); the consumer redelivers with backoff until its receive threshold (`MAX_RECEIVE_COUNT`, four handling attempts) dead-letters the message on the fifth receive.
 3. See the consumer's runbook for the queue and dead-letter side.
 
 ### WorkflowDefinitionServiceTenantPurgeFailing

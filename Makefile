@@ -262,7 +262,7 @@ fix:
 	@echo "==> gofmt (auto-fix)"
 	gofmt -w cmd/ internal/ test/
 	@echo "==> lint (auto-fix)"
-	$(GOLANGCI) run --fix ./...
+	$(GOLANGCI) run --fix --build-tags=integration ./cmd/... ./internal/... ./test/...
 	@echo "✓ formatting and lint fixes applied"
 
 ## check: Verify formatting/lint (read-only), run vet, tests, and coverage gate — full local CI pass
@@ -402,10 +402,10 @@ install-hooks:
 	@chmod +x .git/hooks/pre-commit
 	@echo "✓ Installed git hooks"
 
-## docker-up: Start local infra (PostgreSQL + Valkey)
+## docker-up: Start local infra (PostgreSQL + Valkey + PgBouncer)
 docker-up:
 	docker compose up -d
-	@echo "postgres on :5432, valkey on :6379"
+	@echo "postgres on :5432, valkey on :6379, pgbouncer on :6432"
 
 ## docker-down: Stop local infra
 docker-down:

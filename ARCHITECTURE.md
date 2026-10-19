@@ -460,10 +460,10 @@ The happy path is always a single query. The probe only fires on the exceptional
 | Purpose | Key pattern | TTL |
 | --- | --- | --- |
 | Compiled plan cache | `wf:plan:{tenant_id}:{version_id}` | 1 h (configurable: `CACHE_COMPILED_PLAN_TTL`) |
-| Idempotency key | `idem:{tenant_id}:{method}:{path}:{key}` | 24 h (configurable: `IDEMPOTENCY_TTL`) |
+| Idempotency key | `idem:{tenant_id}:{user_id}:{method}:{path}:{key}` | 24 h (configurable: `IDEMPOTENCY_TTL`) |
 | Draft edit lock | `draft-lock:{tenant_id}:{workflow_id}` | 30 s (fixed; not refreshed) |
 
-When Valkey is unreachable the service stays up but degrades by purpose: compiled-plan reads fall through to Postgres, a duplicate-request replay is not detected and the request runs, and a draft save fails because the draft lock cannot be taken. `/readyz` reports not ready, since it pings Valkey as well as the database.
+When Valkey is unreachable the service stays up but degrades by purpose: compiled-plan reads fall through to Postgres, a duplicate-request replay is not detected and the request runs, and a draft save fails because the draft lock cannot be taken. `/readyz` stays ready and reports `"cache":"degraded"`; only an unreachable database or a draining pod makes it answer 503.
 
 ---
 
@@ -474,7 +474,7 @@ When Valkey is unreachable the service stays up but degrades by purpose: compile
 | Single DRAFT per workflow | `UNIQUE INDEX idx_wv_single_draft ON workflow_version(workflow_id) WHERE status='DRAFT'` — DB-enforced; returns `ErrDraftAlreadyExists` on violation |
 | Status-guarded mutations use `statusOrNotFound` | Publish/Archive SQL filters on `status=X`; on `RowsAffected()==0` a secondary `GetByID` distinguishes absent (→ `ErrNotFound`) from wrong-status (→ `ErrVersionNotDraft` etc.) — happy path is always single-query |
 | `is_valid` reflects assignee eligibility only | `workflow_version.is_valid=false` means an assignee left a required department role; it does not reflect BPMN structural validity |
-| Idempotency-Key scoped per tenant | Cache key format: `idem:<tenant_id>:<method>:<path>:<key>` — prevents cross-tenant replay; only 2xx responses are cached (24 h TTL) |
+| Idempotency-Key scoped per tenant and user | Cache key format: `idem:<tenant_id>:<user_id>:<method>:<path>:<key>` — prevents cross-tenant and cross-user replay; the stored fingerprint covers the body and the `If-Match` header; only 2xx responses are cached (24 h TTL) |
 | Internal routes require manual GUC injection | `WithGUCSet` must be called by each internal handler before any repo access; the public HTTP path injects via `RequireIdentity` after `gincommon.ProtectedMiddlewares` |
 | Tenant policy logs violations | Every tenant table forces row-level security with `rls_check_tenant()` / `rls_check_tenant_or_global()`; a blocked row is written to `rls_violation_log` at a 1% sample and exported as `workflow_definition_service_rls_violations_total` |
 | `ProtectedMiddlewares` must wrap all protected routes | Missing middleware causes `RequestContext` lookup to fail → 500 (server misconfiguration, not 401) |
@@ -608,7 +608,9 @@ All error responses follow RFC 9457 (`application/problem+json`):
   "status": 409,
   "detail": "draft already exists",
   "instance": "/api/v1/workflows/abc/versions/draft",
-  "code": "DRAFT_ALREADY_EXISTS"
+  "code": "DRAFT_ALREADY_EXISTS",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "request_id": "7d1c5c0e-6a52-4a39-9f0a-2f6f0b0c1a11"
 }
 ```
 

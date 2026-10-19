@@ -1,7 +1,8 @@
 name: Validate Quality
 
 # Reusable workflow — called by ci.yml and release.yml. Static/quality checks
-# only (fmt, tidy, vet, lint, vuln, Dockerfile pin). Requires a sibling
+# only (the chart render, breaking-change gate, contract and design copy checks,
+# then fmt, tidy, vet, lint, metrics-lint, vuln, Dockerfile pin). Requires a sibling
 # `generate` job to run first in the caller workflow and upload a `generated`
 # artifact (sqlc/mocks), which this workflow downloads rather than
 # regenerating. See validate-test.yml for the test/coverage/arch-lint

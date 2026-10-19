@@ -72,11 +72,11 @@ env:
   CONNECTOR_ALIAS_ALLOWED_HOSTS: ".svc.cluster.local"
   RLS_VIOLATION_EXPORT_INTERVAL: "30s"
   RLS_VIOLATION_RETENTION: "168h"
-  TENANT_PURGE_ENABLED: "true"                     # purge a departed tenant's workflows, modules, starters and credentials after the retention
-  TENANT_CREDENTIAL_RETENTION: "720h"
-  TENANT_ARTIFACT_RETENTION: "61320h"
-  TENANT_PURGE_INTERVAL: "24h"
-  TENANT_PURGE_BATCH: "100"
+  TENANT_PURGE_ENABLED: "true"                     # purge a departed tenant's data after the retention periods below
+  TENANT_CREDENTIAL_RETENTION: "720h"             # connector credentials: 30 days after the tenant departs
+  TENANT_ARTIFACT_RETENTION: "61320h"             # workflows, modules and starters: 7 years after
+  TENANT_PURGE_INTERVAL: "24h"                    # how often the sweep runs
+  TENANT_PURGE_BATCH: "100"                       # tenants handled per sweep
 
 envFromSecret:
   - DATABASE_URL

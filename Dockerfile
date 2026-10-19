@@ -5,7 +5,7 @@
 #   Stage 1 (builder) — compiles the binary with private module access via build secret.
 #   Stage 2 (runtime) — distroless image; no shell, no package manager, minimal attack surface.
 #
-# Build (local, using SSH agent for private modules):
+# Build (local, with a GitHub token passed as a build secret for the private modules):
 #   docker build \
 #     --secret id=go_private_token,env=GO_PRIVATE_TOKEN \
 #     -t workflow-definition-service:dev .

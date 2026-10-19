@@ -31,7 +31,7 @@ Never add a `replace` directive pointing to `./platform-libs/` — that director
 | Workflow | Trigger | Jobs |
 |---|---|---|
 | `ci.yml` | push/PR to main | generate → (validate-quality, validate-test, lint-dockerfile → build-image-cache, trivy, smoke) parallel → GHCR push (`sha-<short>`/branch tags) + Cosign sign (push only) → PR summary comment (PR only) |
-| `validate-quality.yml` | reusable (called by `ci.yml` and `release.yml`) | downloads caller's `generate` artifact; fmt, tidy, vet, lint, metrics-lint, govulncheck, Dockerfile pin check |
+| `validate-quality.yml` | reusable (called by `ci.yml` and `release.yml`) | a `contracts` job (chart render, breaking-change gate, contract copy check, design copy check — skipped with a notice until the `DESIGN_REPO_TOKEN` secret exists), then, from the caller's `generate` artifact: fmt, tidy, vet, lint, metrics-lint, govulncheck, Dockerfile pin check |
 | `validate-test.yml` | reusable (called by `ci.yml` and `release.yml`) | downloads caller's `generate` artifact; arch-lint, unit + integration tests (testcontainers) with merged coverage (95% global + per-package floors) |
 | `release.yml` | push `v*` tags | changelog-gate (a CHANGELOG entry for the tag) → generate → validate-quality + validate-test → build (binary) → docker (semver-tagged image + Cosign sign) → gh release |
 | `changelog-check.yml` | PR touching `internal/`, `api/`, `cmd/` | fails unless `CHANGELOG.md` was also updated |

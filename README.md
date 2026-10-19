@@ -199,15 +199,18 @@ make help
 | `make cover-html` | Open HTML coverage report |
 | `make cover-check` | Fail if coverage < 95% (postgres adapter + generated pkgs excluded) |
 | `make helm-check` | Lint the chart, render it with production settings, and require a prod render with no service addresses to fail |
+| `make contract-check` / `make contract-breaking` | Compare the checked-in copies of Execution's internal contracts with their source and fail on a breaking change to this service's own specs |
+| `make design-sync-check` / `make design-sync-check-test` | Fail when a document kept both here and in the design repository differs (`DESIGN_DIR` reads a local checkout, otherwise `GH_TOKEN` reads `Haroon-BCBP/design`); the test runs the script against throwaway directories |
 | `make fmt-check` / `make lint` / `make arch-lint` | Formatting, lint, and Clean Architecture import-direction checks (read-only) |
 | `make fix` | Auto-fix formatting and lint issues |
-| `make check` | Full local CI pass: fmt + lint + vet + arch-lint + metrics-lint + tests + coverage gate |
+| `make check` | Full local CI pass: fmt + lint + vet + arch-lint + metrics-lint + contract-breaking + design-sync-check-test + tests + coverage gate |
 | `make vuln` | Run govulncheck for known dependency vulnerabilities |
 | `make metrics-lint` | Observability standard: collector naming, `metricslint` on a real scrape, alert and doc references, inventory drift |
 | `make metrics-inventory` | Regenerate `docs/observability/metric-registry.md` |
 | `make docker-build` / `make docker-lint` / `make docker-trivy` | Build the container image, lint the Dockerfile, scan for CVEs |
-| `make docker-up` | Start PostgreSQL + Valkey (+ PgBouncer) |
+| `make docker-up` | Start PostgreSQL + Valkey + PgBouncer |
 | `make docker-down` | Stop infra |
+| `make docker-reset` | Drop the local volumes and recreate the infra (re-runs `scripts/init-db.sql`, which creates the app and migrator roles) |
 | `make clean` | Remove `bin/`, `gen/`, coverage, mock outputs |
 
 ---
@@ -331,14 +334,18 @@ rctx := gincommon.RequestContext(c)
 
 ```json
 {
-  "type": "https://api.workflow.platform/errors/draft-already-exists",
+  "type": "https://api.workflow.platform/errors/conflict",
   "title": "Draft Already Exists",
   "status": 409,
   "detail": "An active draft already exists for this workflow.",
   "instance": "/api/v1/workflows/abc/draft",
-  "code": "DRAFT_ALREADY_EXISTS"
+  "code": "DRAFT_ALREADY_EXISTS",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "request_id": "7d1c5c0e-6a52-4a39-9f0a-2f6f0b0c1a11"
 }
 ```
+
+`type` is chosen by the HTTP status (a 409 is always `.../conflict`); `code` is the stable machine-readable value. `trace_id` and `request_id` match the `X-Trace-ID` and `X-Request-ID` response headers. A stale draft save also carries `current_record_version`. Public request bodies are strict: an unknown field is a `400 BAD_REQUEST` that names the field in `invalid_params`, and so is a second JSON value after the first.
 
 Validation errors include an `invalid_params` array:
 
@@ -350,6 +357,8 @@ Validation errors include an `invalid_params` array:
   "detail": "BPMN semantic or structural validation failed.",
   "instance": "/api/v1/workflows/abc/versions/xyz/publish",
   "code": "BPMN_VALIDATION_FAILED",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "request_id": "7d1c5c0e-6a52-4a39-9f0a-2f6f0b0c1a11",
   "invalid_params": [
     { "name": "Task_1", "reason": "Cycle detected at task node", "code": "CYCLE_DETECTED" }
   ]
@@ -360,11 +369,11 @@ Validation errors include an `invalid_params` array:
 
 | Code | HTTP | Trigger |
 | --- | --- | --- |
-| `BAD_REQUEST` | 400 | Malformed request body/params, or an invalid UUID path param |
+| `BAD_REQUEST` | 400 | Malformed request body/params, an unknown field or a trailing JSON value, a missing draft lock token, or an invalid UUID path param |
 | `INVALID_BPMN_XML` | 400 | The BPMN document cannot be parsed — bad XML, forbidden `DOCTYPE`/entity, or the XML-bomb token cap. (Forbidden constructs also emit an internal security log; the client response is identical.) |
 | `NOT_FOUND` | 404 | Workflow or version not found, or RLS boundary breached |
 | `DRAFT_NOT_FOUND` | 404 | No active draft exists for the workflow |
-| `NO_ACTIVE_VERSION` | 404 | Workflow has no published active version |
+| `NO_ACTIVE_VERSION` | 409 | Workflow has no published active version |
 | `UNAUTHORIZED` | 401 | Missing or invalid `x-user-id` / `x-tenant-id` headers |
 | `FORBIDDEN` | 403 | Caller lacks `tenant_admin` or `tenant_owner` role |
 | `DRAFT_ALREADY_EXISTS` | 409 | A draft already exists; publish or discard it first |
@@ -374,12 +383,15 @@ Validation errors include an `invalid_params` array:
 | `ACTIVE_INSTANCES_EXIST` | 409 | Cannot archive while running instances exist |
 | `STRUCTURAL_DIVERGENCE` | 409 | Topology changed vs. active version; use `force_publish_structural` to override |
 | `IDEMPOTENCY_KEY_REPLAY` | 409 | Same idempotency key submitted with a different payload |
+| `IDEMPOTENCY_REQUEST_IN_PROGRESS` | 409 | A request with the same idempotency key is still running |
 | `PAYLOAD_TOO_LARGE` | 413 | Request body exceeds the 10 MB limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Request carries a body whose `Content-Type` is not `application/json` |
 | `PLAN_QUOTA_EXCEEDED` | 403 | Tenant has reached the maximum number of workflow templates for their plan |
 | `ASSIGNEE_INELIGIBLE` | 422 | A default assignee no longer has the required department/role membership |
 | `BPMN_VALIDATION_FAILED` | 422 | BPMN structural or semantic validation failed; see `invalid_params` |
+| `INVALID_INPUT` | 422 (400 for connector credential and alias input) | A request field exceeds its maximum length, or a connector credential or alias field is invalid |
 | `UPSTREAM_UNAVAILABLE` | 503 | Execution Service or Org & Membership service unreachable |
+| `EVENT_DECODE_FAILED` | 502 | An internal event could not be decoded (internal event route only) |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
 
 **BPMN status split:** a document that **cannot be parsed** returns **400 `INVALID_BPMN_XML`**; a document that parses but **fails validation** (structural/semantic, including `MISSING_NAMESPACE` and `REJECTED_ELEMENT`) returns **422 `BPMN_VALIDATION_FAILED`** with per-node `invalid_params`. Forbidden `DOCTYPE`/entity or XML-bomb input returns the **same** generic `400 INVALID_BPMN_XML` (so a probe is not confirmed) and is additionally recorded in an internal security log.
@@ -601,6 +613,11 @@ Database: PostgreSQL 18, schema `workflow_definition`. Multi-tenancy is enforced
 | `workflow` | Root template entity — template key, name, active version pointer |
 | `workflow_version` | Versioned snapshot — BPMN XML, compiled DSL, status lifecycle |
 | `workflow_node_assignee` | Denormalised reverse index: user → versions that reference them as default assignees |
+| `workflow_module` / `workflow_module_version` | Reusable BPMN modules and their versions |
+| `workflow_template` | The starter templates a tenant can start from |
+| `connector_rest_alias` | The REST connector alias registry (operational, read across tenants) |
+| `rls_violation_log` | Sampled rows blocked by row-level security, exported as a metric |
+| `tenant_retention` | The ledger of departed tenants and their purge dates (no row-level security; read across tenants by the purge sweep) |
 
 See full DDL in [`db/migrations/`](db/migrations/).
 
@@ -725,7 +742,7 @@ psql "postgresql://workflow_definition_app:devpassword@localhost:6432/pgbouncer"
 
 ## CI
 
-Pull requests and pushes run `ci.yml`: a `ci-gate` job skips draft pull requests and those labelled `skip-ci`, then code generation, `validate-quality` (format, tidy, vet, lint, metrics-lint, govulncheck, contract and Dockerfile pin checks), `validate-test` (unit and integration tests with a merged coverage gate, and a `compat` job that checks out the Execution Service's `feat/service` branch and runs its compatibility suite, which builds this checkout's binary and drives it against Execution's real API and worker), a container image build, a Trivy scan and a smoke test. Pull requests that change only Markdown or `docs/` skip CI. `changelog-check.yml` requires a CHANGELOG entry on every pull request that touches `internal/`, `api/` or `cmd/`, and `pr-summary` keeps one comment on the pull request current.
+Pull requests and pushes run `ci.yml`: a `ci-gate` job skips draft pull requests and those labelled `skip-ci`, then code generation, `validate-quality` (format, tidy, vet, lint, metrics-lint, govulncheck, the chart check, the contract and breaking-change gates, the design-copy check and the Dockerfile pin check; the design-copy check is skipped with a notice until the `DESIGN_REPO_TOKEN` repository secret exists), `validate-test` (unit and integration tests with a merged coverage gate, and a `compat` job that checks out the Execution Service's `feat/service` branch and runs its compatibility suite, which builds this checkout's binary and drives it against Execution's real API and worker), a container image build, a Trivy scan and a smoke test. Pull requests that change only Markdown or `docs/` skip CI. `changelog-check.yml` requires a CHANGELOG entry on every pull request that touches `internal/`, `api/` or `cmd/`, and `pr-summary` keeps one comment on the pull request current.
 
 ## Versioning and releases
 

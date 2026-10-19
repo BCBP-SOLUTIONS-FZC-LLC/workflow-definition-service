@@ -371,6 +371,8 @@ Keep docs in sync when making changes:
 | New internal endpoint | `api/internal-openapi.yaml`, `README.md` § Internal API |
 | New config env var | `ARCHITECTURE.md` § Configuration reference, `.env.example`, `deploy/helm/values.yaml` |
 | New or changed metric | `internal/observability`, then `make metrics-inventory`; alerts under `deploy/` use the new name |
+| New alert | The rule in both `deploy/monitoring/app-alerts.yml` and `deploy/helm/templates/prometheusrule.yaml`, a `runbook` annotation (`workflow-definition-service/<slug>`) and an entry in `docs/observability/runbooks.md`; `test/unit/monitoring` fails when they disagree |
+| A document also kept in the design repository | Update both copies, then `make design-sync-check` (`DESIGN_DIR=<design checkout>`) |
 | New or changed route or event type | `docs/swagger/openapi.yaml`, `api/internal-openapi.yaml` or `api/asyncapi.yaml`; the parity tests fail when they differ |
 | New migration or schema change | `README.md` § Database, this file § Database Migrations |
 | Architecture / layer change | `ARCHITECTURE.md` + `docs/architecture/mermaid/*.mmd` |

@@ -28,7 +28,7 @@ All non-2xx HTTP responses use the RFC-9457 `problemDetails` envelope (`internal
 
 | Code | HTTP Status | Meaning |
 | --- | --- | --- |
-| `BAD_REQUEST` | 400 | JSON bind failure or other malformed request |
+| `BAD_REQUEST` | 400 | JSON bind failure, an unknown field, a trailing JSON value, a missing draft lock token, or other malformed request |
 | `INVALID_BPMN_XML` | 400 | BPMN document could not be parsed |
 | `UNAUTHORIZED` | 401 | Missing/invalid identity |
 | `FORBIDDEN` | 403 | Authenticated but not permitted |
@@ -42,14 +42,16 @@ All non-2xx HTTP responses use the RFC-9457 `problemDetails` envelope (`internal
 | `INVALID_VERSION_STATUS` | 409 | Version not in the required DRAFT/PUBLISHED state for this operation |
 | `ACTIVE_INSTANCES_EXIST` | 409 | Cannot archive — Execution reports RUNNING/PAUSED instances |
 | `STRUCTURAL_DIVERGENCE` | 409 | Compiled DSL diverges from the stored artifact |
-| `IDEMPOTENCY_KEY_REPLAY` | 409 | `Idempotency-Key` reused with a different request body |
+| `IDEMPOTENCY_KEY_REPLAY` | 409 | `Idempotency-Key` reused with a different request body or `If-Match` |
+| `IDEMPOTENCY_REQUEST_IN_PROGRESS` | 409 | A request with the same `Idempotency-Key` is still running |
 | `MODULE_PROCESS_ID_CONFLICT` | 409 | A new module's process id is already used by a module the caller can call, or a new module version changes its module's process id |
 | `ASSIGNEE_INELIGIBLE` | 422 | Default assignee failed the Org & Membership eligibility check |
 | `BPMN_VALIDATION_FAILED` | 422 | Structural/semantic BPMN validation failed (see `invalid_params`) |
-| `INVALID_INPUT` | 422 | Request field(s) exceed maximum length |
+| `INVALID_INPUT` | 422 (400 for connector credential and alias input) | Request field(s) exceed maximum length, or a connector credential or alias field is invalid |
 | `PAYLOAD_TOO_LARGE` | 413 | Request body exceeds the 10 MB limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Non-JSON body on `/api/v1` |
 | `UPSTREAM_UNAVAILABLE` | 503 | Execution/Membership HTTP call failed after retries |
+| `EVENT_DECODE_FAILED` | 502 | An internal event could not be decoded (internal event route only) |
 | `INTERNAL_ERROR` | 500 | Unhandled error |
 
 BPMN-specific validation error codes (`REJECTED_ELEMENT`, `CYCLE_DETECTED`, `UNGUARDED_LOOP`, etc., set inside `invalid_params` on a `BPMN_VALIDATION_FAILED` response) are listed in `.claude/bpmn-compiler.md`, not duplicated here.

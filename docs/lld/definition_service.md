@@ -650,9 +650,12 @@ A cached published plan can outlive an archive or a membership revocation, by at
 | --- | --- | --- |
 | `VALKEY_ADDR` | — | ElastiCache endpoint (host:port) |
 | `CACHE_COMPILED_PLAN_TTL` | `1h` | TTL for compiled-plan cache entries |
-| `CACHE_IDEMPOTENCY_TTL` | `24h` | TTL for idempotency response cache |
-| `CACHE_DRAFT_LOCK_TTL` | `30s` | TTL for distributed draft-edit lock |
-| `VALKEY_CLIENT_TIMEOUT` | `50ms` | Per-command timeout; treat timeout as cache miss |
+| `IDEMPOTENCY_TTL` | `24h` | TTL for the idempotency response cache of the public mutation routes |
+| `VALKEY_DIAL_TIMEOUT` | `2s` | Bound on opening a connection |
+| `VALKEY_READ_TIMEOUT` | `1s` | Per-command read timeout; a timeout is treated as a cache miss |
+| `VALKEY_WRITE_TIMEOUT` | `1s` | Per-command write timeout |
+
+The draft-edit lock lasts 30 s and is not a setting.
 
 ---
 
@@ -4978,6 +4981,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.52 | 2026-10-18 | **Reactivating an archived workflow is counted against the template limit** (§3.3.11, §5.6). Archiving cleared the active version and so freed the slot, but Promote could point a workflow with no active version and no draft at an older published version without any check, so a tenant at its limit could create another template and then reactivate the archived one, ending above the limit. Promote now applies the same count, plan lookup and refusal as creation, in one serializable transaction, only when the workflow is not already counted. The plan table is also served stale while it refreshes in the background, and a catalog entry without a limit field fails the read instead of reading as unlimited (§5.6.4). |
 | 1.53 | 2026-10-18 | **A tenant data purge for departed tenants** (§7.4.4, §7.4.6, §10.15, Appendix E). The service consumed no tenant lifecycle event, so after IAM's tenant wipe its workflows, modules, starters and connector credentials stayed for ever, with user UUIDs in the assignees and stored plans. It now records a tenant when `TenantMembershipsPurged` or `TenantStateChanged` to `offboarded` arrives (idempotent) and a sweep deletes the tenant's credentials, workflows, modules and starters in batches, as the tenant under row-level security, after `TENANT_CREDENTIAL_RETENTION` (30 days by default) for the credentials and `TENANT_ARTIFACT_RETENTION` (7 years by default) for the workflows, modules and starters, each part with its own completion mark; the periods, the interval and the batch are settings and the sweep can be switched off. A tenant is marked purged only after a check finds no row left. `event_consumer` routes both events here as well as to Execution. |
 | 1.54 | 2026-10-19 | **Errors are problem documents with correlation ids, request bodies are strict, and a draft save needs its token** (§3.3.6, §10.11, the error catalog and standard patterns). Errors were sent as `application/json` without the trace and request ids the response headers already carried, unknown request fields were silently accepted, and a draft save that supplied no `record_version` skipped the check and overwrote whatever was stored, although §10.11 offered `If-Match` and the code read only the body. Every problem is `application/problem+json` and carries `trace_id` and `request_id`; a body with a field the endpoint does not define is `400 BAD_REQUEST` naming the first such field (field names match without regard to case, as the decoder does, and a second JSON value after the first is refused); `PUT /workflows/:id/draft` takes the token from `If-Match` or the body, refuses a request with neither, and a stale save answers `409` with `current_record_version`. The library's own flat 401 and timeout bodies are unchanged. Breaking for any client, and none exists yet. |
+| 1.55 | 2026-10-19 | **The cache settings table names the settings the service reads** (§1.9.4). The table listed `CACHE_IDEMPOTENCY_TTL`, `CACHE_DRAFT_LOCK_TTL` and `VALKEY_CLIENT_TIMEOUT`, which do not exist; the idempotency TTL is `IDEMPOTENCY_TTL`, the Valkey timeouts are the dial, read and write settings, and the draft lock is a fixed 30 s. No behaviour changes. |
 ---
 
 ## Appendix E: Open Items
