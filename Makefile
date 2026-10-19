@@ -57,7 +57,7 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/http:3 \
                       internal/bpmn_compiler/element:75 \
                       internal/config:90
 
-.PHONY: helm-check metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-breaking \
+.PHONY: helm-check metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-breaking design-sync-check design-sync-check-test \
         build migrate test test-integration test-ci merge-coverage \
         cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
@@ -279,6 +279,8 @@ check:
 	$(MAKE) metrics-lint
 	@echo "==> contract-breaking"
 	$(MAKE) contract-breaking
+	@echo "==> design-sync-check-test"
+	$(MAKE) design-sync-check-test
 	@echo "==> test-ci (unit + integration, merged coverage gate)"
 	$(MAKE) cover-check
 	@echo "✓ all checks passed"
@@ -286,6 +288,14 @@ check:
 ## arch-lint: Enforce Clean Architecture import direction via go-arch-lint
 arch-lint:
 	$(GOARCHLINT) check --project-path .
+
+## design-sync-check: Fail if a document kept in the design repository too differs (DESIGN_DIR=<checkout> reads it locally, else GH_TOKEN reads Haroon-BCBP/design)
+design-sync-check:
+	@scripts/design-sync-check.sh
+
+## design-sync-check-test: Test the design-sync-check script against throwaway directories
+design-sync-check-test:
+	@scripts/design-sync-check_test.sh
 
 ## contract-check: Fail if a copied contract in api/contracts differs from its source (CONTRACT_SRC_DIR=<checkout> reads it locally)
 contract-check:
