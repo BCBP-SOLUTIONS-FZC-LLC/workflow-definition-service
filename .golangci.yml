@@ -46,7 +46,6 @@ linters:
       - platform-libs/
       - internal/adapter/outbound/postgres/db/
       - internal/core/port/mocks/
-      - test/integration/
     rules:
       - path: _test\.go
         linters:
@@ -54,10 +53,12 @@ linters:
           - unparam
           - noctx
           - gosec
+          - contextcheck
       - path: ^test/
         linters:
           - noctx
           - gosec
+          - contextcheck
       - path: ^cmd/stub/
         linters:
           - gosec
