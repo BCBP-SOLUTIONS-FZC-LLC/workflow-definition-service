@@ -358,9 +358,22 @@ pass "initial draft created with workflow (version_id=${V1_ID})"
 STATUS=$(api_status GET "${API}/workflows/${WF_ID}/draft")
 [ "$STATUS" = "200" ] && pass "GET /draft → 200" || fail "GET /draft → $STATUS"
 
+DRAFT=$(api_get "${API}/workflows/${WF_ID}/draft")
+RV=$(python3 -c "import json,sys; print(json.load(sys.stdin)['record_version'])" <<< "$DRAFT")
+[ -n "$RV" ] && pass "GET /draft carries record_version=${RV}" || fail "no record_version in GET /draft"
+BPMN_EDITED=$(python3 -c "import json,sys; print(json.dumps(json.loads(sys.argv[1]) + '\n'))" "$BPMN_JSON")
+
 STATUS=$(api_status PUT "${API}/workflows/${WF_ID}/draft" \
   "{\"bpmn_xml\":${BPMN_JSON}}")
-[ "$STATUS" = "200" ] && pass "PUT /draft (update BPMN) → 200" || fail "PUT /draft → $STATUS"
+[ "$STATUS" = "400" ] && pass "PUT /draft without a lock token → 400" || fail "PUT /draft without a token → $STATUS (want 400)"
+
+STATUS=$(api_status PUT "${API}/workflows/${WF_ID}/draft" \
+  "{\"bpmn_xml\":${BPMN_EDITED},\"record_version\":${RV}}")
+[ "$STATUS" = "200" ] && pass "PUT /draft (update BPMN, record_version) → 200" || fail "PUT /draft → $STATUS"
+
+STATUS=$(api_status PUT "${API}/workflows/${WF_ID}/draft" \
+  "{\"bpmn_xml\":${BPMN_EDITED},\"record_version\":${RV}}")
+[ "$STATUS" = "409" ] && pass "PUT /draft with the old record_version → 409" || fail "PUT /draft with a stale token → $STATUS (want 409)"
 
 # Duplicate draft → 409
 STATUS=$(api_status POST "${API}/workflows/${WF_ID}/draft" \
