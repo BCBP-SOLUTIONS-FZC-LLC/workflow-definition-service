@@ -20,6 +20,7 @@ spec:
             severity: critical
             team: platform
           annotations:
+            runbook: "workflow-definition-service/service-down"
             summary: workflow-definition-service has no healthy instances
             description: >-
               No workflow-definition-service pods have been scraped as healthy for 2 minutes.
@@ -33,6 +34,7 @@ spec:
             severity: warning
             team: platform
           annotations:
+            runbook: "workflow-definition-service/service-down"
             summary: workflow-definition-service running below minimum replica count
             description: >-
               Fewer than 2 replicas are healthy. The PDB requires minAvailable=1;
@@ -52,6 +54,7 @@ spec:
             severity: warning
             team: platform
           annotations:
+            runbook: "workflow-definition-service/high-error-rate"
             summary: workflow-definition-service 5xx error rate above 5%
             description: >-
               {{ "{{ $value | humanizePercentage }}" }} of requests are returning 5xx errors
@@ -69,6 +72,7 @@ spec:
             severity: critical
             team: platform
           annotations:
+            runbook: "workflow-definition-service/high-error-rate"
             summary: workflow-definition-service 5xx error rate above 20%
             description: >-
               {{ "{{ $value | humanizePercentage }}" }} of requests are returning 5xx errors.
@@ -89,6 +93,7 @@ spec:
             severity: warning
             team: platform
           annotations:
+            runbook: "workflow-definition-service/high-latency"
             summary: workflow-definition-service p99 latency above 2s
             description: >-
               The p99 request duration is {{ "{{ $value | humanizeDuration }}" }}, exceeding
@@ -107,6 +112,7 @@ spec:
             severity: critical
             team: platform
           annotations:
+            runbook: "workflow-definition-service/high-latency"
             summary: workflow-definition-service p99 latency above 25s — approaching timeout
             description: >-
               The p99 request duration is {{ "{{ $value | humanizeDuration }}" }}, approaching
@@ -127,6 +133,7 @@ spec:
             severity: warning
             team: platform
           annotations:
+            runbook: "workflow-definition-service/compiled-plan"
             summary: Compiled-plan read error rate above 5%
             description: >-
               {{ "{{ $value | humanizePercentage }}" }} of compiled-plan reads are
@@ -145,6 +152,7 @@ spec:
             severity: warning
             team: platform
           annotations:
+            runbook: "workflow-definition-service/compiled-plan"
             summary: Compiled-plan read p99 latency above 1s
             description: >-
               The p99 compiled-plan read duration is {{ "{{ $value | humanizeDuration }}" }}.
@@ -162,6 +170,7 @@ spec:
             severity: warning
             team: platform
           annotations:
+            runbook: "workflow-definition-service/validation-failures"
             summary: Elevated BPMN validation failure rate on /validate
             description: >-
               workflow_definition_service_validation_failures_total is only incremented by the standalone
@@ -184,6 +193,7 @@ spec:
             severity: critical
             team: platform
           annotations:
+            runbook: "workflow-definition-service/publish"
             summary: Slow publish execution
             description: >-
               95th percentile of PublishVersion (compile + DB tx combined) is exceeding
@@ -197,6 +207,7 @@ spec:
             severity: critical
             team: platform
           annotations:
+            runbook: "workflow-definition-service/publish"
             summary: A database transaction exhausted its retry budget
             description: >-
               platform_db_transaction_retries_exhausted_total increased — a transaction (e.g. the
@@ -215,6 +226,7 @@ spec:
             severity: warning
             team: platform
           annotations:
+            runbook: "workflow-definition-service/event-ingest"
             summary: POST /api/v1/internal/events is rejecting or failing on inbound events
             description: >-
               More than 5 bad_payload/error results on /api/v1/internal/events in 15 minutes —
@@ -229,6 +241,7 @@ spec:
             severity: warning
             team: platform
           annotations:
+            runbook: "workflow-definition-service/tenant-purge"
             summary: A departed tenant's data purge keeps failing
             description: >-
               A tenant's workflows, modules, starters or connector credentials could not be
@@ -247,6 +260,7 @@ spec:
             severity: warning
             team: platform
           annotations:
+            runbook: "workflow-definition-service/db-errors"
             summary: Elevated Postgres query error rate
             description: >-
               {{ "{{ $value | humanizePercentage }}" }} of queries are erroring over the
@@ -262,6 +276,7 @@ spec:
             severity: critical
             team: platform
           annotations:
+            runbook: "workflow-definition-service/panic"
             summary: An HTTP handler panicked
             description: >-
               platform_http_panics_total increased — a handler panic was recovered by
@@ -287,6 +302,7 @@ spec:
             severity: warning
             team: platform
           annotations:
+            runbook: "workflow-definition-service/cache-hit-ratio"
             summary: Compiled-plan cache hit ratio below 50%
             description: >-
               The compiled-plan cache miss ratio is {{ "{{ $value | humanizePercentage }}" }}
@@ -302,6 +318,7 @@ spec:
             severity: warning
             team: platform
           annotations:
+            runbook: "workflow-definition-service/rls"
             summary: A pool connection reached a tenant table without a tenant GUC
             description: >-
               app.tenant_id was missing or malformed on a connection that queried a
@@ -315,6 +332,7 @@ spec:
             severity: critical
             team: platform
           annotations:
+            runbook: "workflow-definition-service/rls"
             summary: Cross-tenant row access blocked by RLS
             description: >-
               An authenticated session touched another tenant's rows. Possible

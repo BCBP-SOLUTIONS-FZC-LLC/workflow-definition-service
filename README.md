@@ -236,7 +236,7 @@ db/
 docs/
   architecture/          ← Mermaid diagram sources for ARCHITECTURE.md
   swagger/               ← OpenAPI spec served by the dev-mode Swagger UI
-  observability/         ← generated metric inventory (make metrics-inventory)
+  observability/         ← generated metric inventory (make metrics-inventory) and the alert runbooks
   lld/                   ← in-repo copy of the design repo's LLD, kept content-identical
   bpmn-designer-guide.md ← BPMN modelling guide for business analysts / process owners
   ui-enrichment-guide.md ← Compiled-plan enrichment guide for ops/engineering reviewers
@@ -509,7 +509,7 @@ Logs, metrics and traces go through `platform-gincommon` only. Every series carr
 | Workflow domain-shared | none defined yet | Registry |
 | Service-specific | `workflow_definition_service_*` | This service |
 
-[docs/observability/metric-registry.md](docs/observability/metric-registry.md) is generated from the platform registry and a real scrape; `make metrics-lint` fails when it is stale, when a collector is built outside `internal/observability`, or when an alert or doc names a retired metric. `/metrics` is served on its own port. Tracing exports over OTLP, and `OTEL_EXPORTER_OTLP_ENDPOINT=none` turns export off while trace and request IDs keep working. Outbound calls to the Execution Service and the Org & Membership Service carry the trace context.
+[docs/observability/metric-registry.md](docs/observability/metric-registry.md) is generated from the platform registry and a real scrape; `make metrics-lint` fails when it is stale, when a collector is built outside `internal/observability`, or when an alert or doc names a retired metric. Every alert carries a `runbook` annotation naming its entry in [docs/observability/runbooks.md](docs/observability/runbooks.md). `/metrics` is served on its own port. Tracing exports over OTLP, and `OTEL_EXPORTER_OTLP_ENDPOINT=none` turns export off while trace and request IDs keep working. Outbound calls to the Execution Service and the Org & Membership Service carry the trace context.
 
 Sampled row-level-security violations written to `rls_violation_log` are exported by a background loop through the system pool (`RLS_VIOLATION_EXPORT_INTERVAL`), and rows past `RLS_VIOLATION_RETENTION` are deleted; the system role needs `SELECT` and `DELETE` on the log.
 
