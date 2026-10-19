@@ -39,10 +39,10 @@ When `HandleDepartmentMembershipRevoked` finishes marking template versions `is_
 
 `handler.WithIdempotency` in `handler/idempotency.go`. Applied to all mutation endpoints via `idem(fn)` in `router.go`.
 
-Cache key: `"idem:" + tenantID + ":" + method + ":" + path + ":" + Idempotency-Key` (tenant-, method- and path-scoped).
+Cache key: `"idem:" + tenantID + ":" + userID + ":" + method + ":" + path + ":" + Idempotency-Key` (tenant-, user-, method- and path-scoped).
 
-- Only `2xx` responses are cached (TTL `IDEMPOTENCY_TTL`, env `IDEMPOTENCY_TTL`, default `24h`) along with a SHA-256 hash of the raw request body.
-- On replay: matching hash → replay cached response; mismatched hash → 409 `IDEMPOTENCY_KEY_REPLAY`.
+- Only `2xx` responses are cached (TTL `IDEMPOTENCY_TTL`, env `IDEMPOTENCY_TTL`, default `24h`) along with a SHA-256 hash of the raw request body and the `If-Match` header.
+- On replay: matching hash → replay cached response; mismatched hash → 409 `IDEMPOTENCY_KEY_REPLAY`; a request with the same key still running → 409 `IDEMPOTENCY_REQUEST_IN_PROGRESS`.
 - Transparent when header is absent.
 
 ## Body Cap + Content-Type Enforcement
