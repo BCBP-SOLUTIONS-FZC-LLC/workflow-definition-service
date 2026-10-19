@@ -33,7 +33,7 @@ func probeHealth(ctx context.Context, baseURL string) error {
 	if err != nil {
 		return fmt.Errorf("get healthz: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // a failed close of a fully read response body is not actionable
+	defer resp.Body.Close() //nolint:errcheck // a failed close of a response body is not actionable
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("healthz returned %d", resp.StatusCode)
 	}

@@ -107,7 +107,7 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
-          args: --timeout=5m
+          args: --timeout=5m --build-tags=integration
 
       - name: Observability standard lint
         run: make metrics-lint

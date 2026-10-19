@@ -52,7 +52,7 @@ func (c *CatalogClient) readPlanTable(ctx context.Context) (map[string]*int64, e
 	if err != nil {
 		return nil, fmt.Errorf("%w: catalog plan table: %w", domain.ErrUpstreamUnavailable, err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // a failed close of a fully read response body is not actionable
+	defer resp.Body.Close() //nolint:errcheck // a failed close of a response body is not actionable
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%w: catalog returned %d: %s", domain.ErrUpstreamUnavailable, resp.StatusCode, errorSnippet(resp.Body))

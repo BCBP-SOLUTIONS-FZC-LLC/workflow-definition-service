@@ -57,7 +57,7 @@ func (c *SecretsClient) write(ctx context.Context, path string, data map[string]
 	if err != nil {
 		return fmt.Errorf("%w: openbao write %q: %w", domain.ErrUpstreamUnavailable, path, err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // a failed close of a fully read response body is not actionable
+	defer resp.Body.Close() //nolint:errcheck // a failed close of a response body is not actionable
 
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusNoContent:
@@ -83,7 +83,7 @@ func (c *SecretsClient) remove(ctx context.Context, path string) error {
 	if err != nil {
 		return fmt.Errorf("%w: openbao delete %q: %w", domain.ErrUpstreamUnavailable, path, err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // a failed close of a fully read response body is not actionable
+	defer resp.Body.Close() //nolint:errcheck // a failed close of a response body is not actionable
 
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusNoContent, http.StatusNotFound:

@@ -102,7 +102,7 @@ func (c *ExecutionClient) try(ctx context.Context, method, rawURL string, body [
 	if err != nil {
 		return ctx.Err() == nil, fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // a failed close of a fully read response body is not actionable
+	defer resp.Body.Close() //nolint:errcheck // a failed close of a response body is not actionable
 	switch {
 	case resp.StatusCode >= 500:
 		return true, fmt.Errorf("status %d", resp.StatusCode)

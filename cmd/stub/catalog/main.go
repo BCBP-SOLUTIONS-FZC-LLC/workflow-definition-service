@@ -27,7 +27,7 @@ func main() {
 	}
 
 	http.HandleFunc("/api/v1/internal/plans", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%q %q", r.Method, r.URL.Path)
+		log.Printf("%s %s", r.Method, r.URL.Path)
 		if r.Header.Get("x-tenant-roles") != "iam-system" {
 			w.WriteHeader(http.StatusForbidden)
 			return
@@ -36,7 +36,7 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]any{"plans": plans})
 	})
 
-	log.Printf("catalog stub listening on %q", addr)
+	log.Printf("catalog stub listening on %s", addr)
 	srv := &http.Server{Addr: addr, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("serve: %v", err)

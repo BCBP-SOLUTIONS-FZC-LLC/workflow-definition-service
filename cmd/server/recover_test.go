@@ -115,6 +115,29 @@ func TestWaitForStop_ReturnsOnASignalOrAListenerFailure(t *testing.T) {
 	}
 }
 
+func TestDrainWithTimeout_AnExpiredShutdownContextStillGivesTheDrainItsOwnBudget(t *testing.T) {
+	log := &recordingLogger{}
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var budget time.Duration
+	drainWithTimeout(expired, log, "db pool", 500*time.Millisecond, func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			t.Errorf("the drain started with its context already done: %v", err)
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("the drain context has no deadline")
+		}
+		budget = time.Until(deadline)
+		return nil
+	})
+
+	if budget < 400*time.Millisecond {
+		t.Errorf("the drain had %s left, want nearly its full 500ms", budget)
+	}
+}
+
 func TestDrainWithTimeout_EachDrainGetsItsOwnBudget(t *testing.T) {
 	log := &recordingLogger{}
 	stuck := func(ctx context.Context) error {
