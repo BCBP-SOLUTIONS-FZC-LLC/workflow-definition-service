@@ -709,3 +709,36 @@ func TestCompileForPublish_CallSiteAssigneesReachATaskInsideAModuleSubProcess(t 
 		t.Errorf("SS_Task defaults = %v, want [%s]", st.DefaultAssignees, otherUser)
 	}
 }
+
+func moduleCallingInsideAnExclusiveBranch(id, calls string) string {
+	return fmt.Sprintf(`  <bpmn:process id="%[1]s" isExecutable="true">
+    <bpmn:startEvent id="%[1]s_Start"/>
+    <bpmn:exclusiveGateway id="%[1]s_X"/>
+    <bpmn:callActivity id="%[1]s_CA"><bpmn:extensionElements><zeebe:calledElement processId="%[2]s"/></bpmn:extensionElements></bpmn:callActivity>
+    <bpmn:userTask id="%[1]s_Task">
+      <bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="%[3]s"/></bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="%[1]s_J"/>
+    <bpmn:endEvent id="%[1]s_End"/>
+    <bpmn:sequenceFlow id="%[1]s_F1" sourceRef="%[1]s_Start" targetRef="%[1]s_X"/>
+    <bpmn:sequenceFlow id="%[1]s_F2" sourceRef="%[1]s_X" targetRef="%[1]s_CA"><bpmn:conditionExpression>= status == "big"</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="%[1]s_F3" sourceRef="%[1]s_X" targetRef="%[1]s_Task"><bpmn:conditionExpression>= status != "big"</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="%[1]s_F4" sourceRef="%[1]s_CA" targetRef="%[1]s_J"/>
+    <bpmn:sequenceFlow id="%[1]s_F5" sourceRef="%[1]s_Task" targetRef="%[1]s_J"/>
+    <bpmn:sequenceFlow id="%[1]s_F6" sourceRef="%[1]s_J" targetRef="%[1]s_End"/>
+  </bpmn:process>`, id, calls, validCandidateUser)
+}
+
+func TestCompileForPublish_CallSiteAssigneesReachATaskThroughACallInAnExclusiveBranch(t *testing.T) {
+	bpmnXML := mainWithCalls([]callSite{
+		{ID: "CA_1", Lane: "Engineering", Calls: "Process_Lib", Inputs: [][2]string{{"Assignees", `{"Process_Lib_CA::Process_Check_Task":"` + otherUser + `"}`}}},
+	}, moduleCallingInsideAnExclusiveBranch("Process_Lib", "Process_Check"), moduleWithTask("Process_Check", ""))
+
+	if errs := validateBlocking(t, bpmnXML); len(errs) > 0 {
+		t.Fatalf("a path through a call inside an exclusive branch is valid; got %+v", errs)
+	}
+	got := departmentNamed(t, expandedMain(t, compileForPublish(t, bpmnXML)), "CA_1::Process_Lib_CA::Process_Check")
+	if !reflect.DeepEqual(got.Stages[0].DefaultAssignees, []string{otherUser}) {
+		t.Errorf("nested task defaults = %v, want [%s]", got.Stages[0].DefaultAssignees, otherUser)
+	}
+}
