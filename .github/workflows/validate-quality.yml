@@ -1,7 +1,7 @@
 name: Validate Quality
 
 # Reusable workflow — called by ci.yml and release.yml. Static/quality checks
-# only (the chart render, breaking-change gate, contract and design copy checks,
+# only (the chart render, breaking-change gate, contract copy check,
 # then fmt, tidy, vet, lint, metrics-lint, vuln, Dockerfile pin). Requires a sibling
 # `generate` job to run first in the caller workflow and upload a `generated`
 # artifact (sqlc/mocks), which this workflow downloads rather than
@@ -59,18 +59,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
         run: make contract-check
-
-      # Each document kept in the design repository too must still match it. That repository is not in
-      # this organisation, so the step compares only when DESIGN_REPO_TOKEN is set.
-      - name: Design copy check
-        env:
-          DESIGN_REPO_TOKEN: ${{ secrets.DESIGN_REPO_TOKEN }}
-        run: |
-          if [ -z "$DESIGN_REPO_TOKEN" ]; then
-            echo "::notice::DESIGN_REPO_TOKEN is not set, so the design copies are not compared"
-            exit 0
-          fi
-          GH_TOKEN="$DESIGN_REPO_TOKEN" make design-sync-check
 
   quality:
     name: quality

@@ -65,7 +65,7 @@ make metrics-lint           # observability standard: collector naming, metricsl
 make lint                   # golangci-lint (read-only; the eight defect-class linters, build-tagged tests included)
 make contract-check         # checked-in copies of Execution's internal contracts equal their source
 make contract-breaking      # oasdiff: no breaking change to this service's own specs
-make design-sync-check      # repo/design copies equal; DESIGN_DIR=<design checkout> or GH_TOKEN reads Haroon-BCBP/design (CI skips it until the DESIGN_REPO_TOKEN secret exists)
+make design-sync-check      # repo/design copies equal; DESIGN_DIR=<design checkout> or GH_TOKEN reads Haroon-BCBP/design (local only; CI does not read the personal design repository)
 make design-sync-check-test # the script's own test
 make helm-check             # lint + render the chart
 make fix                    # gofmt + golangci-lint --fix (auto-fix formatting and lint)
