@@ -25,7 +25,7 @@
     <bpmn:userTask id="Pkg_Prep" name="Prepare the package">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="L2"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:boundaryEvent id="Pkg_Withdrawn" attachedToRef="Pkg_Prep"><bpmn:messageEventDefinition id="Pkg_MED" messageRef="Msg_withdrawn"/></bpmn:boundaryEvent>
@@ -36,7 +36,7 @@
     <bpmn:userTask id="Pkg_Approve" name="Approve the package">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="approve"/>
-        <zeebe:assignmentDefinition candidateGroups="L4"/>
+        <zeebe:assignmentDefinition candidateGroups="approver"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="Pkg_End"/>

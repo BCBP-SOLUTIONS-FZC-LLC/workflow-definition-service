@@ -20,13 +20,13 @@
     <bpmn:userTask id="Pair_Send" name="Hand over">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="L2"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:userTask id="Pair_Receive" name="Take over">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="L3"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="Pair_End"/>

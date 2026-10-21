@@ -31,7 +31,7 @@ func TestValidate_XOR_LoopWithAllTerminateBranches(t *testing.T) {
     <bpmn:userTask id="Task_A" name="Evaluate">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:exclusiveGateway id="XOR_gw"/>
@@ -78,7 +78,7 @@ func TestHash_SortedZeebeItems_MultipleProps(t *testing.T) {
 				`<bpmn:userTask id="Task_1" name="Proposal">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + aliceUUID + `"/>
         <zeebe:properties>` + propOrder + `</zeebe:properties>
       </bpmn:extensionElements>
     </bpmn:userTask>` +
@@ -130,20 +130,20 @@ func TestValidate_XOR_EarlyExitBranchWithJoin_Valid(t *testing.T) {
     <bpmn:userTask id="Task_A" name="Evaluate">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:exclusiveGateway id="XOR_split"/>
     <bpmn:userTask id="Task_B" name="Path B">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:userTask id="Task_C" name="Path C">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:exclusiveGateway id="XOR_join"/>

@@ -700,7 +700,7 @@ func TestVersionService_Publish_WithAssignees_BulkInsert(t *testing.T) {
 			IAMDepartmentID: uuid.New().String(),
 			Stages: []dsl.StageDef{{
 				Type:             "approve",
-				Role:             "manager",
+				Role:             "approver",
 				DefaultAssignees: []string{assigneeID.String()},
 			}},
 		}},
@@ -1533,7 +1533,7 @@ func TestVersionService_Publish_BulkInsertError(t *testing.T) {
 			IAMDepartmentID: uuid.New().String(),
 			Stages: []dsl.StageDef{{
 				Type:             "approve",
-				Role:             "manager",
+				Role:             "approver",
 				DefaultAssignees: []string{assigneeID.String()},
 			}},
 		}},
@@ -1627,7 +1627,7 @@ func TestVersionService_Publish_EligibilityCheckError(t *testing.T) {
 			IAMDepartmentID: "ops",
 			Stages: []dsl.StageDef{{
 				Type:             "approve",
-				Role:             "manager",
+				Role:             "approver",
 				DefaultAssignees: []string{assigneeID.String()},
 			}},
 		}},
@@ -1638,7 +1638,7 @@ func TestVersionService_Publish_EligibilityCheckError(t *testing.T) {
 	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(plan), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
-	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "ops", "manager").
+	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "ops", "approver").
 		Return(false, errors.New("membership service error"))
 
 	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
@@ -1736,7 +1736,7 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 			IAMDepartmentID: "018e1f2a-0000-7000-8000-000000000030",
 			Stages: []dsl.StageDef{{
 				Type:             "approve",
-				Role:             "manager",
+				Role:             "approver",
 				DefaultAssignees: []string{assigneeID.String()},
 			}},
 		}},
@@ -1753,7 +1753,7 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	// All assignees eligible → checkAssigneeEligibility returns nil
-	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "018e1f2a-0000-7000-8000-000000000030", "manager").
+	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "018e1f2a-0000-7000-8000-000000000030", "approver").
 		Return(true, nil)
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(

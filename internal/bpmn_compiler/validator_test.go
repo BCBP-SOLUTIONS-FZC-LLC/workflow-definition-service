@@ -87,7 +87,7 @@ func TestValidateTaskExtensions_MissingTaskDefinition(t *testing.T) {
 		}},
 		UserTasks: []bpmncore.BPMNUserTask{
 			{ID: "T1", ExtensionElements: bpmncore.BPMNExtensionElements{
-				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "preparer"},
+				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "preparator"},
 			}},
 		},
 	}
@@ -159,6 +159,61 @@ func TestValidateTaskExtensions_CandidateGroupsTooLong(t *testing.T) {
 	}
 }
 
+func userTaskWithRole(role string) *bpmncore.BPMNProcess {
+	return &bpmncore.BPMNProcess{
+		LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{
+			{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}},
+		}},
+		UserTasks: []bpmncore.BPMNUserTask{
+			{ID: "T1", ExtensionElements: bpmncore.BPMNExtensionElements{
+				TaskDefinition:       &bpmncore.ZeebeTaskDefinition{Type: "prep"},
+				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: role, CandidateUsers: aliceUUID},
+			}},
+		},
+	}
+}
+
+func TestValidateTaskExtensions_CandidateGroupsMustBeARoleLevel(t *testing.T) {
+	for _, role := range []string{"preparator", "reviewer", "approver"} {
+		t.Run("accepts "+role, func(t *testing.T) {
+			errs := validator.ValidateTaskExtensions(userTaskWithRole(role), defaultStageTypes())
+			if hasCodeIn(errs, domain.BPMNErrCandidateGroupsInvalid) || hasCodeIn(errs, domain.BPMNErrCandidateGroupsEmpty) {
+				t.Errorf("%q is a role level; got %v", role, errCodesOf(errs))
+			}
+		})
+	}
+	for _, role := range []string{"preparer", "engineering", "Reviewer", "reviewer,approver"} {
+		t.Run("refuses "+role, func(t *testing.T) {
+			errs := validator.ValidateTaskExtensions(userTaskWithRole(role), defaultStageTypes())
+			if !hasCodeIn(errs, domain.BPMNErrCandidateGroupsInvalid) {
+				t.Errorf("expected CANDIDATE_GROUPS_INVALID for %q; got %v", role, errCodesOf(errs))
+			}
+			if hasCodeIn(errs, domain.BPMNErrCandidateGroupsEmpty) {
+				t.Errorf("%q is present and short; CANDIDATE_GROUPS_EMPTY does not apply", role)
+			}
+		})
+	}
+}
+
+func TestValidateTaskExtensions_EmptyCandidateGroupsIsEmptyNotInvalid(t *testing.T) {
+	errs := validator.ValidateTaskExtensions(userTaskWithRole(""), defaultStageTypes())
+	if !hasCodeIn(errs, domain.BPMNErrCandidateGroupsEmpty) {
+		t.Errorf("expected CANDIDATE_GROUPS_EMPTY; got %v", errCodesOf(errs))
+	}
+	if hasCodeIn(errs, domain.BPMNErrCandidateGroupsInvalid) {
+		t.Errorf("an empty value is reported once, as EMPTY; got %v", errCodesOf(errs))
+	}
+}
+
+func TestValidateOptionalAssignment_DoesNotRequireARoleLevel(t *testing.T) {
+	ext := bpmncore.BPMNExtensionElements{
+		AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "client-rep", CandidateUsers: aliceUUID},
+	}
+	if errs := validator.ValidateOptionalAssignment("R1", ext); len(errs) != 0 {
+		t.Errorf("an element that creates no human task keeps free-text groups; got %v", errCodesOf(errs))
+	}
+}
+
 // The end-to-end path is covered by TestValidate_ExtensionElementRules in
 // test/unit/bpmn_compiler; this pins the rule itself.
 func TestValidateDefaultAssignee_CandidateUsersEmpty(t *testing.T) {
@@ -174,7 +229,7 @@ func TestValidateDefaultAssignee_CandidateUsersEmpty(t *testing.T) {
 			ext := bpmncore.BPMNExtensionElements{
 				TaskDefinition: &bpmncore.ZeebeTaskDefinition{Type: "prep"},
 				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{
-					CandidateGroups: "preparer",
+					CandidateGroups: "preparator",
 					CandidateUsers:  tt.candidateUsers,
 				},
 			}
@@ -189,7 +244,7 @@ func TestValidateDefaultAssignee_CandidateUsersEmpty(t *testing.T) {
 func TestValidateDefaultAssignee_NamedAssigneePasses(t *testing.T) {
 	ext := bpmncore.BPMNExtensionElements{
 		AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{
-			CandidateGroups: "preparer", CandidateUsers: aliceUUID,
+			CandidateGroups: "preparator", CandidateUsers: aliceUUID,
 		},
 	}
 	if errs := validator.ValidateDefaultAssignee("T1", ext); len(errs) != 0 {
@@ -202,7 +257,7 @@ func TestValidateDefaultAssignee_NamedAssigneePasses(t *testing.T) {
 // no task, so requiring one would reject a legal plan.
 func TestValidateOptionalAssignment_NoDefaultAssigneeRequired(t *testing.T) {
 	ext := bpmncore.BPMNExtensionElements{
-		AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "preparer"},
+		AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "preparator"},
 	}
 	if errs := validator.ValidateOptionalAssignment("T1", ext); hasCodeIn(errs, domain.BPMNErrCandidateUsersEmpty) {
 		t.Errorf("sendTask/receiveTask must not require candidateUsers; got %v", errCodesOf(errs))
@@ -224,7 +279,7 @@ func TestValidateTaskExtensions_InvalidCandidateUser(t *testing.T) {
 			{ID: "T1", ExtensionElements: bpmncore.BPMNExtensionElements{
 				TaskDefinition: &bpmncore.ZeebeTaskDefinition{Type: "prep"},
 				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{
-					CandidateGroups: "preparer",
+					CandidateGroups: "preparator",
 					CandidateUsers:  "not-a-uuid",
 				},
 			}},
@@ -248,7 +303,7 @@ func TestValidateTaskExtensions_CandidateUserMustBeAUUIDv7(t *testing.T) {
 			LaneSet: bpmncore.BPMNLaneSet{Lanes: []bpmncore.BPMNLane{{ID: "L1", Name: "Design", FlowNodeRefs: []string{"T1"}}}},
 			UserTasks: []bpmncore.BPMNUserTask{{ID: "T1", ExtensionElements: bpmncore.BPMNExtensionElements{
 				TaskDefinition:       &bpmncore.ZeebeTaskDefinition{Type: "prep"},
-				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "preparer", CandidateUsers: id},
+				AssignmentDefinition: &bpmncore.ZeebeAssignmentDefinition{CandidateGroups: "preparator", CandidateUsers: id},
 			}}},
 		}
 		if got := hasCodeIn(validator.ValidateTaskExtensions(proc, defaultStageTypes()), domain.BPMNErrInvalidCandidateUser); got != want {

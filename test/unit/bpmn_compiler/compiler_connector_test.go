@@ -156,7 +156,7 @@ func TestValidate_ConnectorTaskWithAssignment_Warns(t *testing.T) {
     <bpmn:serviceTask id="Task_1" name="Fetch Packet">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="connector:storage"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1</bpmn:incoming>
       <bpmn:outgoing>Flow_2</bpmn:outgoing>

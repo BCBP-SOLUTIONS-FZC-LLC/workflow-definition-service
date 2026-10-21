@@ -26,6 +26,7 @@ func (UserTaskHandler) Validate(nodeID string, proc *bpmncore.BPMNProcess, _ *bp
 	} else {
 		errs = append(errs, validator.ValidateTaskDef(task.ID, task.ExtensionElements, stageTypes)...)
 		errs = append(errs, validator.ValidateAssignmentDef(task.ID, task.ExtensionElements)...)
+		errs = append(errs, validator.ValidateRoleLevel(task.ID, task.ExtensionElements)...)
 		errs = append(errs, validator.ValidateDefaultAssignee(task.ID, task.ExtensionElements)...)
 	}
 

@@ -147,7 +147,7 @@ func lanedModule(id string, lanes ...moduleLane) string {
 			fmt.Fprintf(&laneXML, "<bpmn:flowNodeRef>%s_End</bpmn:flowNodeRef>", id)
 		}
 		laneXML.WriteString("</bpmn:lane>\n")
-		fmt.Fprintf(&nodes, `    <bpmn:userTask id=%q><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers=%q/></bpmn:extensionElements></bpmn:userTask>
+		fmt.Fprintf(&nodes, `    <bpmn:userTask id=%q><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers=%q/></bpmn:extensionElements></bpmn:userTask>
 `, l.TaskID, validCandidateUser)
 		fmt.Fprintf(&flows, "    <bpmn:sequenceFlow id=\"%s_F%d\" sourceRef=%q targetRef=%q/>\n", id, i, prev, l.TaskID)
 		prev = l.TaskID
@@ -504,7 +504,7 @@ func TestCompileForPublish_ExpandedStagesOverTheLimit_AreRefused(t *testing.T) {
 	var tasks, flows strings.Builder
 	prev := "Big_SubStart"
 	for i := range 600 {
-		fmt.Fprintf(&tasks, `      <bpmn:userTask id="Big_T%d"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers=%q/></bpmn:extensionElements></bpmn:userTask>
+		fmt.Fprintf(&tasks, `      <bpmn:userTask id="Big_T%d"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers=%q/></bpmn:extensionElements></bpmn:userTask>
 `, i, validCandidateUser)
 		fmt.Fprintf(&flows, "      <bpmn:sequenceFlow id=\"Big_SF%d\" sourceRef=%q targetRef=\"Big_T%d\"/>\n", i, prev, i)
 		prev = fmt.Sprintf("Big_T%d", i)
@@ -544,7 +544,7 @@ func workFreeLaneModule() string {
       <bpmn:lane id="Process_R_Lane1" name="Sender"><bpmn:flowNodeRef>R_Send</bpmn:flowNodeRef><bpmn:flowNodeRef>R_End</bpmn:flowNodeRef></bpmn:lane>
     </bpmn:laneSet>
     <bpmn:startEvent id="R_Start"/>
-    <bpmn:userTask id="R_Send"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers=%q/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="R_Send"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers=%q/></bpmn:extensionElements></bpmn:userTask>
     <bpmn:endEvent id="R_End"/>
     <bpmn:sequenceFlow id="R_F1" sourceRef="R_Start" targetRef="R_Send"/>
     <bpmn:sequenceFlow id="R_F2" sourceRef="R_Send" targetRef="R_End"/>
@@ -561,7 +561,7 @@ func subProcessLaneModule() string {
     <bpmn:startEvent id="N_Start"/>
     <bpmn:subProcess id="N_Sub">
       <bpmn:startEvent id="N_SubStart"/>
-      <bpmn:userTask id="N_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers=%q/></bpmn:extensionElements></bpmn:userTask>
+      <bpmn:userTask id="N_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers=%q/></bpmn:extensionElements></bpmn:userTask>
       <bpmn:endEvent id="N_SubEnd"/>
       <bpmn:sequenceFlow id="N_SF1" sourceRef="N_SubStart" targetRef="N_Task"/>
       <bpmn:sequenceFlow id="N_SF2" sourceRef="N_Task" targetRef="N_SubEnd"/>
@@ -631,7 +631,7 @@ func TestCompileForPublish_ModuleCalledOnlyInsideAParallelBranch(t *testing.T) {
     <bpmn:startEvent id="Start_1"/>
     <bpmn:parallelGateway id="Split"/>
     <bpmn:callActivity id="CA_1" name="Review"><bpmn:extensionElements><zeebe:calledElement processId="Process_M"/></bpmn:extensionElements></bpmn:callActivity>
-    <bpmn:userTask id="Ops_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers=%[3]q/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="Ops_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers=%[3]q/></bpmn:extensionElements></bpmn:userTask>
     <bpmn:parallelGateway id="Join"/>
     <bpmn:endEvent id="End_1"/>
     <bpmn:sequenceFlow id="F1" sourceRef="Start_1" targetRef="Split"/>
@@ -688,7 +688,7 @@ func TestCompileForPublish_CallSiteAssigneesReachATaskInsideAModuleSubProcess(t 
     <bpmn:startEvent id="S_Start"/>
     <bpmn:subProcess id="S_Sub">
       <bpmn:startEvent id="SS_Start"/>
-      <bpmn:userTask id="SS_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer"/></bpmn:extensionElements></bpmn:userTask>
+      <bpmn:userTask id="SS_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator"/></bpmn:extensionElements></bpmn:userTask>
       <bpmn:endEvent id="SS_End"/>
       <bpmn:sequenceFlow id="SS_F1" sourceRef="SS_Start" targetRef="SS_Task"/>
       <bpmn:sequenceFlow id="SS_F2" sourceRef="SS_Task" targetRef="SS_End"/>
@@ -716,7 +716,7 @@ func moduleCallingInsideAnExclusiveBranch(id, calls string) string {
     <bpmn:exclusiveGateway id="%[1]s_X"/>
     <bpmn:callActivity id="%[1]s_CA"><bpmn:extensionElements><zeebe:calledElement processId="%[2]s"/></bpmn:extensionElements></bpmn:callActivity>
     <bpmn:userTask id="%[1]s_Task">
-      <bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="%[3]s"/></bpmn:extensionElements>
+      <bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="%[3]s"/></bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:exclusiveGateway id="%[1]s_J"/>
     <bpmn:endEvent id="%[1]s_End"/>

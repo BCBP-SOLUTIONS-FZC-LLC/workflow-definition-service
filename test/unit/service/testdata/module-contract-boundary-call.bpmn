@@ -20,11 +20,11 @@
     </bpmn:laneSet>
     <bpmn:startEvent id="BC_Start"/>
     <bpmn:userTask id="BC_Prep" name="Prepare">
-      <bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="L2"/></bpmn:extensionElements>
+      <bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator"/></bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:boundaryEvent id="BC_Stop" attachedToRef="BC_Prep"><bpmn:messageEventDefinition id="BC_MED" messageRef="Msg_stop"/></bpmn:boundaryEvent>
     <bpmn:userTask id="BC_Esc" name="Escalate">
-      <bpmn:extensionElements><zeebe:taskDefinition type="approve"/><zeebe:assignmentDefinition candidateGroups="L4"/></bpmn:extensionElements>
+      <bpmn:extensionElements><zeebe:taskDefinition type="approve"/><zeebe:assignmentDefinition candidateGroups="approver"/></bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:callActivity id="BC_Check" name="Check on escalation">
       <bpmn:extensionElements><zeebe:calledElement processId="Process_Check"/></bpmn:extensionElements>

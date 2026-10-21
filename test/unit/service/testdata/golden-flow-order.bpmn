@@ -26,9 +26,9 @@
         <bpmn:flowNodeRef>Bill</bpmn:flowNodeRef>
       </bpmn:lane>
     </bpmn:laneSet>
-    <bpmn:userTask id="Draft" name="Draft"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="engineering" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
-    <bpmn:userTask id="Check" name="Check"><bpmn:extensionElements><zeebe:taskDefinition type="review"/><zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
-    <bpmn:userTask id="Approve" name="Approve"><bpmn:extensionElements><zeebe:taskDefinition type="approve"/><zeebe:assignmentDefinition candidateGroups="engineering" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="Draft" name="Draft"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="Check" name="Check"><bpmn:extensionElements><zeebe:taskDefinition type="review"/><zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="Approve" name="Approve"><bpmn:extensionElements><zeebe:taskDefinition type="approve"/><zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
     <bpmn:exclusiveGateway id="X_Route" name="Route"/>
     <bpmn:callActivity id="CA_Review" name="Review">
       <bpmn:extensionElements>
@@ -36,13 +36,13 @@
         <zeebe:ioMapping><zeebe:input source='{"Review_Check::Check_Task":"018f2d3c-0000-7000-8000-0000000000c1"}' target="Assignees"/></zeebe:ioMapping>
       </bpmn:extensionElements>
     </bpmn:callActivity>
-    <bpmn:userTask id="Fix" name="Fix"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="Fix" name="Fix"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
     <bpmn:exclusiveGateway id="J_Route"/>
     <bpmn:parallelGateway id="P_Split"/>
-    <bpmn:userTask id="Pack" name="Pack"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
-    <bpmn:userTask id="Bill" name="Bill"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="Pack" name="Pack"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="Bill" name="Bill"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
     <bpmn:parallelGateway id="P_Join"/>
-    <bpmn:userTask id="Close" name="Close"><bpmn:extensionElements><zeebe:taskDefinition type="approve"/><zeebe:assignmentDefinition candidateGroups="engineering" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="Close" name="Close"><bpmn:extensionElements><zeebe:taskDefinition type="approve"/><zeebe:assignmentDefinition candidateGroups="approver" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/></bpmn:extensionElements></bpmn:userTask>
     <bpmn:startEvent id="Start_1"/>
     <bpmn:endEvent id="End_1"/>
     <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_1" targetRef="Draft"/>

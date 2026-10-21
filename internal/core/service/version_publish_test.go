@@ -22,7 +22,7 @@ func TestExtractAssignees_InvalidUUID(t *testing.T) {
 				Stages: []dsl.StageDef{
 					{
 						Type:             "prep",
-						Role:             "preparer",
+						Role:             "preparator",
 						DefaultAssignees: []string{"not-a-uuid", uuid.New().String()},
 					},
 				},
@@ -48,9 +48,9 @@ func TestExtractAssignees_NodeKeyComposition(t *testing.T) {
 				ID:              "engineering",
 				IAMDepartmentID: uuid.New().String(),
 				Stages: []dsl.StageDef{
-					{Type: "prep", NodeID: "Activity_first", Role: "preparer", DefaultAssignees: []string{uuid.New().String()}},
-					{Type: "prep", NodeID: "Activity_second", Role: "preparer", DefaultAssignees: []string{uuid.New().String()}},
-					{Type: "gateway", Role: "preparer", DefaultAssignees: []string{uuid.New().String()}},
+					{Type: "prep", NodeID: "Activity_first", Role: "preparator", DefaultAssignees: []string{uuid.New().String()}},
+					{Type: "prep", NodeID: "Activity_second", Role: "preparator", DefaultAssignees: []string{uuid.New().String()}},
+					{Type: "gateway", Role: "preparator", DefaultAssignees: []string{uuid.New().String()}},
 				},
 			},
 		},

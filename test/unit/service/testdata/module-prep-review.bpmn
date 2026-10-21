@@ -15,7 +15,7 @@
     <bpmn:userTask id="PR_Prep" name="Prepare">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="PR_End" name="End"/>

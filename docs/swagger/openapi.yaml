@@ -453,7 +453,7 @@ components:
         activity:            { type: string }
         role:
           type: string
-          description: "IAM role level name passed as 'required_level' to the Org & Membership eligibility read at publish time. Sourced from zeebe:assignmentDefinition candidateGroups."
+          description: "One of the department role levels preparator, reviewer or approver, passed as 'required_level' to the Org & Membership eligibility read at publish time. Sourced from zeebe:assignmentDefinition candidateGroups."
         default_assignees:
           type: array
           nullable: true
@@ -919,6 +919,7 @@ components:
         - UNKNOWN_STAGE_TYPE            # taskDefinition.type not in the registered StageTypeHandler set; warning severity — compilation continues with passthrough StageDef
         - TASK_NOT_IN_LANE              # userTask not listed in any lane via flowNodeRef
         - CANDIDATE_GROUPS_EMPTY        # candidateGroups absent or exceeds 256 chars
+        - CANDIDATE_GROUPS_INVALID      # a userTask candidateGroups is not preparator, reviewer or approver
         - INVALID_CANDIDATE_USER        # candidateUsers is not a UUID v7; in a global module, any candidateUsers or call Assignees at all
         - CANDIDATE_USERS_EMPTY         # a userTask names no user: a warning on a document; an error at publish and /validate for a task of the expanded plan with no default, on the task or the top-level call that runs it
         - INVALID_CONDITION_EXPRESSION  # conditionExpression exceeds 4096 chars

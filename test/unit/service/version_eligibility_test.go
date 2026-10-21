@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/enums"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -162,4 +163,38 @@ func TestPublish_ALookupErrorIsReportedNotTreatedAsIneligible(t *testing.T) {
 
 	require.ErrorIs(t, err, down)
 	assert.NotErrorIs(t, err, domain.ErrAssigneeIneligible)
+}
+
+func TestPublish_ARoleThatIsNotALevelIsIneligibleWithoutAskingMembership(t *testing.T) {
+	u := uuid.Must(uuid.NewV7())
+	plan := &dsl.CompiledPlan{Departments: []dsl.DepartmentDef{{
+		ID: "a", IAMDepartmentID: "dept-a", Stages: []dsl.StageDef{stageOf("engineering", u)},
+	}}}
+	fake := &eligibilityFake{eligible: func(uuid.UUID) bool { return false }}
+
+	err := publishWithAssignees(t, fake, plan)
+
+	require.ErrorIs(t, err, domain.ErrAssigneeIneligible)
+	assert.Contains(t, err.Error(), "engineering")
+	assert.Empty(t, fake.calls, "membership was asked about a level it does not define")
+}
+
+func TestPublish_OnlyStagesThatCreateAHumanTaskAreChecked(t *testing.T) {
+	receiver, connectorUser, reviewer := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	receive := stageOf("client-rep", receiver)
+	receive.Type = string(enums.StageTypeReceiveTask)
+	connector := stageOf("ops", connectorUser)
+	connector.ConnectorType = "http"
+	plan := &dsl.CompiledPlan{Departments: []dsl.DepartmentDef{{
+		ID: "a", IAMDepartmentID: "dept-a", Stages: []dsl.StageDef{receive, connector, stageOf("reviewer", reviewer)},
+	}}}
+	fake := &eligibilityFake{eligible: func(uuid.UUID) bool { return false }}
+
+	err := publishWithAssignees(t, fake, plan)
+
+	require.ErrorIs(t, err, domain.ErrAssigneeIneligible)
+	assert.Contains(t, err.Error(), reviewer.String())
+	assert.NotContains(t, err.Error(), receiver.String())
+	assert.NotContains(t, err.Error(), connectorUser.String())
+	assert.Equal(t, map[string]int{reviewer.String() + "|dept-a|reviewer": 1}, fake.calls)
 }

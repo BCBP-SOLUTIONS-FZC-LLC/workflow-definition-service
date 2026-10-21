@@ -164,7 +164,7 @@ func TestValidate_SingleProcess_Valid(t *testing.T) {
     <bpmn:userTask id="T1" name="Task">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
       <bpmn:incoming>F1</bpmn:incoming><bpmn:outgoing>F2</bpmn:outgoing>
     </bpmn:userTask>
@@ -278,7 +278,7 @@ func TestCompile_ParallelSplitWithoutAJoin_IsUnmatchedGateway(t *testing.T) {
     <bpmn:userTask id="T1" name="Task">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
       <bpmn:incoming>F1</bpmn:incoming><bpmn:outgoing>F2</bpmn:outgoing>
     </bpmn:userTask>

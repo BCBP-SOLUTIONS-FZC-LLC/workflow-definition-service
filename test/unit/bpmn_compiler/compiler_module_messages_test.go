@@ -22,11 +22,11 @@ func messagingModule(id string) string {
   <bpmn:error id="Err_mod" errorCode="MODULE_FAILED"/>
   <bpmn:process id=%[1]q isExecutable="true">
     <bpmn:startEvent id="M_Start"/>
-    <bpmn:receiveTask id="M_Wait" messageRef="Msg_ping"><bpmn:extensionElements><zeebe:taskDefinition type="receive"/><zeebe:assignmentDefinition candidateGroups="preparer"/></bpmn:extensionElements></bpmn:receiveTask>
+    <bpmn:receiveTask id="M_Wait" messageRef="Msg_ping"><bpmn:extensionElements><zeebe:taskDefinition type="receive"/><zeebe:assignmentDefinition candidateGroups="preparator"/></bpmn:extensionElements></bpmn:receiveTask>
 %[2]s    <bpmn:boundaryEvent id="M_BMsg" attachedToRef="M_Review"><bpmn:messageEventDefinition messageRef="Msg_withdraw"/></bpmn:boundaryEvent>
     <bpmn:subProcess id="M_Sub">
       <bpmn:startEvent id="MS_Start"/>
-      <bpmn:userTask id="MS_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers=%[3]q/></bpmn:extensionElements></bpmn:userTask>
+      <bpmn:userTask id="MS_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers=%[3]q/></bpmn:extensionElements></bpmn:userTask>
       <bpmn:endEvent id="MS_End"/>
       <bpmn:sequenceFlow id="MS_F1" sourceRef="MS_Start" targetRef="MS_Task"/>
       <bpmn:sequenceFlow id="MS_F2" sourceRef="MS_Task" targetRef="MS_End"/>

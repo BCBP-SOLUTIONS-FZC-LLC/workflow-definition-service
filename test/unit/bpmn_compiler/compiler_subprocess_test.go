@@ -39,7 +39,7 @@ const subprocessTimerBoundaryBPMN = `<?xml version="1.0" encoding="UTF-8"?>
       <bpmn:userTask id="InnerTask" name="Inner Task">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="prep"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+          <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         </bpmn:extensionElements>
       </bpmn:userTask>
       <bpmn:endEvent id="InnerEnd" name="Inner End"/>
@@ -191,7 +191,7 @@ func TestValidate_TimerBoundary_InvalidDuration(t *testing.T) {
     <bpmn:userTask id="T1" name="Task">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:boundaryEvent id="BE1" attachedToRef="T1">
@@ -232,7 +232,7 @@ func TestValidate_ErrorBoundary_OnUserTask_Rejected(t *testing.T) {
     <bpmn:userTask id="T1" name="Task">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:boundaryEvent id="BE1" attachedToRef="T1">
@@ -380,7 +380,7 @@ func TestCompile_TimerBoundary_AlreadyVisitedTarget(t *testing.T) {
     <bpmn:userTask id="Task_A" name="Step A">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:boundaryEvent id="BE_timer" attachedToRef="Task_A" cancelActivity="false">
@@ -391,7 +391,7 @@ func TestCompile_TimerBoundary_AlreadyVisitedTarget(t *testing.T) {
     <bpmn:userTask id="Task_B" name="Step B">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="E1"/>
@@ -463,7 +463,7 @@ func TestCompile_Subprocess_CatchAllErrorBoundary(t *testing.T) {
       <bpmn:userTask id="InnerTask" name="Inner Prep">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="prep"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + aliceUUID + `"/>
+          <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + aliceUUID + `"/>
         </bpmn:extensionElements>
       </bpmn:userTask>
       <bpmn:endEvent id="InnerEnd"/>

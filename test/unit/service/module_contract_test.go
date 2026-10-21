@@ -79,9 +79,9 @@ func TestModuleContract_OpenAndFixedSlots(t *testing.T) {
 		t.Errorf("slots:\n got %+v\nwant %+v", got.Slots, wantSlots)
 	}
 	wantTasks := []service.ModuleTask{
-		{AssigneeKey: "Pkg_Prep", NodeID: "Pkg_Prep", Name: "Prepare the package", Slot: "Author", StageType: "prep", Role: "L2"},
-		{AssigneeKey: "Pkg_Approve", NodeID: "Pkg_Approve", Name: "Approve the package", Slot: "Quality", StageType: "approve", Role: "L4"},
-		{AssigneeKey: "Pkg_Check::Check_Task", NodeID: "Check_Task", Name: "Check", Slot: "Author", StageType: "review", Role: "checker"},
+		{AssigneeKey: "Pkg_Prep", NodeID: "Pkg_Prep", Name: "Prepare the package", Slot: "Author", StageType: "prep", Role: "preparator"},
+		{AssigneeKey: "Pkg_Approve", NodeID: "Pkg_Approve", Name: "Approve the package", Slot: "Quality", StageType: "approve", Role: "approver"},
+		{AssigneeKey: "Pkg_Check::Check_Task", NodeID: "Check_Task", Name: "Check", Slot: "Author", StageType: "review", Role: "approver"},
 	}
 	if !reflect.DeepEqual(got.Tasks, wantTasks) {
 		t.Errorf("tasks:\n got %+v\nwant %+v", got.Tasks, wantTasks)
@@ -117,7 +117,7 @@ func TestModuleContract_LanelessModule(t *testing.T) {
 	wantTasks := []service.ModuleTask{
 		{AssigneeKey: "Review_Task", NodeID: "Review_Task", Name: "Review", Slot: "Process_Review", StageType: "review", Role: "reviewer",
 			DefaultUserIDs: []string{"018f2d3c-0000-7000-8000-0000000000a1"}},
-		{AssigneeKey: "Review_Check::Check_Task", NodeID: "Check_Task", Name: "Check", Slot: "Process_Review", StageType: "review", Role: "checker"},
+		{AssigneeKey: "Review_Check::Check_Task", NodeID: "Check_Task", Name: "Check", Slot: "Process_Review", StageType: "review", Role: "approver"},
 	}
 	if !reflect.DeepEqual(got.Tasks, wantTasks) {
 		t.Errorf("tasks:\n got %+v\nwant %+v", got.Tasks, wantTasks)
@@ -175,10 +175,10 @@ func TestModuleContract_CallOnAParallelBranch(t *testing.T) {
 		t.Fatalf("Contract: %v", err)
 	}
 	wantTasks := []service.ModuleTask{
-		{AssigneeKey: "Out_Task", NodeID: "Out_Task", Name: "Draft", Slot: "Drafting", StageType: "prep", Role: "L2"},
-		{AssigneeKey: "Sub_Task", NodeID: "Sub_Task", Name: "Finalise the draft", Slot: "Drafting", StageType: "approve", Role: "L4"},
+		{AssigneeKey: "Out_Task", NodeID: "Out_Task", Name: "Draft", Slot: "Drafting", StageType: "prep", Role: "preparator"},
+		{AssigneeKey: "Sub_Task", NodeID: "Sub_Task", Name: "Finalise the draft", Slot: "Drafting", StageType: "approve", Role: "approver"},
 		{AssigneeKey: "Out_CallFixed::Fx_Task", NodeID: "Fx_Task", Name: "Clear the terms",
-			IAMDepartmentID: "0b8f3a51-6c2d-5e4f-8a7b-1c9d2e3f4a5b", StageType: "review", Role: "L3"},
+			IAMDepartmentID: "0b8f3a51-6c2d-5e4f-8a7b-1c9d2e3f4a5b", StageType: "review", Role: "reviewer"},
 	}
 	if !reflect.DeepEqual(got.Tasks, wantTasks) {
 		t.Errorf("tasks:\n got %+v\nwant %+v", got.Tasks, wantTasks)

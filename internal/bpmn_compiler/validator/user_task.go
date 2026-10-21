@@ -20,6 +20,7 @@ func ValidateTaskExtensions(proc *bpmncore.BPMNProcess, stageTypes map[string]bp
 	for _, t := range proc.UserTasks {
 		errs = append(errs, ValidateTaskDef(t.ID, t.ExtensionElements, stageTypes)...)
 		errs = append(errs, ValidateAssignmentDef(t.ID, t.ExtensionElements)...)
+		errs = append(errs, ValidateRoleLevel(t.ID, t.ExtensionElements)...)
 		errs = append(errs, ValidateDefaultAssignee(t.ID, t.ExtensionElements)...)
 		errs = append(errs, ValidateLaneMembership(t.ID, laneRefs)...)
 	}
@@ -69,6 +70,18 @@ func ValidateAssignmentDef(taskID string, ext bpmncore.BPMNExtensionElements) []
 	}
 	errs = append(errs, validateCandidateUser(taskID, ad.CandidateUsers)...)
 	return errs
+}
+
+func ValidateRoleLevel(taskID string, ext bpmncore.BPMNExtensionElements) []domain.BPMNValidationError {
+	if ext.AssignmentDefinition == nil {
+		return nil
+	}
+	role := ext.AssignmentDefinition.CandidateGroups
+	if role == "" || len(role) > maxRoleLen || domain.ValidRoleLevel(role) {
+		return nil
+	}
+	return AppendErr(nil, domain.BPMNErrCandidateGroupsInvalid, taskID,
+		fmt.Sprintf("candidateGroups %q is not a department role level: preparator, reviewer or approver", role))
 }
 
 func validateCandidateUser(taskID, candidateUsers string) []domain.BPMNValidationError {

@@ -38,7 +38,7 @@ func TestHash_ChangesWhenAMessageNameOrAnErrorCodeChanges(t *testing.T) {
 }
 
 func subProcessWithProperties(first, second string) string {
-	task := "    <bpmn:userTask id=\"SP_T\"><bpmn:extensionElements><zeebe:taskDefinition type=\"prep\"/><zeebe:assignmentDefinition candidateGroups=\"preparer\" candidateUsers=\"" + validCandidateUser + "\"/><zeebe:properties>" + first + second + "</zeebe:properties></bpmn:extensionElements></bpmn:userTask>\n"
+	task := "    <bpmn:userTask id=\"SP_T\"><bpmn:extensionElements><zeebe:taskDefinition type=\"prep\"/><zeebe:assignmentDefinition candidateGroups=\"preparator\" candidateUsers=\"" + validCandidateUser + "\"/><zeebe:properties>" + first + second + "</zeebe:properties></bpmn:extensionElements></bpmn:userTask>\n"
 	sub := "    <bpmn:subProcess id=\"SP\"><bpmn:startEvent id=\"SP_S\"/>\n" + task + "    <bpmn:endEvent id=\"SP_E\"/>\n" +
 		flowXML("SP_F1", "SP_S", "SP_T") + flowXML("SP_F2", "SP_T", "SP_E") + "    </bpmn:subProcess>\n"
 	body := "    <bpmn:startEvent id=\"S\"/>\n" + sub + "    <bpmn:endEvent id=\"E\"/>\n" + flowXML("F1", "S", "SP") + flowXML("F2", "SP", "E")

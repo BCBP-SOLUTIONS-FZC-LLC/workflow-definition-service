@@ -95,7 +95,7 @@ func validTask(id, deptID, stageType string) string {
 	return `<bpmn:userTask id="` + id + `" name="` + id + `">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="` + stageType + `"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:userTask>`
 }
@@ -238,7 +238,7 @@ func TestValidate_ExtensionElementRules(t *testing.T) {
 			name: "missing taskDefinition",
 			taskXML: `<bpmn:userTask id="Task_1" name="T">
         <bpmn:extensionElements>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + aliceUUID + `"/>
+          <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + aliceUUID + `"/>
         </bpmn:extensionElements></bpmn:userTask>`,
 			wantCode: domain.BPMNErrMissingTaskDefinition,
 		},
@@ -247,7 +247,7 @@ func TestValidate_ExtensionElementRules(t *testing.T) {
 			taskXML: `<bpmn:userTask id="Task_1" name="T">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="audit"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + aliceUUID + `"/>
+          <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + aliceUUID + `"/>
         </bpmn:extensionElements></bpmn:userTask>`,
 			wantCode: domain.BPMNWarnUnknownStageType,
 		},
@@ -273,7 +273,7 @@ func TestValidate_ExtensionElementRules(t *testing.T) {
 			taskXML: `<bpmn:userTask id="Task_1" name="T">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="prep"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer"/>
+          <zeebe:assignmentDefinition candidateGroups="preparator"/>
         </bpmn:extensionElements></bpmn:userTask>`,
 			wantCode: domain.BPMNErrCandidateUsersEmpty,
 		},
@@ -282,7 +282,7 @@ func TestValidate_ExtensionElementRules(t *testing.T) {
 			taskXML: `<bpmn:userTask id="Task_1" name="T">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="prep"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="   "/>
+          <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="   "/>
         </bpmn:extensionElements></bpmn:userTask>`,
 			wantCode: domain.BPMNErrCandidateUsersEmpty,
 		},
@@ -291,7 +291,7 @@ func TestValidate_ExtensionElementRules(t *testing.T) {
 			taskXML: `<bpmn:userTask id="Task_1" name="T">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="prep"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="not-a-uuid"/>
+          <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="not-a-uuid"/>
         </bpmn:extensionElements></bpmn:userTask>`,
 			wantCode: domain.BPMNErrInvalidCandidateUser,
 		},
@@ -752,7 +752,7 @@ func TestHash_AttributeOrderDoesNotAffectHash(t *testing.T) {
 			`<bpmn:userTask id="Task_1" name="T">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements></bpmn:userTask>` +
 			`<bpmn:endEvent id="EndEvent_1" name="End"/>
       <bpmn:sequenceFlow id="F1" sourceRef="StartEvent_1" targetRef="Task_1"/>
@@ -760,8 +760,8 @@ func TestHash_AttributeOrderDoesNotAffectHash(t *testing.T) {
 	)
 	// Swap attribute order on assignmentDefinition — semantically identical.
 	bpmnB := strings.ReplaceAll(bpmnA,
-		`<zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="`+aliceUUID+`"/>`,
-		`<zeebe:assignmentDefinition candidateUsers="`+aliceUUID+`" candidateGroups="preparer"/>`,
+		`<zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="`+aliceUUID+`"/>`,
+		`<zeebe:assignmentDefinition candidateUsers="`+aliceUUID+`" candidateGroups="preparator"/>`,
 	)
 
 	c := bpmn_compiler.New()
@@ -923,7 +923,7 @@ func TestValidate_ValidCandidateUser(t *testing.T) {
 	taskXML := `<bpmn:userTask id="Task_1" name="T">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements></bpmn:userTask>`
 	bpmnXML := minimalBPMN(
 		`<bpmn:startEvent id="StartEvent_1" name="Start"/>` +
@@ -1005,7 +1005,7 @@ const subprocessUnknownErrorRefBPMN = `<?xml version="1.0" encoding="UTF-8"?>
       <bpmn:userTask id="InnerTask" name="Inner Task">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="prep"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+          <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         </bpmn:extensionElements>
       </bpmn:userTask>
       <bpmn:endEvent id="InnerEnd" name="Inner End"/>

@@ -48,7 +48,7 @@ func validSendTask(id, msgRef string) string {
 	}
 	return `<bpmn:sendTask id="` + id + `" name="` + id + `"` + ref + `>
       <bpmn:extensionElements>
-        <zeebe:assignmentDefinition candidateGroups="design" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:sendTask>`
 }
@@ -59,7 +59,7 @@ func TestCompile_DataStoreReference_CollectedAsVisualElement(t *testing.T) {
     <bpmn:userTask id="Task_1" name="Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="`+aliceUUID+`"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="`+aliceUUID+`"/>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1</bpmn:incoming>
       <bpmn:outgoing>Flow_2</bpmn:outgoing>
@@ -95,7 +95,7 @@ func TestCompile_UnknownStageType_PassthroughWithEngineNote(t *testing.T) {
     <bpmn:userTask id="Task_1" name="Custom Step">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="custom-stage"/>
-        <zeebe:assignmentDefinition candidateGroups="custom-role" candidateUsers="`+aliceUUID+`"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="`+aliceUUID+`"/>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1</bpmn:incoming>
       <bpmn:outgoing>Flow_2</bpmn:outgoing>
@@ -210,7 +210,7 @@ func TestCompile_ReceiveTask(t *testing.T) {
     <bpmn:startEvent id="StartEvent_1"/>
     <bpmn:receiveTask id="Task_recv" name="Task_recv" messageRef="` + msgID + `">
       <bpmn:extensionElements>
-        <zeebe:assignmentDefinition candidateGroups="design" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:receiveTask>
     <bpmn:endEvent id="EndEvent_1"/>
@@ -266,7 +266,7 @@ func TestCompile_UnknownZeebeProperties(t *testing.T) {
     <bpmn:userTask id="Task_1" name="Task 1">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="design" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false"/>
           <zeebe:property name="sla_category" value="high"/>
@@ -474,7 +474,7 @@ func TestCompile_ReceiveTaskInExclusiveBranch(t *testing.T) {
     <bpmn:userTask id="Task_prep" name="Prepare">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="design" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:exclusiveGateway id="XOR_1"/>
@@ -482,7 +482,7 @@ func TestCompile_ReceiveTaskInExclusiveBranch(t *testing.T) {
     <bpmn:userTask id="Task_after" name="After">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="design" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:exclusiveGateway id="Join_1"/>

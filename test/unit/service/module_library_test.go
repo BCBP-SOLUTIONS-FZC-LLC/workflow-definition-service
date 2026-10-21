@@ -232,7 +232,7 @@ var openLaneModule = `<?xml version="1.0" encoding="UTF-8"?>
   <bpmn:process id="Process_Open" isExecutable="true">
     <bpmn:laneSet id="LS"><bpmn:lane id="L1" name="Sender"><bpmn:flowNodeRef>O_Start</bpmn:flowNodeRef><bpmn:flowNodeRef>O_Task</bpmn:flowNodeRef><bpmn:flowNodeRef>O_End</bpmn:flowNodeRef></bpmn:lane></bpmn:laneSet>
     <bpmn:startEvent id="O_Start"/>
-    <bpmn:userTask id="O_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="O_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator"/></bpmn:extensionElements></bpmn:userTask>
     <bpmn:endEvent id="O_End"/>
     <bpmn:sequenceFlow id="O_F1" sourceRef="O_Start" targetRef="O_Task"/>
     <bpmn:sequenceFlow id="O_F2" sourceRef="O_Task" targetRef="O_End"/>
@@ -295,7 +295,7 @@ func TestModuleService_Create_ProcessIDInUseIsAConflict(t *testing.T) {
 func TestModuleService_Create_GlobalModuleNamingAUserIsRefused(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, _ := newLibraryModuleService(ctrl)
-	named := strings.Replace(openLaneModule, `candidateGroups="preparer"/>`, `candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>`, 1)
+	named := strings.Replace(openLaneModule, `candidateGroups="preparator"/>`, `candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>`, 1)
 
 	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), service.CreateModuleReq{Name: "Open", BPMNXML: named, Scope: domain.ScopeGlobal})
 	var vf *domain.ValidationFailedError

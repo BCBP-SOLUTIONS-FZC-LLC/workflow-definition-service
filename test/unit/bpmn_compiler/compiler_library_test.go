@@ -257,7 +257,7 @@ func TestValidateModule_GlobalModuleUserTwoSubProcessesDown_IsRefused(t *testing
       <bpmn:startEvent id="GO_Start"/>
       <bpmn:subProcess id="G_Inner">
         <bpmn:startEvent id="GI_Start"/>
-        <bpmn:userTask id="GI_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + validCandidateUser + `"/></bpmn:extensionElements></bpmn:userTask>
+        <bpmn:userTask id="GI_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + validCandidateUser + `"/></bpmn:extensionElements></bpmn:userTask>
         <bpmn:endEvent id="GI_End"/>
         <bpmn:sequenceFlow id="GI_F1" sourceRef="GI_Start" targetRef="GI_Task"/>
         <bpmn:sequenceFlow id="GI_F2" sourceRef="GI_Task" targetRef="GI_End"/>

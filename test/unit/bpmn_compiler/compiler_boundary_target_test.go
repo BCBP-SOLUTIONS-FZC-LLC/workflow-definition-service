@@ -13,7 +13,7 @@ import (
 )
 
 func userTaskXML(id string) string {
-	return fmt.Sprintf(`    <bpmn:userTask id=%q><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers=%q/></bpmn:extensionElements></bpmn:userTask>
+	return fmt.Sprintf(`    <bpmn:userTask id=%q><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers=%q/></bpmn:extensionElements></bpmn:userTask>
 `, id, validCandidateUser)
 }
 
@@ -31,7 +31,7 @@ func escalatingModule(id string) string {
 %[2]s%[3]s    <bpmn:boundaryEvent id="%[1]s_BTask" attachedToRef="Task_Work">%[4]s</bpmn:boundaryEvent>
     <bpmn:subProcess id="SP_Work">
       <bpmn:startEvent id="SP_Start"/>
-      <bpmn:userTask id="SP_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers=%[5]q/></bpmn:extensionElements></bpmn:userTask>
+      <bpmn:userTask id="SP_Task"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers=%[5]q/></bpmn:extensionElements></bpmn:userTask>
       <bpmn:endEvent id="SP_End"/>
       <bpmn:sequenceFlow id="SP_F1" sourceRef="SP_Start" targetRef="SP_Task"/>
       <bpmn:sequenceFlow id="SP_F2" sourceRef="SP_Task" targetRef="SP_End"/>
@@ -161,9 +161,9 @@ func TestValidate_BoundaryLeadingToACallOrMessageTask_IsRefused(t *testing.T) {
 	}{
 		{"callActivity", "CA_Esc", `    <bpmn:callActivity id="CA_Esc"><bpmn:extensionElements><zeebe:calledElement processId="Process_M"/></bpmn:extensionElements></bpmn:callActivity>
 `, []string{moduleWithTask("Process_M", validCandidateUser)}},
-		{"sendTask", "Send_N", `    <bpmn:sendTask id="Send_N" messageRef="Msg_n"><bpmn:extensionElements><zeebe:taskDefinition type="send"/><zeebe:assignmentDefinition candidateGroups="preparer"/></bpmn:extensionElements></bpmn:sendTask>
+		{"sendTask", "Send_N", `    <bpmn:sendTask id="Send_N" messageRef="Msg_n"><bpmn:extensionElements><zeebe:taskDefinition type="send"/><zeebe:assignmentDefinition candidateGroups="preparator"/></bpmn:extensionElements></bpmn:sendTask>
 `, nil},
-		{"receiveTask", "Recv_N", `    <bpmn:receiveTask id="Recv_N" messageRef="Msg_n"><bpmn:extensionElements><zeebe:taskDefinition type="receive"/><zeebe:assignmentDefinition candidateGroups="preparer"/></bpmn:extensionElements></bpmn:receiveTask>
+		{"receiveTask", "Recv_N", `    <bpmn:receiveTask id="Recv_N" messageRef="Msg_n"><bpmn:extensionElements><zeebe:taskDefinition type="receive"/><zeebe:assignmentDefinition candidateGroups="preparator"/></bpmn:extensionElements></bpmn:receiveTask>
 `, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

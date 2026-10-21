@@ -51,7 +51,7 @@ const callActivityBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="PR_Prep" name="Prepare">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="PR_End" name="End"/>
@@ -193,7 +193,7 @@ const callActivityWithBoundaryBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="PR_Prep" name="Prepare">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="PR_End" name="End"/>
@@ -319,7 +319,7 @@ const callActivityNoLaneWithDeptBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="NL_Task" name="Prepare">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="NL_End" name="End"/>
@@ -371,7 +371,7 @@ const callActivityNoLaneMissingDeptBPMN = `<?xml version="1.0" encoding="UTF-8"?
     <bpmn:userTask id="NL_Task" name="Prepare">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="NL_End" name="End"/>
@@ -436,7 +436,7 @@ const nestedSubProcessBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:subProcess id="SP_1" name="Outer Sub">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="engineering" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
       <bpmn:startEvent id="SP1_Start"/>
       <bpmn:endEvent id="SP1_End"/>
@@ -519,7 +519,7 @@ const callActivityDeptsRemapBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="PR_Prep" name="Prepare">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="PR_End" name="End"/>

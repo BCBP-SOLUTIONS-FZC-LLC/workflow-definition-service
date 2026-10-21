@@ -54,7 +54,7 @@
     <bpmn:userTask id="Task_design_prep" name="PrepActivity">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -81,7 +81,7 @@
     <bpmn:userTask id="Task_contracts_prep" name="Contracts Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -108,7 +108,7 @@
     <bpmn:userTask id="Task_procurement_prep" name="Procurement Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -135,7 +135,7 @@
     <bpmn:userTask id="Task_planning_prep" name="Planning Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -162,7 +162,7 @@
     <bpmn:userTask id="Task_logistics_prep" name="Logistics Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -189,7 +189,7 @@
     <bpmn:userTask id="Task_hse_prep" name="HSE Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -216,7 +216,7 @@
     <bpmn:userTask id="Task_construction_prep" name="Construction Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -243,7 +243,7 @@
     <bpmn:userTask id="Task_qa_prep" name="QA Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>
@@ -270,7 +270,7 @@
     <bpmn:userTask id="Task_commissioning_prep" name="Commissioning Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="requires_comment" value="false" />
         </zeebe:properties>

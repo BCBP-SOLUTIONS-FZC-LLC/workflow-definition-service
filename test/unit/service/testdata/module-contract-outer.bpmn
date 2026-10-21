@@ -25,7 +25,7 @@
     <bpmn:userTask id="Out_Task" name="Draft">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="L2"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:callActivity id="Out_CallFixed" name="Clear with legal">
@@ -37,7 +37,7 @@
       <bpmn:userTask id="Sub_Task" name="Finalise the draft">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="approve"/>
-          <zeebe:assignmentDefinition candidateGroups="L4"/>
+          <zeebe:assignmentDefinition candidateGroups="approver"/>
         </bpmn:extensionElements>
       </bpmn:userTask>
       <bpmn:endEvent id="Sub_End"/>

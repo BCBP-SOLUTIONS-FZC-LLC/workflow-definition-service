@@ -407,7 +407,7 @@ func TestCompile_PassthroughGateway(t *testing.T) {
     <bpmn:userTask id="Task_prep" name="Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:parallelGateway id="Gateway_pass" name="Pass"/>

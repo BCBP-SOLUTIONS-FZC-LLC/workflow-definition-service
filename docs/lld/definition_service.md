@@ -1362,7 +1362,7 @@ Below is a detailed walkthrough of the endpoints, checks, and flow execution tra
 17. **`ASSIGNEE_INELIGIBLE`** (HTTP 422)
     - **Endpoints**: `POST /workflows/:id/versions/:version_id/publish`
     - **Trigger Scenario**: An admin sets a default assignee user or department on a task, but the user does not belong to that department or lacks the required role level in the Organization registry.
-    - **Technical Cause**: The validation engine extracts default assignee attributes and makes an outbound REST check to the Org & Membership Service. If the target service returns that the user is ineligible, validation fails.
+    - **Technical Cause**: The validation engine extracts default assignee attributes and makes an outbound REST check to the Org & Membership Service. If the target service returns that the user is ineligible, validation fails. A stage whose role is not one of the three department role levels, and a stage that creates no human task, is never sent to it: the first is refused here without a call, the second is not checked.
     - **Step-by-Step Flow**:
       1. The client requests publishing.
       2. The service extracts assignee ID `user-123` and department ID `dept-456` from task `Task_1`.
@@ -1612,6 +1612,10 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
 46. **`INVALID_CONDITION_EXPRESSION`**
     - **Trigger Scenario**: A `conditionExpression` on a flow that leaves a split is longer than 4096 characters, or is not one comparison of a result field with a literal (`[= ] field (=|==|!=) literal`).
     - **Trigger Logic**: The Execution Service evaluates branch conditions with the same shared condition parser of `workflow-models` and fails the gateway at run time on any other form, so a condition it cannot evaluate is refused at validation. A whitespace-only expression is refused too, since it would count as conditional.
+
+47. **`CANDIDATE_GROUPS_INVALID`**
+    - **Trigger Scenario**: A user task's `candidateGroups` is present but is not `preparator`, `reviewer` or `approver`.
+    - **Trigger Logic**: The value is the department role level a user must hold for the task, and Org & Membership accepts only these three levels, so any other value is refused here instead of reaching it as a malformed request. The three levels are one platform-wide set, not a tenant setting. An absent, empty or over-long value is `CANDIDATE_GROUPS_EMPTY`. Elements other than a user task are not checked.
 
 ---
 
@@ -2201,7 +2205,7 @@ Elements are classified into three tiers. The raw-XML denylist scan (`rejectedEl
   **Message Flow Name Resolution**: `name`/`messageRef` on the flow element itself are optional and rarely set in practice — real diagrams almost always put the `messageRef` on the *connected node* instead. `ResolveMessageFlowName` (`bpmncore/compile.go`) resolves a flow's message name in this order: (1) the flow's own `name` attribute; (2) the flow's own `messageRef`, resolved against a root `<bpmn:message>`; (3) the target node's own `messageRef` (a `sendTask`/`receiveTask` attribute, or a boundary event's `messageEventDefinition messageRef`, via `nodeMessageRef`); (4) the same lookup on the source node. `ResolveMessageFlowTarget` provides the inverse (node ID → name), for a receive task or a message boundary whose own `messageRef` does not resolve. A flow with no name into a receive task or message boundary that runs, in the pool that runs or a module it calls, is `MISSING_MESSAGE_DEFINITION` as a **warning**; a flow into anything else needs none, since nothing waits for it.
 - `<bpmn:extensionElements>` — 0–1 per `userTask`, `sendTask`, `receiveTask`, or `sequenceFlow`.
 - `<zeebe:taskDefinition type="...">` — Required on `userTask` and `sendTask`. `type` identifies the stage handler (e.g. `prep`, `review`, `approve`) from the `StageTypeHandler` registry.
-- `<zeebe:assignmentDefinition candidateGroups="..." candidateUsers="...">` — Required on `userTask`. `candidateGroups` → role (validated against Membership at publish); `candidateUsers` → optional single UUID v7 default assignee (code 8).
+- `<zeebe:assignmentDefinition candidateGroups="..." candidateUsers="...">` — Required on `userTask`. `candidateGroups` → role level (one of the three, code 47; the default assignee is validated against Membership at publish); `candidateUsers` → optional single UUID v7 default assignee (code 8).
 - `<zeebe:subscription messageCorrelationKey="...">` — Required on `receiveTask`. Key used at runtime to correlate incoming messages to the correct process instance.
 - `<zeebe:properties>` / `<zeebe:property>` — Optional domain flags. Every property is forwarded verbatim into `StageDef.Extras`; the compiler does not special-case any property name (`requires_comment` is just one convention the Execution Service happens to interpret).
 - `<bpmn:conditionExpression>` (child of `sequenceFlow`) — a single comparison of one result field with one literal: `[= ] field (=|==|!=) literal`, where the literal is a double-quoted string, a number, or `true` or `false`; the optional leading `=` is the designer's expression marker. The Execution Service evaluates exactly this form, so the validator refuses anything else with `INVALID_CONDITION_EXPRESSION`. Required on all outgoing flows of an exclusive or inclusive gateway split except one default flow. Max 4096 chars. Stored verbatim; evaluated by Execution Service at runtime.
@@ -2265,7 +2269,7 @@ Stage type — identifies the job worker that handles the task. The default regi
 
 **`<zeebe:assignmentDefinition candidateGroups="..." candidateUsers="...">` *(required)***
 
-- `candidateGroups` — IAM role level name; passed as `required_level` to Membership at publish; max 256 chars. Compiles to `StageDef.Role`.
+- `candidateGroups` — one of the department role levels `preparator`, `reviewer`, `approver` (`CANDIDATE_GROUPS_INVALID` otherwise); passed as `required_level` to Membership at publish; max 256 chars. Compiles to `StageDef.Role`.
 - `candidateUsers` — single UUID v7 (current limit; enforced via a named validation function for easy relaxation later). Compiles to `StageDef.DefaultAssignees`.
 
 **`<zeebe:properties>` / `<zeebe:property name="..." value="...">` *(optional, any number)***
@@ -3028,7 +3032,7 @@ Default assignee(s) for a `<bpmn:userTask>` are set via `<zeebe:assignmentDefini
 
 | Attribute | Type | Required | Values |
 | --- | --- | --- | --- |
-| `candidateGroups` | string | Yes | IAM role level name (e.g. `"preparator"`); max 256 chars |
+| `candidateGroups` | string | Yes | One of `preparator`, `reviewer`, `approver` |
 | `candidateUsers` | UUID v7 | Current: single | Single UUID v7; multi-user support will be added via a named validator function |
 
 **BPMN XML examples**:
@@ -3134,6 +3138,7 @@ The following rules apply specifically to multi-assignee nodes. The first three 
 | --- | --- |
 | `zeebe:assignmentDefinition` must be present | `MISSING_ASSIGNMENT_DEFINITION` |
 | `candidateGroups` must be non-empty and ≤ 256 chars | `CANDIDATE_GROUPS_EMPTY` |
+| `candidateGroups` of a user task must be `preparator`, `reviewer` or `approver` | `CANDIDATE_GROUPS_INVALID` |
 | `candidateUsers` should be present (warning on a document; an error at publish and `/validate` when the expanded plan leaves the task with no default, §3.1.4 code 8) | `CANDIDATE_USERS_EMPTY` |
 | `candidateUsers` must be a single valid UUID v7 | `INVALID_CANDIDATE_USER` |
 | UUID in `candidateUsers` must pass Org & Membership eligibility check | `ASSIGNEE_INELIGIBLE` |
@@ -4983,6 +4988,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.54 | 2026-10-19 | **Errors are problem documents with correlation ids, request bodies are strict, and a draft save needs its token** (§3.3.6, §10.11, the error catalog and standard patterns). Errors were sent as `application/json` without the trace and request ids the response headers already carried, unknown request fields were silently accepted, and a draft save that supplied no `record_version` skipped the check and overwrote whatever was stored, although §10.11 offered `If-Match` and the code read only the body. Every problem is `application/problem+json` and carries `trace_id` and `request_id`; a body with a field the endpoint does not define is `400 BAD_REQUEST` naming the first such field (field names match without regard to case, as the decoder does, and a second JSON value after the first is refused); `PUT /workflows/:id/draft` takes the token from `If-Match` or the body, refuses a request with neither, and a stale save answers `409` with `current_record_version`. The library's own flat 401 and timeout bodies are unchanged. Breaking for any client, and none exists yet. |
 | 1.55 | 2026-10-19 | **The cache settings table names the settings the service reads** (§1.9.4). The table listed `CACHE_IDEMPOTENCY_TTL`, `CACHE_DRAFT_LOCK_TTL` and `VALKEY_CLIENT_TIMEOUT`, which do not exist; the idempotency TTL is `IDEMPOTENCY_TTL`, the Valkey timeouts are the dial, read and write settings, and the draft lock is a fixed 30 s. No behaviour changes. |
 | 1.56 | 2026-10-21 | **The eligibility check uses the Org & Membership assignee eligibility read, I-19** (§1.2, the `workflow_node_assignee` table, §3.1.3 code 17, §4.1.3, §5.1, §6.2.2, §9.2). Publish asks `GET /api/v1/internal/tenants/:t/members/:u/eligibility` with `department_id` and `required_level`, as the `iam-system` principal with the tenant in the path and in `x-tenant-id`. The answer is `200` with an `eligible` flag; `eligible: false` refuses the publish, and no other outcome is read as an ineligible user. |
+| 1.57 | 2026-10-21 | **A task's role is one of the three department role levels** (§3.1.3 codes 17 and 47, §4.1.3, §4.5.1, §4.5.5). A user task whose `candidateGroups` is not `preparator`, `reviewer` or `approver` is refused with `CANDIDATE_GROUPS_INVALID`, because Org & Membership answers a malformed request for any other level. Publish checks default assignees only on stages that create a human task, and refuses an unknown role as `ASSIGNEE_INELIGIBLE` without calling Org & Membership. The three levels are one platform-wide set held in one place. |
 ---
 
 ## Appendix E: Open Items

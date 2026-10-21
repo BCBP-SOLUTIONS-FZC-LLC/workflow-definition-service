@@ -47,6 +47,7 @@ const (
 	BPMNErrConnectorSecretAuthored        BPMNErrorCode = "CONNECTOR_SECRET_AUTHORED"
 	BPMNErrTaskNotInLane                  BPMNErrorCode = "TASK_NOT_IN_LANE"
 	BPMNErrCandidateGroupsEmpty           BPMNErrorCode = "CANDIDATE_GROUPS_EMPTY"
+	BPMNErrCandidateGroupsInvalid         BPMNErrorCode = "CANDIDATE_GROUPS_INVALID"
 	BPMNErrCandidateUsersEmpty            BPMNErrorCode = "CANDIDATE_USERS_EMPTY"
 	BPMNErrInvalidCandidateUser           BPMNErrorCode = "INVALID_CANDIDATE_USER"
 	BPMNErrInvalidSLADuration             BPMNErrorCode = "INVALID_SLA_DURATION"

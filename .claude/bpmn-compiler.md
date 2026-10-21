@@ -66,7 +66,7 @@ See [ARCHITECTURE.md § BPMN Compiler](../ARCHITECTURE.md#bpmn-compiler).
 
 **`zeebe:taskSchedule`**: optional `<zeebe:taskSchedule dueDate="…" followUpDate="…"/>` on `userTask` is extracted into `StageDef.DueDate` and `StageDef.FollowUpDate` (both strings, omitted from JSON when absent). Values are treated as opaque FEEL expressions; the compiler does not validate them.
 
-**Role and default assignees** come from `<zeebe:assignmentDefinition candidateGroups="…" candidateUsers="…"/>` (standard Camunda 8 extension elements). `candidateUsers` is a single UUID v7 (enforced via a named validation function; will be relaxed to multi-assignee later). Eligibility of `candidateGroups` is delegated to `MembershipClient.CheckEligibility` at publish time.
+**Role and default assignees** come from `<zeebe:assignmentDefinition candidateGroups="…" candidateUsers="…"/>` (standard Camunda 8 extension elements). `candidateUsers` is a single UUID v7 (enforced via a named validation function; will be relaxed to multi-assignee later). On a user task `candidateGroups` is one of `preparator`, `reviewer`, `approver` (`CANDIDATE_GROUPS_INVALID`), held in `domain.ValidRoleLevel`; publish sends it as `required_level` through `MembershipClient.CheckEligibility` for stages that create a human task.
 
 ## XOR Gateways vs Error Events
 

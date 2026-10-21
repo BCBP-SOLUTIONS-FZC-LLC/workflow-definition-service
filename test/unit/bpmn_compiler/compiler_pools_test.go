@@ -104,7 +104,7 @@ func TestCompileForPublish_Collaboration_RunsItsOnePool(t *testing.T) {
 // applies publish's own rules to a collaboration's pool, as it does to a
 // single process: here, a task with no default user.
 func TestValidateForPublish_Collaboration_JudgesAsPublish(t *testing.T) {
-	award := `    <bpmn:userTask id="Award"><bpmn:extensionElements><zeebe:taskDefinition type="approve"/><zeebe:assignmentDefinition candidateGroups="ops"/></bpmn:extensionElements></bpmn:userTask>
+	award := `    <bpmn:userTask id="Award"><bpmn:extensionElements><zeebe:taskDefinition type="approve"/><zeebe:assignmentDefinition candidateGroups="reviewer"/></bpmn:extensionElements></bpmn:userTask>
 `
 	errs, err := bpmn_compiler.New().ValidateForPublish(context.Background(), tenderDocument(award))
 	if err != nil {
@@ -404,8 +404,8 @@ const twoLaneModule = `  <bpmn:process id="Process_Two" isExecutable="true">
       <bpmn:lane id="Two_B" name="B"><bpmn:flowNodeRef>MT2</bpmn:flowNodeRef></bpmn:lane>
     </bpmn:laneSet>
     <bpmn:startEvent id="Two_S"/>
-    <bpmn:userTask id="MT1"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="g" candidateUsers="` + validCandidateUser + `"/></bpmn:extensionElements></bpmn:userTask>
-    <bpmn:userTask id="MT2"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="g" candidateUsers="` + validCandidateUser + `"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="MT1"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + validCandidateUser + `"/></bpmn:extensionElements></bpmn:userTask>
+    <bpmn:userTask id="MT2"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + validCandidateUser + `"/></bpmn:extensionElements></bpmn:userTask>
     <bpmn:endEvent id="Two_E"/>
     <bpmn:sequenceFlow id="Two_F1" sourceRef="Two_S" targetRef="MT1"/>
     <bpmn:sequenceFlow id="Two_F2" sourceRef="MT1" targetRef="MT2"/>
@@ -456,7 +456,7 @@ func TestCompileForPublish_IgnoredPoolCallingTheWorkflow_StillRunsIt(t *testing.
 // association, written by bpmn-js with a placeholder property on its task, is
 // accepted as a decoration.
 func TestValidate_DataInputAssociation_IsDiagramOnly(t *testing.T) {
-	task := `    <bpmn:userTask id="Award"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="` + validCandidateUser + `"/></bpmn:extensionElements>
+	task := `    <bpmn:userTask id="Award"><bpmn:extensionElements><zeebe:taskDefinition type="prep"/><zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + validCandidateUser + `"/></bpmn:extensionElements>
       <bpmn:documentation>Award the bid</bpmn:documentation>
       <bpmn:property id="Property_1" name="__targetRef_placeholder"/>
       <bpmn:dataInputAssociation id="DIA_1"><bpmn:sourceRef>Store</bpmn:sourceRef><bpmn:targetRef>Property_1</bpmn:targetRef></bpmn:dataInputAssociation>

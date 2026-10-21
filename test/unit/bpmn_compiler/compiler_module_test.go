@@ -98,7 +98,7 @@ func moduleWithTask(id, candidateUsers string) string {
     <bpmn:userTask id="%[1]s_Task">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="%[2]s"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="%[2]s"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="%[1]s_End"/>
@@ -320,7 +320,7 @@ func TestValidate_CalledProcessSubProcessError_NamesTheSubProcess(t *testing.T) 
       <bpmn:userTask id="C_Sub_Task">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="prep"/>
-          <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="` + validCandidateUser + `"/>
+          <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="` + validCandidateUser + `"/>
         </bpmn:extensionElements>
       </bpmn:userTask>
       <bpmn:sequenceFlow id="C_Sub_F1" sourceRef="C_Sub_Start" targetRef="C_Sub_Task"/>

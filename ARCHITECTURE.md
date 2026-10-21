@@ -866,7 +866,7 @@ Every `<bpmn:userTask>` requires these extension elements:
 
 | Attribute | Required | Rules |
 |---|---|---|
-| `candidateGroups` | Yes | IAM role level name; validated against Membership Service at publish time; max 256 chars |
+| `candidateGroups` | Yes | One of `preparator`, `reviewer`, `approver` (`CANDIDATE_GROUPS_INVALID` otherwise); sent to the Membership Service as the required level at publish time; max 256 chars |
 | `candidateUsers` | No | Single UUID v7 (one assignee). Absent is the `CANDIDATE_USERS_EMPTY` warning on the document; a published workflow gives every task a default, from here or from a calling callActivity's `Assignees`, and refuses publish (and `/validate`) otherwise. A global module names no user. |
 
 **System semantics**: `candidateGroups` → `StageDef.Role` (passed as `required_level` to the Membership eligibility read). `candidateUsers` → `StageDef.DefaultAssignees` (pre-assigned when the task starts in Execution Service).
@@ -1060,6 +1060,7 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | Task appears in exactly one lane via `<bpmn:flowNodeRef>` | `TASK_NOT_IN_LANE` |
 | `zeebe:assignmentDefinition` present | `MISSING_ASSIGNMENT_DEFINITION` |
 | `candidateGroups` present, ≤ 256 chars | `CANDIDATE_GROUPS_EMPTY` |
+| `candidateGroups` of a user task is `preparator`, `reviewer` or `approver` | `CANDIDATE_GROUPS_INVALID` |
 | `candidateUsers` present — on a workflow's expanded plan at publish and `/validate`, or given by a calling callActivity's `Assignees` | `CANDIDATE_USERS_EMPTY` *(warning on the document; error at publish)* |
 | `candidateUsers` is a single valid UUID v7, and is not set at all in a global module | `INVALID_CANDIDATE_USER` |
 
@@ -1158,6 +1159,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `UNKNOWN_STAGE_TYPE` | *(warning severity)* `type` attribute value not in the registered `StageTypeHandler` set; compilation continues |
 | `TASK_NOT_IN_LANE` | `userTask` not referenced by any `<bpmn:flowNodeRef>` |
 | `CANDIDATE_GROUPS_EMPTY` | `candidateGroups` absent or exceeds 256 chars |
+| `CANDIDATE_GROUPS_INVALID` | A user task's `candidateGroups` is not `preparator`, `reviewer` or `approver` |
 | `CANDIDATE_USERS_EMPTY` | `candidateUsers` absent: a warning on the document; an error at publish and `/validate` for any task of the expanded plan with no default, on the task or the top-level call that runs it |
 | `INVALID_CANDIDATE_USER` | `candidateUsers` is not a valid UUID v7, or a global module names a user |
 | `INVALID_CONDITION_EXPRESSION` | Condition expression exceeds 4096 chars or is not one comparison of a field with a literal |

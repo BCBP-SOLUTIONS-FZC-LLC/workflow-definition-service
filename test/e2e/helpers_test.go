@@ -38,7 +38,7 @@ const minimalBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_prep" name="PrepActivity">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties><zeebe:property name="requires_comment" value="false"/></zeebe:properties>
       </bpmn:extensionElements>
     </bpmn:userTask>

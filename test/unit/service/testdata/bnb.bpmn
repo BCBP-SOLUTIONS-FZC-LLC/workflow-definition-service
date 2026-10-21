@@ -58,7 +58,7 @@
       <bpmn:userTask id="Activity_1j3njtc" name="Prepare">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="prep" />
-          <zeebe:assignmentDefinition candidateGroups="tender-business" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
+          <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
         </bpmn:extensionElements>
         <bpmn:incoming>Flow_19cd9lj</bpmn:incoming>
         <bpmn:incoming>Flow_13rcogu</bpmn:incoming>
@@ -67,7 +67,7 @@
       <bpmn:userTask id="Activity_09encqr" name="Review">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="review" />
-          <zeebe:assignmentDefinition candidateGroups="tender-business" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
+          <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
         </bpmn:extensionElements>
         <bpmn:incoming>Flow_0go3lj0</bpmn:incoming>
         <bpmn:incoming>Flow_1cu8z2f</bpmn:incoming>
@@ -77,7 +77,7 @@
       <bpmn:userTask id="Activity_1uxl7re" name="Approve">
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="approve" />
-          <zeebe:assignmentDefinition candidateGroups="tender-business" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
+          <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
         </bpmn:extensionElements>
         <bpmn:incoming>Flow_1l63rw9</bpmn:incoming>
         <bpmn:outgoing>Flow_1wk51am</bpmn:outgoing>
@@ -114,7 +114,7 @@
     <bpmn:userTask id="Activity_1gll6sb" name="Inform Depts BId">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep" />
-        <zeebe:assignmentDefinition candidateGroups="tender-business" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1b50fe9</bpmn:incoming>
       <bpmn:outgoing>Flow_1u6zjnr</bpmn:outgoing>
@@ -145,7 +145,7 @@
     <bpmn:userTask id="Activity_0qhdz4p" name="Inform No Bid">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep" />
-        <zeebe:assignmentDefinition candidateGroups="tender-business" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_nobid</bpmn:incoming>
       <bpmn:outgoing>Flow_14gf8y3</bpmn:outgoing>
@@ -179,7 +179,7 @@
     <bpmn:userTask id="Activity_13swln3" name="Verify Attachments">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review" />
-        <zeebe:assignmentDefinition candidateGroups="bd-agent" candidateUsers="018e1f2a-0000-7000-8000-000000000001" />
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018e1f2a-0000-7000-8000-000000000001" />
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_0c1c8bz</bpmn:incoming>
       <bpmn:outgoing>Flow_1pvxzf0</bpmn:outgoing>
@@ -223,7 +223,7 @@
     <bpmn:userTask id="Activity_0fdth99" name="Prepare ack without missing">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep" />
-        <zeebe:assignmentDefinition candidateGroups="tender-business" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_0awzypx</bpmn:incoming>
       <bpmn:incoming>Flow_06bhng2</bpmn:incoming>
@@ -239,7 +239,7 @@
     <bpmn:userTask id="Activity_1l5l53o" name="Ack with missing doc">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep" />
-        <zeebe:assignmentDefinition candidateGroups="tender-business" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_0ou50th</bpmn:incoming>
       <bpmn:outgoing>Flow_0bho60z</bpmn:outgoing>
@@ -250,7 +250,7 @@
     <bpmn:userTask id="Activity_00syxjl" name="Decide if to procesd with misssing docs">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review" />
-        <zeebe:assignmentDefinition candidateGroups="tender-business" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018e1f2a-0000-7000-8000-000000000020" />
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_12wyw04</bpmn:incoming>
       <bpmn:outgoing>Flow_01z6jdb</bpmn:outgoing>

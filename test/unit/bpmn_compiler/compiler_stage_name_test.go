@@ -14,7 +14,7 @@ func TestCompile_StageCarriesTheTaskName(t *testing.T) {
 		{"user task", `<bpmn:userTask id="Task_1" name="Prepare the response">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="design" candidateUsers="` + aliceUUID + `"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1</bpmn:incoming><bpmn:outgoing>Flow_2</bpmn:outgoing>
     </bpmn:userTask>`},
@@ -23,7 +23,7 @@ func TestCompile_StageCarriesTheTaskName(t *testing.T) {
       <bpmn:incoming>Flow_1</bpmn:incoming><bpmn:outgoing>Flow_2</bpmn:outgoing>
     </bpmn:serviceTask>`},
 		{"send task", `<bpmn:sendTask id="Task_1" name="Prepare the response">
-      <bpmn:extensionElements><zeebe:assignmentDefinition candidateGroups="design" candidateUsers="` + aliceUUID + `"/></bpmn:extensionElements>
+      <bpmn:extensionElements><zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="` + aliceUUID + `"/></bpmn:extensionElements>
       <bpmn:incoming>Flow_1</bpmn:incoming><bpmn:outgoing>Flow_2</bpmn:outgoing>
     </bpmn:sendTask>`},
 	} {

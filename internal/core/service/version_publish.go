@@ -179,10 +179,16 @@ func distinctEligibilityChecks(plan *dsl.CompiledPlan) ([]eligibilityCheck, erro
 	seen := map[eligibilityCheck]bool{}
 	for _, dept := range plan.Departments {
 		for _, stage := range dept.Stages {
+			if !stage.CreatesHumanTask() {
+				continue
+			}
 			for _, assigneeID := range stage.DefaultAssignees {
 				userID, err := uuid.Parse(assigneeID)
 				if err != nil || userID.Version() != 7 {
 					return nil, fmt.Errorf("invalid assignee UUID %s: %w", assigneeID, domain.ErrAssigneeIneligible)
+				}
+				if !domain.ValidRoleLevel(stage.Role) {
+					return nil, fmt.Errorf("user %s dept %s role %s is not a department role level: %w", assigneeID, dept.IAMDepartmentID, stage.Role, domain.ErrAssigneeIneligible)
 				}
 				check := eligibilityCheck{assigneeID: assigneeID, userID: userID, deptID: dept.IAMDepartmentID, role: stage.Role}
 				if !seen[check] {

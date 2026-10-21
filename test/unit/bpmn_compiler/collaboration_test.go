@@ -71,7 +71,7 @@ var collabMainBody = `
     <bpmn:userTask id="Task_main" name="Main Task">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
       <bpmn:incoming>FM1</bpmn:incoming>
       <bpmn:outgoing>FM2</bpmn:outgoing>
@@ -254,7 +254,7 @@ func TestValidate_Collaboration_MessageFlowNameViaConnectedNode_NoWarn(t *testin
     <bpmn:userTask id="T_b" name="Task">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="l" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
       <bpmn:incoming>F_b1</bpmn:incoming>
       <bpmn:outgoing>F_b2</bpmn:outgoing>
@@ -411,7 +411,7 @@ func TestWithStageType_CustomStagePreventsInvalidTaskDefError(t *testing.T) {
     <bpmn:userTask id="T1" name="Task">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="special"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
       <bpmn:incoming>F1</bpmn:incoming><bpmn:outgoing>F2</bpmn:outgoing>
     </bpmn:userTask>
@@ -465,7 +465,7 @@ const xorAllTerminateContinuationBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_eval" name="Evaluate">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="tender" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
       <bpmn:incoming>Fx1_1</bpmn:incoming><bpmn:outgoing>Fx1_2</bpmn:outgoing>
     </bpmn:userTask>
@@ -477,7 +477,7 @@ const xorAllTerminateContinuationBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_proceed" name="Proceed">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="tender" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
       <bpmn:incoming>Fx1_bid</bpmn:incoming><bpmn:outgoing>Fx1_3</bpmn:outgoing>
     </bpmn:userTask>
@@ -531,7 +531,7 @@ const xorAllTerminateAllEndBPMN = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_decide" name="Decide">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
       <bpmn:incoming>Fx2_1</bpmn:incoming><bpmn:outgoing>Fx2_2</bpmn:outgoing>
     </bpmn:userTask>
@@ -668,7 +668,7 @@ func TestValidate_Collaboration_TargetRef_UnknownNode(t *testing.T) {
     <bpmn:userTask id="Task_1" name="T1">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="E1"/>
@@ -687,7 +687,7 @@ func TestValidate_Collaboration_TargetRef_UnknownNode(t *testing.T) {
     <bpmn:userTask id="Task_2" name="T2">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="E2"/>
@@ -730,20 +730,20 @@ func TestValidate_InclusiveGateway_SplitJoin_Unsupported(t *testing.T) {
     <bpmn:userTask id="Task_A" name="Evaluate">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:inclusiveGateway id="INC_split"/>
     <bpmn:userTask id="Task_B" name="Path B">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:userTask id="Task_C" name="Path C">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="review"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:inclusiveGateway id="INC_join"/>
@@ -814,7 +814,7 @@ func TestValidate_Collaboration_ReceiveTask_CollabReachable(t *testing.T) {
     <bpmn:userTask id="Task_send" name="Send RFQ">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:userTask>
     <bpmn:endEvent id="E1"/>
@@ -833,7 +833,7 @@ func TestValidate_Collaboration_ReceiveTask_CollabReachable(t *testing.T) {
     <bpmn:receiveTask id="Task_rcv" name="Receive RFQ">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="ops" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
       </bpmn:extensionElements>
     </bpmn:receiveTask>
     <bpmn:endEvent id="E2"/>
