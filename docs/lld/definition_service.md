@@ -26,7 +26,7 @@ The Definition Service operates within a broader ecosystem and interacts with th
 1. **Frontend / UI**: Supplies the raw BPMN 2.0 XML from the canvas modeler for upload and template editing. During node authoring, the modeler calls Org & Membership directly (`GET /tenants/:id/users?department=:dept&level=:level`) to populate filtered user pickers.
 2. **PostgreSQL**: Stores the compiled DSL, draft XMLs, historical versions, and default node assignee mapping records (`workflow_node_assignee`).
 3. **Internal API (HTTP)**: Serves the compiled plan of a workflow version to the Execution Service and its Temporal Worker on the internal route group, `/api/v1/internal`, specified in `api/internal-openapi.yaml` (§3.4.1).
-4. **Org & Membership Service (Outbound REST)**: During publish/execution transactions and validation passes, the Definition Service calls `POST /tenants/:t/users/:u/eligibility?department=:dept&level=:level` as a backend defense-in-depth check to ensure all default assignees are eligible.
+4. **Org & Membership Service (Outbound REST)**: During publish/execution transactions and validation passes, the Definition Service calls `GET /api/v1/internal/tenants/:t/members/:u/eligibility?department_id=:dept&required_level=:level` as a backend defense-in-depth check to ensure all default assignees are eligible. The call carries the `iam-system` system principal (`x-user-id`, `x-tenant-roles`) and `x-tenant-id`; the tenant in the path is authoritative. The answer is `200` with an `eligible` flag, and `eligible: false` is the only answer that makes an assignee ineligible. A `400`, a `403`, a `5xx`, a transport error or a `200` without the flag is an unavailable dependency, never an ineligible user.
 5. **Event Bus (inbound only)**: This service publishes no events and has no outbox (§7.2, §10.7). It does **not** consume SQS: the shared workflow-events consumer subscribes to `membership-workflow-q` (`iam.membership.events`) and forwards `DepartmentMembershipRevoked` events to `POST /api/v1/internal/events` (§7.4), which triggers template invalidation.
 6. **Shared Workflow-Events Consumer (Inbound HTTP)**: A separate engine-wide service consumes the SQS queues and HTTP-routes each envelope to the respective workflow service (Definition or Execution). For the Definition Service it calls the internal `POST /api/v1/internal/events` endpoint.
 7. **Execution Service (Outbound HTTP)**: The Definition Service makes two calls on the Execution Service's internal API (§3.4.2). (a) During archive (`POST /workflows/:id/archive`): the active-instances read refuses the archive with `ACTIVE_INSTANCES_EXIST` (409) if any instance is RUNNING or PAUSED. (b) During membership revocation (`POST /api/v1/internal/events`, §7.4.2): the pause-tasks call has Execution pause the revoked user's active task assignments. Both calls wrap errors as `ErrUpstreamUnavailable` after retries.
@@ -874,7 +874,7 @@ A **denormalized reverse index** that inverts the compiled DSL's `default_assign
 | `node_key` | VARCHAR(255) | Key of the workflow step |
 | `user_id` | UUID | Assigned user |
 | `department_id` | VARCHAR(255) | Department identifier from the BPMN lane configuration. Format is determined by the workflow admin; current examples (e.g. "design", "qa-hse") are placeholders. Revisit when the Org & Membership service LLD is complete. |
-| `role` | VARCHAR(64) | IAM role level for eligibility validation. Passed as `?level=<role>` to the Org & Membership eligibility endpoint at publish time. Maps to the IAM role tier (e.g. "preparator", "reviewer", "approver"). |
+| `role` | VARCHAR(64) | IAM role level for eligibility validation. Passed as `required_level` to the Org & Membership eligibility read at publish time. Maps to the IAM role tier (e.g. "preparator", "reviewer", "approver"). |
 | `created_at` | TIMESTAMPTZ | Creation timestamp |
 
 ---
@@ -1366,8 +1366,8 @@ Below is a detailed walkthrough of the endpoints, checks, and flow execution tra
     - **Step-by-Step Flow**:
       1. The client requests publishing.
       2. The service extracts assignee ID `user-123` and department ID `dept-456` from task `Task_1`.
-      3. The service calls the Org Service: `POST /tenants/tenant-id/users/user-123/eligibility?department=dept-456`.
-      4. The Org Service responds that the user is not in department `dept-456`.
+      3. The service calls the Org Service: `GET /api/v1/internal/tenants/tenant-id/members/user-123/eligibility?department_id=dept-456&required_level=reviewer`.
+      4. The Org Service answers `eligible: false` with the reason `not_in_department`.
       5. The validation pass fails, the transaction rolls back, and the service returns `code: ASSIGNEE_INELIGIBLE` detailing the node ID and error message.
     - **Database & Transaction Impact**: Opened transaction is aborted and rolled back.
     - **Resolution**: Assign an eligible user who belongs to the department and holds the correct role clearance.
@@ -2265,7 +2265,7 @@ Stage type — identifies the job worker that handles the task. The default regi
 
 **`<zeebe:assignmentDefinition candidateGroups="..." candidateUsers="...">` *(required)***
 
-- `candidateGroups` — IAM role level name; passed as `?level=<role>` to Membership at publish; max 256 chars. Compiles to `StageDef.Role`.
+- `candidateGroups` — IAM role level name; passed as `required_level` to Membership at publish; max 256 chars. Compiles to `StageDef.Role`.
 - `candidateUsers` — single UUID v7 (current limit; enforced via a named validation function for easy relaxation later). Compiles to `StageDef.DefaultAssignees`.
 
 **`<zeebe:properties>` / `<zeebe:property name="..." value="...">` *(optional, any number)***
@@ -3173,7 +3173,7 @@ sequenceDiagram
     
     API->>API: Extract Default Assignees from Plan (default_assignees[] per node)
     loop For each user_id in default_assignees across all nodes
-        API->>IAM: POST /tenants/:t/users/:u/eligibility?department=:dept&level=:level
+        API->>IAM: GET /api/v1/internal/tenants/:t/members/:u/eligibility?department_id=:dept&required_level=:level
         IAM-->>API: Response { eligible: true/false }
         alt User not eligible
             API-->>Admin: 422 Unprocessable Entity (Assignee Ineligible)
@@ -3625,7 +3625,7 @@ The service adds the following **additional child spans** on top of the gincommo
 
 Distributed tracing context is propagated across network boundaries as follows:
 
-1. **Outbound HTTP Calls**: For outbound HTTP requests (such as calling the Org & Membership Service `POST /tenants/:t/users/:u/eligibility`), the client uses OpenTelemetry transport wrappers that start a client span and inject its W3C context into the `traceparent` header. Every outbound client (Org & Membership, the Execution Service, OpenBao) shares one construction: that transport, a 1 MiB cap on a decoded response body, a 1 KiB cap on an error body kept for logging, and one `platform_dependency_request_seconds` observation per call by `dependency` (`membership`, `execution`, `openbao`), `operation` and `outcome`.
+1. **Outbound HTTP Calls**: For outbound HTTP requests (such as calling the Org & Membership Service `GET /api/v1/internal/tenants/:t/members/:u/eligibility`), the client uses OpenTelemetry transport wrappers that start a client span and inject its W3C context into the `traceparent` header. Every outbound client (Org & Membership, the Execution Service, OpenBao) shares one construction: that transport, a 1 MiB cap on a decoded response body, a 1 KiB cap on an error body kept for logging, and one `platform_dependency_request_seconds` observation per call by `dependency` (`membership`, `execution`, `openbao`), `operation` and `outcome`.
 2. **Inbound Internal Calls**: The internal routes (§3.4) run behind the same `gincommon.TracingMiddleware`, which extracts the W3C `traceparent` header, so a compiled-plan read joins the Execution Service's span for the call.
 
 ### 6.3 Structured Logging and Auditing
@@ -3782,7 +3782,7 @@ This is the standard path when an admin intentionally wants to change who gets a
 1. Admin creates a new draft from the existing published version (inheriting the BPMN XML).
 2. Admin updates the `candidateUsers` in `<zeebe:assignmentDefinition>` for the relevant node in the BPMN XML.
 3. Admin calls `POST /workflows/:id/versions/:versionId/publish`.
-4. The publish handler validates the new assignee's eligibility via `POST /tenants/:t/users/:u/eligibility?department=:dept&level=:level` on the Org & Membership Service.
+4. The publish handler validates the new assignee's eligibility via `GET /api/v1/internal/tenants/:t/members/:u/eligibility?department_id=:dept&required_level=:level` on the Org & Membership Service.
 5. On success, the new `compiled_plan_json` is written and new rows are inserted into `workflow_node_assignee` in the same transaction. No event is emitted (§7.2, §10.7).
 
 **Scope**: affects only **new** workflow instances started from this point forward. All running instances retain the `assignee_user_id` that was resolved when they were started — they are never retroactively re-pointed.
@@ -3932,7 +3932,7 @@ To ensure optimal connection management, the service connects to PostgreSQL thro
 | **Valkey (cache)** | Down / unreachable | Three effects: (1) compiled-plan cache miss falls through to Postgres transparently (no caller-visible impact); (2) idempotency middleware — cache miss → request passes through uncached (duplicate protection degraded, not lost); (3) draft-edit lock acquisition fails → handler returns `503`. `/readyz` stays `200` with `"cache":"degraded"` — the pod stays in rotation. | None for business data. Duplicate-mutation window open for the outage duration. |
 | **Execution Service internal API** | Down / timeout | `ArchiveWorkflow` reads the workflow's active instances before archiving (§3.4.2). On timeout (default 5 s), the handler returns `503 UPSTREAM_UNAVAILABLE`. No archive proceeds. The workflow remains in its current state. | None. |
 | **Inbound event ingest** (`POST /api/v1/internal/events`) | Definition pod down, or shared consumer down | The shared consumer holds `DepartmentMembershipRevoked` messages on `membership-workflow-q` (SQS retention: 14 days) and retries the HTTP POST until the Definition Service is healthy. On recovery, events are reprocessed; the handlers converge on the same state either way (§2.3.1). `is_valid` flags may be stale for the duration of the outage. | None — SQS retains the messages and the consumer retries. |
-| **Org & Membership eligibility endpoint** | Down at publish time | Publish calls the membership eligibility check once for each distinct (user, department, role), at most eight at a time, and reports the first failure in plan order. On timeout/5xx, publish returns `503 UPSTREAM_UNAVAILABLE`. The draft is not promoted. | None. |
+| **Org & Membership eligibility endpoint** | Down at publish time | Publish calls the membership eligibility check once for each distinct (user, department, role), at most eight at a time, and reports the first failure in plan order. On timeout/5xx, a `400` or `403`, or an answer without the `eligible` flag, publish returns `503 UPSTREAM_UNAVAILABLE`; an unavailable read is never read as an ineligible user. The draft is not promoted. | None. |
 
 ### 9.3 Service-Level Objectives
 
@@ -4982,6 +4982,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.53 | 2026-10-18 | **A tenant data purge for departed tenants** (§7.4.4, §7.4.6, §10.15, Appendix E). The service consumed no tenant lifecycle event, so after IAM's tenant wipe its workflows, modules, starters and connector credentials stayed for ever, with user UUIDs in the assignees and stored plans. It now records a tenant when `TenantMembershipsPurged` or `TenantStateChanged` to `offboarded` arrives (idempotent) and a sweep deletes the tenant's credentials, workflows, modules and starters in batches, as the tenant under row-level security, after `TENANT_CREDENTIAL_RETENTION` (30 days by default) for the credentials and `TENANT_ARTIFACT_RETENTION` (7 years by default) for the workflows, modules and starters, each part with its own completion mark; the periods, the interval and the batch are settings and the sweep can be switched off. A tenant is marked purged only after a check finds no row left. `event_consumer` routes both events here as well as to Execution. |
 | 1.54 | 2026-10-19 | **Errors are problem documents with correlation ids, request bodies are strict, and a draft save needs its token** (§3.3.6, §10.11, the error catalog and standard patterns). Errors were sent as `application/json` without the trace and request ids the response headers already carried, unknown request fields were silently accepted, and a draft save that supplied no `record_version` skipped the check and overwrote whatever was stored, although §10.11 offered `If-Match` and the code read only the body. Every problem is `application/problem+json` and carries `trace_id` and `request_id`; a body with a field the endpoint does not define is `400 BAD_REQUEST` naming the first such field (field names match without regard to case, as the decoder does, and a second JSON value after the first is refused); `PUT /workflows/:id/draft` takes the token from `If-Match` or the body, refuses a request with neither, and a stale save answers `409` with `current_record_version`. The library's own flat 401 and timeout bodies are unchanged. Breaking for any client, and none exists yet. |
 | 1.55 | 2026-10-19 | **The cache settings table names the settings the service reads** (§1.9.4). The table listed `CACHE_IDEMPOTENCY_TTL`, `CACHE_DRAFT_LOCK_TTL` and `VALKEY_CLIENT_TIMEOUT`, which do not exist; the idempotency TTL is `IDEMPOTENCY_TTL`, the Valkey timeouts are the dial, read and write settings, and the draft lock is a fixed 30 s. No behaviour changes. |
+| 1.56 | 2026-10-21 | **The eligibility check uses the Org & Membership assignee eligibility read, I-19** (§1.2, the `workflow_node_assignee` table, §3.1.3 code 17, §4.1.3, §5.1, §6.2.2, §9.2). Publish asks `GET /api/v1/internal/tenants/:t/members/:u/eligibility` with `department_id` and `required_level`, as the `iam-system` principal with the tenant in the path and in `x-tenant-id`. The answer is `200` with an `eligible` flag; `eligible: false` refuses the publish, and no other outcome is read as an ineligible user. |
 ---
 
 ## Appendix E: Open Items

@@ -42,7 +42,7 @@ DB_URL="${DB_URL:-postgres://workflow_definition_migrator:devpassword@localhost:
 INTERNAL_TOKEN="${INTERNAL_TOKEN:-}"
 
 # Stable fixture UUIDs matching initial-diagram.bpmn
-ALICE="019ef700-0000-7001-8001-000000000001"  # design preparer (UUID v7 required by eligibility check)
+ALICE="019ef700-0000-7001-8001-000000000001"  # design preparator (UUID v7 required by eligibility check)
 BOB="019ef700-0000-7001-9001-000000000002"    # design reviewer (UUID v7 required by eligibility check)
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -109,7 +109,7 @@ get_id()         { python3 -c "import json,sys; d=json.load(sys.stdin); print(d[
 get_version_id() { python3 -c "import json,sys; d=json.load(sys.stdin); print(d['version_id'])" 2>/dev/null <<< "$1"; }
 get_workflow_id() { python3 -c "import json,sys; d=json.load(sys.stdin); print(d['workflow_id'])" 2>/dev/null <<< "$1"; }
 
-# Uses the canonical Zeebe properties; alice is preparer, bob is reviewer.
+# Uses the canonical Zeebe properties; alice is preparator, bob is reviewer.
 BPMN_VALID='<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
     xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
@@ -136,10 +136,10 @@ BPMN_VALID='<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_prep" name="Design Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="018f2d3c-0000-7000-8000-0000000000a1"/>
         <zeebe:properties>
           <zeebe:property name="dept_id" value="design"/>
-          <zeebe:property name="role" value="preparer"/>
+          <zeebe:property name="role" value="preparator"/>
           <zeebe:property name="default_user_ids" value="018f2d3c-0000-7000-8000-0000000000a1"/>
           <zeebe:property name="sla_duration" value="48h"/>
         </zeebe:properties>
@@ -231,10 +231,10 @@ BPMN_IE='<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:userTask id="Task_ie_prep" name="Design Prep">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="prep"/>
-        <zeebe:assignmentDefinition candidateGroups="preparer" candidateUsers="'"${ALICE}"'"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator" candidateUsers="'"${ALICE}"'"/>
         <zeebe:properties>
           <zeebe:property name="dept_id" value="design"/>
-          <zeebe:property name="role" value="preparer"/>
+          <zeebe:property name="role" value="preparator"/>
           <zeebe:property name="sla_duration" value="48h"/>
         </zeebe:properties>
       </bpmn:extensionElements>
@@ -517,7 +517,7 @@ WF2_ID=$(get_workflow_id "$WF2_RESP")
 V2_DRAFT_ID=$(get_version_id "$WF2_RESP")
 [ -n "$V2_DRAFT_ID" ] && pass "Setup: created draft workflow for internal events test" || fail "Setup: draft creation failed"
 
-# Send DepartmentMembershipRevoked for alice (design/preparer)
+# Send DepartmentMembershipRevoked for alice (design/preparator)
 EVENT1_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
 REVOKE_MSG=$(cat <<JSON
 {
@@ -528,7 +528,7 @@ REVOKE_MSG=$(cat <<JSON
   "data": {
     "user_id": "${ALICE}",
     "department_id": "f14abc9f-befa-54ff-b57f-c15ab3090062",
-    "role": "preparer"
+    "role": "preparator"
   }
 }
 JSON

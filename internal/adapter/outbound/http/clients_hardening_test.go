@@ -92,7 +92,9 @@ func TestClients_StartAClientSpanOfTheirOwn(t *testing.T) {
 		"execution": func() {
 			_, _ = NewExecutionClient(srv.URL, "t", time.Second).try(ctx, http.MethodGet, srv.URL+"/x", nil, http.StatusOK, nil)
 		},
-		"membership": func() { _, _, _ = NewMembershipClient(srv.URL, time.Second).tryCheckEligibility(ctx, srv.URL) },
+		"membership": func() {
+			_, _, _ = NewMembershipClient(srv.URL, time.Second).tryCheckEligibility(ctx, srv.URL, uuid.New())
+		},
 		"secrets": func() {
 			_ = NewSecretsClient(srv.URL, "t", "secret", time.Second).Delete(ctx, "some/path")
 		},

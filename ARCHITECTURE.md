@@ -869,7 +869,7 @@ Every `<bpmn:userTask>` requires these extension elements:
 | `candidateGroups` | Yes | IAM role level name; validated against Membership Service at publish time; max 256 chars |
 | `candidateUsers` | No | Single UUID v7 (one assignee). Absent is the `CANDIDATE_USERS_EMPTY` warning on the document; a published workflow gives every task a default, from here or from a calling callActivity's `Assignees`, and refuses publish (and `/validate`) otherwise. A global module names no user. |
 
-**System semantics**: `candidateGroups` → `StageDef.Role` (passed as `?level=<role>` to Membership eligibility check). `candidateUsers` → `StageDef.DefaultAssignees` (pre-assigned when the task starts in Execution Service).
+**System semantics**: `candidateGroups` → `StageDef.Role` (passed as `required_level` to the Membership eligibility read). `candidateUsers` → `StageDef.DefaultAssignees` (pre-assigned when the task starts in Execution Service).
 
 **`zeebe:properties`**
 

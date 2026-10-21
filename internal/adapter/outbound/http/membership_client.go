@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,14 +24,12 @@ type MembershipClient struct {
 
 func NewMembershipClient(baseURL string, timeout time.Duration) *MembershipClient {
 	return &MembershipClient{
-		baseURL: baseURL,
+		baseURL: strings.TrimRight(baseURL, "/"),
 		client:  newClient(timeout),
 	}
 }
 
 const maxEligibilityAttempts = 3
-
-const notEligibleStatusCode = http.StatusConflict
 
 func (c *MembershipClient) CheckEligibility(
 	ctx context.Context,
@@ -50,13 +49,13 @@ func (c *MembershipClient) checkEligibility(
 	tenantID, userID uuid.UUID,
 	departmentID, role string,
 ) (bool, error) {
-	params := url.Values{"department": {departmentID}, "level": {role}}
-	rawURL := fmt.Sprintf("%s/tenants/%s/users/%s/eligibility?%s",
+	params := url.Values{"department_id": {departmentID}, "required_level": {role}}
+	rawURL := fmt.Sprintf("%s/api/v1/internal/tenants/%s/members/%s/eligibility?%s",
 		c.baseURL, tenantID, userID, params.Encode())
 
 	var lastErr error
 	for attempt := 1; attempt <= maxEligibilityAttempts; attempt++ {
-		eligible, retryable, err := c.tryCheckEligibility(ctx, rawURL)
+		eligible, retryable, err := c.tryCheckEligibility(ctx, rawURL, tenantID)
 		if err == nil {
 			return eligible, nil
 		}
@@ -73,11 +72,14 @@ func (c *MembershipClient) checkEligibility(
 	return false, lastErr
 }
 
-func (c *MembershipClient) tryCheckEligibility(ctx context.Context, rawURL string) (eligible, retryable bool, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, nil)
+func (c *MembershipClient) tryCheckEligibility(ctx context.Context, rawURL string, tenantID uuid.UUID) (eligible, retryable bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return false, false, fmt.Errorf("build eligibility request: %w", err)
 	}
+	req.Header.Set("x-user-id", systemPrincipal)
+	req.Header.Set("x-tenant-roles", systemPrincipal)
+	req.Header.Set("x-tenant-id", tenantID.String())
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return false, true, fmt.Errorf("%w: membership eligibility check: %w", domain.ErrUpstreamUnavailable, err)
@@ -85,8 +87,6 @@ func (c *MembershipClient) tryCheckEligibility(ctx context.Context, rawURL strin
 	defer resp.Body.Close() //nolint:errcheck // a failed close of a response body is not actionable
 
 	switch {
-	case resp.StatusCode == notEligibleStatusCode:
-		return false, false, nil
 	case resp.StatusCode >= 500:
 		return false, true, fmt.Errorf("%w: membership returned %d", domain.ErrUpstreamUnavailable, resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:
@@ -94,12 +94,15 @@ func (c *MembershipClient) tryCheckEligibility(ctx context.Context, rawURL strin
 	}
 
 	var body struct {
-		Eligible bool `json:"eligible"`
+		Eligible *bool `json:"eligible"`
 	}
 	if err := json.NewDecoder(limitedBody(resp.Body)).Decode(&body); err != nil {
 		return false, false, fmt.Errorf("decode eligibility response: %w", err)
 	}
-	return body.Eligible, false, nil
+	if body.Eligible == nil {
+		return false, false, fmt.Errorf("%w: membership eligibility response has no eligible flag", domain.ErrUpstreamUnavailable)
+	}
+	return *body.Eligible, false, nil
 }
 
 func retryBackoff(attempt int) time.Duration {

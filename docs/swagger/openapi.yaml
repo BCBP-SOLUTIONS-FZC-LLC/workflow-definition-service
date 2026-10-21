@@ -453,7 +453,7 @@ components:
         activity:            { type: string }
         role:
           type: string
-          description: "IAM role level name passed as '?level=<role>' to the Org & Membership eligibility endpoint at publish time. Sourced from zeebe:assignmentDefinition candidateGroups."
+          description: "IAM role level name passed as 'required_level' to the Org & Membership eligibility read at publish time. Sourced from zeebe:assignmentDefinition candidateGroups."
         default_assignees:
           type: array
           nullable: true

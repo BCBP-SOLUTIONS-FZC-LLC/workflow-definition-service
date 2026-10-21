@@ -11,6 +11,8 @@ import (
 
 var ineligible atomic.Bool
 
+var validLevels = map[string]bool{"preparator": true, "reviewer": true, "approver": true}
+
 func main() {
 	if os.Getenv("ELIGIBLE") == "false" {
 		ineligible.Store(true)
@@ -38,15 +40,33 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("GET /api/v1/internal/tenants/{tenant_id}/members/{user_id}/eligibility", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s %s", r.Method, r.URL.String())
 
-		if ineligible.Load() {
-			w.WriteHeader(http.StatusConflict)
+		if r.Header.Get("x-tenant-roles") != "iam-system" {
+			w.WriteHeader(http.StatusForbidden)
 			return
 		}
+		q := r.URL.Query()
+		if q.Get("department_id") == "" || !validLevels[q.Get("required_level")] {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"errorCode": "VALIDATION_ERROR"})
+			return
+		}
+
+		answer := map[string]any{
+			"tenant_id":      r.PathValue("tenant_id"),
+			"user_id":        r.PathValue("user_id"),
+			"department_id":  q.Get("department_id"),
+			"required_level": q.Get("required_level"),
+			"eligible":       !ineligible.Load(),
+		}
+		if ineligible.Load() {
+			answer["reason"] = "not_in_department"
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"eligible": true})
+		_ = json.NewEncoder(w).Encode(answer)
 	})
 
 	log.Printf("membership stub listening on %s (ELIGIBLE=%s)", addr, os.Getenv("ELIGIBLE"))

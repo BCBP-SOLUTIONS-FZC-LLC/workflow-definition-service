@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/google/uuid"
 )
 
 func tracedContext(t *testing.T) context.Context {
@@ -51,7 +52,7 @@ func TestMembershipClient_PropagatesTraceContext(t *testing.T) {
 	defer srv.Close()
 
 	c := NewMembershipClient(srv.URL, time.Second)
-	_, _, _ = c.tryCheckEligibility(tracedContext(t), srv.URL)
+	_, _, _ = c.tryCheckEligibility(tracedContext(t), srv.URL, uuid.New())
 
 	if traceparent == "" {
 		t.Error("traceparent header missing on the membership call")

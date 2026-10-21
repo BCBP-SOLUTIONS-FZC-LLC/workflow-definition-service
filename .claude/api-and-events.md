@@ -54,6 +54,8 @@ Cache key: `"idem:" + tenantID + ":" + userID + ":" + method + ":" + path + ":" 
 
 `ExecutionClient` and `MembershipClient` (both HTTP) retry on transient failures — 3 attempts, 50 ms / 100 ms / 500 ms bounded backoff — wrapping final failure as `ErrUpstreamUnavailable`.
 
+`MembershipClient` calls Org & Membership I-19, `GET /api/v1/internal/tenants/:t/members/:u/eligibility?department_id=&required_level=`, as the `iam-system` principal (`x-user-id`, `x-tenant-roles`, `x-tenant-id`). `200` with `eligible: false` is the only ineligible answer; a `400`, `403`, `5xx`, transport error or a `200` without `eligible` is `ErrUpstreamUnavailable`, never ineligible. A `400` and a `403` are not retried.
+
 Test patterns:
 - `test/contract/` — `httptest.NewServer` for the execution client, each request held to `api/contracts/execution-internal-openapi.yaml`; the real router's internal responses held to `api/internal-openapi.yaml`
 - `test/unit/membershipclient/` — `httptest.NewServer`

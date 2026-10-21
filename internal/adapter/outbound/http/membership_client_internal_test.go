@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestTryCheckEligibility_UnexpectedStatusCode(t *testing.T) {
@@ -15,12 +17,12 @@ func TestTryCheckEligibility_UnexpectedStatusCode(t *testing.T) {
 	defer srv.Close()
 
 	c := &MembershipClient{baseURL: srv.URL, client: srv.Client()}
-	eligible, retryable, err := c.tryCheckEligibility(context.Background(), srv.URL)
+	eligible, retryable, err := c.tryCheckEligibility(context.Background(), srv.URL, uuid.New())
 	if err == nil {
 		t.Fatal("expected error for unexpected status code")
 	}
 	if retryable {
-		t.Error("expected retryable=false for a non-5xx, non-409 status code")
+		t.Error("expected retryable=false for a non-5xx status code")
 	}
 	if eligible {
 		t.Error("expected eligible=false")
