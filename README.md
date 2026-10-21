@@ -3,7 +3,7 @@
 The design-time control plane of the BCBP Workflow Engine: it parses, validates, versions and serves BPMN workflow templates.
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service`  
-**Module:** Go 1.26.9 · private module · a containerised microservice not yet deployed to any live environment
+**Module:** Go 1.26.10 · private module · a containerised microservice not yet deployed to any live environment
 
 ---
 
