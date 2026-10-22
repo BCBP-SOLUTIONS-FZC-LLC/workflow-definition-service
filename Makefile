@@ -376,6 +376,9 @@ helm-check:
 			| awk -v name="$${target%%:*}" -v port="$${target##*:}" '/- to:/{ns=0;pod=0} /kubernetes.io\/metadata.name: iam$$/{ns=1} $$0 ~ "app.kubernetes.io/name: "name"$$"{pod=1} ns&&pod&&$$0 ~ "port: "port"$$"{found=1} END{exit !found}' \
 			|| { echo "helm-check: the NetworkPolicy does not allow egress to $$target in the iam namespace"; exit 1; }; \
 	done
+	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/deployment.yaml \
+		| grep -A1 "name: CONNECTOR_ALIAS_ALLOWED_HOSTS" | grep -q 'value: ".tender-app.svc.cluster.local"' \
+		|| { echo "helm-check: alias targets are not limited to the tender-app namespace"; exit 1; }
 	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/securitypolicy.yaml \
 		--set ingress.enabled=true --set ingress.gateway.name=gw --set ingress.securityPolicy.enabled=true \
 		--set ingress.securityPolicy.cors.enabled=true --set 'ingress.securityPolicy.cors.allowOrigins[0]=https://app.example.com' \

@@ -69,7 +69,7 @@ env:
   OPENBAO_ADDR: ""                                 # in-cluster OpenBao address — required when APP_ENV != dev
   OPENBAO_MOUNT: "secret"
   SECRETS_CLIENT_TIMEOUT: "5s"
-  CONNECTOR_ALIAS_ALLOWED_HOSTS: ".svc.cluster.local"
+  CONNECTOR_ALIAS_ALLOWED_HOSTS: ".tender-app.svc.cluster.local"   # alias targets: the Tender Service and the LLM subsystem; never the iam namespace
   RLS_VIOLATION_EXPORT_INTERVAL: "30s"
   RLS_VIOLATION_RETENTION: "168h"
   TENANT_PURGE_ENABLED: "true"                     # purge a departed tenant's data after the retention periods below
