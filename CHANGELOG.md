@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The served AsyncAPI page lists every inbound message and schema in `api/asyncapi.yaml`; it showed only `DepartmentMembershipRevoked`.
 - The chart follows the identity subsystem's admission model: the NetworkPolicy allows egress to Org & Membership (`iam`, 8080) and Catalog (`iam`, 8081), where it allowed only same-namespace pods and named User Profile, which the service does not call; the route-level `SecurityPolicy` sets `mergeType: StrategicMerge` (`ingress.securityPolicy.mergeType`) so it merges with the gateway's JWT and authorisation filter instead of replacing them. `make helm-check` proves both (LLD rev 1.58).
 - The membership stub follows the I-19 contract more closely: `400 invalid_uuid` and `400 invalid_role_level`, `400 TENANT_MISMATCH` when `x-tenant-id` differs from the path tenant, and a `503` mode (`"unavailable": true` on `/control`) for the outage case.
 - The module requires Go 1.26.10: `govulncheck` reports GO-2026-6809 (`crypto/x509`) on 1.26.9; the base image digest follows.

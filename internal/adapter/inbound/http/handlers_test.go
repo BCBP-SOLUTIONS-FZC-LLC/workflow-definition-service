@@ -58,3 +58,17 @@ func TestAsyncAPIHandler_FileNotFound(t *testing.T) {
 		t.Fatalf("status = %d, want 500 (spec file not present in test CWD)", w.Code)
 	}
 }
+
+func TestAsyncAPIHandler_ListsEveryInboundMessageAndSchema(t *testing.T) {
+	t.Chdir("../../../..")
+	c, w := newTestContext()
+	AsyncAPIHandler(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	for _, name := range []string{"DepartmentMembershipRevokedInbound", "MembershipRevokedInbound", "TenantMembershipsPurgedInbound", "TenantStateChangedInbound"} {
+		if got := strings.Count(w.Body.String(), `id="msg-`+name+`"`) + strings.Count(w.Body.String(), `id="schema-`+name+`"`); got < 2 {
+			t.Errorf("the page renders %s %d times as a message or schema section, want both", name, got)
+		}
+	}
+}

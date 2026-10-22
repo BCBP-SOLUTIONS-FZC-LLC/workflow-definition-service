@@ -304,8 +304,7 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 	renderServers(w, &s.Servers)
 
 	w.WriteString(`<div class="section" id="messages"><div class="section-title">Messages</div>`)
-	msgOrder := []string{"DepartmentMembershipRevokedInbound"}
-	for _, name := range msgOrder {
+	for _, name := range sortedKeys(s.Comps.Messages) {
 		msg, ok := s.Comps.Messages[name]
 		if !ok {
 			continue
@@ -315,11 +314,7 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 	w.WriteString(`</div>`)
 
 	w.WriteString(`<div class="section" id="schemas"><div class="section-title">Schemas</div>`)
-	schemaOrder := []string{
-		"EventEnvelope",
-		"DepartmentMembershipRevokedInbound",
-	}
-	for _, name := range schemaOrder {
+	for _, name := range schemaOrder(s.Comps.Schemas) {
 		sc, ok := s.Comps.Schemas[name]
 		if !ok {
 			continue
@@ -669,6 +664,19 @@ func renderPropsTable(w *bytes.Buffer, sc *asyncSchema, schemaID string) {
 	}
 
 	w.WriteString(`</tbody></table>`)
+}
+
+func schemaOrder(schemas map[string]asyncSchema) []string {
+	order := []string{}
+	if _, ok := schemas["EventEnvelope"]; ok {
+		order = append(order, "EventEnvelope")
+	}
+	for _, name := range sortedKeys(schemas) {
+		if name != "EventEnvelope" {
+			order = append(order, name)
+		}
+	}
+	return order
 }
 
 func sortedKeys[T any](m map[string]T) []string {
