@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- `workflow-connectors/v2` is `v2.2.0`; this service imports only `pkg/registry`, which it leaves unchanged.
 - `workflow-models/v2` is `v2.1.0`, the stable release of `v2.1.0-rc.3` (same code).
 - The chart's `CONNECTOR_ALIAS_ALLOWED_HOSTS` is `.tender-app.svc.cluster.local`, the namespace of the Tender Service and the LLM subsystem, where it was `.svc.cluster.local`, every service in the cluster, the identity subsystem's included (LLD rev 1.59).
 - The served AsyncAPI page lists every inbound message and schema in `api/asyncapi.yaml`; it showed only `DepartmentMembershipRevoked`.
