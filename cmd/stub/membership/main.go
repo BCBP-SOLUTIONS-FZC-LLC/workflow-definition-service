@@ -7,9 +7,14 @@ import (
 	"os"
 	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-var ineligible atomic.Bool
+var (
+	ineligible  atomic.Bool
+	unavailable atomic.Bool
+)
 
 var validLevels = map[string]bool{"preparator": true, "reviewer": true, "approver": true}
 
@@ -29,14 +34,16 @@ func main() {
 			return
 		}
 		var body struct {
-			Eligible bool `json:"eligible"`
+			Eligible    bool `json:"eligible"`
+			Unavailable bool `json:"unavailable"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		ineligible.Store(!body.Eligible)
-		log.Printf("control: eligible=%v", body.Eligible)
+		unavailable.Store(body.Unavailable)
+		log.Printf("control: eligible=%v unavailable=%v", body.Eligible, body.Unavailable)
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -44,14 +51,24 @@ func main() {
 		log.Printf("%s %s", r.Method, r.URL.String())
 
 		if r.Header.Get("x-tenant-roles") != "iam-system" {
-			w.WriteHeader(http.StatusForbidden)
+			writeProblem(w, http.StatusForbidden, "FORBIDDEN")
 			return
 		}
 		q := r.URL.Query()
-		if q.Get("department_id") == "" || !validLevels[q.Get("required_level")] {
-			w.Header().Set("Content-Type", "application/problem+json")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]any{"errorCode": "VALIDATION_ERROR"})
+		if !isUUID(r.PathValue("tenant_id")) || !isUUID(r.PathValue("user_id")) || !isUUID(q.Get("department_id")) {
+			writeProblem(w, http.StatusBadRequest, "invalid_uuid")
+			return
+		}
+		if !validLevels[q.Get("required_level")] {
+			writeProblem(w, http.StatusBadRequest, "invalid_role_level")
+			return
+		}
+		if r.Header.Get("x-tenant-id") != r.PathValue("tenant_id") {
+			writeProblem(w, http.StatusBadRequest, "TENANT_MISMATCH")
+			return
+		}
+		if unavailable.Load() {
+			writeProblem(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE")
 			return
 		}
 
@@ -74,4 +91,15 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("serve: %v", err)
 	}
+}
+
+func isUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
+}
+
+func writeProblem(w http.ResponseWriter, status int, code string) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": status, "errorCode": code})
 }

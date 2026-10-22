@@ -156,6 +156,8 @@ The stub binaries expose a runtime control plane to toggle their responses:
 # Toggle membership eligibility
 curl -X POST http://localhost:8081/control -d '{"eligible":true}'
 curl -X POST http://localhost:8081/control -d '{"eligible":false}'
+# Answer 503, as Org & Membership does when it cannot check
+curl -X POST http://localhost:8081/control -d '{"eligible":true,"unavailable":true}'
 
 # Toggle active instances on execution service
 curl -X POST http://localhost:8083/control -d '{"has_active":false}'
