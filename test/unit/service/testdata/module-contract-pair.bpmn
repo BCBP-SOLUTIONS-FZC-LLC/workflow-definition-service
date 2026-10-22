@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A library module with two open lanes, which every call binds through
+     Depts, for the module-contract read: see module_contract_test.go. -->
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_Pair" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_Pair" name="Pair" isExecutable="true">
+    <bpmn:laneSet id="Pair_LaneSet">
+      <bpmn:lane id="Lane_Sender" name="Sender">
+        <bpmn:flowNodeRef>Pair_Start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Pair_Send</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Receiver" name="Receiver">
+        <bpmn:flowNodeRef>Pair_Receive</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Pair_End</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Pair_Start"/>
+    <bpmn:userTask id="Pair_Send" name="Hand over">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:userTask id="Pair_Receive" name="Take over">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:endEvent id="Pair_End"/>
+    <bpmn:sequenceFlow id="Pair_F1" sourceRef="Pair_Start" targetRef="Pair_Send"/>
+    <bpmn:sequenceFlow id="Pair_F2" sourceRef="Pair_Send" targetRef="Pair_Receive"/>
+    <bpmn:sequenceFlow id="Pair_F3" sourceRef="Pair_Receive" targetRef="Pair_End"/>
+  </bpmn:process>
+</bpmn:definitions>

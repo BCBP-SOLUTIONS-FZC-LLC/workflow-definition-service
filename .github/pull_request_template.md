@@ -1,0 +1,74 @@
+## Pull Request Checklist
+
+Thank you for your contribution! Please complete the checklist below before requesting review.
+
+### Description
+<!-- A clear, concise summary of what this PR changes and why. -->
+
+### Type of change
+
+- [ ] Bug fix (non-breaking)
+- [ ] New feature (non-breaking)
+- [ ] Breaking change (requires version bump + migration guide)
+- [ ] Refactor / cleanup
+- [ ] Documentation / config only
+
+---
+
+### Code checklist
+
+- [ ] `make lint` passes with no new warnings
+- [ ] `make test` passes (unit tests with race detector)
+- [ ] `make test-integration` passes (requires Docker)
+- [ ] `make cover-check` passes ≥ 95% threshold
+- [ ] New code follows the Clean Architecture import rules (`domain ← port ← service ← adapter`)
+- [ ] No `internal/core/` code imports from `adapter/`
+
+### Database migrations
+
+- [ ] No new migrations in this PR  
+- OR:
+- [ ] Migration added to `db/migrations/` as a `NNNNNN_name.up.sql` + `.down.sql` pair (golang-migrate; no `+goose` annotations)
+- [ ] Migration is safe to run on a live database (backward-compatible, no locking full-table rewrites on large tables)
+- [ ] Verified the migration applies at startup (`go run ./cmd/server`) and via `make test-integration`
+
+### Events / messaging
+
+- [ ] No event changes in this PR  
+- OR:
+- [ ] New event type documented in `.claude/CLAUDE.md` (outbound event types section)
+- [ ] No outbound event is added without a designed contract and a named consumer (this service has no outbox; see `.claude/CLAUDE.md`)
+- [ ] Inbound event handling (`POST /internal/events`) is idempotent by construction — a redelivery converges on the same state (LLD §2.3.1); a handler that cannot guarantee that brings the dedup registry with it
+- [ ] `api/asyncapi.yaml` lists every event type the inbound handler accepts
+
+### Code generation
+
+- [ ] No changes to the internal API spec, sqlc queries, or port interfaces  
+- OR:
+- [ ] `make generate` was re-run after changing `db/queries/*.sql`
+- [ ] `make contract-breaking` passes after changing `api/internal-openapi.yaml`, and the Execution Service's copy is refreshed
+- [ ] `make mock` was re-run after changing `internal/core/port/*.go` interfaces
+- [ ] Generated files are **not** committed (they are gitignored and regenerated in CI)
+
+### Tests
+
+- [ ] Unit tests added or updated for changed behaviour
+- [ ] Integration tests added for any new repository methods
+- [ ] No `t.Skip` placeholders removed without implementing the test body
+
+### Documentation
+
+- [ ] README updated if setup steps or environment variables changed
+- [ ] `.claude/CLAUDE.md` updated if architecture or patterns changed
+- [ ] CHANGELOG.md entry added under `## [Unreleased]`
+
+### Security
+
+- [ ] No secrets, tokens, or DSNs in committed code
+- [ ] Request context (`x-tenant-id`, `x-user-id`) is propagated to all DB queries via RLS GUC
+- [ ] BPMN XML inputs are parsed with XXE protection (no `xml.Unmarshal` on untrusted input without the hardened decoder)
+
+---
+
+### Screenshots / logs (if applicable)
+<!-- Paste relevant log output, curl responses, or screenshots here. -->

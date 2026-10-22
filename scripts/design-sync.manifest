@@ -1,0 +1,5 @@
+# <kind> <repo path> <design path>; see scripts/design-sync-check.sh
+lld docs/lld/definition_service.md LLD/definition_service.md
+raw api/asyncapi.yaml LLD/definition_asyncapi.yaml
+raw api/internal-openapi.yaml LLD/definition_internal_openapi.yaml
+raw docs/swagger/openapi.yaml LLD/definition_openapi.yaml

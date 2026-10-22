@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A library module that runs a call of Process_Fixed beside a task, on a
+     parallel branch, then a subProcess, for the module-contract read: see
+     module_contract_test.go. -->
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_Outer" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_Outer" name="Outer" isExecutable="true">
+    <bpmn:laneSet id="Out_LaneSet">
+      <bpmn:lane id="Lane_A" name="Drafting">
+        <bpmn:flowNodeRef>Out_Start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Out_Split</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Out_Task</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Out_Join</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Out_Sub</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Out_End</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_B" name="Legal desk">
+        <bpmn:flowNodeRef>Out_CallFixed</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Out_Start"/>
+    <bpmn:parallelGateway id="Out_Split"/>
+    <bpmn:userTask id="Out_Task" name="Draft">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prep"/>
+        <zeebe:assignmentDefinition candidateGroups="preparator"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:callActivity id="Out_CallFixed" name="Clear with legal">
+      <bpmn:extensionElements><zeebe:calledElement processId="Process_Fixed"/></bpmn:extensionElements>
+    </bpmn:callActivity>
+    <bpmn:parallelGateway id="Out_Join"/>
+    <bpmn:subProcess id="Out_Sub" name="Finalise">
+      <bpmn:startEvent id="Sub_Start"/>
+      <bpmn:userTask id="Sub_Task" name="Finalise the draft">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="approve"/>
+          <zeebe:assignmentDefinition candidateGroups="approver"/>
+        </bpmn:extensionElements>
+      </bpmn:userTask>
+      <bpmn:endEvent id="Sub_End"/>
+      <bpmn:sequenceFlow id="Sub_F1" sourceRef="Sub_Start" targetRef="Sub_Task"/>
+      <bpmn:sequenceFlow id="Sub_F2" sourceRef="Sub_Task" targetRef="Sub_End"/>
+    </bpmn:subProcess>
+    <bpmn:endEvent id="Out_End"/>
+    <bpmn:sequenceFlow id="Out_F1" sourceRef="Out_Start" targetRef="Out_Split"/>
+    <bpmn:sequenceFlow id="Out_F2" sourceRef="Out_Split" targetRef="Out_Task"/>
+    <bpmn:sequenceFlow id="Out_F3" sourceRef="Out_Split" targetRef="Out_CallFixed"/>
+    <bpmn:sequenceFlow id="Out_F4" sourceRef="Out_Task" targetRef="Out_Join"/>
+    <bpmn:sequenceFlow id="Out_F5" sourceRef="Out_CallFixed" targetRef="Out_Join"/>
+    <bpmn:sequenceFlow id="Out_F6" sourceRef="Out_Join" targetRef="Out_Sub"/>
+    <bpmn:sequenceFlow id="Out_F7" sourceRef="Out_Sub" targetRef="Out_End"/>
+  </bpmn:process>
+</bpmn:definitions>

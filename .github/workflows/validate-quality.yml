@@ -1,0 +1,120 @@
+name: Validate Quality
+
+# Reusable workflow — called by ci.yml and release.yml. Static/quality checks
+# only (the chart render, breaking-change gate, contract copy check,
+# then fmt, tidy, vet, lint, metrics-lint, vuln, Dockerfile pin). Requires a sibling
+# `generate` job to run first in the caller workflow and upload a `generated`
+# artifact (sqlc/mocks), which this workflow downloads rather than
+# regenerating. See validate-test.yml for the test/coverage/arch-lint
+# counterpart.
+
+"on":
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to check out (leave empty to use the caller ref)'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+  GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+
+jobs:
+  contracts:
+    name: contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+          fetch-depth: 0
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Helm chart renders for production
+        run: make helm-check
+
+      # The internal spec must not break its callers (definition LLD §3.4).
+      - name: Breaking-change gate
+        env:
+          CONTRACT_BASE_REF: origin/main
+        run: |
+          GOBIN="$PWD/.tools" go install github.com/oasdiff/oasdiff@v1.32.1
+          make contract-breaking
+
+      # The copy of the Execution Service's spec must match its source.
+      - name: Contract copy check
+        env:
+          GH_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: make contract-check
+
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      - name: Configure private module access
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+        run: .github/scripts/configure-private-module-access.sh
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated
+          path: internal
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Format check
+        run: .github/scripts/format-check.sh
+
+      - name: Tidy check
+        run: .github/scripts/tidy-check.sh
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+          args: --timeout=5m --build-tags=integration
+
+      - name: Observability standard lint
+        run: make metrics-lint
+
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./internal/... ./cmd/...
+
+      - name: Dockerfile base-image pin check
+        run: .github/scripts/dockerfile-pin-check.sh

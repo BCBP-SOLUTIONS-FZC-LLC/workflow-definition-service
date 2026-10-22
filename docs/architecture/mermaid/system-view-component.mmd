@@ -1,0 +1,44 @@
+---
+config:
+  layout: elk
+---
+graph TD
+    UI[Frontend Modeler]
+    Gateway[Envoy API Gateway]
+    ExecSvc[Execution Svc / Workers]
+
+    subgraph Workflow_Definition_Service [Workflow Definition Service]
+        API[Gin HTTP API]
+        Internal[Internal HTTP API]
+        Parser[BPMN Parser]
+        Compiler[DSL Compiler]
+        Validator[Validation Engine]
+        InternalEvents[POST /internal/events]
+
+        API --> Validator
+        API --> Parser
+        Internal --> DB
+        Parser --> Compiler
+    end
+
+    subgraph Persistence [RDS PostgreSQL]
+        DB[(workflow_definition DB)]
+    end
+
+    subgraph External_Integrations [External Services]
+        OrgMembership[Org & Membership Service]
+        EventsConsumer[Shared Workflow-Events Consumer]
+        SQS_Membership[SQS: membership-workflow-q]
+    end
+
+    UI -->|1. Get Eligible Users per Node| OrgMembership
+    UI -->|2. Upload BPMN| Gateway
+    Gateway -->|Headers: x-tenant-id, etc.| API
+    ExecSvc -->|HTTP: compiled plan| Internal
+
+    Compiler -->|3. Validate Assignee Eligibility| OrgMembership
+    Compiler -->|4. Store Draft/Publish| DB
+    SQS_Membership -.->|5. Consume Revocation Events| EventsConsumer
+    EventsConsumer -->|6. POST /internal/events| InternalEvents
+    InternalEvents -->|Invalidate Affected Templates| DB
+

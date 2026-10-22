@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A library module whose one lane is fixed, with a connector task, for the
+     module-contract read: see module_contract_test.go. -->
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Def_Fixed" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_Fixed" name="Legal clearance" isExecutable="true">
+    <bpmn:laneSet id="Fx_LaneSet">
+      <bpmn:lane id="Lane_Legal" name="Legal"><bpmn:extensionElements><zeebe:properties><zeebe:property name="dept_id" value="0b8f3a51-6c2d-5e4f-8a7b-1c9d2e3f4a5b"/></zeebe:properties></bpmn:extensionElements>
+        <bpmn:flowNodeRef>Fx_Start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Fx_Task</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Fx_Store</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Fx_End</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Fx_Start"/>
+    <bpmn:userTask id="Fx_Task" name="Clear the terms">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="review"/>
+        <zeebe:assignmentDefinition candidateGroups="reviewer"/>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:serviceTask id="Fx_Store" name="File the clearance">
+      <bpmn:extensionElements><zeebe:taskDefinition type="connector:storage"/></bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Fx_End"/>
+    <bpmn:sequenceFlow id="Fx_F1" sourceRef="Fx_Start" targetRef="Fx_Task"/>
+    <bpmn:sequenceFlow id="Fx_F2" sourceRef="Fx_Task" targetRef="Fx_Store"/>
+    <bpmn:sequenceFlow id="Fx_F3" sourceRef="Fx_Store" targetRef="Fx_End"/>
+  </bpmn:process>
+</bpmn:definitions>

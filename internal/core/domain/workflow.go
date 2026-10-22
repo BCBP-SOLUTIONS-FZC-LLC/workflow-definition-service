@@ -15,15 +15,17 @@ const (
 )
 
 type Workflow struct {
-	ID              uuid.UUID
-	TenantID        uuid.UUID
-	CreatedByUserID uuid.UUID
-	BusinessKey     string
-	Name            string
-	Description     string
-	ActiveVersionID *uuid.UUID
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                  uuid.UUID
+	TenantID            uuid.UUID
+	CreatedByUserID     uuid.UUID
+	TemplateKey         string
+	Name                string
+	Description         string
+	ActiveVersionID     *uuid.UUID
+	ActiveVersionNumber *int32
+	HasDraft            bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type WorkflowVersion struct {
@@ -41,6 +43,8 @@ type WorkflowVersion struct {
 	ValidationErrorsJSON *string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+	RecordVersion        int64
+	ModuleRefs           []ModuleRef
 }
 
 type NodeAssignee struct {
@@ -49,7 +53,7 @@ type NodeAssignee struct {
 	WorkflowVersionID uuid.UUID
 	NodeKey           string
 	UserID            uuid.UUID
-	DepartmentID      string
+	DepartmentID      uuid.UUID
 	Role              string
 	CreatedAt         time.Time
 }

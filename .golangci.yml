@@ -16,13 +16,25 @@ linters:
     - misspell
     - unconvert
     - unparam
+    - bodyclose
+    - noctx
+    - nilerr
+    - gosec
+    - contextcheck
+    - gocritic
+    - nolintlint
+    - sqlclosecheck
   settings:
     revive:
       rules:
-        - name: exported
         - name: var-naming
         - name: error-return
+        - name: error-strings
+        - name: error-naming
         - name: if-return
+    nolintlint:
+      require-explanation: true
+      require-specific: true
     wrapcheck:
       ignore-package-globs:
         - github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/*
@@ -31,7 +43,7 @@ linters:
 
   exclusions:
     paths:
-      - gen/
+      - platform-libs/
       - internal/adapter/outbound/postgres/db/
       - internal/core/port/mocks/
     rules:
@@ -39,6 +51,17 @@ linters:
         linters:
           - wrapcheck
           - unparam
+          - noctx
+          - gosec
+          - contextcheck
+      - path: ^test/
+        linters:
+          - noctx
+          - gosec
+          - contextcheck
+      - path: ^cmd/stub/
+        linters:
+          - gosec
       - path: internal/
         text: "exported: "
         linters:
@@ -49,6 +72,6 @@ formatters:
     - goimports
   exclusions:
     paths:
-      - gen/
+      - platform-libs/
       - internal/adapter/outbound/postgres/db/
       - internal/core/port/mocks/

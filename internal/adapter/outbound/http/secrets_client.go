@@ -1,0 +1,94 @@
+package http
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+)
+
+var _ port.SecretsClient = (*SecretsClient)(nil)
+
+type SecretsClient struct {
+	addr   string
+	token  string
+	mount  string
+	client *http.Client
+}
+
+func NewSecretsClient(addr, token, mount string, timeout time.Duration) *SecretsClient {
+	return &SecretsClient{
+		addr:   addr,
+		token:  token,
+		mount:  mount,
+		client: newClient(timeout),
+	}
+}
+
+type openBaoWriteRequest struct {
+	Data map[string]string `json:"data"`
+}
+
+func (c *SecretsClient) Write(ctx context.Context, path string, data map[string]string) error {
+	return observed("openbao", "write_secret", func() error { return c.write(ctx, path, data) })
+}
+
+func (c *SecretsClient) write(ctx context.Context, path string, data map[string]string) error {
+	body, err := json.Marshal(openBaoWriteRequest{Data: data})
+	if err != nil {
+		return fmt.Errorf("encode openbao write request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/v1/%s/data/%s", strings.TrimRight(c.addr, "/"), c.mount, strings.TrimLeft(path, "/"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build openbao write request: %w", err)
+	}
+	req.Header.Set("X-Vault-Token", c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: openbao write %q: %w", domain.ErrUpstreamUnavailable, path, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // a failed close of a response body is not actionable
+
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent:
+		return nil
+	default:
+		return fmt.Errorf("%w: openbao write %q: status %d: %s", domain.ErrUpstreamUnavailable, path, resp.StatusCode, errorSnippet(resp.Body))
+	}
+}
+
+func (c *SecretsClient) Delete(ctx context.Context, path string) error {
+	return observed("openbao", "delete_secret", func() error { return c.remove(ctx, path) })
+}
+
+func (c *SecretsClient) remove(ctx context.Context, path string) error {
+	url := fmt.Sprintf("%s/v1/%s/metadata/%s", strings.TrimRight(c.addr, "/"), c.mount, strings.TrimLeft(path, "/"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("build openbao delete request: %w", err)
+	}
+	req.Header.Set("X-Vault-Token", c.token)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: openbao delete %q: %w", domain.ErrUpstreamUnavailable, path, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // a failed close of a response body is not actionable
+
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent, http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("%w: openbao delete %q: status %d: %s", domain.ErrUpstreamUnavailable, path, resp.StatusCode, errorSnippet(resp.Body))
+	}
+}
