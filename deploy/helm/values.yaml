@@ -196,14 +196,20 @@ networkPolicy:
     # Pod label selector for the Prometheus pod.
     podSelector:
       app.kubernetes.io/name: prometheus
-  # Named same-namespace egress targets, replacing a blanket podSelector: {} allow.
-  # ORG_MEMBERSHIP_BASE_URL, CATALOG_ADMIN_BASE_URL and EXECUTION_SERVICE_URL are this
-  # service's only same-namespace outbound dependencies.
+  # Named egress targets: Org & Membership and Catalog in the iam namespace on their
+  # ports, and the Execution Service in this release's namespace. An entry without a
+  # namespaceSelector matches this release's namespace only.
   allowedEgressTargets:
     - podSelector:
-        app.kubernetes.io/name: iam-user-profile
+        app.kubernetes.io/name: iam-org-membership
+      namespaceSelector:
+        kubernetes.io/metadata.name: iam
+      ports: [8080]
     - podSelector:
         app.kubernetes.io/name: iam-catalog-admin
+      namespaceSelector:
+        kubernetes.io/metadata.name: iam
+      ports: [8081]
     - podSelector:
         app.kubernetes.io/name: workflow-execution-service
         app.kubernetes.io/component: api
@@ -265,6 +271,10 @@ ingress:
   # Requires gateway.envoyproxy.io/v1alpha1 CRD (Envoy Gateway v0.6+).
   securityPolicy:
     enabled: false
+    # Merges this route policy with the Gateway-level SecurityPolicy (Envoy Gateway
+    # v1.8+). Unset, the route policy replaces the gateway's, dropping its JWT
+    # validation and the authorisation filter that writes the identity headers.
+    mergeType: StrategicMerge
     cors:
       enabled: false
       allowOrigins: []

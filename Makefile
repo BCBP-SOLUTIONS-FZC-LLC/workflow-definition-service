@@ -359,8 +359,8 @@ docker-check: docker-lint docker-trivy
 
 ## helm-check: lint the chart, render it with production settings, and require a prod render with no service addresses to fail
 HELM_PROD_SETTINGS = --set existingSecret=workflow-definition-service-secrets \
-	--set env.ORG_MEMBERSHIP_BASE_URL=http://org-membership.platform.svc:8080 \
-	--set env.CATALOG_ADMIN_BASE_URL=http://iam-catalog-admin.iam.svc:8080 \
+	--set env.ORG_MEMBERSHIP_BASE_URL=http://iam-org-membership.iam.svc.cluster.local:8080 \
+	--set env.CATALOG_ADMIN_BASE_URL=http://iam-catalog-admin.iam.svc.cluster.local:8081 \
 	--set env.OPENBAO_ADDR=http://openbao.platform.svc:8200 \
 	--set env.VALKEY_ADDR=valkey.platform.svc:6379
 
@@ -371,8 +371,16 @@ helm-check:
 		helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/networkpolicy.yaml | grep -q "app.kubernetes.io/name: $$caller" \
 			|| { echo "helm-check: the NetworkPolicy does not admit $$caller to the internal API"; exit 1; }; \
 	done
-	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/networkpolicy.yaml | grep -q "app.kubernetes.io/name: iam-catalog-admin" \
-		|| { echo "helm-check: the NetworkPolicy does not allow egress to iam-catalog-admin"; exit 1; }
+	@for target in iam-org-membership:8080 iam-catalog-admin:8081; do \
+		helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/networkpolicy.yaml \
+			| awk -v name="$${target%%:*}" -v port="$${target##*:}" '/- to:/{ns=0;pod=0} /kubernetes.io\/metadata.name: iam$$/{ns=1} $$0 ~ "app.kubernetes.io/name: "name"$$"{pod=1} ns&&pod&&$$0 ~ "port: "port"$$"{found=1} END{exit !found}' \
+			|| { echo "helm-check: the NetworkPolicy does not allow egress to $$target in the iam namespace"; exit 1; }; \
+	done
+	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/securitypolicy.yaml \
+		--set ingress.enabled=true --set ingress.gateway.name=gw --set ingress.securityPolicy.enabled=true \
+		--set ingress.securityPolicy.cors.enabled=true --set 'ingress.securityPolicy.cors.allowOrigins[0]=https://app.example.com' \
+		| grep -q "mergeType: StrategicMerge" \
+		|| { echo "helm-check: the route SecurityPolicy does not merge with the gateway's (mergeType StrategicMerge)"; exit 1; }
 	@if helm template workflow-definition-service deploy/helm --set existingSecret=workflow-definition-service-secrets > /dev/null 2>&1; then \
 		echo "helm-check: the chart renders for prod without ORG_MEMBERSHIP_BASE_URL, CATALOG_ADMIN_BASE_URL, OPENBAO_ADDR and VALKEY_ADDR"; exit 1; fi
 

@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The chart follows the identity subsystem's admission model: the NetworkPolicy allows egress to Org & Membership (`iam`, 8080) and Catalog (`iam`, 8081), where it allowed only same-namespace pods and named User Profile, which the service does not call; the route-level `SecurityPolicy` sets `mergeType: StrategicMerge` (`ingress.securityPolicy.mergeType`) so it merges with the gateway's JWT and authorisation filter instead of replacing them. `make helm-check` proves both (LLD rev 1.58).
 - The membership stub follows the I-19 contract more closely: `400 invalid_uuid` and `400 invalid_role_level`, `400 TENANT_MISMATCH` when `x-tenant-id` differs from the path tenant, and a `503` mode (`"unavailable": true` on `/control`) for the outage case.
 - The module requires Go 1.26.10: `govulncheck` reports GO-2026-6809 (`crypto/x509`) on 1.26.9; the base image digest follows.
 - A user task's `candidateGroups` is one of `preparator`, `reviewer` or `approver` (`CANDIDATE_GROUPS_INVALID`), the department role levels Org & Membership accepts. Publish checks default assignees only on stages that create a human task and refuses an unknown role as `ASSIGNEE_INELIGIBLE` without calling Org & Membership. The set is one function, `domain.ValidRoleLevel`. LLD rev 1.57. `workflow-models/v2` is v2.1.0-rc.3, whose goldens carry role levels.

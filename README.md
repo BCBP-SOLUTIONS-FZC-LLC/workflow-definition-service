@@ -460,8 +460,10 @@ deploy/helm/
 ```bash
 helm lint ./deploy/helm
 helm template my-release ./deploy/helm --set secretValues.DATABASE_URL=... # ... (see Secrets below)
-helm upgrade workflow-definition-service ./deploy/helm --install --namespace <ns>
+helm upgrade workflow-definition-service ./deploy/helm --install --namespace workflow-app
 ```
+
+**Namespace, mesh and admission.** The release runs in `workflow-app`, inside the Istio mesh with mTLS and under its chart name (no `nameOverride`), because Org & Membership and Catalog admit it by namespace, pod label and ServiceAccount `workflow-definition-service`. The NetworkPolicy allows egress to Org & Membership (`iam`, port 8080) and Catalog (`iam`, port 8081). The route-level `SecurityPolicy` sets `mergeType: StrategicMerge` (Envoy Gateway 1.8 or later), so enabling it keeps the gateway's JWT validation and authorisation filter on these routes; on an older gateway, keep it disabled.
 
 **Ports and probes.** The Service and Deployment both expose named `http` (8080) and `metrics` (9091) ports. `startupProbe`/`livenessProbe`/`readinessProbe` all target `http` — `/healthz` is a trivial liveness check, `/readyz` actually verifies the Postgres pool and Valkey are reachable (`internal/adapter/inbound/http/router.go`), so a pod only receives traffic once its real dependencies are up.
 
