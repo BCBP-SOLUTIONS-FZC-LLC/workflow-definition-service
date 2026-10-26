@@ -135,6 +135,9 @@ jobs:
           dockerfile: Dockerfile
           config: .hadolint.yaml
 
+      - name: Check that no credential stays in a layer or a registry cache
+        run: scripts/dockerfile-credentials-check.sh
+
       - uses: actions/download-artifact@v4
         with:
           name: generated

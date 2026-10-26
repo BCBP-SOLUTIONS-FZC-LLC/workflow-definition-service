@@ -12,7 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 - The NetworkPolicy selects the platform namespaces `gateway` (Envoy Gateway data plane) and `observability` (Prometheus), the names IAM's charts use, in place of `envoy-gateway-system` and `monitoring`, and names OpenBao on 8200 (placeholder `openbao` namespace until the platform's address is known). `make helm-check` holds all three.
 - The release deploy passes the published image digest to Helm as `image.digest` (`repository:tag@digest`), and "Verify deployed image digest" fails when the deployed image is not pinned by digest.
-- The Dockerfile writes, uses and removes the private-module credential in one `RUN`; CI and the release build use no registry build cache; `make docker-lint` runs `scripts/dockerfile-credentials-check.sh`. Earlier builder caches held `GO_PRIVATE_TOKEN`, so it needs rotating.
+- The Dockerfile writes, uses and removes the private-module credential in one `RUN`; CI and the release build use no registry build cache; `make docker-lint` and the CI image job run `scripts/dockerfile-credentials-check.sh`. Earlier builder caches held `GO_PRIVATE_TOKEN`, so it needs rotating.
 - The compat job checks out the Workflow-Events Consumer at `main` (`compat_consumer_ref`), now that its branch is merged.
 - `platform-events/v2` is `v2.2.1` (consumer-side dead-letter fixes, Go 1.26.10; no API change).
 - `workflow-connectors/v2` is `v2.2.0`; this service imports only `pkg/registry`, which it leaves unchanged.
