@@ -10,6 +10,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The NetworkPolicy selects the platform namespaces `gateway` (Envoy Gateway data plane) and `observability` (Prometheus), the names IAM's charts use, in place of `envoy-gateway-system` and `monitoring`, and names OpenBao on 8200 (placeholder `openbao` namespace until the platform's address is known). `make helm-check` holds all three.
+- The release deploy passes the published image digest to Helm as `image.digest` (`repository:tag@digest`), and "Verify deployed image digest" fails when the deployed image is not pinned by digest.
+- The Dockerfile writes, uses and removes the private-module credential in one `RUN`; CI and the release build use no registry build cache; `make docker-lint` runs `scripts/dockerfile-credentials-check.sh`. Earlier builder caches held `GO_PRIVATE_TOKEN`, so it needs rotating.
 - The compat job checks out the Workflow-Events Consumer at `main` (`compat_consumer_ref`), now that its branch is merged.
 - `platform-events/v2` is `v2.2.1` (consumer-side dead-letter fixes, Go 1.26.10; no API change).
 - `workflow-connectors/v2` is `v2.2.0`; this service imports only `pkg/registry`, which it leaves unchanged.
@@ -102,6 +105,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Fixed
 
+- A send task, a receive task or a connector stage no longer produces `workflow_node_assignee` rows: a free-text `candidateGroups` longer than the 64-character `role` column failed the publish insert with a 500, and nothing is routed to a person at such a stage.
+- The 2000-node path limit applies from the implicit start of a process with no start event; it was skipped there.
+- A `standardLoopCharacteristics` or `multiInstanceLoopCharacteristics` inside a connector `serviceTask` is `REJECTED_ELEMENT` on the task; it was ignored and the task ran once.
+- The migration Job's pod no longer carries the label the Service selects, so it does not join the Service endpoints during the pre-upgrade hook.
+- `values.yaml` describes `TENANT_PURGE_BATCH` as rows deleted per batch, and its gateway-namespace comment matches its default.
 - The smoke test saved the draft without its lock token, which the endpoint has required since the draft token change, so CI's smoke job failed with a 400. It reads `record_version` from `GET /draft`, checks that a save without it is refused with `400` and that a stale one is `409`, and saves with the current one.
 - Promoting a published version on an archived workflow put it back among the tenant's templates without a limit check, so a tenant at its limit could create another template and then reactivate the archived one. Promote applies the creation count, plan lookup and refusal when the workflow has no active version and no draft, reading the workflow again inside the transaction so a concurrent promote of the same version is a success.
 - A request that found the plan table past its freshness window waited for the catalog, up to the client timeout; the held table answers at once while the refresh runs in the background, and a reader panic no longer leaves the refresh marked as running. A catalog plan entry without a code or a `workflow_template_limit` field fails the read instead of reading as unlimited.

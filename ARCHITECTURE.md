@@ -847,7 +847,7 @@ Limits: 1–100 lanes per process.
 
 `scriptTask`, `businessRuleTask`, `transaction`, `adHocSubProcess`, `complexGateway`, terminate/compensate/cancel/conditional/link event definitions, `dataObject`, `dataStore`, `standardLoopCharacteristics`.
 
-These elements trigger `REJECTED_ELEMENT` on upload.
+These elements trigger `REJECTED_ELEMENT` on upload. A `standardLoopCharacteristics` or `multiInstanceLoopCharacteristics` inside a connector `serviceTask` is rejected on the task as well: a connector task runs once.
 
 ### User Task Contract
 
@@ -1063,7 +1063,7 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | Sequence flows reference known nodes | `INVALID_SEQUENCE_FLOW_REF` |
 | Every node reachable from start (DFS) | `UNREACHABLE_NODE` |
 | Each split gateway has a matching join **and every branch reconverges at it** | `UNMATCHED_GATEWAY` |
-| Longest forward path ≤ 2000 nodes | `MAX_DEPTH_EXCEEDED` |
+| Longest forward path ≤ 2000 nodes, counted from the start event or the implicit start | `MAX_DEPTH_EXCEEDED` |
 | Message flow source/target reference known elements | `UNMATCHED_MESSAGE_FLOW` |
 | `messageRef` on flow/task references a declared `<bpmn:message>` | `MISSING_MESSAGE_DEFINITION` |
 | Boundary event attached to a legal host node type | `INVALID_BOUNDARY_ATTACHMENT` |
