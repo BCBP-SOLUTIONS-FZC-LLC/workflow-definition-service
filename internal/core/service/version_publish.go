@@ -249,6 +249,9 @@ func extractAssignees(
 	var assignees []*domain.NodeAssignee
 	for _, dept := range plan.Departments {
 		for _, stage := range dept.Stages {
+			if !stage.CreatesHumanTask() {
+				continue
+			}
 			nodeKey := dsl.NodeKey(dept.ID, &stage)
 			deptUUID, err := uuid.Parse(dept.IAMDepartmentID)
 			if err != nil {

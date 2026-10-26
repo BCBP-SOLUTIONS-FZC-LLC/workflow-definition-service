@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
@@ -76,5 +77,30 @@ func TestExtractAssignees_NodeKeyComposition(t *testing.T) {
 	}
 	if len(keys) != 3 {
 		t.Errorf("two stages of the same type must not collide on one node key; got %v", keys)
+	}
+}
+
+// A send task, a receive task and a connector stage create no human task, so their free-text
+// group and user are not default assignees: the reverse index stores a role of at most 64
+// characters, and revoking a membership has no task to pause for them.
+func TestExtractAssignees_SkipsStagesThatCreateNoHumanTask(t *testing.T) {
+	plan := &dsl.CompiledPlan{
+		Departments: []dsl.DepartmentDef{
+			{
+				ID:              "engineering",
+				IAMDepartmentID: uuid.New().String(),
+				Stages: []dsl.StageDef{
+					{Type: "send_task", NodeID: "Activity_send", Role: strings.Repeat("x", 100), DefaultAssignees: []string{uuid.New().String()}},
+					{Type: "receive_task", NodeID: "Activity_receive", Role: "client-rep", DefaultAssignees: []string{uuid.New().String()}},
+					{Type: "connector", NodeID: "Activity_call", ConnectorType: "rest-call", Role: "client-rep", DefaultAssignees: []string{uuid.New().String()}},
+					{Type: "prep", NodeID: "Activity_prep", Role: "preparator", DefaultAssignees: []string{uuid.New().String()}},
+				},
+			},
+		},
+	}
+
+	got := extractAssignees(uuid.New(), uuid.New(), plan)
+	if len(got) != 1 || got[0].NodeKey != "engineering/Activity_prep" {
+		t.Fatalf("extractAssignees() = %+v; want only the human task's assignee", got)
 	}
 }
