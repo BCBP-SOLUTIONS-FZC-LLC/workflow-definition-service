@@ -12,11 +12,19 @@ const MaxPathDepth = 2000
 const maxPathDepth = MaxPathDepth
 
 func ValidateMaxDepth(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
-	if len(proc.StartEvents) == 0 {
+	return validateMaxDepthFrom(proc, g, backEdges, "")
+}
+
+func validateMaxDepthFrom(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool, implicitStart string) []domain.BPMNValidationError {
+	start := implicitStart
+	if len(proc.StartEvents) > 0 {
+		start = proc.StartEvents[0].ID
+	}
+	if start == "" {
 		return nil
 	}
 	memo := make(map[string]int)
-	bpmncore.IterativeDFS(g, proc.StartEvents[0].ID, bpmncore.DFSVisitor{
+	bpmncore.IterativeDFS(g, start, bpmncore.DFSVisitor{
 		OnEdge: func(from, to string, _ bool) bool {
 			return !backEdges[[2]string{from, to}]
 		},
@@ -33,8 +41,8 @@ func ValidateMaxDepth(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges m
 			memo[v] = best
 		},
 	})
-	if memo[proc.StartEvents[0].ID] > maxPathDepth {
-		return AppendErr(nil, domain.BPMNErrMaxDepthExceeded, proc.StartEvents[0].ID,
+	if memo[start] > maxPathDepth {
+		return AppendErr(nil, domain.BPMNErrMaxDepthExceeded, start,
 			fmt.Sprintf("workflow path exceeds the maximum depth of %d nodes", maxPathDepth))
 	}
 	return nil

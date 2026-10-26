@@ -284,3 +284,31 @@ func TestValidate_ChatNotifyConnector_WarnsAsUnknown(t *testing.T) {
 		t.Errorf("expected UNKNOWN_CONNECTOR_TYPE warning; got %v", errCodes(errs))
 	}
 }
+
+func TestValidate_LoopMarkerInsideAConnectorServiceTask_IsRejected(t *testing.T) {
+	for _, marker := range []string{"standardLoopCharacteristics", "multiInstanceLoopCharacteristics"} {
+		bpmn := compilableBPMN(`
+    <bpmn:startEvent id="StartEvent_1"><bpmn:outgoing>Flow_1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:serviceTask id="Task_1" name="Fetch Packet">
+      <bpmn:extensionElements><zeebe:taskDefinition type="connector:storage"/></bpmn:extensionElements>
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+      <bpmn:`+marker+`/>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndEvent_1"><bpmn:incoming>Flow_2</bpmn:incoming></bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Task_1"/>
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_1" targetRef="EndEvent_1"/>`, "")
+
+		errs, err := bpmn_compiler.New().Validate(context.Background(), bpmn)
+		if err != nil {
+			t.Fatalf("%s: Validate() error: %v", marker, err)
+		}
+		found := false
+		for _, e := range errs {
+			found = found || (e.Code == domain.BPMNErrRejectedElement && e.NodeID == "Task_1")
+		}
+		if !found {
+			t.Errorf("%s inside a connector task: errors = %+v; want REJECTED_ELEMENT on Task_1, since the task runs once and the author would expect a loop", marker, errs)
+		}
+	}
+}

@@ -32,7 +32,7 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 
 	var errs []domain.BPMNValidationError
 	errs = append(errs, ValidateCounts(proc, implicitStart)...)
-	if depth := ValidateMaxDepth(proc, g, backEdges); len(depth) > 0 {
+	if depth := validateMaxDepthFrom(proc, g, backEdges, implicitStart); len(depth) > 0 {
 		return append(errs, depth...)
 	}
 	errs = append(errs, ValidateLaneNames(proc)...)

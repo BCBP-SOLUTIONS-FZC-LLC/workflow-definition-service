@@ -120,11 +120,14 @@ func classifyElement(dec *xml.Decoder, se xml.StartElement) (elemErr *domain.BPM
 }
 
 func classifyServiceTask(dec *xml.Decoder, se xml.StartElement) (elemErr *domain.BPMNValidationError, abort bool) {
-	_, isConnector, scanErr := scanServiceTaskConnectorType(dec)
+	_, isConnector, loopMarker, scanErr := scanServiceTaskConnectorType(dec)
 	if scanErr != nil {
 		return nil, true //nolint:nilerr // a malformed document ends this scan of rejected elements; parsing reports the syntax error
 	}
 	if isConnector {
+		if loopMarker != "" {
+			return rejectedElementErr(se, domain.BPMNErrRejectedElement, "a connector task runs once and cannot carry <"+loopMarker+">"), false
+		}
 		return nil, false
 	}
 	return rejectedElementErr(se, domain.BPMNErrRejectedElement, "not supported (§4.1.2 Tier 3)"), false
@@ -139,12 +142,12 @@ func rejectedElementErr(se xml.StartElement, code domain.BPMNErrorCode, reason s
 	}
 }
 
-func scanServiceTaskConnectorType(dec *xml.Decoder) (connectorType string, isConnector bool, err error) {
+func scanServiceTaskConnectorType(dec *xml.Decoder) (connectorType string, isConnector bool, loopMarker string, err error) {
 	depth := 1
 	for depth > 0 {
 		tok, tokenErr := dec.Token()
 		if tokenErr != nil {
-			return "", false, fmt.Errorf("scan service task subtree: %w", tokenErr)
+			return "", false, "", fmt.Errorf("scan service task subtree: %w", tokenErr)
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
@@ -152,6 +155,10 @@ func scanServiceTaskConnectorType(dec *xml.Decoder) (connectorType string, isCon
 				depth++
 			}
 			isDirectChildOfOuterTask := depth == 1
+			isLoopMarker := t.Name.Space == nsBPMN && (t.Name.Local == "standardLoopCharacteristics" || t.Name.Local == "multiInstanceLoopCharacteristics")
+			if loopMarker == "" && isDirectChildOfOuterTask && isLoopMarker {
+				loopMarker = t.Name.Local
+			}
 			isTaskDefinition := t.Name.Space == nsZeebe && t.Name.Local == "taskDefinition"
 			if !isConnector && isDirectChildOfOuterTask && isTaskDefinition {
 				for _, a := range t.Attr {
@@ -170,7 +177,7 @@ func scanServiceTaskConnectorType(dec *xml.Decoder) (connectorType string, isCon
 			}
 		}
 	}
-	return connectorType, isConnector, nil
+	return connectorType, isConnector, loopMarker, nil
 }
 
 func elementID(se xml.StartElement) string {

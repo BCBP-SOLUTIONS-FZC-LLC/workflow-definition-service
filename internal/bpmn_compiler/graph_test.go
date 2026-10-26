@@ -712,3 +712,29 @@ func taskWithProps(props map[string]string) *bpmncore.BPMNUserTask {
 		},
 	}
 }
+
+func TestValidateWithImplicitStart_CapsThePathDepthFromTheImplicitStart(t *testing.T) {
+	g := &bpmncore.Graph{
+		Outgoing: map[string][]string{},
+		Incoming: map[string][]string{},
+		NodeIDs:  map[string]struct{}{},
+		NodeType: map[string]bpmncore.FlowNodeType{},
+	}
+	const n = validator.MaxPathDepth + 5
+	prev := "N0"
+	g.NodeIDs[prev] = struct{}{}
+	g.NodeType[prev] = bpmncore.NodeTypeReceiveTask
+	for i := 1; i < n; i++ {
+		cur := "N" + strconv.Itoa(i)
+		g.Outgoing[prev] = []string{cur}
+		g.Incoming[cur] = []string{prev}
+		g.NodeIDs[cur] = struct{}{}
+		g.NodeType[cur] = bpmncore.NodeTypeExclusiveGateway
+		prev = cur
+	}
+	proc := &bpmncore.BPMNProcess{}
+	errs := validator.ValidateWithImplicitStart(proc, g, "N0", map[string]bpmncore.StageTypeHandler{}, map[bpmncore.FlowNodeType]bpmncore.ElementHandler{}, &bpmncore.BPMNDefinitions{})
+	if !hasCodeIn(errs, domain.BPMNErrMaxDepthExceeded) {
+		t.Errorf("a process entered at its implicit start has the same depth limit; expected MAX_DEPTH_EXCEEDED, got %v", errCodesOf(errs))
+	}
+}
