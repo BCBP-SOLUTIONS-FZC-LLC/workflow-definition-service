@@ -14,6 +14,7 @@ Render locally with the [Mermaid VS Code / IntelliJ plugin](https://marketplace.
 | `http-mutation-flow.mmd` | Key runtime flows → HTTP mutation (e.g. PublishVersion) |
 | `internal-compiled-plan-flow.mmd` | Key runtime flows → Internal compiled-plan read |
 | `membership-revoked-flow.mmd` | Key runtime flows → DepartmentMembershipRevoked |
+| `tenant-offboarding-flow.mmd` | Key runtime flows → Tenant offboarding |
 | `archive-workflow-flow.mmd` | Key runtime flows → Archive workflow |
 | `pgcommon-withconn-flow.mmd` | platform-pgcommon → Connection lifecycle → `WithConn` |
 | `pgcommon-runintx-flow.mmd` | platform-pgcommon → Connection lifecycle → `RunInTx` |

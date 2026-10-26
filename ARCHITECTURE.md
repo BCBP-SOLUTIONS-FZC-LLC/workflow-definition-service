@@ -27,7 +27,7 @@ flowchart LR
     DEF -->|"active-instances · pause-tasks\ninternal HTTP"| EXEC
     DEF -->|"read/write"| DB
     DEF -->|"idempotency · quota cache"| CACHE
-    CONSUMER -->|"POST /api/v1/internal/events\n(DepartmentMembershipRevoked)"| DEF
+    CONSUMER -->|"POST /api/v1/internal/events\n(membership and tenant lifecycle events)"| DEF
     DEF -->|"eligibility check"| IAM
 ```
 
@@ -368,6 +368,29 @@ sequenceDiagram
     end
     Svc -->>- Handler: nil
     Handler -->>- Consumer: 200 OK (consumer acks the SQS message)
+```
+
+### 3b. Tenant offboarding (inbound via POST /api/v1/internal/events)
+
+> Source: [docs/architecture/mermaid/tenant-offboarding-flow.mmd](docs/architecture/mermaid/tenant-offboarding-flow.mmd)
+
+```mermaid
+sequenceDiagram
+    participant Consumer as shared workflow-events consumer
+    participant Handler as http/handler.HandleInternalEvent
+    participant Off as TenantOffboardingService
+    participant Ledger as tenant_retention
+    participant Purger as TenantPurger (daily sweep)
+    participant Bao as OpenBao
+
+    Consumer ->>+ Handler: TenantMembershipsPurged, or TenantStateChanged with status offboarded
+    Handler ->> Off: RecordOffboarded(tenant, event time)
+    Off ->> Ledger: one row, credential and artifact due dates
+    Handler -->>- Consumer: 200 OK
+    Note over Handler: a TenantStateChanged with any other status is acknowledged and ignored
+    Purger ->> Ledger: tenants whose retention has lapsed
+    Purger ->> Bao: destroy the tenant's connector credentials (registry paths)
+    Purger ->> Purger: delete workflows, modules and starters in batches under the tenant's RLS scope
 ```
 
 ### 4. Archive workflow

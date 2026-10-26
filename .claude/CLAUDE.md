@@ -8,7 +8,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 Key responsibilities: BPMN ingestion, structural/semantic/topological validation, DSL compilation, DRAFT → PUBLISHED → ARCHIVED versioning, and serving compiled plans to the Execution Service over its internal HTTP API.
 
-**This service publishes no events and keeps no outbox.** `api/asyncapi.yaml` documents the two inbound messages and no outbound channel. A future outbound event designs its contract and names a consumer first, and brings its own outbox, relay and schema registry client in the same change.
+**This service publishes no events and keeps no outbox.** `api/asyncapi.yaml` documents the four inbound messages (`DepartmentMembershipRevoked`, `MembershipRevoked`, `TenantMembershipsPurged`, `TenantStateChanged`) and no outbound channel. A future outbound event designs its contract and names a consumer first, and brings its own outbox, relay and schema registry client in the same change.
 
 ---
 

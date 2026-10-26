@@ -12,5 +12,5 @@ flowchart LR
     DEF -->|"active-instances · pause-tasks\ninternal HTTP"| EXEC
     DEF -->|"read/write"| DB
     DEF -->|"idempotency · quota cache"| CACHE
-    CONSUMER -->|"POST /internal/events\n(DepartmentMembershipRevoked)"| DEF
+    CONSUMER -->|"POST /internal/events\n(membership and tenant lifecycle events)"| DEF
     DEF -->|"eligibility check"| IAM
