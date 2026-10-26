@@ -25,6 +25,7 @@ spec:
     metadata:
       labels:
         {{- include "workflow-definition-service.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
     spec:
       restartPolicy: Never
       serviceAccountName: {{ if .Values.serviceAccount.create }}{{ include "workflow-definition-service.fullname" . }}{{ else }}default{{ end }}
@@ -37,7 +38,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: "{{ .Values.image.repository }}:{{ include "workflow-definition-service.imageTag" . }}"
+          image: "{{ include "workflow-definition-service.image" . }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["migrate"]
           securityContext:

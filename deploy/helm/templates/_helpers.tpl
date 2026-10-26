@@ -43,3 +43,10 @@ Image tag: prefer .Values.image.tag; fall back to chart appVersion.
 {{- define "workflow-definition-service.imageTag" -}}
 {{- .Values.image.tag | default .Chart.AppVersion }}
 {{- end }}
+
+{{/*
+Image reference: repository:tag, pinned by digest when image.digest is set.
+*/}}
+{{- define "workflow-definition-service.image" -}}
+{{ .Values.image.repository }}:{{ include "workflow-definition-service.imageTag" . }}{{ with .Values.image.digest }}@{{ . }}{{ end }}
+{{- end }}

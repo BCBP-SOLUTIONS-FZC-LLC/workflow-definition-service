@@ -4,6 +4,7 @@ image:
   repository: ghcr.io/bcbp-solutions-fzc-llc/workflow-definition-service
   pullPolicy: IfNotPresent
   tag: ""
+  digest: ""
 
 serviceAccount:
   create: true
@@ -76,7 +77,7 @@ env:
   TENANT_CREDENTIAL_RETENTION: "720h"             # connector credentials: 30 days after the tenant departs
   TENANT_ARTIFACT_RETENTION: "61320h"             # workflows, modules and starters: 7 years after
   TENANT_PURGE_INTERVAL: "24h"                    # how often the sweep runs
-  TENANT_PURGE_BATCH: "100"                       # tenants handled per sweep
+  TENANT_PURGE_BATCH: "100"                       # rows deleted per batch while purging one tenant
 
 envFromSecret:
   - DATABASE_URL
@@ -168,7 +169,7 @@ readinessProbe:
 # reads compiled plans from the internal API) and the monitoring namespace (/metrics).
 #
 # Envoy Gateway: data-plane Envoy proxy pods run in the same namespace as the
-# Gateway resource (not envoy-gateway-system, which is the control plane).
+# Gateway resource, the platform `gateway` namespace (Envoy Gateway's control plane is a separate namespace).
 # Set ingressControllerNamespaceSelector to the Gateway's namespace label and
 # ingressControllerPodSelector to the Envoy pod labels so the NetworkPolicy
 # allows only gateway traffic, not arbitrary pods in that namespace.
@@ -176,7 +177,7 @@ networkPolicy:
   enabled: true
   # Namespace label selector for the ingress controller / Envoy Gateway data-plane.
   ingressControllerNamespaceSelector:
-    kubernetes.io/metadata.name: envoy-gateway-system
+    kubernetes.io/metadata.name: gateway
   # Optional pod label selector — combined with namespaceSelector (logical AND).
   # Leave empty ({}) to allow all pods in the ingress controller namespace.
   ingressControllerPodSelector: {}
@@ -192,7 +193,7 @@ networkPolicy:
     enabled: true
     # Namespace where Prometheus runs.
     namespaceSelector:
-      kubernetes.io/metadata.name: monitoring
+      kubernetes.io/metadata.name: observability
     # Pod label selector for the Prometheus pod.
     podSelector:
       app.kubernetes.io/name: prometheus
@@ -213,6 +214,13 @@ networkPolicy:
     - podSelector:
         app.kubernetes.io/name: workflow-execution-service
         app.kubernetes.io/component: api
+    # OpenBao holds the tenants' connector credentials. Placeholder address until the
+    # platform's OpenBao namespace, labels and port are known; replace with the real ones.
+    - podSelector:
+        app.kubernetes.io/name: openbao
+      namespaceSelector:
+        kubernetes.io/metadata.name: openbao
+      ports: [8200]
   # If the Execution Service lives in a different namespace than this release, add
   # an ingress rule here restricted to the http port.
   additionalIngressRules: []

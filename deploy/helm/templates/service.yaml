@@ -17,3 +17,4 @@ spec:
       name: metrics
   selector:
     {{- include "workflow-definition-service.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api

@@ -40,7 +40,7 @@ spec:
           protocol: TCP
     {{- end }}
 
-    # Allow Prometheus to scrape /metrics — restricted to the monitoring namespace.
+    # Allow Prometheus to scrape /metrics — restricted to the observability namespace.
     {{- if .Values.networkPolicy.metricsIngress.enabled }}
     - from:
         - namespaceSelector:

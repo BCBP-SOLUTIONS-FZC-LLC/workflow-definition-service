@@ -23,6 +23,7 @@ spec:
     metadata:
       labels:
         {{- include "workflow-definition-service.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
       annotations:
         {{- if .Values.existingSecret }}
         # When using an external secret (ESO / CSI), bump rotationEpoch to force
@@ -45,7 +46,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: {{ .Chart.Name }}
-          image: "{{ .Values.image.repository }}:{{ include "workflow-definition-service.imageTag" . }}"
+          image: "{{ include "workflow-definition-service.image" . }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

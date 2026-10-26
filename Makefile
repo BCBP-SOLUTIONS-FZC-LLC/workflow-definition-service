@@ -342,6 +342,7 @@ docker-build:
 ## docker-lint: Lint Dockerfile with Hadolint (run 'make tools' to install)
 docker-lint:
 	$(HADOLINT) --config .hadolint.yaml Dockerfile
+	@scripts/dockerfile-credentials-check.sh
 
 ## docker-trivy: Scan source and dependencies for HIGH/CRITICAL CVEs (run 'make tools' to install)
 docker-trivy:
@@ -376,6 +377,15 @@ helm-check:
 			| awk -v name="$${target%%:*}" -v port="$${target##*:}" '/- to:/{ns=0;pod=0} /kubernetes.io\/metadata.name: iam$$/{ns=1} $$0 ~ "app.kubernetes.io/name: "name"$$"{pod=1} ns&&pod&&$$0 ~ "port: "port"$$"{found=1} END{exit !found}' \
 			|| { echo "helm-check: the NetworkPolicy does not allow egress to $$target in the iam namespace"; exit 1; }; \
 	done
+	@np="$$(helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/networkpolicy.yaml)"; \
+	for ns in gateway observability; do \
+		echo "$$np" | grep -q "kubernetes.io/metadata.name: $$ns$$" \
+			|| { echo "helm-check: the NetworkPolicy does not select the $$ns namespace"; exit 1; }; \
+	done; \
+	! echo "$$np" | grep -qE "kubernetes.io/metadata.name: (envoy-gateway-system|monitoring)$$" \
+		|| { echo "helm-check: the NetworkPolicy still selects a pre-rename namespace"; exit 1; }; \
+	echo "$$np" | awk '/- to:/{ns=0;pod=0} /kubernetes.io\/metadata.name: openbao$$/{ns=1} /app.kubernetes.io\/name: openbao$$/{pod=1} ns&&pod&&/port: 8200$$/{found=1} END{exit !found}' \
+		|| { echo "helm-check: the NetworkPolicy has no egress rule to OpenBao on 8200"; exit 1; }
 	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/deployment.yaml \
 		| grep -A1 "name: CONNECTOR_ALIAS_ALLOWED_HOSTS" | grep -q 'value: ".tender-app.svc.cluster.local"' \
 		|| { echo "helm-check: alias targets are not limited to the tender-app namespace"; exit 1; }
@@ -384,6 +394,19 @@ helm-check:
 		--set ingress.securityPolicy.cors.enabled=true --set 'ingress.securityPolicy.cors.allowOrigins[0]=https://app.example.com' \
 		| grep -q "mergeType: StrategicMerge" \
 		|| { echo "helm-check: the route SecurityPolicy does not merge with the gateway's (mergeType StrategicMerge)"; exit 1; }
+	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/service.yaml | grep -q "app.kubernetes.io/component: api" \
+		&& helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/deployment.yaml | awk '/template:/{t=1} t&&/app.kubernetes.io\/component: api/{f=1} END{exit !f}' \
+		|| { echo "helm-check: the Service selects the API pods by component: api, and the Deployment's pods carry it"; exit 1; }
+	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/migrate-job.yaml | grep -q "app.kubernetes.io/component: api" \
+		&& { echo "helm-check: the migration Job's pod carries the label the Service selects, so it would join the Service endpoints"; exit 1; } || true
+	@digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef; \
+	for t in deployment migrate-job; do \
+		helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) --set image.tag=v1 --set image.digest=$$digest -s templates/$$t.yaml \
+			| grep -q "image: \".*:v1@$$digest\"" \
+			|| { echo "helm-check: $$t does not pin the image by image.digest"; exit 1; }; \
+	done; \
+	grep -q -- '--set image.digest=' .github/workflows/release.yml \
+		|| { echo "helm-check: the release deploy does not pass the published digest, so its digest check can never fail"; exit 1; }
 	@if helm template workflow-definition-service deploy/helm --set existingSecret=workflow-definition-service-secrets > /dev/null 2>&1; then \
 		echo "helm-check: the chart renders for prod without ORG_MEMBERSHIP_BASE_URL, CATALOG_ADMIN_BASE_URL, OPENBAO_ADDR and VALKEY_ADDR"; exit 1; fi
 

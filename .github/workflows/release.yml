@@ -195,8 +195,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: BUILD_VERSION=${{ github.ref_name }}
           secrets: go_private_token=${{ secrets.GO_PRIVATE_TOKEN }}
-          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
 
       - uses: sigstore/cosign-installer@v3
 
@@ -248,6 +246,7 @@ jobs:
       - name: Deploy with Helm
         env:
           IMAGE_VERSION: ${{ needs.docker.outputs.version }}
+          IMAGE_DIGEST: ${{ needs.docker.outputs.digest }}
           K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'workflow-app' }}
           ORG_MEMBERSHIP_BASE_URL: ${{ vars.ORG_MEMBERSHIP_BASE_URL }}
           CATALOG_ADMIN_BASE_URL: ${{ vars.CATALOG_ADMIN_BASE_URL }}
@@ -260,6 +259,7 @@ jobs:
             --timeout=5m \
             --namespace="$K8S_NAMESPACE" \
             --set image.tag="$IMAGE_VERSION" \
+            --set image.digest="$IMAGE_DIGEST" \
             --set existingSecret=workflow-definition-service-secrets \
             --set env.ORG_MEMBERSHIP_BASE_URL="$ORG_MEMBERSHIP_BASE_URL" \
             --set env.CATALOG_ADMIN_BASE_URL="$CATALOG_ADMIN_BASE_URL" \
@@ -288,7 +288,8 @@ jobs:
             fi
             echo "Digest verified: deployed image matches published artifact."
           else
-            echo "::warning::Deployed image is not digest-pinned — cannot verify supply-chain integrity. Pin image digests in the Helm values."
+            echo "::error::Deployed image is not pinned by digest, so its integrity cannot be verified; the deploy step sets image.digest."
+            exit 1
           fi
 
       - name: Wait for rollout
