@@ -71,6 +71,7 @@ func NewRouter(cfg RouterConfig) *Router {
 		r.Use(mw)
 	}
 
+	r.NoRoute(handler.NotFound)
 	r.GET("/healthz", gincommon.HealthHandler())
 	draining := &atomic.Bool{}
 	r.GET("/readyz", readyzHandler(cfg.DB, cfg.Cache, draining))

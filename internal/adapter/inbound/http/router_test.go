@@ -184,3 +184,14 @@ func TestReadyz_AfterDrainBegins_Returns503EvenWhenHealthy(t *testing.T) {
 	router.engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "a pod that is shutting down must leave the endpoint lists before it stops listening")
 }
+
+func TestRouter_AnUnroutedPathIsAProblemDocument(t *testing.T) {
+	r := testRouter(fakeDBPinger{health: DBHealth{Healthy: true}}, fakePinger{})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/no-such-route", nil))
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, "application/problem+json", w.Header().Get("Content-Type"))
+	assert.Contains(t, w.Body.String(), `"code":"NOT_FOUND"`)
+}

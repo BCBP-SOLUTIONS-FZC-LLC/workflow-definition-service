@@ -22,6 +22,8 @@ func TestBindErrors_NameFieldsAndNothingElse(t *testing.T) {
 		{"missing required fields", `{}`, []string{"key", "name", "bpmn_xml"}, ""},
 		{"a field of the wrong type", `{"key":"secret-value-7","name":{"a":"hunter2"},"bpmn_xml":"x"}`, []string{"name"}, "hunter2"},
 		{"not json", `{"key": `, nil, ""},
+		{"a field name in the wrong case", `{"Key":"k","name":"n","bpmn_xml":"x"}`, []string{"Key"}, ""},
+		{"every unknown field is named", `{"key":"k","name":"n","bpmn_xml":"x","zeta":1,"alpha":{"b":2}}`, []string{"alpha", "zeta"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			log := &fakeLogger{}

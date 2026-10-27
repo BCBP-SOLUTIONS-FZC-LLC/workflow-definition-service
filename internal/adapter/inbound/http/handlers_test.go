@@ -14,6 +14,7 @@ func init() { gin.SetMode(gin.TestMode) }
 func newTestContext() (*gin.Context, *httptest.ResponseRecorder) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/asyncapi", nil)
 	return c, w
 }
 
@@ -56,6 +57,9 @@ func TestAsyncAPIHandler_FileNotFound(t *testing.T) {
 	AsyncAPIHandler(c)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 (spec file not present in test CWD)", w.Code)
+	}
+	if body := w.Body.String(); strings.Contains(body, "no such file") || strings.Contains(body, "asyncapi.yaml") {
+		t.Errorf("the 500 names the cause: %s", body)
 	}
 }
 

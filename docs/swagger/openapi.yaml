@@ -874,7 +874,7 @@ components:
           description: Present on DRAFT_CONCURRENCY. The draft's current record_version, to retry with after reconciling.
         invalid_params:
           type: array
-          description: Details about specific fields that failed validation, including a request field the endpoint does not define (reason "is not a known field").
+          description: Details about specific fields that failed validation, including every request field the endpoint does not define (reason "is not a known field"; names match exactly, case included, and a nested field is named by its path), up to twenty.
           items:
             type: object
             required: [name, reason]
