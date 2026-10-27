@@ -80,6 +80,14 @@ var tenantPurgeSteps = []purgeStep{
 	}},
 }
 
+func TenantPurgeTables() []string {
+	tables := make([]string, len(tenantPurgeSteps))
+	for i, step := range tenantPurgeSteps {
+		tables[i] = step.table
+	}
+	return tables
+}
+
 func (r *TenantRetentionRepo) PurgeBatch(ctx context.Context, tenantID uuid.UUID, limit int) (map[string]int64, error) {
 	deleted := map[string]int64{}
 	ctx = pgcommon.WithGUCSet(ctx, pgdomain.GUCSet{TenantID: tenantID.String()})

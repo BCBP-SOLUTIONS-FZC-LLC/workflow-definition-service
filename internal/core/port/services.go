@@ -11,7 +11,9 @@ import (
 )
 
 type MembershipService interface {
-	CheckEligibility(ctx context.Context, tenantID, userID uuid.UUID, departmentID, role string) (bool, error)
+	CheckEligibility(
+		ctx context.Context, tenantID, userID uuid.UUID, departmentID, role string,
+	) (domain.Eligibility, error)
 }
 
 type PlanTableReader interface {

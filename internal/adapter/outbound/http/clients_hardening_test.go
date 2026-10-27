@@ -76,8 +76,8 @@ func TestClients_RefuseAnOversizedResponseBody(t *testing.T) {
 		_, _ = w.Write([]byte(oversizedJSON("eligible")))
 	}))
 	defer eligible.Close()
-	if ok, err := NewMembershipClient(eligible.URL, time.Second).CheckEligibility(context.Background(), uuid.New(), uuid.New(), "d", "r"); err == nil || ok {
-		t.Errorf("membership client decoded a 2 MiB body: eligible=%v err=%v", ok, err)
+	if ok, err := NewMembershipClient(eligible.URL, time.Second).CheckEligibility(context.Background(), uuid.New(), uuid.New(), "d", "r"); err == nil || ok.Eligible {
+		t.Errorf("membership client decoded a 2 MiB body: eligible=%v err=%v", ok.Eligible, err)
 	}
 }
 

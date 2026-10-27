@@ -57,7 +57,7 @@ COVER_PKG_FLOORS   := internal/adapter/inbound/http:3 \
                       internal/bpmn_compiler/element:75 \
                       internal/config:90
 
-.PHONY: helm-check metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-breaking design-sync-check design-sync-check-test \
+.PHONY: alerts-test helm-check metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-breaking design-sync-check design-sync-check-test \
         build migrate test test-integration test-ci merge-coverage \
         cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
@@ -277,6 +277,8 @@ check:
 	$(MAKE) arch-lint
 	@echo "==> metrics-lint"
 	$(MAKE) metrics-lint
+	@echo "==> alerts-test"
+	$(MAKE) alerts-test
 	@echo "==> contract-breaking"
 	$(MAKE) contract-breaking
 	@echo "==> design-sync-check-test"
@@ -284,6 +286,14 @@ check:
 	@echo "==> test-ci (unit + integration, merged coverage gate)"
 	$(MAKE) cover-check
 	@echo "✓ all checks passed"
+
+PROMTOOL_IMAGE ?= prom/prometheus:v3.15.0
+
+## alerts-test: Unit-test the alert rules with promtool (a local promtool, else the Prometheus image)
+alerts-test:
+	@if command -v promtool >/dev/null 2>&1; then promtool test rules deploy/monitoring/app-alerts.test.yml; \
+	else docker run --rm --entrypoint promtool -v "$(CURDIR)/deploy/monitoring:/rules:ro" -w /rules \
+		$(PROMTOOL_IMAGE) test rules app-alerts.test.yml; fi
 
 ## arch-lint: Enforce Clean Architecture import direction via go-arch-lint
 arch-lint:
@@ -394,6 +404,10 @@ helm-check:
 		--set ingress.securityPolicy.cors.enabled=true --set 'ingress.securityPolicy.cors.allowOrigins[0]=https://app.example.com' \
 		| grep -q "mergeType: StrategicMerge" \
 		|| { echo "helm-check: the route SecurityPolicy does not merge with the gateway's (mergeType StrategicMerge)"; exit 1; }
+	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/prometheusrule.yaml \
+		--set serviceMonitor.enabled=true --set env.TENANT_PURGE_INTERVAL=48h \
+		| grep -q 'tenant_purge_failures_total{.*}\[50h\]' \
+		|| { echo "helm-check: the purge alert window does not follow TENANT_PURGE_INTERVAL (interval plus 2h)"; exit 1; }
 	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/service.yaml | grep -q "app.kubernetes.io/component: api" \
 		&& helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/deployment.yaml | awk '/template:/{t=1} t&&/app.kubernetes.io\/component: api/{f=1} END{exit !f}' \
 		|| { echo "helm-check: the Service selects the API pods by component: api, and the Deployment's pods carry it"; exit 1; }

@@ -417,8 +417,8 @@ func TestValidate_CallSitesCountTowardTaskLimit(t *testing.T) {
 		callSites int
 		rejected  bool
 	}{
-		{callSites: 999, rejected: false}, // 1 + 999 = 1000
-		{callSites: 1000, rejected: true}, // 1 + 1000 = 1001
+		{callSites: 999, rejected: false}, // the root and 999 calls reach the limit exactly
+		{callSites: 1000, rejected: true}, // one call over the limit
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%d call sites", tc.callSites), func(t *testing.T) {

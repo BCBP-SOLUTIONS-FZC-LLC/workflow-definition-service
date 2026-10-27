@@ -173,3 +173,14 @@ func TestObserveDependency_RecordsOutcomeByDependencyAndOperation(t *testing.T) 
 	require.Contains(t, body, `operation="check_active_instances",outcome="success"`)
 	require.Contains(t, body, `operation="check_active_instances",outcome="error"`)
 }
+
+func TestInitTenantPurgeTables_EveryTableIsScrapedAtZero(t *testing.T) {
+	initIdentity(t)
+	observability.InitTenantPurgeTables([]string{"purge_table_a", "purge_table_b"})
+
+	body := scrape(t)
+
+	for _, table := range []string{"purge_table_a", "purge_table_b"} {
+		require.Contains(t, body, `table="`+table+`"} 0`)
+	}
+}

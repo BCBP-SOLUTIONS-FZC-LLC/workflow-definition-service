@@ -50,3 +50,11 @@ Image reference: repository:tag, pinned by digest when image.digest is set.
 {{- define "workflow-definition-service.image" -}}
 {{ .Values.image.repository }}:{{ include "workflow-definition-service.imageTag" . }}{{ with .Values.image.digest }}@{{ . }}{{ end }}
 {{- end }}
+
+{{- define "workflow-definition-service.purgeAlertWindow" -}}
+{{- $interval := .Values.env.TENANT_PURGE_INTERVAL | toString -}}
+{{- if not (regexMatch "^[0-9]+h$" $interval) -}}
+{{- fail "env.TENANT_PURGE_INTERVAL must be whole hours (for example 24h), so the purge alert window can follow it" -}}
+{{- end -}}
+{{- printf "%dh" (add (trimSuffix "h" $interval | atoi) 2) -}}
+{{- end -}}

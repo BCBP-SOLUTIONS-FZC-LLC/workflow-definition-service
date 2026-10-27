@@ -46,6 +46,9 @@ jobs:
       - name: Helm chart renders for production
         run: make helm-check
 
+      - name: Alert rule tests
+        run: make alerts-test
+
       # The internal spec must not break its callers (definition LLD §3.4).
       - name: Breaking-change gate
         env:

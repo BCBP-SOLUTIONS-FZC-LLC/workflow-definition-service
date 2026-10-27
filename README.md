@@ -205,9 +205,10 @@ make help
 | `make design-sync-check` / `make design-sync-check-test` | Fail when a document kept both here and in the design repository differs (`DESIGN_DIR` reads a local checkout, otherwise `GH_TOKEN` reads `Haroon-BCBP/design`); the test runs the script against throwaway directories |
 | `make fmt-check` / `make lint` / `make arch-lint` | Formatting, lint, and Clean Architecture import-direction checks (read-only) |
 | `make fix` | Auto-fix formatting and lint issues |
-| `make check` | Full local CI pass: fmt + lint + vet + arch-lint + metrics-lint + contract-breaking + design-sync-check-test + tests + coverage gate |
+| `make check` | Full local CI pass: fmt + lint + vet + arch-lint + metrics-lint + alerts-test + contract-breaking + design-sync-check-test + tests + coverage gate |
 | `make vuln` | Run govulncheck for known dependency vulnerabilities |
 | `make metrics-lint` | Observability standard: collector naming, `metricslint` on a real scrape, alert and doc references, inventory drift |
+| `make alerts-test` | Unit-test the alert rules with `promtool` (`deploy/monitoring/app-alerts.test.yml`) |
 | `make metrics-inventory` | Regenerate `docs/observability/metric-registry.md` |
 | `make docker-build` / `make docker-lint` / `make docker-trivy` | Build the container image, lint the Dockerfile, scan for CVEs |
 | `make docker-up` | Start PostgreSQL + Valkey + PgBouncer |

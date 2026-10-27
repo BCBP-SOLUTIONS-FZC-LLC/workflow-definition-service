@@ -7,3 +7,8 @@ func ValidRoleLevel(role string) bool {
 	}
 	return false
 }
+
+type Eligibility struct {
+	Eligible bool
+	Reason   string
+}

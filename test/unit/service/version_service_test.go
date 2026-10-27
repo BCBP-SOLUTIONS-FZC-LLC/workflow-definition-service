@@ -634,7 +634,7 @@ func TestVersionService_Publish_EligibilityFail(t *testing.T) {
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(plan), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("hash", nil)
 	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "finance", "reviewer").
-		Return(false, nil)
+		Return(domain.Eligibility{}, nil)
 
 	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
 	if !errors.Is(err, domain.ErrAssigneeIneligible) {
@@ -1639,7 +1639,7 @@ func TestVersionService_Publish_EligibilityCheckError(t *testing.T) {
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(plan), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("h", nil)
 	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "ops", "approver").
-		Return(false, errors.New("membership service error"))
+		Return(domain.Eligibility{}, errors.New("membership service error"))
 
 	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
 	if err == nil {
@@ -1754,7 +1754,7 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{}, nil) // divergence check: first publish
 	// All assignees eligible → checkAssigneeEligibility returns nil
 	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, assigneeID, "018e1f2a-0000-7000-8000-000000000030", "approver").
-		Return(true, nil)
+		Return(domain.Eligibility{Eligible: true}, nil)
 	vRepo.EXPECT().NextVersionNumber(gomock.Any(), tenantID, wfID).Return(int32(1), nil)
 	tx.EXPECT().RunInTxWithRetry(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })

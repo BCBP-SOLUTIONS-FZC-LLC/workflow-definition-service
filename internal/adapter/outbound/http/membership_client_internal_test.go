@@ -17,14 +17,14 @@ func TestTryCheckEligibility_UnexpectedStatusCode(t *testing.T) {
 	defer srv.Close()
 
 	c := &MembershipClient{baseURL: srv.URL, client: srv.Client()}
-	eligible, retryable, err := c.tryCheckEligibility(context.Background(), srv.URL, uuid.New())
+	result, retryable, err := c.tryCheckEligibility(context.Background(), srv.URL, uuid.New())
 	if err == nil {
 		t.Fatal("expected error for unexpected status code")
 	}
 	if retryable {
 		t.Error("expected retryable=false for a non-5xx status code")
 	}
-	if eligible {
+	if result.Eligible {
 		t.Error("expected eligible=false")
 	}
 }

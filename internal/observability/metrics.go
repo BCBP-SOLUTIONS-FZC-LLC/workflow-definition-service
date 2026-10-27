@@ -117,6 +117,15 @@ func AddRLSViolations(violationType string, n float64) {
 	}
 }
 
+func InitTenantPurgeTables(tables []string) {
+	if TenantPurgeRowsDeletedTotal == nil {
+		return
+	}
+	for _, table := range tables {
+		TenantPurgeRowsDeletedTotal.WithLabelValues(table)
+	}
+}
+
 func AddTenantPurgeRows(table string, n int64) {
 	if TenantPurgeRowsDeletedTotal != nil {
 		TenantPurgeRowsDeletedTotal.WithLabelValues(table).Add(float64(n))

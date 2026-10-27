@@ -174,6 +174,7 @@ func newApp(cfg *config.Config) (*app, error) {
 	})
 	var tenantPurger *service.TenantPurger
 	if cfg.TenantPurgeEnabled {
+		observability.InitTenantPurgeTables(pgadapter.TenantPurgeTables())
 		tenantPurger = service.NewTenantPurger(service.TenantPurgerDeps{
 			Retention: retentionRepo,
 			Data:      retentionRepo,

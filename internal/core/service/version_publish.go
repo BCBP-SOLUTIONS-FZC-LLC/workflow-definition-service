@@ -232,11 +232,18 @@ func (s *VersionService) checkAssigneeEligibility(
 }
 
 func (s *VersionService) checkEligibility(ctx context.Context, tenantID uuid.UUID, check eligibilityCheck) error {
-	eligible, err := s.membership.CheckEligibility(ctx, tenantID, check.userID, check.deptID, check.role)
+	result, err := s.membership.CheckEligibility(ctx, tenantID, check.userID, check.deptID, check.role)
 	if err != nil {
 		return fmt.Errorf("check eligibility: %w", err)
 	}
-	if !eligible {
+	if !result.Eligible {
+		s.log.Info("assignee refused by membership eligibility", map[string]any{
+			"tenant_id":      tenantID.String(),
+			"user_id":        check.userID.String(),
+			"department_id":  check.deptID,
+			"required_level": check.role,
+			"reason":         result.Reason,
+		})
 		return fmt.Errorf("user %s dept %s role %s: %w", check.assigneeID, check.deptID, check.role, domain.ErrAssigneeIneligible)
 	}
 	return nil

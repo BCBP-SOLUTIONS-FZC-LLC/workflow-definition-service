@@ -16,6 +16,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port/mocks"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 )
@@ -27,9 +28,12 @@ type eligibilityFake struct {
 	peak     atomic.Int32
 	delay    func(user uuid.UUID) time.Duration
 	eligible func(user uuid.UUID) bool
+	reason   string
 }
 
-func (f *eligibilityFake) CheckEligibility(_ context.Context, _, userID uuid.UUID, dept, role string) (bool, error) {
+func (f *eligibilityFake) CheckEligibility(
+	_ context.Context, _, userID uuid.UUID, dept, role string,
+) (domain.Eligibility, error) {
 	n := f.inFlight.Add(1)
 	for {
 		p := f.peak.Load()
@@ -47,15 +51,25 @@ func (f *eligibilityFake) CheckEligibility(_ context.Context, _, userID uuid.UUI
 	if f.delay != nil {
 		time.Sleep(f.delay(userID))
 	}
-	return f.eligible(userID), nil
+	if f.eligible(userID) {
+		return domain.Eligibility{Eligible: true}, nil
+	}
+	return domain.Eligibility{Reason: f.reason}, nil
 }
 
 func publishWithAssignees(t *testing.T, fake *eligibilityFake, plan *dsl.CompiledPlan) error {
 	t.Helper()
+	return publishWithAssigneesLogged(t, fake, plan, nil)
+}
+
+func publishWithAssigneesLogged(t *testing.T, fake *eligibilityFake, plan *dsl.CompiledPlan, log port.Logger) error {
+	t.Helper()
 	ctrl := gomock.NewController(t)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 	compiler := mocks.NewMockPlanCompiler(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{Versions: vRepo, Compiler: compiler, Membership: fake})
+	svc := service.NewVersionService(service.VersionDeps{
+		Versions: vRepo, Compiler: compiler, Membership: fake, Log: log,
+	})
 
 	tenantID, wfID, vID := uuid.New(), uuid.New(), uuid.New()
 	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, vID).Return(
@@ -157,7 +171,7 @@ func TestPublish_ALookupErrorIsReportedNotTreatedAsIneligible(t *testing.T) {
 	compiler.EXPECT().BundleModules("<bpmn/>", gomock.Any()).Return("<bpmn/>", nil)
 	compiler.EXPECT().CompileForPublish(gomock.Any(), "<bpmn/>").Return(collabOf(plan), nil)
 	compiler.EXPECT().Hash(gomock.Any(), "<bpmn/>").Return("hash", nil)
-	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, u, "dept-a", "reviewer").Return(false, down)
+	membership.EXPECT().CheckEligibility(gomock.Any(), tenantID, u, "dept-a", "reviewer").Return(domain.Eligibility{}, down)
 
 	_, err := svc.Publish(context.Background(), tenantID, uuid.New(), wfID, vID, false)
 
@@ -197,4 +211,22 @@ func TestPublish_OnlyStagesThatCreateAHumanTaskAreChecked(t *testing.T) {
 	assert.NotContains(t, err.Error(), receiver.String())
 	assert.NotContains(t, err.Error(), connectorUser.String())
 	assert.Equal(t, map[string]int{reviewer.String() + "|dept-a|reviewer": 1}, fake.calls)
+}
+
+func TestPublish_LogsTheReasonMembershipGaveForARefusal(t *testing.T) {
+	u := uuid.Must(uuid.NewV7())
+	plan := &dsl.CompiledPlan{Departments: []dsl.DepartmentDef{
+		{ID: "a", IAMDepartmentID: "dept-a", Stages: []dsl.StageDef{stageOf("approver", u)}},
+	}}
+	fake := &eligibilityFake{eligible: func(uuid.UUID) bool { return false }, reason: "level_insufficient"}
+	log := &recordingLogger{}
+
+	err := publishWithAssigneesLogged(t, fake, plan, log)
+
+	require.ErrorIs(t, err, domain.ErrAssigneeIneligible)
+	line := log.only(t)
+	assert.Equal(t, "level_insufficient", line.fields["reason"])
+	assert.Equal(t, u.String(), line.fields["user_id"])
+	assert.Equal(t, "dept-a", line.fields["department_id"])
+	assert.Equal(t, "approver", line.fields["required_level"])
 }

@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Publish logs the `reason` Org & Membership gives when it refuses an assignee (`member_not_active`, `not_member`, `department_not_active`, `not_in_department`, `level_insufficient`), as that service asked (LLD rev 1.62).
+- `workflow_definition_service_tenant_purge_rows_deleted_total` shows every purge table at zero from startup, and the purge-failure alert in the chart looks back over `TENANT_PURGE_INTERVAL` plus two hours; the chart refuses an interval that is not whole hours (`make helm-check` holds it).
+- `make alerts-test` unit-tests the alert rules with `promtool` (a local binary, else the Prometheus image); `make check` and the `validate-quality` contracts job run it.
+- gocritic runs its `diagnostic` and `performance` checks, apart from `hugeParam` and `rangeValCopy`, whose 50 findings ask for pointer parameters where a copy is deliberate.
 - The NetworkPolicy selects the platform namespaces `gateway` (Envoy Gateway data plane) and `observability` (Prometheus), the names IAM's charts use, in place of `envoy-gateway-system` and `monitoring`, and names OpenBao on 8200 (placeholder `openbao` namespace until the platform's address is known). `make helm-check` holds all three.
 - The release deploy passes the published image digest to Helm as `image.digest` (`repository:tag@digest`), and "Verify deployed image digest" fails when the deployed image is not pinned by digest.
 - The Dockerfile writes, uses and removes the private-module credential in one `RUN`; CI and the release build use no registry build cache; `make docker-lint` and the CI image job run `scripts/dockerfile-credentials-check.sh`. Earlier builder caches held `GO_PRIVATE_TOKEN`, so it needs rotating.

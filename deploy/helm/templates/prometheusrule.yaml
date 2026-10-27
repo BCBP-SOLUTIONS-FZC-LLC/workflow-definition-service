@@ -235,7 +235,7 @@ spec:
 
         - alert: WorkflowDefinitionServiceTenantPurgeFailing
           expr: |
-            sum(increase(workflow_definition_service_tenant_purge_failures_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[26h])) > 0
+            sum(increase(workflow_definition_service_tenant_purge_failures_total{job={{ include "workflow-definition-service.fullname" . | quote }}}[{{ include "workflow-definition-service.purgeAlertWindow" . }}])) > 0
           for: 5m
           labels:
             severity: warning

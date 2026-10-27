@@ -69,7 +69,8 @@ make design-sync-check      # repo/design copies equal; DESIGN_DIR=<design check
 make design-sync-check-test # the script's own test
 make helm-check             # lint + render the chart
 make fix                    # gofmt + golangci-lint --fix (auto-fix formatting and lint)
-make check                  # gofmt check + lint + vet + arch-lint + metrics-lint + contract-breaking + design-sync-check-test + test + coverage gate (full local CI, read-only)
+make alerts-test            # promtool unit tests of the alert rules
+make check                  # gofmt check + lint + vet + arch-lint + metrics-lint + alerts-test + contract-breaking + design-sync-check-test + test + coverage gate (full local CI, read-only)
 
 # Container checks (run 'make tools' first to install hadolint + trivy)
 make docker-lint            # lint Dockerfile with Hadolint (native binary, no image needed)

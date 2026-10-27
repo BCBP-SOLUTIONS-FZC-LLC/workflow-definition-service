@@ -263,8 +263,8 @@ func TestMembershipClient_CheckEligibility(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
-				if ok != tt.wantEligible {
-					t.Errorf("eligible = %v, want %v", ok, tt.wantEligible)
+				if ok.Eligible != tt.wantEligible {
+					t.Errorf("eligible = %v, want %v", ok.Eligible, tt.wantEligible)
 				}
 			}
 			if tt.wantCalls > 0 && calls != tt.wantCalls {
@@ -306,5 +306,42 @@ func TestMembershipClient_CheckEligibility_RequestShape(t *testing.T) {
 		if v := got.Header.Get(header); v != want {
 			t.Errorf("%s = %q, want %q", header, v, want)
 		}
+	}
+}
+
+func TestMembershipClient_CheckEligibility_ReturnsTheReason(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want domain.Eligibility
+	}{
+		{
+			name: "a refusal carries its reason",
+			body: `{"eligible":false,"reason":"level_insufficient"}`,
+			want: domain.Eligibility{Reason: "level_insufficient"},
+		},
+		{
+			name: "an eligible answer has no reason",
+			body: `{"eligible":true}`,
+			want: domain.Eligibility{Eligible: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			client := httpadapter.NewMembershipClient(srv.URL, 10*time.Second)
+			got, err := client.CheckEligibility(context.Background(), uuid.New(), uuid.New(), "dept-1", "reviewer")
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("CheckEligibility() = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
