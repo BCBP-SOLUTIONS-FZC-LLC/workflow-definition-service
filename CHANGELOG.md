@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Gateway matching finds every split's join, and whether each branch reaches an end event, in one pass over the forward graph, shared by the validator and the compiler; a chain of exclusive gateways that each also lead to an end event no longer costs the square of its length (LLD rev 1.63).
 - Publish logs the `reason` Org & Membership gives when it refuses an assignee (`member_not_active`, `not_member`, `department_not_active`, `not_in_department`, `level_insufficient`), as that service asked (LLD rev 1.62).
 - `workflow_definition_service_tenant_purge_rows_deleted_total` shows every purge table at zero from startup, and the purge-failure alert in the chart looks back over `TENANT_PURGE_INTERVAL` plus two hours; the chart refuses an interval that is not whole hours (`make helm-check` holds it).
 - `make alerts-test` unit-tests the alert rules with `promtool` (a local binary, else the Prometheus image); `make check` and the `validate-quality` contracts job run it.

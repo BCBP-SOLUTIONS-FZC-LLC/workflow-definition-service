@@ -34,29 +34,10 @@ func TestCheckSplitJoin_BranchDoesNotReconverge(t *testing.T) {
 	}
 	backEdges := map[[2]string]bool{{"e", "d"}: true}
 
-	errs := checkSplitJoin("gw", "exclusive", g, backEdges)
+	errs := checkSplitJoin("gw", "exclusive", g, backEdges, bpmncore.NewJoins(g, backEdges))
 
 	if !hasCode(errs, domain.BPMNErrUnmatchedGateway) {
 		t.Fatalf("checkSplitJoin() = %v, want UNMATCHED_GATEWAY for the non-reconverging branch", errs)
-	}
-}
-
-// TestBranchTerminatesAtEndEvent_CycleProtection feeds branchTerminatesAtEndEvent
-// a cycle (x->y->x) with an empty backEdges map — i.e. neither edge is marked as
-// a back-edge, so the function must rely on IterativeDFS's own "scheduled" guard
-// to avoid revisiting a node forever. It must return false (no end event reached)
-// without hanging.
-func TestBranchTerminatesAtEndEvent_CycleProtection(t *testing.T) {
-	g := &bpmncore.Graph{
-		Outgoing: map[string][]string{
-			"x": {"y"},
-			"y": {"x"},
-		},
-		NodeType: map[string]bpmncore.FlowNodeType{},
-	}
-
-	if branchTerminatesAtEndEvent("x", g, map[[2]string]bool{}) {
-		t.Error("branchTerminatesAtEndEvent() = true, want false (no end event in the cycle)")
 	}
 }
 

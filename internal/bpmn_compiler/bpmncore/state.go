@@ -39,6 +39,7 @@ type CompileState struct {
 	laneLabels map[string]string
 	condExprs  map[[2]string]string
 	backEdges  map[[2]string]bool
+	joins      *lazyJoins
 	StageTypes map[string]StageTypeHandler
 	Elements   map[FlowNodeType]ElementHandler
 	Defs       *BPMNDefinitions
@@ -75,6 +76,7 @@ func NewCompileState(
 		laneLabels:    laneLabels,
 		condExprs:     condExprs,
 		backEdges:     backEdges,
+		joins:         &lazyJoins{},
 		StageTypes:    stageTypes,
 		Elements:      elements,
 		Defs:          defs,
@@ -103,6 +105,7 @@ func NewBranchState(parent *CompileState, stopAt string) *CompileState {
 		laneLabels:       parent.laneLabels,
 		condExprs:        parent.condExprs,
 		backEdges:        parent.backEdges,
+		joins:            parent.joins,
 		StageTypes:       parent.StageTypes,
 		Elements:         parent.Elements,
 		Defs:             parent.Defs,

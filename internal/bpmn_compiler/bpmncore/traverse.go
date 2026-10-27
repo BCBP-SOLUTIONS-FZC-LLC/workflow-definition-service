@@ -111,7 +111,7 @@ func (s *CompileState) HandleGateway(nodeID string, kind GatewayKind) error {
 		return s.handleSingleForwardWithReverts(nodeID, fwd, backTargets)
 	}
 
-	joinID, ok := FindJoin(nodeID, s.G, s.backEdges)
+	joinID, ok := s.joins.get(s.G, s.backEdges).Find(nodeID)
 	if !ok {
 		return s.handleSplitNoJoin(nodeID, fwd, backTargets, kind)
 	}
