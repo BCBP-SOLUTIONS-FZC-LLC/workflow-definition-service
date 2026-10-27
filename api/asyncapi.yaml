@@ -41,8 +41,9 @@ operations:
       whose status is offboarded) records the tenant for the purge of its
       templates after the artifact retention and its credentials after the credential retention; a redelivery
       keeps the first recorded dates. Any other TenantStateChanged status means
-      the tenant is back: it removes a purge record whose offboarding is older
-      than the event.
+      the tenant is back: it marks the purge record returned unless the
+      recorded offboarding is newer, and an older offboarding delivered after
+      it is ignored.
       2xx means handled, 400 means malformed (not retried), 500 and 502
       mean transient (retried). A message that carries a dataschema holds a
       schema-registry framed payload, which the service decodes first; 502
@@ -89,9 +90,9 @@ components:
       title: Tenant state changed (owned by IAM)
       description: >
         A status of offboarded records the tenant as TenantMembershipsPurged
-        does. Any other status removes a purge record whose offboarding is
-        older than the event, since the tenant is back; the Execution Service
-        also acts on them.
+        does. Any other status marks the purge record returned unless the
+        recorded offboarding is newer, since the tenant is back; the Execution
+        Service also acts on them.
       x-schema-owner: iam-org-membership
       payload: { $ref: '#/components/schemas/TenantStateChangedInbound' }
 

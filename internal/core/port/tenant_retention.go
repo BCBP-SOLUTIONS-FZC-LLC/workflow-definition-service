@@ -17,7 +17,8 @@ type TenantPurgeDue struct {
 
 type TenantRetentionRepository interface {
 	RecordOffboarded(ctx context.Context, tenantID uuid.UUID, offboardedAt, credentialsAfter, artifactsAfter time.Time) error
-	ClearOffboarded(ctx context.Context, tenantID uuid.UUID, before time.Time) error
+	RecordReturned(ctx context.Context, tenantID uuid.UUID, at time.Time) error
+	Current(ctx context.Context, tenantID uuid.UUID, version int64) error
 	ListDue(ctx context.Context, now time.Time, limit int) ([]TenantPurgeDue, error)
 	MarkCredentialsPurged(ctx context.Context, tenantID uuid.UUID, version int64, at time.Time) (int64, error)
 	MarkPurged(ctx context.Context, tenantID uuid.UUID, version int64, at time.Time) (int64, error)
@@ -25,6 +26,6 @@ type TenantRetentionRepository interface {
 }
 
 type TenantDataPurger interface {
-	PurgeBatch(ctx context.Context, tenantID uuid.UUID, limit int) (map[string]int64, error)
+	PurgeBatch(ctx context.Context, tenantID uuid.UUID, version int64, limit int) (map[string]int64, error)
 	HasRows(ctx context.Context, tenantID uuid.UUID) (bool, error)
 }

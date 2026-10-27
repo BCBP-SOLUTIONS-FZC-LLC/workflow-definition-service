@@ -45,9 +45,16 @@ type recordedFailure struct {
 	nextAttempt time.Time
 }
 
-func (f *fakeRetention) ClearOffboarded(_ context.Context, tenantID uuid.UUID, before time.Time) error {
-	f.cleared = append(f.cleared, clearedOffboard{tenantID, before})
+func (f *fakeRetention) RecordReturned(_ context.Context, tenantID uuid.UUID, at time.Time) error {
+	f.cleared = append(f.cleared, clearedOffboard{tenantID, at})
 	return f.recordErr
+}
+
+func (f *fakeRetention) Current(context.Context, uuid.UUID, int64) error {
+	if f.changed {
+		return domain.ErrTenantRetentionChanged
+	}
+	return nil
 }
 
 func (f *fakeRetention) RecordFailure(_ context.Context, tenantID uuid.UUID, version int64, attempts int, next time.Time) error {
@@ -125,7 +132,7 @@ func (f *fakeDataPurger) HasRows(_ context.Context, tenantID uuid.UUID) (bool, e
 	return f.rows[tenantID], f.rowsErr
 }
 
-func (f *fakeDataPurger) PurgeBatch(_ context.Context, tenantID uuid.UUID, _ int) (map[string]int64, error) {
+func (f *fakeDataPurger) PurgeBatch(_ context.Context, tenantID uuid.UUID, _ int64, _ int) (map[string]int64, error) {
 	if f.calls == nil {
 		f.calls = map[uuid.UUID]int{}
 	}
@@ -381,10 +388,25 @@ func TestTenantPurger_AChangedLedgerRowSkipsTheTenantWithoutAFailure(t *testing.
 	r := &fakeRetention{due: bothDue(tenant), changed: true}
 	rec, failed := map[string]int64{}, 0
 
-	require.NoError(t, newPurger(r, &fakeDataPurger{}, &fakeSecrets{}, rec, &failed).Tick(context.Background()))
+	s := &fakeSecrets{}
+	require.NoError(t, newPurger(r, &fakeDataPurger{}, s, rec, &failed).Tick(context.Background()))
 
 	assert.Zero(t, failed, "a tenant that returned or that another replica moved on is not a failure")
 	assert.Empty(t, r.failures)
+	assert.Empty(t, s.deleted, "no credential of a tenant whose record changed is deleted")
+}
+
+func TestTenantPurger_APartThatCompletesClearsTheAttemptCount(t *testing.T) {
+	tenant := uuid.New()
+	r := &fakeRetention{due: []port.TenantPurgeDue{{TenantID: tenant, Credentials: true, Artifacts: true, Attempts: 3, RecordVersion: 1}}}
+	d := &fakeDataPurger{errFor: map[uuid.UUID]error{tenant: errors.New("fk violation")}}
+	rec, failed := map[string]int64{}, 0
+
+	require.Error(t, newPurger(r, d, &fakeSecrets{}, rec, &failed).Tick(context.Background()))
+
+	require.Len(t, r.failures, 1)
+	assert.Equal(t, 1, r.failures[0].attempts, "the credentials completed, so the count starts again")
+	assert.Equal(t, int64(2), r.failures[0].version)
 }
 
 func TestTenantOffboardingService_AReturnClearsAnEarlierOffboarding(t *testing.T) {
@@ -393,6 +415,9 @@ func TestTenantOffboardingService_AReturnClearsAnEarlierOffboarding(t *testing.T
 	tenant, at := uuid.New(), time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
 
 	require.NoError(t, svc.RecordReturned(context.Background(), tenant, at))
+	require.NoError(t, svc.RecordReturned(context.Background(), tenant, time.Time{}))
 
-	assert.Equal(t, []clearedOffboard{{tenant, at}}, r.cleared)
+	require.Len(t, r.cleared, 2)
+	assert.Equal(t, clearedOffboard{tenant, at}, r.cleared[0])
+	assert.WithinDuration(t, time.Now(), r.cleared[1].before, time.Minute, "a return without a time is anchored at receipt")
 }

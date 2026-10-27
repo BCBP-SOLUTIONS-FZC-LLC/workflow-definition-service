@@ -58,6 +58,7 @@ func (p *TenantPurger) Tick(ctx context.Context) error {
 
 func (p *TenantPurger) purgeTenant(ctx context.Context, d port.TenantPurgeDue) []error {
 	version := d.RecordVersion
+	attempts := d.Attempts
 	var failures []error
 	for _, part := range []func(context.Context, port.TenantPurgeDue, int64) (int64, error){p.purgeCredentials, p.purgeArtifacts} {
 		next, err := part(ctx, d, version)
@@ -71,10 +72,13 @@ func (p *TenantPurger) purgeTenant(ctx context.Context, d port.TenantPurgeDue) [
 			failures = append(failures, err)
 			continue
 		}
+		if next != version {
+			attempts = 0
+		}
 		version = next
 	}
 	if len(failures) > 0 {
-		attempts := d.Attempts + 1
+		attempts++
 		err := p.deps.Retention.RecordFailure(ctx, d.TenantID, version, attempts, p.deps.Now().Add(p.backoff(attempts)))
 		if err != nil && !errors.Is(err, domain.ErrTenantRetentionChanged) {
 			failures = append(failures, fmt.Errorf("record tenant %s purge failure: %w", d.TenantID, err))
@@ -100,7 +104,7 @@ func (p *TenantPurger) purgeArtifacts(ctx context.Context, d port.TenantPurgeDue
 		if err := ctx.Err(); err != nil {
 			return version, fmt.Errorf("purge tenant %s: %w", tenantID, err)
 		}
-		deleted, err := p.deps.Data.PurgeBatch(ctx, tenantID, p.deps.Batch)
+		deleted, err := p.deps.Data.PurgeBatch(ctx, tenantID, version, p.deps.Batch)
 		if err != nil {
 			return version, fmt.Errorf("purge tenant %s: %w", tenantID, err)
 		}
@@ -132,6 +136,9 @@ func (p *TenantPurger) purgeCredentials(ctx context.Context, d port.TenantPurgeD
 	}
 	if p.deps.Secrets != nil {
 		for _, path := range tenantCredentialPaths(d.TenantID) {
+			if err := p.deps.Retention.Current(ctx, d.TenantID, version); err != nil {
+				return version, fmt.Errorf("purge tenant %s: %w", d.TenantID, err)
+			}
 			if err := p.deps.Secrets.Delete(ctx, path); err != nil {
 				return version, fmt.Errorf("purge tenant %s: delete credential %s: %w", d.TenantID, path, err)
 			}

@@ -39,7 +39,10 @@ func (s *TenantOffboardingService) RecordOffboarded(ctx context.Context, tenantI
 }
 
 func (s *TenantOffboardingService) RecordReturned(ctx context.Context, tenantID uuid.UUID, at time.Time) error {
-	if err := s.deps.Retention.ClearOffboarded(ctx, tenantID, at); err != nil {
+	if at.IsZero() {
+		at = s.deps.Now()
+	}
+	if err := s.deps.Retention.RecordReturned(ctx, tenantID, at); err != nil {
 		return fmt.Errorf("clear returned tenant: %w", err)
 	}
 	return nil

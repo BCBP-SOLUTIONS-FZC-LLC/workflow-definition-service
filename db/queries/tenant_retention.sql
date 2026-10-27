@@ -1,10 +1,29 @@
 -- name: RecordTenantOffboarded :exec
 INSERT INTO tenant_retention (tenant_id, offboarded_at, credentials_purge_after, artifacts_purge_after, next_attempt_at)
 VALUES ($1, $2, $3, $4, $2)
-ON CONFLICT (tenant_id) DO NOTHING;
+ON CONFLICT (tenant_id) DO UPDATE SET
+    offboarded_at = EXCLUDED.offboarded_at,
+    credentials_purge_after = EXCLUDED.credentials_purge_after,
+    artifacts_purge_after = EXCLUDED.artifacts_purge_after,
+    credentials_purged_at = NULL,
+    purged_at = NULL,
+    returned_at = NULL,
+    attempts = 0,
+    next_attempt_at = EXCLUDED.next_attempt_at
+WHERE tenant_retention.returned_at IS NOT NULL
+  AND tenant_retention.returned_at < EXCLUDED.offboarded_at;
 
--- name: ClearTenantOffboarded :exec
-DELETE FROM tenant_retention WHERE tenant_id = $1 AND offboarded_at < $2;
+-- name: RecordTenantReturned :exec
+INSERT INTO tenant_retention (tenant_id, returned_at, next_attempt_at)
+VALUES ($1, $2, $2)
+ON CONFLICT (tenant_id) DO UPDATE SET returned_at = EXCLUDED.returned_at
+WHERE (tenant_retention.offboarded_at IS NULL OR tenant_retention.offboarded_at < EXCLUDED.returned_at)
+  AND (tenant_retention.returned_at IS NULL OR tenant_retention.returned_at < EXCLUDED.returned_at);
+
+-- name: LockCurrentTenantRetention :one
+SELECT record_version FROM tenant_retention
+WHERE tenant_id = $1 AND record_version = $2 AND returned_at IS NULL
+FOR SHARE;
 
 -- name: ListTenantsDueForPurge :many
 SELECT
@@ -15,6 +34,7 @@ SELECT
     record_version
 FROM tenant_retention
 WHERE next_attempt_at <= $1
+  AND returned_at IS NULL
   AND ((credentials_purged_at IS NULL AND credentials_purge_after <= $1)
     OR (purged_at IS NULL AND artifacts_purge_after <= $1))
 ORDER BY LEAST(credentials_purge_after, artifacts_purge_after), tenant_id

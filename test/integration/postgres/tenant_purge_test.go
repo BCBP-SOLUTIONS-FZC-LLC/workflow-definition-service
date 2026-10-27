@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -178,30 +179,89 @@ func TestTenantRetentionRepo_HasRowsSeesOnlyTheTenantsOwnRows(t *testing.T) {
 	assert.False(t, has)
 }
 
-func TestTenantRetentionRepo_AReturnClearsOnlyAnEarlierOffboarding(t *testing.T) {
+func TestTenantRetentionRepo_AReturnStopsEveryOlderOffboarding(t *testing.T) {
+	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	at := func(hours int) time.Time { return base.Add(time.Duration(hours) * time.Hour) }
+	tests := []struct {
+		name    string
+		events  func(ctx context.Context, repo *pgadapter.TenantRetentionRepo, tenant uuid.UUID) error
+		wantDue bool
+	}{
+		{
+			name: "an offboarding redelivered after the return",
+			events: func(ctx context.Context, repo *pgadapter.TenantRetentionRepo, tenant uuid.UUID) error {
+				return errors.Join(
+					repo.RecordOffboarded(ctx, tenant, at(0), at(1), at(2)),
+					repo.RecordReturned(ctx, tenant, at(10)),
+					repo.RecordOffboarded(ctx, tenant, at(0), at(1), at(2)))
+			},
+		},
+		{
+			name: "an offboarding that arrives after the return that undid it",
+			events: func(ctx context.Context, repo *pgadapter.TenantRetentionRepo, tenant uuid.UUID) error {
+				return errors.Join(
+					repo.RecordReturned(ctx, tenant, at(10)),
+					repo.RecordOffboarded(ctx, tenant, at(0), at(1), at(2)))
+			},
+		},
+		{
+			name: "a return older than the offboarding is a late delivery",
+			events: func(ctx context.Context, repo *pgadapter.TenantRetentionRepo, tenant uuid.UUID) error {
+				return errors.Join(
+					repo.RecordOffboarded(ctx, tenant, at(5), at(6), at(7)),
+					repo.RecordReturned(ctx, tenant, at(4)))
+			},
+			wantDue: true,
+		},
+		{
+			name: "an offboarding after the return records afresh",
+			events: func(ctx context.Context, repo *pgadapter.TenantRetentionRepo, tenant uuid.UUID) error {
+				return errors.Join(
+					repo.RecordOffboarded(ctx, tenant, at(0), at(1), at(2)),
+					repo.RecordReturned(ctx, tenant, at(10)),
+					repo.RecordOffboarded(ctx, tenant, at(20), at(21), at(22)))
+			},
+			wantDue: true,
+		},
+	}
 	pool := fixtures.NewTestPool(t)
 	repo := pgadapter.NewTenantRetentionRepo(pool)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			tenant := uuid.New()
+			require.NoError(t, tt.events(ctx, repo, tenant))
+
+			due, err := repo.ListDue(ctx, at(100), 1000)
+			require.NoError(t, err)
+			var found bool
+			for _, d := range due {
+				found = found || d.TenantID == tenant
+			}
+			assert.Equal(t, tt.wantDue, found)
+		})
+	}
+}
+
+func TestTenantRetentionRepo_APurgeBatchStopsOnceTheTenantReturned(t *testing.T) {
+	superPool, superDSN := fixtures.NewTestPoolAndDSN(t)
+	appPool := fixtures.NewContextGUCRolePool(t, superDSN)
+	repo := pgadapter.NewTenantRetentionRepo(appPool)
 	ctx := context.Background()
 	tenant := uuid.New()
-	offboarded := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, repo.RecordOffboarded(ctx, tenant, offboarded, offboarded.Add(time.Hour), offboarded.Add(2*time.Hour)))
-
-	require.NoError(t, repo.ClearOffboarded(ctx, tenant, offboarded.Add(-time.Minute)))
-	due, err := repo.ListDue(ctx, offboarded.Add(3*time.Hour), 10)
+	seedPurgeTenant(t, superPool, tenant, 2)
+	now := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, repo.RecordOffboarded(ctx, tenant, now.Add(-48*time.Hour), now.Add(-time.Hour), now.Add(-time.Hour)))
+	due, err := repo.ListDue(ctx, now, 10)
 	require.NoError(t, err)
-	assert.Len(t, due, 1, "a status change older than the offboarding is a late delivery and clears nothing")
+	require.Len(t, due, 1)
 
-	require.NoError(t, repo.ClearOffboarded(ctx, tenant, offboarded.Add(time.Minute)))
-	due, err = repo.ListDue(ctx, offboarded.Add(3*time.Hour), 10)
-	require.NoError(t, err)
-	assert.Empty(t, due, "a tenant that came back is not purged")
+	require.NoError(t, repo.RecordReturned(ctx, tenant, now))
 
-	again := offboarded.Add(48 * time.Hour)
-	require.NoError(t, repo.RecordOffboarded(ctx, tenant, again, again.Add(time.Hour), again.Add(2*time.Hour)))
-	due, err = repo.ListDue(ctx, again.Add(3*time.Hour), 10)
-	require.NoError(t, err)
-	assert.Equal(t, []port.TenantPurgeDue{{TenantID: tenant, Credentials: true, Artifacts: true, RecordVersion: 1}}, due,
-		"a later offboarding of the same tenant is recorded afresh")
+	_, err = repo.PurgeBatch(ctx, tenant, due[0].RecordVersion, 10)
+	require.ErrorIs(t, err, domain.ErrTenantRetentionChanged)
+	require.ErrorIs(t, repo.Current(ctx, tenant, due[0].RecordVersion), domain.ErrTenantRetentionChanged)
+	assert.Equal(t, 2, countTenantRows(t, superPool, "workflow", tenant), "a returned tenant keeps its workflows")
 }
 
 func TestTenantRetentionRepo_AFailedTenantWaitsForItsNextAttempt(t *testing.T) {

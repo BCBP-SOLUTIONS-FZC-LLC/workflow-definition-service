@@ -34,7 +34,10 @@ func NewTenantRetentionRepo(pool *pgcommon.Pool) *TenantRetentionRepo {
 func (r *TenantRetentionRepo) RecordOffboarded(ctx context.Context, tenantID uuid.UUID, offboardedAt, credentialsAfter, artifactsAfter time.Time) error {
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
 		return db.New(dbtx).RecordTenantOffboarded(ctx, db.RecordTenantOffboardedParams{
-			TenantID: tenantID, OffboardedAt: offboardedAt, CredentialsPurgeAfter: credentialsAfter, ArtifactsPurgeAfter: artifactsAfter,
+			TenantID:              tenantID,
+			OffboardedAt:          timestamptz(offboardedAt),
+			CredentialsPurgeAfter: timestamptz(credentialsAfter),
+			ArtifactsPurgeAfter:   timestamptz(artifactsAfter),
 		})
 	})
 }
@@ -42,7 +45,7 @@ func (r *TenantRetentionRepo) RecordOffboarded(ctx context.Context, tenantID uui
 func (r *TenantRetentionRepo) ListDue(ctx context.Context, now time.Time, limit int) ([]port.TenantPurgeDue, error) {
 	var due []port.TenantPurgeDue
 	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		rows, err := db.New(dbtx).ListTenantsDueForPurge(ctx, db.ListTenantsDueForPurgeParams{CredentialsPurgeAfter: now, Limit: clampInt32(limit)})
+		rows, err := db.New(dbtx).ListTenantsDueForPurge(ctx, db.ListTenantsDueForPurgeParams{CredentialsPurgeAfter: timestamptz(now), Limit: clampInt32(limit)})
 		if err != nil {
 			return err
 		}
@@ -57,10 +60,25 @@ func (r *TenantRetentionRepo) ListDue(ctx context.Context, now time.Time, limit 
 	return due, err
 }
 
-func (r *TenantRetentionRepo) ClearOffboarded(ctx context.Context, tenantID uuid.UUID, before time.Time) error {
+func (r *TenantRetentionRepo) RecordReturned(ctx context.Context, tenantID uuid.UUID, at time.Time) error {
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		return db.New(dbtx).ClearTenantOffboarded(ctx, db.ClearTenantOffboardedParams{TenantID: tenantID, OffboardedAt: before})
+		return db.New(dbtx).RecordTenantReturned(ctx, db.RecordTenantReturnedParams{TenantID: tenantID, ReturnedAt: timestamptz(at)})
 	})
+}
+
+func (r *TenantRetentionRepo) Current(ctx context.Context, tenantID uuid.UUID, version int64) error {
+	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		return lockCurrent(ctx, db.New(dbtx), tenantID, version)
+	})
+}
+
+func lockCurrent(ctx context.Context, q *db.Queries, tenantID uuid.UUID, version int64) error {
+	_, err := q.LockCurrentTenantRetention(ctx, db.LockCurrentTenantRetentionParams{TenantID: tenantID, RecordVersion: version})
+	return retentionChanged(err)
+}
+
+func timestamptz(t time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: t, Valid: true}
 }
 
 func (r *TenantRetentionRepo) MarkCredentialsPurged(ctx context.Context, tenantID uuid.UUID, version int64, at time.Time) (int64, error) {
@@ -128,11 +146,14 @@ func TenantPurgeTables() []string {
 	return tables
 }
 
-func (r *TenantRetentionRepo) PurgeBatch(ctx context.Context, tenantID uuid.UUID, limit int) (map[string]int64, error) {
+func (r *TenantRetentionRepo) PurgeBatch(ctx context.Context, tenantID uuid.UUID, version int64, limit int) (map[string]int64, error) {
 	deleted := map[string]int64{}
 	ctx = pgcommon.WithGUCSet(ctx, pgdomain.GUCSet{TenantID: tenantID.String()})
-	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		q := db.New(dbtx)
+	err := asUnavailable(pgcommon.RunInTx(ctx, r.pool, pgx.TxOptions{}, func(ctx context.Context, tx pgx.Tx) error {
+		q := db.New(tx)
+		if err := lockCurrent(ctx, q, tenantID, version); err != nil {
+			return err
+		}
 		for _, step := range tenantPurgeSteps {
 			n, err := step.run(ctx, q, tenantID, clampInt32(limit))
 			if err != nil {
@@ -144,7 +165,7 @@ func (r *TenantRetentionRepo) PurgeBatch(ctx context.Context, tenantID uuid.UUID
 			}
 		}
 		return nil
-	})
+	}))
 	return deleted, err
 }
 
