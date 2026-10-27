@@ -5,7 +5,7 @@ import "sort"
 type Joins struct {
 	g          *Graph
 	backEdges  map[[2]string]bool
-	acyclic    bool
+	cyclic     map[string]bool
 	ipdom      map[string]string
 	reachesEnd map[string]bool
 }
@@ -16,13 +16,11 @@ func NewJoins(g *Graph, backEdges map[[2]string]bool) *Joins {
 	j := &Joins{
 		g:          g,
 		backEdges:  backEdges,
-		acyclic:    w.acyclic,
+		cyclic:     w.cyclic,
 		ipdom:      map[string]string{},
 		reachesEnd: map[string]bool{},
 	}
-	if j.acyclic {
-		j.index(w.order, w.successors)
-	}
+	j.index(w.order, w.successors)
 	return j
 }
 
@@ -38,7 +36,7 @@ func (l *lazyJoins) get(g *Graph, backEdges map[[2]string]bool) *Joins {
 }
 
 func (j *Joins) Find(splitID string) (string, bool) {
-	if !j.acyclic {
+	if j.cyclic[splitID] {
 		return FindJoin(splitID, j.g, j.backEdges)
 	}
 	if forwardCount(splitID, j.g, j.backEdges) < 2 {
@@ -49,7 +47,7 @@ func (j *Joins) Find(splitID string) (string, bool) {
 }
 
 func (j *Joins) ReachesEndEvent(node string) bool {
-	if !j.acyclic {
+	if j.cyclic[node] {
 		return reachesEndEvent(node, j.g, j.backEdges)
 	}
 	return j.reachesEnd[node]
@@ -58,6 +56,9 @@ func (j *Joins) ReachesEndEvent(node string) bool {
 func (j *Joins) index(order []string, successors map[string][]string) {
 	depth := map[string]int{"": 0}
 	for _, n := range order {
+		if j.cyclic[n] {
+			continue
+		}
 		var meet string
 		reaches := j.g.NodeType[n] == NodeTypeEndEvent
 		for i, succ := range successors[n] {
@@ -80,7 +81,7 @@ type forwardWalk struct {
 	state      map[string]int
 	successors map[string][]string
 	order      []string
-	acyclic    bool
+	cyclic     map[string]bool
 }
 
 const (
@@ -94,7 +95,7 @@ func newForwardWalk(g *Graph, backEdges map[[2]string]bool) *forwardWalk {
 		backEdges:  backEdges,
 		state:      map[string]int{},
 		successors: map[string][]string{},
-		acyclic:    true,
+		cyclic:     map[string]bool{},
 	}
 }
 
@@ -122,8 +123,7 @@ func (w *forwardWalk) from(root string) {
 		top := &stack[len(stack)-1]
 		out := w.g.Outgoing[top.node]
 		if top.next == len(out) {
-			w.state[top.node] = walkDone
-			w.order = append(w.order, top.node)
+			w.finish(top.node)
 			stack = stack[:len(stack)-1]
 			continue
 		}
@@ -133,13 +133,24 @@ func (w *forwardWalk) from(root string) {
 			continue
 		}
 		if w.state[next] == walkOnStack {
-			w.acyclic = false
+			w.cyclic[top.node] = true
 			continue
 		}
 		w.successors[top.node] = append(w.successors[top.node], next)
 		if w.state[next] == 0 {
 			w.state[next] = walkOnStack
 			stack = append(stack, frame{node: next})
+		}
+	}
+}
+
+func (w *forwardWalk) finish(node string) {
+	w.state[node] = walkDone
+	w.order = append(w.order, node)
+	for _, succ := range w.successors[node] {
+		if w.cyclic[succ] {
+			w.cyclic[node] = true
+			return
 		}
 	}
 }

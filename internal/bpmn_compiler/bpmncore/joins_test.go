@@ -40,11 +40,17 @@ func TestJoins_AgreeWithTheSearchBelowEachSplit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := rand.New(rand.NewPCG(7, 11))
+			shared, fallback := 0, 0
 			for round := 0; round < 200; round++ {
 				g := randomGraph(r, 3+r.IntN(25), tt.cyclic)
 				backEdges := ClassifyBackEdges(g, "n0")
 				joins := NewJoins(g, backEdges)
 				for node := range g.Outgoing {
+					if joins.cyclic[node] {
+						fallback++
+					} else {
+						shared++
+					}
 					wantJoin, wantOK := FindJoin(node, g, backEdges)
 					gotJoin, gotOK := joins.Find(node)
 					if gotJoin != wantJoin || gotOK != wantOK {
@@ -54,6 +60,12 @@ func TestJoins_AgreeWithTheSearchBelowEachSplit(t *testing.T) {
 						t.Fatalf("round %d, %s: ReachesEndEvent = %v, want %v", round, node, got, want)
 					}
 				}
+			}
+			if shared < 1000 {
+				t.Errorf("the shared pass answered only %d nodes", shared)
+			}
+			if tt.cyclic && fallback < 100 {
+				t.Errorf("the per-split search answered only %d nodes", fallback)
 			}
 		})
 	}
