@@ -7,6 +7,7 @@ import (
 	"errors"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -451,6 +452,28 @@ func TestPublish_AProblemInsideAModuleIsReportedOnTheWorkflowsCall(t *testing.T)
 	if e.Code != domain.BPMNErrUnresolvedCalledElement || e.NodeID != "CA_1" ||
 		!strings.Contains(e.Message, `"Process_Review" version 3`) || !strings.Contains(e.Message, "Process_Check") {
 		t.Errorf("errors = %+v, want UNRESOLVED_CALLED_ELEMENT on CA_1, naming Process_Review version 3 and the missing Process_Check", vf.Errors)
+	}
+}
+
+func TestPublish_AProblemInsideAModuleIsReportedOnEveryCallThatReachesIt(t *testing.T) {
+	review := libraryVersion(uuid.New(), "Process_Review", 3, libraryReviewCallsCheckBPMN)
+	got := publishWithLibrary(t, libraryCallerBPMN, map[libraryKey]*domain.ModuleVersion{
+		{"Process_Review", 3}: review,
+		{"Process_Review", 0}: review,
+	})
+	var vf *domain.ValidationFailedError
+	if !errors.As(got.err, &vf) {
+		t.Fatalf("publish err = %v, want a ValidationFailedError", got.err)
+	}
+	var calls []string
+	for _, e := range vf.Errors {
+		if e.Code == domain.BPMNErrUnresolvedCalledElement {
+			calls = append(calls, e.NodeID)
+		}
+	}
+	slices.Sort(calls)
+	if !slices.Equal(calls, []string{"CA_1", "CA_2"}) {
+		t.Errorf("unresolved-call errors name %v, want both calls that reach the broken version: %+v", calls, vf.Errors)
 	}
 }
 

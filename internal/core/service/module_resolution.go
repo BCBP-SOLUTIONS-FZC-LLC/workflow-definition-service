@@ -65,24 +65,26 @@ type moduleKey struct {
 }
 
 type pendingDoc struct {
-	xml      string
-	rootCall string
-	path     string
+	xml       string
+	versionID uuid.UUID
 }
 
-func (d pendingDoc) attribute(e domain.BPMNValidationError) domain.BPMNValidationError {
-	if d.rootCall == "" {
-		return e
-	}
-	e.Message = fmt.Sprintf("inside %s: %s", d.path, e.Message)
-	e.NodeID = d.rootCall
-	return e
+type moduleEdge struct {
+	from  uuid.UUID
+	call  string
+	label string
+}
+
+type moduleRoute struct {
+	rootCall string
+	path     string
 }
 
 func (r moduleResolver) resolve(ctx context.Context, lookup moduleLookup, mainXML, self string) (*resolution, error) {
 	w := &moduleWalk{
 		lookup: lookup, self: self,
-		refs: map[uuid.UUID]domain.ModuleRef{}, resolved: map[moduleKey]bool{}, failed: map[moduleKey]bool{},
+		refs: map[uuid.UUID]domain.ModuleRef{}, resolvedTo: map[moduleKey]*domain.ModuleVersion{}, failed: map[moduleKey]bool{},
+		reachedBy: map[uuid.UUID][]moduleEdge{}, docIssues: map[uuid.UUID][]domain.BPMNValidationError{},
 		queue: []pendingDoc{{xml: mainXML}},
 	}
 	for len(w.queue) > 0 {
@@ -93,7 +95,7 @@ func (r moduleResolver) resolve(ctx context.Context, lookup moduleLookup, mainXM
 			return nil, fmt.Errorf("list module calls: %w", err)
 		}
 		for _, e := range callIssues {
-			w.issues = append(w.issues, doc.attribute(e))
+			w.report(doc, e)
 		}
 		for _, call := range calls {
 			if err := w.visit(ctx, doc, call); err != nil {
@@ -101,6 +103,7 @@ func (r moduleResolver) resolve(ctx context.Context, lookup moduleLookup, mainXM
 			}
 		}
 	}
+	w.attributeModuleIssues()
 	if len(w.issues) > 0 {
 		return &resolution{issues: w.issues}, nil
 	}
@@ -119,39 +122,44 @@ func (r moduleResolver) resolve(ctx context.Context, lookup moduleLookup, mainXM
 }
 
 type moduleWalk struct {
-	lookup   moduleLookup
-	self     string
-	modules  []domain.ResolvedModule
-	issues   []domain.BPMNValidationError
-	refs     map[uuid.UUID]domain.ModuleRef
-	resolved map[moduleKey]bool
-	failed   map[moduleKey]bool
-	queue    []pendingDoc
+	lookup     moduleLookup
+	self       string
+	modules    []domain.ResolvedModule
+	issues     []domain.BPMNValidationError
+	refs       map[uuid.UUID]domain.ModuleRef
+	resolvedTo map[moduleKey]*domain.ModuleVersion
+	failed     map[moduleKey]bool
+	queue      []pendingDoc
+	reachedBy  map[uuid.UUID][]moduleEdge
+	docIssues  map[uuid.UUID][]domain.BPMNValidationError
+	issueOrder []uuid.UUID
 }
 
 func (w *moduleWalk) visit(ctx context.Context, doc pendingDoc, call domain.ModuleCall) error {
 	if w.self != "" && call.ProcessID == w.self && call.VersionNumber == 0 {
-		w.issues = append(w.issues, doc.attribute(selfCall(call, w.self)))
+		w.report(doc, selfCall(call, w.self))
 		return nil
 	}
 	key := moduleKey{call.ProcessID, call.VersionNumber}
 	if w.failed[key] {
-		w.issues = append(w.issues, doc.attribute(unresolvedCall(call)))
+		w.report(doc, unresolvedCall(call))
 		return nil
 	}
-	if w.resolved[key] {
+	if v, ok := w.resolvedTo[key]; ok {
+		w.reach(doc, call, v)
 		return nil
 	}
 	v, err := w.lookup(ctx, call.ProcessID, call.VersionNumber)
 	if errors.Is(err, domain.ErrNotFound) {
 		w.failed[key] = true
-		w.issues = append(w.issues, doc.attribute(unresolvedCall(call)))
+		w.report(doc, unresolvedCall(call))
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	w.resolved[key] = true
+	w.resolvedTo[key] = v
+	w.reach(doc, call, v)
 	number := *v.VersionNumber
 	w.modules = append(w.modules, domain.ResolvedModule{
 		ProcessID:     call.ProcessID,
@@ -161,17 +169,68 @@ func (w *moduleWalk) visit(ctx context.Context, doc pendingDoc, call domain.Modu
 	})
 	if _, seen := w.refs[v.ID]; !seen {
 		w.refs[v.ID] = domain.ModuleRef{ModuleID: v.ModuleID, VersionID: v.ID, ProcessID: v.ProcessID, VersionNumber: number}
-		w.queue = append(w.queue, doc.child(call, v.ProcessID, number, v.BPMNXML))
+		w.queue = append(w.queue, pendingDoc{xml: v.BPMNXML, versionID: v.ID})
 	}
 	return nil
 }
 
-func (d pendingDoc) child(call domain.ModuleCall, processID string, number int32, xml string) pendingDoc {
-	label := fmt.Sprintf("module %q version %d", processID, number)
-	if d.rootCall == "" {
-		return pendingDoc{xml: xml, rootCall: call.CallID, path: label}
+func (w *moduleWalk) reach(doc pendingDoc, call domain.ModuleCall, v *domain.ModuleVersion) {
+	edge := moduleEdge{from: doc.versionID, call: call.CallID, label: fmt.Sprintf("module %q version %d", v.ProcessID, *v.VersionNumber)}
+	if !slices.Contains(w.reachedBy[v.ID], edge) {
+		w.reachedBy[v.ID] = append(w.reachedBy[v.ID], edge)
 	}
-	return pendingDoc{xml: xml, rootCall: d.rootCall, path: d.path + " → " + label}
+}
+
+func (w *moduleWalk) report(doc pendingDoc, e domain.BPMNValidationError) {
+	if doc.versionID == uuid.Nil {
+		w.issues = append(w.issues, e)
+		return
+	}
+	if _, seen := w.docIssues[doc.versionID]; !seen {
+		w.issueOrder = append(w.issueOrder, doc.versionID)
+	}
+	w.docIssues[doc.versionID] = append(w.docIssues[doc.versionID], e)
+}
+
+func (w *moduleWalk) attributeModuleIssues() {
+	routes := map[uuid.UUID][]moduleRoute{}
+	for _, versionID := range w.issueOrder {
+		for _, route := range w.routes(versionID, routes, map[uuid.UUID]bool{}) {
+			for _, e := range w.docIssues[versionID] {
+				e.Message = fmt.Sprintf("inside %s: %s", route.path, e.Message)
+				e.NodeID = route.rootCall
+				w.issues = append(w.issues, e)
+			}
+		}
+	}
+}
+
+func (w *moduleWalk) routes(versionID uuid.UUID, memo map[uuid.UUID][]moduleRoute, visiting map[uuid.UUID]bool) []moduleRoute {
+	if known, ok := memo[versionID]; ok {
+		return known
+	}
+	if visiting[versionID] {
+		return nil
+	}
+	visiting[versionID] = true
+	defer delete(visiting, versionID)
+	var out []moduleRoute
+	add := func(r moduleRoute) {
+		if !slices.ContainsFunc(out, func(o moduleRoute) bool { return o.rootCall == r.rootCall }) {
+			out = append(out, r)
+		}
+	}
+	for _, edge := range w.reachedBy[versionID] {
+		if edge.from == uuid.Nil {
+			add(moduleRoute{rootCall: edge.call, path: edge.label})
+			continue
+		}
+		for _, parent := range w.routes(edge.from, memo, visiting) {
+			add(moduleRoute{rootCall: parent.rootCall, path: parent.path + " → " + edge.label})
+		}
+	}
+	memo[versionID] = out
+	return out
 }
 
 func (r moduleResolver) validate(ctx context.Context, lookup moduleLookup, bpmnXML string) ([]domain.BPMNValidationError, error) {
