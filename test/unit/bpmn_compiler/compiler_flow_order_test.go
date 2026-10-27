@@ -401,8 +401,7 @@ func TestCompileForPublish_ParallelBranchLedByAGateway_NamesItsFirstDepartment(t
 // compile work is bounded: splits whose branches merge only partly compile
 // the merged tail once per branch, so a long chain is refused at the task
 // limit rather than compiled for ever.
-func TestCompile_ChainedExclusiveSplitsWithoutAJoin_StopAtTheTaskLimit(t *testing.T) {
-	const blocks = 30
+func chainedSplitsWithoutAJoin(blocks int) string {
 	var body strings.Builder
 	var eng []string
 	body.WriteString("    <bpmn:startEvent id=\"S\"/>\n")
@@ -417,7 +416,11 @@ func TestCompile_ChainedExclusiveSplitsWithoutAJoin_StopAtTheTaskLimit(t *testin
 		prev = m
 	}
 	body.WriteString("    <bpmn:endEvent id=\"E\"/>\n" + flowXML("Fend", prev, "E"))
-	bpmnXML := flowDocument([]flowLane{{"Engineering", engDeptID, append([]string{"S", "E"}, eng...)}}, body.String())
+	return flowDocument([]flowLane{{"Engineering", engDeptID, append([]string{"S", "E"}, eng...)}}, body.String())
+}
+
+func TestCompile_ChainedExclusiveSplitsWithoutAJoin_StopAtTheTaskLimit(t *testing.T) {
+	bpmnXML := chainedSplitsWithoutAJoin(30)
 
 	done := make(chan error, 1)
 	go func() {
@@ -519,5 +522,16 @@ func TestCompileForPublish_RevertToATaskTwoBranchesReach_NamesItsOwnBranchsCopy(
 	walk(main.Execution.Steps, nil)
 	if len(reverts) != 2 {
 		t.Fatalf("found %d reverts to M, want one in each branch", len(reverts))
+	}
+}
+
+func TestValidateModule_AModuleThatCannotCompileIsRefused(t *testing.T) {
+	errs, err := bpmn_compiler.New().ValidateModule(context.Background(), chainedSplitsWithoutAJoin(30), "Process_Main", false)
+
+	if err != nil {
+		t.Fatalf("ValidateModule: %v", err)
+	}
+	if findCode(errs, domain.BPMNErrTaskLimitExceeded) == nil {
+		t.Errorf("errors = %v, want TASK_LIMIT_EXCEEDED: the module passes validation but cannot compile", errCodes(errs))
 	}
 }

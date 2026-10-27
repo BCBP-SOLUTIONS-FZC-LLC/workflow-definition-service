@@ -101,6 +101,22 @@ func moduleCall(ca bpmncore.BPMNCallActivity, callerID string, defs *bpmncore.BP
 }
 
 func (c *Compiler) ValidateModule(ctx context.Context, bpmnXML, moduleProcessID string, global bool) ([]domain.BPMNValidationError, error) {
+	errs, err := c.validateModule(ctx, bpmnXML, moduleProcessID, global)
+	if err != nil || slices.ContainsFunc(errs, isBlocking) {
+		return errs, err
+	}
+	_, _, err = c.compileModule(ctx, bpmnXML, moduleProcessID)
+	var refused *domain.ValidationFailedError
+	if errors.As(err, &refused) {
+		return append(errs, refused.Errors...), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return errs, nil
+}
+
+func (c *Compiler) validateModule(ctx context.Context, bpmnXML, moduleProcessID string, global bool) ([]domain.BPMNValidationError, error) {
 	defs, err := parse(ctx, bpmnXML)
 	if errors.Is(err, errMissingNamespace) {
 		return []domain.BPMNValidationError{{Code: domain.BPMNErrMissingNamespace, Message: err.Error(), Severity: domain.SeverityError}}, nil
@@ -124,13 +140,20 @@ func (c *Compiler) ValidateModule(ctx context.Context, bpmnXML, moduleProcessID 
 
 func (c *Compiler) CompileModule(ctx context.Context, bpmnXML, moduleProcessID string) (*dsl.CompiledCollaboration, domain.ModuleDeclarations, error) {
 	var none domain.ModuleDeclarations
-	errs, err := c.ValidateModule(ctx, bpmnXML, moduleProcessID, false)
+	errs, err := c.validateModule(ctx, bpmnXML, moduleProcessID, false)
 	if err != nil {
 		return nil, none, err
 	}
 	if blocking := slices.DeleteFunc(errs, func(e domain.BPMNValidationError) bool { return !isBlocking(e) }); len(blocking) > 0 {
 		return nil, none, &domain.ValidationFailedError{Errors: blocking}
 	}
+	return c.compileModule(ctx, bpmnXML, moduleProcessID)
+}
+
+func (c *Compiler) compileModule(
+	ctx context.Context, bpmnXML, moduleProcessID string,
+) (*dsl.CompiledCollaboration, domain.ModuleDeclarations, error) {
+	var none domain.ModuleDeclarations
 	defs, err := parse(ctx, bpmnXML)
 	if err != nil {
 		return nil, none, classifyParseError("compile-module", err)
