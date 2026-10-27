@@ -408,6 +408,12 @@ helm-check:
 		--set serviceMonitor.enabled=true --set env.TENANT_PURGE_INTERVAL=48h \
 		| grep -q 'tenant_purge_failures_total{.*}\[50h\]' \
 		|| { echo "helm-check: the purge alert window does not follow TENANT_PURGE_INTERVAL (interval plus 2h)"; exit 1; }
+	@for tpl in deployment migrate-job; do \
+		out="$$(helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/$$tpl.yaml \
+			--set podLabels.team=wf --set podAnnotations.owner=wf --set 'imagePullSecrets[0].name=regcred')"; \
+		echo "$$out" | grep -q "team: wf" && echo "$$out" | grep -q "owner: wf" && echo "$$out" | grep -q "name: regcred" \
+			|| { echo "helm-check: $$tpl does not take podLabels, podAnnotations and imagePullSecrets"; exit 1; }; \
+	done
 	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/service.yaml | grep -q "app.kubernetes.io/component: api" \
 		&& helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/deployment.yaml | awk '/template:/{t=1} t&&/app.kubernetes.io\/component: api/{f=1} END{exit !f}' \
 		|| { echo "helm-check: the Service selects the API pods by component: api, and the Deployment's pods carry it"; exit 1; }

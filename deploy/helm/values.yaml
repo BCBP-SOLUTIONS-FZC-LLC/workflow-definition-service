@@ -6,6 +6,10 @@ image:
   tag: ""
   digest: ""
 
+imagePullSecrets: []   # e.g. [{name: regcred}] for a private registry
+podLabels: {}          # added to the API and migration pods
+podAnnotations: {}     # added to the API and migration pods
+
 serviceAccount:
   create: true
   # Annotations added to the ServiceAccount — use for IRSA on EKS:

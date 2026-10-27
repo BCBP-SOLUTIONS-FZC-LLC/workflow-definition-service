@@ -24,7 +24,13 @@ spec:
       labels:
         {{- include "workflow-definition-service.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: api
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
         {{- if .Values.existingSecret }}
         # When using an external secret (ESO / CSI), bump rotationEpoch to force
         # a rollout after secret rotation:
@@ -35,6 +41,10 @@ spec:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
     spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       serviceAccountName: {{ if .Values.serviceAccount.create }}{{ include "workflow-definition-service.fullname" . }}{{ else }}default{{ end }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext:

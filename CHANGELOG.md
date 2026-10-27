@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The chart takes `imagePullSecrets`, `podLabels` and `podAnnotations` for the API pods and the migration job; `make helm-check` holds them.
 - A problem inside a module is reported on every call of the workflow that reaches it, through any chain of modules, not only on the first (LLD rev 1.68).
 - A module is also compiled and expanded when it is validated, so one that cannot compile (for instance `TASK_LIMIT_EXCEEDED`) is refused at create, draft and publish rather than when a workflow first calls it (LLD rev 1.67).
 - A module's cross-scope process-id check runs inside the create transaction, `SERIALIZABLE` with retry, so a tenant module and a global module created at once with one process id cannot both succeed (LLD rev 1.66).

@@ -26,8 +26,19 @@ spec:
       labels:
         {{- include "workflow-definition-service.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: migrate
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       serviceAccountName: {{ if .Values.serviceAccount.create }}{{ include "workflow-definition-service.fullname" . }}{{ else }}default{{ end }}
       securityContext:
         runAsNonRoot: true

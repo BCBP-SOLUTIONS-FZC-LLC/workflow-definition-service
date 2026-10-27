@@ -480,6 +480,8 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 
 `terminationGracePeriodSeconds` is `60`. `cmd/server/app.go`'s shutdown sequence on `SIGTERM`: an HTTP and a metrics `Shutdown(ctx)` bounded by a single 30-second context, then a final pool drain bounded by whatever remains of that deadline. In practice this finishes well under 30 seconds; the grace period carries real headroom above it.
 
+**Pod metadata.** `imagePullSecrets`, `podLabels` and `podAnnotations` apply to the API pods and the migration job; all are empty by default.
+
 **Secrets.** Two mutually exclusive modes, selected by whether `existingSecret` is set:
 
 - **`existingSecret: "<name>"`** (recommended beyond local testing) — points at a Secret already provisioned by External Secrets Operator, the AWS Secrets Manager CSI driver, or Sealed Secrets. The chart creates no Secret resource of its own. The render-time key checks do not run in this mode, so a key missing from that Secret shows as `CreateContainerConfigError` at pod start. Bump `rotationEpoch` (`--set rotationEpoch=$(date +%s)`) to force a rollout after the external secret rotates.
