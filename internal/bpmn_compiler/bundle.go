@@ -22,6 +22,7 @@ func bundleModules(mainXML string, modules []domain.ResolvedModule) (string, err
 		planFor[moduleKey{m.ProcessID, m.VersionNumber}] = m.PlanName
 	}
 	for i := range defs.Processes {
+		defs.Processes[i].LibraryModule = false
 		pointLibraryCalls(&defs.Processes[i], defs, planFor)
 	}
 	bundled := map[string]bool{}
@@ -40,6 +41,7 @@ func bundleModules(mainXML string, modules []domain.ResolvedModule) (string, err
 		pointLibraryCalls(&proc, modDefs, planFor)
 		pointSelfCalls(&proc, m.PlanName)
 		proc.ID = m.PlanName
+		proc.LibraryModule = true
 		bundleDefinitions(defs, modDefs, &proc, m.PlanName)
 		defs.Processes = append(defs.Processes, proc)
 		bundled[m.PlanName] = true

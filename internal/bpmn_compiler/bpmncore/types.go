@@ -57,6 +57,7 @@ type BPMNProcess struct {
 	ID                string                `xml:"id,attr"`
 	Name              string                `xml:"name,attr"`
 	IsExecutable      bool                  `xml:"isExecutable,attr"`
+	LibraryModule     bool                  `xml:"libraryModule,attr,omitempty"`
 	ExtensionElements BPMNExtensionElements `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL extensionElements"`
 	LaneSet           BPMNLaneSet           `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL laneSet"`
 	UserTasks         []BPMNUserTask        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL userTask"`

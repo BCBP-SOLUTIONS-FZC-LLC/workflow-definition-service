@@ -316,3 +316,15 @@ func TestValidate_AProblemInALibraryModuleNamesEveryCallThatReachesIt(t *testing
 		}
 	}
 }
+
+// A process the file defines keeps its problems on its own nodes, whatever
+// its id looks like: only processes bundled from the library are modules.
+func TestValidate_AProcessTheFileDefinesKeepsItsProblemsOnItsOwnNodes(t *testing.T) {
+	sub := strings.Replace(moduleWithTask("Sub@v1", validCandidateUser), `<zeebe:taskDefinition type="prep"/>`,
+		`<zeebe:taskDefinition type="prep"/><zeebe:taskSchedule dueDate="P3D"/>`, 1)
+	main := mainWithCalls([]callSite{{ID: "CA_1", Lane: "Engineering", Calls: "Sub@v1"}}, sub)
+
+	errs := validateDocument(t, main)
+
+	assertErrorOn(t, errs, domain.BPMNErrInvalidTaskSchedule, "Sub@v1_Task")
+}

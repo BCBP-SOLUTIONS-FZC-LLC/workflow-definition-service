@@ -83,7 +83,10 @@ func validateUniqueProcessIDs(defs *bpmncore.BPMNDefinitions) []domain.BPMNValid
 }
 
 func ValidateCalledBodies(root *bpmncore.BPMNProcess, stageTypes map[string]bpmncore.StageTypeHandler, elements map[bpmncore.FlowNodeType]bpmncore.ElementHandler, defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
-	w := bodyWalk{own: map[string][]domain.BPMNValidationError{}, callers: map[string][]bodyCaller{}}
+	w := bodyWalk{own: map[string][]domain.BPMNValidationError{}, callers: map[string][]bodyCaller{}, library: map[string]bool{}}
+	for _, p := range defs.Processes {
+		w.library[p.ID] = p.LibraryModule
+	}
 	visited := map[string]bool{root.ID: true}
 	queue := []*bpmncore.BPMNProcess{root}
 	for len(queue) > 0 {
@@ -121,13 +124,14 @@ type bodyWalk struct {
 	order   []string
 	own     map[string][]domain.BPMNValidationError
 	callers map[string][]bodyCaller
+	library map[string]bool
 }
 
 func (w *bodyWalk) attributed() []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	memo := map[string][]bodyRoute{}
 	for _, id := range w.order {
-		if !isLibraryModule(id) {
+		if !w.library[id] {
 			errs = append(errs, w.own[id]...)
 			continue
 		}
@@ -159,7 +163,7 @@ func (w *bodyWalk) routes(id string, memo map[string][]bodyRoute, visiting map[s
 		}
 	}
 	for _, c := range w.callers[id] {
-		if !isLibraryModule(c.process) {
+		if !w.library[c.process] {
 			add(bodyRoute{call: c.call, path: moduleLabel(id)})
 			continue
 		}
@@ -173,10 +177,6 @@ func (w *bodyWalk) routes(id string, memo map[string][]bodyRoute, visiting map[s
 		memo[id] = found
 	}
 	return found, complete
-}
-
-func isLibraryModule(processID string) bool {
-	return strings.Contains(processID, "@v")
 }
 
 func moduleLabel(planName string) string {
