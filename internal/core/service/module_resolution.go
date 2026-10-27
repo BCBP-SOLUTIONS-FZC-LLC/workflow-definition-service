@@ -195,7 +195,8 @@ func (w *moduleWalk) report(doc pendingDoc, e domain.BPMNValidationError) {
 func (w *moduleWalk) attributeModuleIssues() {
 	routes := map[uuid.UUID][]moduleRoute{}
 	for _, versionID := range w.issueOrder {
-		for _, route := range w.routes(versionID, routes, map[uuid.UUID]bool{}) {
+		found, _ := w.routes(versionID, routes, map[uuid.UUID]bool{})
+		for _, route := range found {
 			for _, e := range w.docIssues[versionID] {
 				e.Message = fmt.Sprintf("inside %s: %s", route.path, e.Message)
 				e.NodeID = route.rootCall
@@ -205,15 +206,18 @@ func (w *moduleWalk) attributeModuleIssues() {
 	}
 }
 
-func (w *moduleWalk) routes(versionID uuid.UUID, memo map[uuid.UUID][]moduleRoute, visiting map[uuid.UUID]bool) []moduleRoute {
+func (w *moduleWalk) routes(
+	versionID uuid.UUID, memo map[uuid.UUID][]moduleRoute, visiting map[uuid.UUID]bool,
+) (found []moduleRoute, complete bool) {
 	if known, ok := memo[versionID]; ok {
-		return known
+		return known, true
 	}
 	if visiting[versionID] {
-		return nil
+		return nil, false
 	}
 	visiting[versionID] = true
 	defer delete(visiting, versionID)
+	complete = true
 	var out []moduleRoute
 	add := func(r moduleRoute) {
 		if !slices.ContainsFunc(out, func(o moduleRoute) bool { return o.rootCall == r.rootCall }) {
@@ -225,12 +229,16 @@ func (w *moduleWalk) routes(versionID uuid.UUID, memo map[uuid.UUID][]moduleRout
 			add(moduleRoute{rootCall: edge.call, path: edge.label})
 			continue
 		}
-		for _, parent := range w.routes(edge.from, memo, visiting) {
+		parents, whole := w.routes(edge.from, memo, visiting)
+		complete = complete && whole
+		for _, parent := range parents {
 			add(moduleRoute{rootCall: parent.rootCall, path: parent.path + " → " + edge.label})
 		}
 	}
-	memo[versionID] = out
-	return out
+	if complete {
+		memo[versionID] = out
+	}
+	return out, complete
 }
 
 func (r moduleResolver) validate(ctx context.Context, lookup moduleLookup, bpmnXML string) ([]domain.BPMNValidationError, error) {
