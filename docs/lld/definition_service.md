@@ -1617,6 +1617,10 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Scenario**: A user task's `candidateGroups` is present but is not `preparator`, `reviewer` or `approver`.
     - **Trigger Logic**: The value is the department role level a user must hold for the task, and Org & Membership accepts only these three levels, so any other value is refused here instead of reaching it as a malformed request. The three levels are one platform-wide set, not a tenant setting. An absent, empty or over-long value is `CANDIDATE_GROUPS_EMPTY`. Elements other than a user task are not checked.
 
+48. **`UNSUPPORTED_REVERT_TARGET`**
+    - **Trigger Scenario**: A revert flow leads back to a `subProcess` or a `callActivity`: the first task on its way back is one of them.
+    - **Trigger Logic**: A revert runs its target's department again from the target, then decides at the gateway once more. A `subProcess` or `callActivity` is a step of its own, not a stage of a department, so the Execution Service has nothing to run again. The error is emitted on the exclusive gateway the revert flow leaves; looping back to a userTask before the call or subProcess is valid.
+
 ---
 
 ### 3.2 Endpoint Registry
@@ -5006,6 +5010,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.66 | 2026-10-27 | **A module's process id cannot be taken twice at once** (§10.16 identity). The cross-scope check ran before the create transaction, so a tenant module and a global module created together with one process id both succeeded; the check now runs inside the create, `SERIALIZABLE` with retry. |
 | 1.67 | 2026-10-27 | **A module that cannot compile is refused when it is saved** (§10.16 rules for module content). The module check ran the validators and the static call count only, so a module whose branches merge only in part passed and then failed every workflow that called it; the check now also compiles and expands the module. |
 | 1.68 | 2026-10-27 | **A problem inside a module is reported on every call that reaches it** (§10.16 resolution). A module version reached by two calls was walked once, so its problems named only the first call; they now name each call that reaches it, through any chain of modules. |
+| 1.69 | 2026-10-27 | **A revert to a subProcess or call is refused** (§3.1.4 new code 48). A revert flow whose way back reaches a `subProcess` or `callActivity` before any task compiled, and the instance failed when the gateway took it: a revert runs one department again, and neither is a stage of one. The validator refuses it with `UNSUPPORTED_REVERT_TARGET` on the gateway. |
 ---
 
 ## Appendix E: Open Items

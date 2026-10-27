@@ -73,6 +73,7 @@ const (
 	BPMNErrIgnoredLaneWork                BPMNErrorCode = "IGNORED_LANE_WORK"
 	BPMNErrInvalidBoundaryAttachment      BPMNErrorCode = "INVALID_BOUNDARY_ATTACHMENT"
 	BPMNErrUnsupportedBoundaryTarget      BPMNErrorCode = "UNSUPPORTED_BOUNDARY_TARGET"
+	BPMNErrUnsupportedRevertTarget        BPMNErrorCode = "UNSUPPORTED_REVERT_TARGET"
 	BPMNErrMissingDiagram                 BPMNErrorCode = "MISSING_DIAGRAM"
 	BPMNErrMissingDiagramShape            BPMNErrorCode = "MISSING_DIAGRAM_SHAPE"
 	BPMNErrInvalidZeebeProperty           BPMNErrorCode = "INVALID_ZEEBE_PROPERTY"

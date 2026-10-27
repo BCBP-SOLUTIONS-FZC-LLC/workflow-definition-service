@@ -92,6 +92,32 @@ func TestValidate_ReceiveTaskCannotBeTheSourceOfARevertFlow(t *testing.T) {
 	assertErrorOn(t, errs, domain.BPMNErrUnguardedLoop, "R")
 }
 
+func TestValidate_RevertFlowTarget(t *testing.T) {
+	subProcess := `    <bpmn:subProcess id="T">
+      <bpmn:startEvent id="SP_Start"/>
+` + userTaskXML("SP_Task") + `      <bpmn:endEvent id="SP_End"/>
+      <bpmn:sequenceFlow id="SP_F1" sourceRef="SP_Start" targetRef="SP_Task"/>
+      <bpmn:sequenceFlow id="SP_F2" sourceRef="SP_Task" targetRef="SP_End"/>
+    </bpmn:subProcess>
+`
+	revertTo := func(target string) string {
+		return "    <bpmn:startEvent id=\"S\"/>\n" + userTaskXML("A") + target + "    <bpmn:exclusiveGateway id=\"X\"/>\n    <bpmn:endEvent id=\"E\"/>\n" +
+			flowXML("F1", "S", "A") + flowXML("F2", "A", "T") + flowXML("F3", "T", "X") +
+			conditionalFlowXML("F4", "X", "E", `x == "done"`) + conditionalFlowXML("F5", "X", "T", `x == "again"`)
+	}
+	lane := oneLane("S", "A", "T", "X", "E")
+
+	t.Run("a revert to a subProcess is refused", func(t *testing.T) {
+		assertErrorOn(t, validateDocument(t, flowDocument(lane, revertTo(subProcess))), domain.BPMNErrUnsupportedRevertTarget, "X")
+	})
+	t.Run("a revert to a callActivity is refused", func(t *testing.T) {
+		assertErrorOn(t, validateDocument(t, flowDocument(lane, revertTo(callXML("T", "Mod")))), domain.BPMNErrUnsupportedRevertTarget, "X")
+	})
+	t.Run("a revert to a userTask is valid", func(t *testing.T) {
+		assertNoError(t, validateDocument(t, flowDocument(lane, revertTo(userTaskXML("T")))), domain.BPMNErrUnsupportedRevertTarget)
+	})
+}
+
 func TestValidate_EndEventWithAnOutgoingFlow_IsRefused(t *testing.T) {
 	body := "    <bpmn:startEvent id=\"S\"/>\n" + userTaskXML("A") + userTaskXML("B") + "    <bpmn:endEvent id=\"E\"/>\n    <bpmn:endEvent id=\"E2\"/>\n" +
 		flowXML("F1", "S", "A") + flowXML("F2", "A", "E") + flowXML("F3", "E", "B") + flowXML("F4", "B", "E2")

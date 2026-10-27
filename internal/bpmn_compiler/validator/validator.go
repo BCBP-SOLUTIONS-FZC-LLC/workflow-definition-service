@@ -43,6 +43,7 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 	errs = append(errs, ValidateDanglingNodes(proc, g, implicitStart)...)
 	errs = append(errs, ValidateReachability(proc, g, implicitStart)...)
 	errs = append(errs, ValidateLoops(g, backEdges)...)
+	errs = append(errs, ValidateRevertTargets(proc, g, backEdges)...)
 	errs = append(errs, ValidateGatewayMatching(proc, g, backEdges)...)
 	errs = append(errs, ValidateSingleOutgoing(proc, g, backEdges)...)
 	errs = append(errs, ValidateConditionExprs(proc, g, backEdges)...)

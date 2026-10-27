@@ -71,3 +71,39 @@ var sccExitNodeTypes = []bpmncore.FlowNodeType{
 func canExitSCCViaOutgoingEdge(t bpmncore.FlowNodeType) bool {
 	return slices.Contains(sccExitNodeTypes, t)
 }
+
+func ValidateRevertTargets(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	skipped := bpmncore.SkippedTasks(proc, g)
+	for edge := range backEdges {
+		if g.NodeType[edge[0]] != bpmncore.NodeTypeExclusiveGateway {
+			continue
+		}
+		target := revertTarget(edge[1], g, backEdges, skipped)
+		if t := g.NodeType[target]; t == bpmncore.NodeTypeSubProcess || t == bpmncore.NodeTypeCallActivity {
+			errs = AppendErr(errs, domain.BPMNErrUnsupportedRevertTarget, edge[0],
+				fmt.Sprintf("revert flow leads back to %s %q; a revert runs its target's department again, so put a userTask before it and loop back to that", t, target))
+		}
+	}
+	return errs
+}
+
+func revertTarget(node string, g *bpmncore.Graph, backEdges map[[2]string]bool, skipped map[string]bool) string {
+	work := []bpmncore.FlowNodeType{
+		bpmncore.NodeTypeUserTask, bpmncore.NodeTypeSendTask, bpmncore.NodeTypeReceiveTask,
+		bpmncore.NodeTypeSubProcess, bpmncore.NodeTypeCallActivity,
+	}
+	visited := map[string]bool{}
+	for curr := node; curr != "" && !visited[curr]; {
+		visited[curr] = true
+		if !skipped[curr] && slices.Contains(work, g.NodeType[curr]) {
+			return curr
+		}
+		next, ok := bpmncore.FirstForward(curr, g, backEdges)
+		if !ok {
+			return ""
+		}
+		curr = next
+	}
+	return ""
+}

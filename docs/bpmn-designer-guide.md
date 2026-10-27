@@ -251,6 +251,7 @@ These are checked on every upload. Breaking them causes rejection.
 | A task's `dueDate` and `followUpDate` are RFC 3339 date-times, such as `2026-10-12T09:00:00Z` | `INVALID_TASK_SCHEDULE` |
 | An exclusive split has a condition on every flow but one | `GATEWAY_BRANCH_WITHOUT_CONDITION` (warning) |
 | A revert flow starts at an exclusive gateway, never at a receive task (a receive task may be the place a revert returns to) | `UNGUARDED_LOOP` |
+| A revert flow leads back to a task; to repeat a sub-process or call, loop back to a user task before it | `UNSUPPORTED_REVERT_TARGET` |
 | Diagram block present (Camunda Modeler adds this) | `MISSING_DIAGRAM` |
 
 ### Limits

@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- A revert flow that leads back to a `subProcess` or `callActivity` is refused with the new code `UNSUPPORTED_REVERT_TARGET` on its gateway; it compiled and then failed the instance when taken (LLD rev 1.69).
 - The chart takes `imagePullSecrets`, `podLabels` and `podAnnotations` for the API pods and the migration job; `make helm-check` holds them.
 - A problem inside a module is reported on every call of the workflow that reaches it, through any chain of modules, not only on the first (LLD rev 1.68).
 - A module is also compiled and expanded when it is validated, so one that cannot compile (for instance `TASK_LIMIT_EXCEEDED`) is refused at create, draft and publish rather than when a workflow first calls it (LLD rev 1.67).
