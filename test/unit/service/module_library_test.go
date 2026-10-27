@@ -575,3 +575,62 @@ func TestDiff_DraftThatIsNotYetPublishable_StillDiffs(t *testing.T) {
 		t.Errorf("change type = %s, want STRUCTURAL", result.ChangeType)
 	}
 }
+
+// TestDiff_AChangeTwoModulesDeepNamesItsWholeCallPath pins that a change
+// inside a module called by a module is reported on the task under each call
+// path that reaches it, from the workflow's own call down.
+func TestDiff_AChangeTwoModulesDeepNamesItsWholeCallPath(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
+	modules := mocks.NewMockModuleVersionRepository(ctrl)
+	svc := service.NewVersionService(service.VersionDeps{Versions: vRepo, Compiler: bpmn_compiler.New(), ModuleVersions: modules})
+
+	timedCheck := strings.Replace(libraryCheckBPMN, `<bpmn:endEvent id="Check_End"/>`, `<bpmn:endEvent id="Check_End"/>
+    <bpmn:boundaryEvent id="Check_Timer" attachedToRef="Check_Task"><bpmn:timerEventDefinition><bpmn:timeDuration>P1D</bpmn:timeDuration></bpmn:timerEventDefinition></bpmn:boundaryEvent>
+    <bpmn:endEvent id="Check_TimedOut"/>
+    <bpmn:sequenceFlow id="Check_F3" sourceRef="Check_Timer" targetRef="Check_TimedOut"/>`, 1)
+	tenantID, wfID, baseID, targetID, reviewID, checkID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	review3 := libraryVersion(reviewID, "Process_Review", 3, libraryReviewCallsCheckBPMN)
+	review4 := libraryVersion(reviewID, "Process_Review", 4, libraryReviewCallsCheckBPMN)
+	check1 := libraryVersion(checkID, "Process_Check", 1, libraryCheckBPMN)
+	expectLibrary(modules, tenantID, map[libraryKey]*domain.ModuleVersion{
+		{"Process_Review", 3}: review3,
+		{"Process_Review", 0}: review4,
+		{"Process_Check", 0}:  libraryVersion(checkID, "Process_Check", 2, timedCheck),
+	})
+	for _, v := range []*domain.ModuleVersion{review3, review4, check1} {
+		modules.EXPECT().GetByID(gomock.Any(), tenantID, v.ID).Return(v, nil).AnyTimes()
+	}
+	unreadable, one := "not valid json", int32(1)
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, baseID).Return(&domain.WorkflowVersion{
+		ID: baseID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusPublished, VersionNumber: &one,
+		BPMNXML: libraryCallerBPMN, CompiledPlanJSON: &unreadable,
+		ModuleRefs: []domain.ModuleRef{
+			{ModuleID: reviewID, VersionID: review3.ID, ProcessID: "Process_Review", VersionNumber: 3},
+			{ModuleID: reviewID, VersionID: review4.ID, ProcessID: "Process_Review", VersionNumber: 4},
+			{ModuleID: checkID, VersionID: check1.ID, ProcessID: "Process_Check", VersionNumber: 1},
+		},
+	}, nil)
+	vRepo.EXPECT().GetByID(gomock.Any(), tenantID, targetID).Return(&domain.WorkflowVersion{
+		ID: targetID, WorkflowID: wfID, TenantID: tenantID, Status: domain.VersionStatusDraft, BPMNXML: libraryCallerBPMN,
+	}, nil)
+
+	result, err := svc.Diff(context.Background(), tenantID, wfID, baseID, targetID)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+
+	var keys []string
+	for _, c := range result.Changes.StageChanges {
+		if c.Description == "timer boundary changed" {
+			keys = append(keys, c.NodeKey)
+		}
+	}
+	for _, call := range []string{"CA_1", "CA_2"} {
+		if !slices.ContainsFunc(keys, func(k string) bool {
+			return strings.HasPrefix(k, call) && strings.Contains(k, "Review_Check") && strings.HasSuffix(k, "Check_Task")
+		}) {
+			t.Errorf("timer changes on %v, want one on Check_Task under %s and its Review_Check call", keys, call)
+		}
+	}
+}

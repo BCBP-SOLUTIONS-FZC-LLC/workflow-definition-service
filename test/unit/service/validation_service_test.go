@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -144,9 +145,10 @@ func TestValidationService_Validate_InvalidModuleTask_IsInvalid(t *testing.T) {
 	}
 	found := false
 	for _, e := range errs {
-		found = found || (e.Code == domain.BPMNErrInvalidCandidateUser && e.NodeID == "PR_Prep")
+		found = found || (e.Code == domain.BPMNErrInvalidCandidateUser && e.NodeID == "CA_1" &&
+			strings.Contains(e.Message, `inside module "Process_PrepReview" version 1`))
 	}
 	if !found {
-		t.Errorf("errors = %+v, want INVALID_CANDIDATE_USER on PR_Prep", errs)
+		t.Errorf("errors = %+v, want INVALID_CANDIDATE_USER on the call CA_1, naming the module", errs)
 	}
 }

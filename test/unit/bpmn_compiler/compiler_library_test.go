@@ -287,3 +287,32 @@ func TestProcessID_MissingNamespaceIsAValidationError(t *testing.T) {
 		t.Errorf("err = %v, want a ValidationFailedError with MISSING_NAMESPACE, as Validate reports it", err)
 	}
 }
+
+// A problem in a library module's body is reported on each call of the
+// workflow that reaches it, naming the module, since the module's own nodes
+// are not in the workflow's diagram.
+func TestValidate_AProblemInALibraryModuleNamesEveryCallThatReachesIt(t *testing.T) {
+	broken := strings.Replace(libraryModule("Process_Lib"), `<zeebe:taskDefinition type="prep"/>`,
+		`<zeebe:taskDefinition type="prep"/><zeebe:taskSchedule dueDate="P3D"/>`, 1)
+	main := mainWithCalls([]callSite{
+		{ID: "CA_1", Lane: "Engineering", Calls: "Process_Lib"},
+		{ID: "CA_2", Lane: "Ops", Calls: "Process_Lib"},
+	})
+	bundled, err := bpmn_compiler.New().BundleModules(main, []domain.ResolvedModule{
+		{ProcessID: "Process_Lib", VersionNumber: 0, PlanName: "Process_Lib@v4", BPMNXML: broken},
+	})
+	if err != nil {
+		t.Fatalf("BundleModules: %v", err)
+	}
+
+	errs := validateDocument(t, bundled)
+
+	for _, call := range []string{"CA_1", "CA_2"} {
+		assertErrorOn(t, errs, domain.BPMNErrInvalidTaskSchedule, call)
+	}
+	for _, e := range errs {
+		if e.Code == domain.BPMNErrInvalidTaskSchedule && !strings.Contains(e.Message, `inside module "Process_Lib" version 4`) {
+			t.Errorf("message %q does not name the module", e.Message)
+		}
+	}
+}

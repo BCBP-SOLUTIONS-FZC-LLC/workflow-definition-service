@@ -1114,7 +1114,7 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | An exclusive split has a condition on every flow but one default flow | `GATEWAY_BRANCH_WITHOUT_CONDITION` (warning) |
 | A receive task is never the source of a revert flow | `UNGUARDED_LOOP` |
 | A revert flow leads back to a task, not to a subProcess or callActivity | `UNSUPPORTED_REVERT_TARGET` |
-| The called process's own body passes every rule in these tables, without the diagram rules | the body's own codes, anchored on its own nodes, or on the called process id for a whole-process rule |
+| The called process's own body passes every rule in these tables, without the diagram rules | the body's own codes, anchored on its own nodes, or on the called process id for a whole-process rule; a library module's are anchored on each call of the workflow that reaches it, naming the module |
 
 Message, timer and error boundary events on `callActivity` compile to the call step's `message_paths`, `timer_paths` and `error_paths`. Every boundary names the department of the first task or subProcess on its path, or `terminates` at an end event; a path starting at a call or a message task is `UNSUPPORTED_BOUNDARY_TARGET`.
 
