@@ -11,10 +11,14 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors/v2/pkg/registry"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-const tenantsPerPurgeTick = 100
+const (
+	tenantsPerPurgeTick = 100
+	maxPurgeBackoff     = 7 * 24 * time.Hour
+)
 
 type TenantPurgerDeps struct {
 	Retention port.TenantRetentionRepository
@@ -47,37 +51,66 @@ func (p *TenantPurger) Tick(ctx context.Context) error {
 	}
 	var failures []error
 	for _, d := range due {
-		for _, err := range []error{p.purgeCredentials(ctx, d), p.purgeArtifacts(ctx, d)} {
-			if err != nil {
-				p.deps.Failed()
-				p.log.Error("tenant purge failed", map[string]any{"tenant_id": d.TenantID.String(), "error": err.Error()})
-				failures = append(failures, err)
-			}
-		}
+		failures = append(failures, p.purgeTenant(ctx, d)...)
 	}
 	return errors.Join(failures...)
 }
 
-func (p *TenantPurger) purgeArtifacts(ctx context.Context, d port.TenantPurgeDue) error {
+func (p *TenantPurger) purgeTenant(ctx context.Context, d port.TenantPurgeDue) []error {
+	version := d.RecordVersion
+	var failures []error
+	for _, part := range []func(context.Context, port.TenantPurgeDue, int64) (int64, error){p.purgeCredentials, p.purgeArtifacts} {
+		next, err := part(ctx, d, version)
+		if errors.Is(err, domain.ErrTenantRetentionChanged) {
+			p.log.Info("tenant purge skipped: its record changed", map[string]any{"tenant_id": d.TenantID.String()})
+			return nil
+		}
+		if err != nil {
+			p.deps.Failed()
+			p.log.Error("tenant purge failed", map[string]any{"tenant_id": d.TenantID.String(), "error": err.Error()})
+			failures = append(failures, err)
+			continue
+		}
+		version = next
+	}
+	if len(failures) > 0 {
+		attempts := d.Attempts + 1
+		err := p.deps.Retention.RecordFailure(ctx, d.TenantID, version, attempts, p.deps.Now().Add(p.backoff(attempts)))
+		if err != nil && !errors.Is(err, domain.ErrTenantRetentionChanged) {
+			failures = append(failures, fmt.Errorf("record tenant %s purge failure: %w", d.TenantID, err))
+		}
+	}
+	return failures
+}
+
+func (p *TenantPurger) backoff(attempts int) time.Duration {
+	wait := p.deps.Interval
+	for i := 1; i < attempts && wait < maxPurgeBackoff; i++ {
+		wait *= 2
+	}
+	return min(wait, maxPurgeBackoff)
+}
+
+func (p *TenantPurger) purgeArtifacts(ctx context.Context, d port.TenantPurgeDue, version int64) (int64, error) {
 	if !d.Artifacts {
-		return nil
+		return version, nil
 	}
 	tenantID := d.TenantID
 	for {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("purge tenant %s: %w", tenantID, err)
+			return version, fmt.Errorf("purge tenant %s: %w", tenantID, err)
 		}
 		deleted, err := p.deps.Data.PurgeBatch(ctx, tenantID, p.deps.Batch)
 		if err != nil {
-			return fmt.Errorf("purge tenant %s: %w", tenantID, err)
+			return version, fmt.Errorf("purge tenant %s: %w", tenantID, err)
 		}
 		if len(deleted) == 0 {
 			remaining, err := p.deps.Data.HasRows(ctx, tenantID)
 			if err != nil {
-				return fmt.Errorf("check tenant %s for remaining rows: %w", tenantID, err)
+				return version, fmt.Errorf("check tenant %s for remaining rows: %w", tenantID, err)
 			}
 			if remaining {
-				return fmt.Errorf("purge tenant %s: rows remain after a pass that deleted none, another replica may be purging it", tenantID)
+				return version, fmt.Errorf("purge tenant %s: rows remain after a pass that deleted none, another replica may be purging it", tenantID)
 			}
 			break
 		}
@@ -85,28 +118,30 @@ func (p *TenantPurger) purgeArtifacts(ctx context.Context, d port.TenantPurgeDue
 			p.deps.Record(table, n)
 		}
 	}
-	if err := p.deps.Retention.MarkPurged(ctx, tenantID, p.deps.Now()); err != nil {
-		return fmt.Errorf("mark tenant %s purged: %w", tenantID, err)
+	next, err := p.deps.Retention.MarkPurged(ctx, tenantID, version, p.deps.Now())
+	if err != nil {
+		return version, fmt.Errorf("mark tenant %s purged: %w", tenantID, err)
 	}
 	p.log.Info("tenant purged", map[string]any{"tenant_id": tenantID.String()})
-	return nil
+	return next, nil
 }
 
-func (p *TenantPurger) purgeCredentials(ctx context.Context, d port.TenantPurgeDue) error {
+func (p *TenantPurger) purgeCredentials(ctx context.Context, d port.TenantPurgeDue, version int64) (int64, error) {
 	if !d.Credentials {
-		return nil
+		return version, nil
 	}
 	if p.deps.Secrets != nil {
 		for _, path := range tenantCredentialPaths(d.TenantID) {
 			if err := p.deps.Secrets.Delete(ctx, path); err != nil {
-				return fmt.Errorf("purge tenant %s: delete credential %s: %w", d.TenantID, path, err)
+				return version, fmt.Errorf("purge tenant %s: delete credential %s: %w", d.TenantID, path, err)
 			}
 		}
 	}
-	if err := p.deps.Retention.MarkCredentialsPurged(ctx, d.TenantID, p.deps.Now()); err != nil {
-		return fmt.Errorf("mark tenant %s credentials purged: %w", d.TenantID, err)
+	next, err := p.deps.Retention.MarkCredentialsPurged(ctx, d.TenantID, version, p.deps.Now())
+	if err != nil {
+		return version, fmt.Errorf("mark tenant %s credentials purged: %w", d.TenantID, err)
 	}
-	return nil
+	return next, nil
 }
 
 func tenantCredentialPaths(tenantID uuid.UUID) []string {

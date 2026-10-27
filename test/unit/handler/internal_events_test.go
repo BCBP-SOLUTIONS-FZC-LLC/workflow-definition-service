@@ -257,7 +257,13 @@ func TestInternalEvents_UnknownTypes_ShareOneMetricLabel(t *testing.T) {
 type fakeOffboarder struct {
 	recorded []uuid.UUID
 	gotAt    []time.Time
+	returned []uuid.UUID
 	err      error
+}
+
+func (f *fakeOffboarder) RecordReturned(_ context.Context, tenantID uuid.UUID, _ time.Time) error {
+	f.returned = append(f.returned, tenantID)
+	return f.err
 }
 
 func (f *fakeOffboarder) RecordOffboarded(_ context.Context, tenantID uuid.UUID, at time.Time) error {
@@ -297,7 +303,7 @@ func TestInternalEvents_TenantStateChanged_OffboardedRecordsTheTenant(t *testing
 	assert.Equal(t, []uuid.UUID{ieTenantID}, off.recorded)
 }
 
-func TestInternalEvents_TenantStateChanged_OtherStatusesAreAcknowledgedAndIgnored(t *testing.T) {
+func TestInternalEvents_TenantStateChanged_AnyOtherStatusClearsAnEarlierOffboarding(t *testing.T) {
 	for _, status := range []string{"active", "suspended", "cancelled", "trial_expired", "past_due"} {
 		t.Run(status, func(t *testing.T) {
 			off := &fakeOffboarder{}
@@ -305,6 +311,7 @@ func TestInternalEvents_TenantStateChanged_OtherStatusesAreAcknowledgedAndIgnore
 				map[string]string{"status": status}))
 			assert.Equal(t, http.StatusOK, w.Code)
 			assert.Empty(t, off.recorded)
+			assert.Equal(t, []uuid.UUID{ieTenantID}, off.returned)
 		})
 	}
 }

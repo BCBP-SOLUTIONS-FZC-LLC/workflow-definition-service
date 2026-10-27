@@ -15,6 +15,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/test/fixtures"
@@ -141,18 +142,21 @@ func TestTenantRetentionRepo_ARedeliveredOffboardingKeepsTheFirstDates(t *testin
 
 	due, err := repo.ListDue(ctx, first.Add(25*time.Hour), 10)
 	require.NoError(t, err)
-	assert.Equal(t, []port.TenantPurgeDue{{TenantID: tenant, Credentials: true}}, due, "only the credentials are due at 25 hours, on the first dates")
+	assert.Equal(t, []port.TenantPurgeDue{{TenantID: tenant, Credentials: true, RecordVersion: 1}}, due, "only the credentials are due at 25 hours, on the first dates")
 
 	due, err = repo.ListDue(ctx, first.Add(49*time.Hour), 10)
 	require.NoError(t, err)
-	assert.Equal(t, []port.TenantPurgeDue{{TenantID: tenant, Credentials: true, Artifacts: true}}, due)
+	assert.Equal(t, []port.TenantPurgeDue{{TenantID: tenant, Credentials: true, Artifacts: true, RecordVersion: 1}}, due)
 
-	require.NoError(t, repo.MarkCredentialsPurged(ctx, tenant, first.Add(50*time.Hour)))
+	version, err := repo.MarkCredentialsPurged(ctx, tenant, 1, first.Add(50*time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), version, "the trigger counts the write")
 	due, err = repo.ListDue(ctx, first.Add(51*time.Hour), 10)
 	require.NoError(t, err)
-	assert.Equal(t, []port.TenantPurgeDue{{TenantID: tenant, Artifacts: true}}, due, "a purged part is not due again")
+	assert.Equal(t, []port.TenantPurgeDue{{TenantID: tenant, Artifacts: true, RecordVersion: 2}}, due, "a purged part is not due again")
 
-	require.NoError(t, repo.MarkPurged(ctx, tenant, first.Add(52*time.Hour)))
+	_, err = repo.MarkPurged(ctx, tenant, 2, first.Add(52*time.Hour))
+	require.NoError(t, err)
 	due, err = repo.ListDue(ctx, first.Add(53*time.Hour), 10)
 	require.NoError(t, err)
 	assert.Empty(t, due)
@@ -172,4 +176,71 @@ func TestTenantRetentionRepo_HasRowsSeesOnlyTheTenantsOwnRows(t *testing.T) {
 	has, err = repo.HasRows(ctx, empty)
 	require.NoError(t, err)
 	assert.False(t, has)
+}
+
+func TestTenantRetentionRepo_AReturnClearsOnlyAnEarlierOffboarding(t *testing.T) {
+	pool := fixtures.NewTestPool(t)
+	repo := pgadapter.NewTenantRetentionRepo(pool)
+	ctx := context.Background()
+	tenant := uuid.New()
+	offboarded := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, repo.RecordOffboarded(ctx, tenant, offboarded, offboarded.Add(time.Hour), offboarded.Add(2*time.Hour)))
+
+	require.NoError(t, repo.ClearOffboarded(ctx, tenant, offboarded.Add(-time.Minute)))
+	due, err := repo.ListDue(ctx, offboarded.Add(3*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Len(t, due, 1, "a status change older than the offboarding is a late delivery and clears nothing")
+
+	require.NoError(t, repo.ClearOffboarded(ctx, tenant, offboarded.Add(time.Minute)))
+	due, err = repo.ListDue(ctx, offboarded.Add(3*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Empty(t, due, "a tenant that came back is not purged")
+
+	again := offboarded.Add(48 * time.Hour)
+	require.NoError(t, repo.RecordOffboarded(ctx, tenant, again, again.Add(time.Hour), again.Add(2*time.Hour)))
+	due, err = repo.ListDue(ctx, again.Add(3*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Equal(t, []port.TenantPurgeDue{{TenantID: tenant, Credentials: true, Artifacts: true, RecordVersion: 1}}, due,
+		"a later offboarding of the same tenant is recorded afresh")
+}
+
+func TestTenantRetentionRepo_AFailedTenantWaitsForItsNextAttempt(t *testing.T) {
+	pool := fixtures.NewTestPool(t)
+	repo := pgadapter.NewTenantRetentionRepo(pool)
+	ctx := context.Background()
+	failing, other := uuid.New(), uuid.New()
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, repo.RecordOffboarded(ctx, failing, at, at, at))
+	require.NoError(t, repo.RecordOffboarded(ctx, other, at.Add(time.Minute), at.Add(time.Minute), at.Add(time.Minute)))
+	now := at.Add(time.Hour)
+
+	require.NoError(t, repo.RecordFailure(ctx, failing, 1, 1, now.Add(24*time.Hour)))
+
+	due, err := repo.ListDue(ctx, now, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []port.TenantPurgeDue{{TenantID: other, Credentials: true, Artifacts: true, RecordVersion: 1}}, due,
+		"the failing tenant no longer takes the only slot")
+	due, err = repo.ListDue(ctx, now.Add(25*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Contains(t, due, port.TenantPurgeDue{TenantID: failing, Credentials: true, Artifacts: true, Attempts: 1, RecordVersion: 2})
+}
+
+func TestTenantRetentionRepo_AWriteWithAStaleVersionIsRefused(t *testing.T) {
+	pool := fixtures.NewTestPool(t)
+	repo := pgadapter.NewTenantRetentionRepo(pool)
+	ctx := context.Background()
+	tenant := uuid.New()
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, repo.RecordOffboarded(ctx, tenant, at, at, at))
+
+	version, err := repo.MarkCredentialsPurged(ctx, tenant, 1, at)
+	require.NoError(t, err)
+
+	_, err = repo.MarkPurged(ctx, tenant, 1, at)
+	require.ErrorIs(t, err, domain.ErrTenantRetentionChanged)
+	require.ErrorIs(t, repo.RecordFailure(ctx, tenant, 1, 1, at), domain.ErrTenantRetentionChanged)
+	_, err = repo.MarkPurged(ctx, uuid.New(), 1, at)
+	require.ErrorIs(t, err, domain.ErrTenantRetentionChanged, "a cleared row is a changed row")
+	_, err = repo.MarkPurged(ctx, tenant, version, at)
+	require.NoError(t, err)
 }

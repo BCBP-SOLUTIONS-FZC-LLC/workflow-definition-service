@@ -1,24 +1,39 @@
 -- name: RecordTenantOffboarded :exec
-INSERT INTO tenant_retention (tenant_id, offboarded_at, credentials_purge_after, artifacts_purge_after, updated_at)
-VALUES ($1, $2, $3, $4, now())
+INSERT INTO tenant_retention (tenant_id, offboarded_at, credentials_purge_after, artifacts_purge_after, next_attempt_at)
+VALUES ($1, $2, $3, $4, $2)
 ON CONFLICT (tenant_id) DO NOTHING;
+
+-- name: ClearTenantOffboarded :exec
+DELETE FROM tenant_retention WHERE tenant_id = $1 AND offboarded_at < $2;
 
 -- name: ListTenantsDueForPurge :many
 SELECT
     tenant_id,
     (credentials_purged_at IS NULL AND credentials_purge_after <= $1)::boolean AS credentials_due,
-    (purged_at IS NULL AND artifacts_purge_after <= $1)::boolean AS artifacts_due
+    (purged_at IS NULL AND artifacts_purge_after <= $1)::boolean AS artifacts_due,
+    attempts,
+    record_version
 FROM tenant_retention
-WHERE (credentials_purged_at IS NULL AND credentials_purge_after <= $1)
-   OR (purged_at IS NULL AND artifacts_purge_after <= $1)
+WHERE next_attempt_at <= $1
+  AND ((credentials_purged_at IS NULL AND credentials_purge_after <= $1)
+    OR (purged_at IS NULL AND artifacts_purge_after <= $1))
 ORDER BY LEAST(credentials_purge_after, artifacts_purge_after), tenant_id
 LIMIT $2;
 
--- name: MarkTenantCredentialsPurged :exec
-UPDATE tenant_retention SET credentials_purged_at = $2, updated_at = now() WHERE tenant_id = $1;
+-- name: MarkTenantCredentialsPurged :one
+UPDATE tenant_retention SET credentials_purged_at = $3, attempts = 0
+WHERE tenant_id = $1 AND record_version = $2
+RETURNING record_version;
 
--- name: MarkTenantPurged :exec
-UPDATE tenant_retention SET purged_at = $2, updated_at = now() WHERE tenant_id = $1;
+-- name: MarkTenantPurged :one
+UPDATE tenant_retention SET purged_at = $3, attempts = 0
+WHERE tenant_id = $1 AND record_version = $2
+RETURNING record_version;
+
+-- name: RecordTenantPurgeFailure :one
+UPDATE tenant_retention SET attempts = $3, next_attempt_at = $4
+WHERE tenant_id = $1 AND record_version = $2
+RETURNING record_version;
 
 -- name: PurgeTenantWorkflows :execrows
 DELETE FROM workflow

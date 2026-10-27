@@ -2,16 +2,19 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	pgdomain "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres/db"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
@@ -44,23 +47,60 @@ func (r *TenantRetentionRepo) ListDue(ctx context.Context, now time.Time, limit 
 			return err
 		}
 		for _, row := range rows {
-			due = append(due, port.TenantPurgeDue{TenantID: row.TenantID, Credentials: row.CredentialsDue, Artifacts: row.ArtifactsDue})
+			due = append(due, port.TenantPurgeDue{
+				TenantID: row.TenantID, Credentials: row.CredentialsDue, Artifacts: row.ArtifactsDue,
+				Attempts: int(row.Attempts), RecordVersion: row.RecordVersion,
+			})
 		}
 		return nil
 	})
 	return due, err
 }
 
-func (r *TenantRetentionRepo) MarkCredentialsPurged(ctx context.Context, tenantID uuid.UUID, at time.Time) error {
+func (r *TenantRetentionRepo) ClearOffboarded(ctx context.Context, tenantID uuid.UUID, before time.Time) error {
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		return db.New(dbtx).MarkTenantCredentialsPurged(ctx, db.MarkTenantCredentialsPurgedParams{TenantID: tenantID, CredentialsPurgedAt: pgtype.Timestamptz{Time: at, Valid: true}})
+		return db.New(dbtx).ClearTenantOffboarded(ctx, db.ClearTenantOffboardedParams{TenantID: tenantID, OffboardedAt: before})
 	})
 }
 
-func (r *TenantRetentionRepo) MarkPurged(ctx context.Context, tenantID uuid.UUID, at time.Time) error {
-	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		return db.New(dbtx).MarkTenantPurged(ctx, db.MarkTenantPurgedParams{TenantID: tenantID, PurgedAt: pgtype.Timestamptz{Time: at, Valid: true}})
+func (r *TenantRetentionRepo) MarkCredentialsPurged(ctx context.Context, tenantID uuid.UUID, version int64, at time.Time) (int64, error) {
+	var next int64
+	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		var err error
+		next, err = db.New(dbtx).MarkTenantCredentialsPurged(ctx, db.MarkTenantCredentialsPurgedParams{
+			TenantID: tenantID, RecordVersion: version, CredentialsPurgedAt: pgtype.Timestamptz{Time: at, Valid: true},
+		})
+		return retentionChanged(err)
 	})
+	return next, err
+}
+
+func (r *TenantRetentionRepo) MarkPurged(ctx context.Context, tenantID uuid.UUID, version int64, at time.Time) (int64, error) {
+	var next int64
+	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		var err error
+		next, err = db.New(dbtx).MarkTenantPurged(ctx, db.MarkTenantPurgedParams{
+			TenantID: tenantID, RecordVersion: version, PurgedAt: pgtype.Timestamptz{Time: at, Valid: true},
+		})
+		return retentionChanged(err)
+	})
+	return next, err
+}
+
+func (r *TenantRetentionRepo) RecordFailure(ctx context.Context, tenantID uuid.UUID, version int64, attempts int, next time.Time) error {
+	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		_, err := db.New(dbtx).RecordTenantPurgeFailure(ctx, db.RecordTenantPurgeFailureParams{
+			TenantID: tenantID, RecordVersion: version, Attempts: clampInt32(attempts), NextAttemptAt: next,
+		})
+		return retentionChanged(err)
+	})
+}
+
+func retentionChanged(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrTenantRetentionChanged
+	}
+	return err
 }
 
 type purgeStep struct {

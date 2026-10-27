@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 )
@@ -26,6 +27,40 @@ type fakeRetention struct {
 	credsErr  error
 	recorded  []recordedOffboard
 	recordErr error
+	cleared   []clearedOffboard
+	failures  []recordedFailure
+	versions  []int64
+	changed   bool
+}
+
+type clearedOffboard struct {
+	tenantID uuid.UUID
+	before   time.Time
+}
+
+type recordedFailure struct {
+	tenantID    uuid.UUID
+	version     int64
+	attempts    int
+	nextAttempt time.Time
+}
+
+func (f *fakeRetention) ClearOffboarded(_ context.Context, tenantID uuid.UUID, before time.Time) error {
+	f.cleared = append(f.cleared, clearedOffboard{tenantID, before})
+	return f.recordErr
+}
+
+func (f *fakeRetention) RecordFailure(_ context.Context, tenantID uuid.UUID, version int64, attempts int, next time.Time) error {
+	f.failures = append(f.failures, recordedFailure{tenantID, version, attempts, next})
+	return nil
+}
+
+func (f *fakeRetention) mark(version int64) (int64, error) {
+	f.versions = append(f.versions, version)
+	if f.changed {
+		return 0, domain.ErrTenantRetentionChanged
+	}
+	return version + 1, nil
 }
 
 type recordedOffboard struct {
@@ -48,26 +83,32 @@ func (f *fakeRetention) ListDue(_ context.Context, now time.Time, _ int) ([]port
 	return f.due, f.listErr
 }
 
-func (f *fakeRetention) MarkCredentialsPurged(_ context.Context, tenantID uuid.UUID, _ time.Time) error {
+func (f *fakeRetention) MarkCredentialsPurged(_ context.Context, tenantID uuid.UUID, version int64, _ time.Time) (int64, error) {
 	if f.credsErr != nil {
-		return f.credsErr
+		return 0, f.credsErr
 	}
-	f.credsDone = append(f.credsDone, tenantID)
-	return nil
+	next, err := f.mark(version)
+	if err == nil {
+		f.credsDone = append(f.credsDone, tenantID)
+	}
+	return next, err
 }
 
-func (f *fakeRetention) MarkPurged(_ context.Context, tenantID uuid.UUID, _ time.Time) error {
+func (f *fakeRetention) MarkPurged(_ context.Context, tenantID uuid.UUID, version int64, _ time.Time) (int64, error) {
 	if f.markErr != nil {
-		return f.markErr
+		return 0, f.markErr
 	}
-	f.purged = append(f.purged, tenantID)
-	return nil
+	next, err := f.mark(version)
+	if err == nil {
+		f.purged = append(f.purged, tenantID)
+	}
+	return next, err
 }
 
 func bothDue(ids ...uuid.UUID) []port.TenantPurgeDue {
 	var out []port.TenantPurgeDue
 	for _, id := range ids {
-		out = append(out, port.TenantPurgeDue{TenantID: id, Credentials: true, Artifacts: true})
+		out = append(out, port.TenantPurgeDue{TenantID: id, Credentials: true, Artifacts: true, RecordVersion: 1})
 	}
 	return out
 }
@@ -297,4 +338,61 @@ func TestTenantOffboardingService_ARecordFailureIsReturned(t *testing.T) {
 	r := &fakeRetention{recordErr: errors.New("db down")}
 	svc := service.NewTenantOffboardingService(service.TenantOffboardingDeps{Retention: r, CredentialRetention: time.Hour, ArtifactRetention: time.Hour})
 	require.Error(t, svc.RecordOffboarded(context.Background(), uuid.New(), time.Now()))
+}
+
+func TestTenantPurger_EachMarkNamesTheVersionThePreviousWriteLeft(t *testing.T) {
+	tenant := uuid.New()
+	r := &fakeRetention{due: []port.TenantPurgeDue{{TenantID: tenant, Credentials: true, Artifacts: true, RecordVersion: 5}}}
+	rec, failed := map[string]int64{}, 0
+
+	require.NoError(t, newPurger(r, &fakeDataPurger{}, &fakeSecrets{}, rec, &failed).Tick(context.Background()))
+
+	assert.Equal(t, []int64{5, 6}, r.versions, "the second mark names the version the first one wrote")
+}
+
+func TestTenantPurger_AFailingTenantBacksOffSoItCannotStarveTheRest(t *testing.T) {
+	tests := []struct {
+		name         string
+		attempts     int
+		wantAttempts int
+		wantDelay    time.Duration
+	}{
+		{name: "first failure waits one interval", attempts: 0, wantAttempts: 1, wantDelay: time.Hour},
+		{name: "third failure waits four intervals", attempts: 2, wantAttempts: 3, wantDelay: 4 * time.Hour},
+		{name: "the wait stops growing at seven days", attempts: 20, wantAttempts: 21, wantDelay: 7 * 24 * time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tenant := uuid.New()
+			r := &fakeRetention{due: []port.TenantPurgeDue{{TenantID: tenant, Artifacts: true, Attempts: tt.attempts, RecordVersion: 3}}}
+			d := &fakeDataPurger{errFor: map[uuid.UUID]error{tenant: errors.New("fk violation")}}
+			rec, failed := map[string]int64{}, 0
+
+			require.Error(t, newPurger(r, d, nil, rec, &failed).Tick(context.Background()))
+
+			now := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+			assert.Equal(t, []recordedFailure{{tenant, 3, tt.wantAttempts, now.Add(tt.wantDelay)}}, r.failures)
+		})
+	}
+}
+
+func TestTenantPurger_AChangedLedgerRowSkipsTheTenantWithoutAFailure(t *testing.T) {
+	tenant := uuid.New()
+	r := &fakeRetention{due: bothDue(tenant), changed: true}
+	rec, failed := map[string]int64{}, 0
+
+	require.NoError(t, newPurger(r, &fakeDataPurger{}, &fakeSecrets{}, rec, &failed).Tick(context.Background()))
+
+	assert.Zero(t, failed, "a tenant that returned or that another replica moved on is not a failure")
+	assert.Empty(t, r.failures)
+}
+
+func TestTenantOffboardingService_AReturnClearsAnEarlierOffboarding(t *testing.T) {
+	r := &fakeRetention{}
+	svc := service.NewTenantOffboardingService(service.TenantOffboardingDeps{Retention: r, CredentialRetention: time.Hour, ArtifactRetention: time.Hour})
+	tenant, at := uuid.New(), time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, svc.RecordReturned(context.Background(), tenant, at))
+
+	assert.Equal(t, []clearedOffboard{{tenant, at}}, r.cleared)
 }

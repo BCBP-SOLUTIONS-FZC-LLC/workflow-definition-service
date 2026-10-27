@@ -9,8 +9,18 @@ CREATE TABLE tenant_retention (
     artifacts_purge_after  TIMESTAMPTZ NOT NULL,
     credentials_purged_at  TIMESTAMPTZ,
     purged_at              TIMESTAMPTZ,
+    attempts               INTEGER     NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at        TIMESTAMPTZ NOT NULL,
+    record_version         BIGINT      NOT NULL DEFAULT 1 CHECK (record_version > 0),
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TRIGGER update_tenant_retention_meta
+    BEFORE UPDATE ON tenant_retention
+    FOR EACH ROW
+    WHEN (OLD.* IS DISTINCT FROM NEW.*)
+    EXECUTE PROCEDURE update_meta_columns();
 
 CREATE INDEX idx_tenant_retention_credentials_due ON tenant_retention (credentials_purge_after) WHERE credentials_purged_at IS NULL;
 CREATE INDEX idx_tenant_retention_artifacts_due ON tenant_retention (artifacts_purge_after) WHERE purged_at IS NULL;

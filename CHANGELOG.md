@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The purge ledger lets a tenant come back: a `TenantStateChanged` to any status other than `offboarded`, newer than the recorded offboarding, removes the tenant's row, and a later offboarding records afresh. A failed purge counts its attempt and waits the sweep interval doubled per failure (at most seven days), so failing tenants no longer fill the 100 due slots. The ledger carries `record_version`, `created_at`, `attempts` and `next_attempt_at` (migration `000005` changed in place: nothing is deployed), and every write names the version it read (LLD rev 1.64).
 - Gateway matching finds every split's join, and whether each branch reaches an end event, in one pass over the forward graph, shared by the validator and the compiler; a chain of exclusive gateways that each also lead to an end event no longer costs the square of its length (LLD rev 1.63).
 - Publish logs the `reason` Org & Membership gives when it refuses an assignee (`member_not_active`, `not_member`, `department_not_active`, `not_in_department`, `level_insufficient`), as that service asked (LLD rev 1.62).
 - `workflow_definition_service_tenant_purge_rows_deleted_total` shows every purge table at zero from startup, and the purge-failure alert in the chart looks back over `TENANT_PURGE_INTERVAL` plus two hours; the chart refuses an interval that is not whole hours (`make helm-check` holds it).

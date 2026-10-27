@@ -29,6 +29,7 @@ var (
 	ErrInvalidConnectorAliasInput      = errors.New("invalid connector alias input")
 	ErrModuleProcessIDTaken            = errors.New("module process id is already in use")
 	ErrModuleProcessIDChanged          = errors.New("module version must keep its module's process id")
+	ErrTenantRetentionChanged          = errors.New("tenant retention record changed since it was read")
 )
 
 type BPMNErrorCode string
