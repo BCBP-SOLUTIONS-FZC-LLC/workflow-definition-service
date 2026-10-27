@@ -5,7 +5,9 @@ package e2e_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -140,4 +142,56 @@ func TestE2E_ModuleGlobalScope_RequiresRealBypassRLSPool(t *testing.T) {
 			t.Fatalf("rejected by validation before reaching the database: %+v", vf.Errors)
 		}
 	})
+}
+
+func TestE2E_ATenantAndAGlobalModuleCannotTakeOneProcessIDAtOnce(t *testing.T) {
+	ctx := context.Background()
+	_, dsn := fixtures.NewTestPoolAndDSN(t)
+	tenantID, userID := uuid.New(), uuid.New()
+	svc := wireModuleService(
+		fixtures.NewRestrictedRolePool(t, dsn, false, &tenantID, &userID),
+		fixtures.NewRestrictedRolePool(t, dsn, true, nil, nil))
+	processRef := regexp.MustCompile(`"P1"`)
+
+	for round := range 20 {
+		processID := fmt.Sprintf(`"Race_%d"`, round)
+		tenantXML := processRef.ReplaceAllString(minimalBPMN, processID)
+		globalXML := processRef.ReplaceAllString(globalModuleBPMN, processID)
+		start := make(chan struct{})
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		for i, create := range []func() error{
+			func() error {
+				_, _, err := svc.Create(ctx, tenantID, userID, service.CreateModuleReq{Name: "tenant", BPMNXML: tenantXML})
+				return err
+			},
+			func() error {
+				_, _, err := svc.Create(ctx, tenantID, userID, service.CreateModuleReq{Name: "global", BPMNXML: globalXML, Scope: domain.ScopeGlobal})
+				return err
+			},
+		} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				errs[i] = create()
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		succeeded := 0
+		for _, err := range errs {
+			if err == nil {
+				succeeded++
+				continue
+			}
+			if !errors.Is(err, domain.ErrModuleProcessIDTaken) {
+				t.Fatalf("round %d: unexpected error %v", round, err)
+			}
+		}
+		if succeeded != 1 {
+			t.Fatalf("round %d: %d of the two creates succeeded, want exactly one", round, succeeded)
+		}
+	}
 }

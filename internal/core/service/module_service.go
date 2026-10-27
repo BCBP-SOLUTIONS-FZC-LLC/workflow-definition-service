@@ -109,14 +109,6 @@ func (s *ModuleService) Create(
 	if scope != domain.ScopeGlobal {
 		tenantID = &callerTenantID
 	}
-	inUse, err := s.modulesFor(scope).ProcessIDInUse(ctx, tenantID, processID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("check module process id: %w", err)
-	}
-	if inUse {
-		return nil, nil, fmt.Errorf("process id %q: %w", processID, domain.ErrModuleProcessIDTaken)
-	}
-
 	moduleID, err := uuid.NewV7()
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate module id: %w", err)
@@ -149,7 +141,14 @@ func (s *ModuleService) Create(
 
 	modules := s.modulesFor(scope)
 	versions := s.versionsFor(scope)
-	if err := s.transactorFor(scope).RunInTx(ctx, func(ctx context.Context) error {
+	if err := s.transactorFor(scope).RunInTxWithRetry(ctx, func(ctx context.Context) error {
+		inUse, err := modules.ProcessIDInUse(ctx, tenantID, processID)
+		if err != nil {
+			return fmt.Errorf("check module process id: %w", err)
+		}
+		if inUse {
+			return fmt.Errorf("process id %q: %w", processID, domain.ErrModuleProcessIDTaken)
+		}
 		if err := modules.Create(ctx, m); err != nil {
 			return err
 		}

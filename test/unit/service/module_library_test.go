@@ -284,6 +284,7 @@ func TestModuleService_Create_ProcessIDInUseIsAConflict(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, m := newLibraryModuleService(ctrl)
 	tenantID := uuid.New()
+	passthrough(m.tx)
 	m.modules.EXPECT().ProcessIDInUse(gomock.Any(), &tenantID, "Process_Open").Return(true, nil)
 
 	_, _, err := svc.Create(context.Background(), tenantID, uuid.New(), service.CreateModuleReq{Name: "Open", BPMNXML: openLaneModule})
