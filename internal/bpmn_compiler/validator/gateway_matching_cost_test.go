@@ -8,7 +8,15 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 )
 
-func exclusiveChainWithExits(gateways int, unreachableCycle bool) (*bpmncore.BPMNProcess, *bpmncore.Graph, map[[2]string]bool) {
+type chainShape int
+
+const (
+	chainReachable chainShape = iota
+	chainBesideACycle
+	chainIntoACycle
+)
+
+func exclusiveChainWithExits(gateways int, shape chainShape) (*bpmncore.BPMNProcess, *bpmncore.Graph, map[[2]string]bool) {
 	proc := &bpmncore.BPMNProcess{StartEvents: []bpmncore.BPMNEvent{{ID: "S"}}}
 	flow := 0
 	link := func(from, to string) {
@@ -17,6 +25,12 @@ func exclusiveChainWithExits(gateways int, unreachableCycle bool) (*bpmncore.BPM
 			bpmncore.BPMNSequenceFlow{ID: fmt.Sprintf("F%d", flow), SourceRef: from, TargetRef: to})
 	}
 	prev := "S"
+	if shape == chainIntoACycle {
+		proc.EndEvents = append(proc.EndEvents, bpmncore.BPMNEvent{ID: "SE"})
+		link("S", "SE")
+		prev = "U"
+		proc.ExclusiveGateways = append(proc.ExclusiveGateways, bpmncore.BPMNGateway{ID: "U"})
+	}
 	for i := 0; i < gateways; i++ {
 		gw, exit := fmt.Sprintf("G%d", i), fmt.Sprintf("X%d", i)
 		proc.ExclusiveGateways = append(proc.ExclusiveGateways, bpmncore.BPMNGateway{ID: gw})
@@ -27,10 +41,13 @@ func exclusiveChainWithExits(gateways int, unreachableCycle bool) (*bpmncore.BPM
 	}
 	proc.EndEvents = append(proc.EndEvents, bpmncore.BPMNEvent{ID: "E"})
 	link(prev, "E")
-	if unreachableCycle {
+	if shape != chainReachable {
 		proc.ExclusiveGateways = append(proc.ExclusiveGateways, bpmncore.BPMNGateway{ID: "UX"}, bpmncore.BPMNGateway{ID: "UY"})
 		link("UX", "UY")
 		link("UY", "UX")
+	}
+	if shape == chainIntoACycle {
+		link(prev, "UX")
 	}
 	g := bpmncore.BuildGraph(proc)
 	return proc, g, bpmncore.ProcessBackEdges(proc, g, "S")
@@ -41,20 +58,25 @@ func exclusiveChainWithExits(gateways int, unreachableCycle bool) (*bpmncore.BPM
 // as long, where a search below every gateway takes sixteen.
 func TestValidateGatewayMatching_CostGrowsLinearlyWithTheChain(t *testing.T) {
 	tests := []struct {
-		name             string
-		unreachableCycle bool
+		name  string
+		shape chainShape
 	}{
-		{name: "every node reachable", unreachableCycle: false},
-		{name: "with a cycle no start reaches", unreachableCycle: true},
+		{name: "every node reachable", shape: chainReachable},
+		{name: "beside a cycle no start reaches", shape: chainBesideACycle},
+		{name: "unreachable and leading into a cycle", shape: chainIntoACycle},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			measure := func(gateways int) time.Duration {
 				t.Helper()
-				proc, g, backEdges := exclusiveChainWithExits(gateways, tt.unreachableCycle)
+				proc, g, backEdges := exclusiveChainWithExits(gateways, tt.shape)
 				start := time.Now()
-				ValidateGatewayMatching(proc, g, backEdges)
-				return time.Since(start)
+				errs := ValidateGatewayMatching(proc, g, backEdges)
+				elapsed := time.Since(start)
+				if tt.shape == chainReachable && len(errs) != 0 {
+					t.Fatalf("a chain of %d exclusive gateways whose branches all end: errors %v", gateways, errs)
+				}
+				return elapsed
 			}
 
 			measure(500)

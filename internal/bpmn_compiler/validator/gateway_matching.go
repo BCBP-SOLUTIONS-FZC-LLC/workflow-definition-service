@@ -25,7 +25,7 @@ func ValidateGatewayMatching(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, back
 func checkSplitJoin(
 	gwID, kind string, g *bpmncore.Graph, backEdges map[[2]string]bool, joins *bpmncore.Joins,
 ) []domain.BPMNValidationError {
-	if forwardOutCount(gwID, g, backEdges) <= 1 {
+	if forwardOutCount(gwID, g, backEdges) <= 1 || joins.ReachesUnbrokenCycle(gwID) {
 		return nil
 	}
 	if _, ok := joins.Find(gwID); ok {

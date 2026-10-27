@@ -35,6 +35,10 @@ func (l *lazyJoins) get(g *Graph, backEdges map[[2]string]bool) *Joins {
 	return l.joins
 }
 
+func (j *Joins) ReachesUnbrokenCycle(node string) bool {
+	return j.cyclic[node]
+}
+
 func (j *Joins) Find(splitID string) (string, bool) {
 	if j.cyclic[splitID] {
 		return FindJoin(splitID, j.g, j.backEdges)
