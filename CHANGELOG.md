@@ -28,7 +28,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - The Dockerfile writes, uses and removes the private-module credential in one `RUN`; CI and the release build use no registry build cache; `make docker-lint` and the CI image job run `scripts/dockerfile-credentials-check.sh`. Earlier builder caches held `GO_PRIVATE_TOKEN`, so it needs rotating.
 - The compat job checks out the Workflow-Events Consumer at `main` (`compat_consumer_ref`), now that its branch is merged.
 - `platform-events/v2` is `v2.2.1` (consumer-side dead-letter fixes, Go 1.26.10; no API change).
-- `workflow-connectors/v2` is `v2.2.0`; this service imports only `pkg/registry`, which it leaves unchanged.
+- `workflow-connectors/v2` is `v2.3.0-rc.1` (stable `v2.3.0` after its PR merges); this service imports only `pkg/registry`, whose change is additive (`Field.Providers`) and unused here.
 - `workflow-models/v2` is `v2.1.0`, the stable release of `v2.1.0-rc.3` (same code).
 - The chart's `CONNECTOR_ALIAS_ALLOWED_HOSTS` is `.tender-app.svc.cluster.local`, the namespace of the Tender Service and the LLM subsystem, where it was `.svc.cluster.local`, every service in the cluster, the identity subsystem's included (LLD rev 1.59).
 - The served AsyncAPI page lists every inbound message and schema in `api/asyncapi.yaml`; it showed only `DepartmentMembershipRevoked`.
