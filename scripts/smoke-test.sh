@@ -517,7 +517,7 @@ WF2_ID=$(get_workflow_id "$WF2_RESP")
 V2_DRAFT_ID=$(get_version_id "$WF2_RESP")
 [ -n "$V2_DRAFT_ID" ] && pass "Setup: created draft workflow for internal events test" || fail "Setup: draft creation failed"
 
-# Send DepartmentMembershipRevoked for alice (design/preparator)
+# Send DepartmentMembershipRevoked for alice
 EVENT1_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
 REVOKE_MSG=$(cat <<JSON
 {
@@ -527,8 +527,7 @@ REVOKE_MSG=$(cat <<JSON
   "source": "iam-svc",
   "data": {
     "user_id": "${ALICE}",
-    "department_id": "f14abc9f-befa-54ff-b57f-c15ab3090062",
-    "role": "preparator"
+    "department_id": "f14abc9f-befa-54ff-b57f-c15ab3090062"
   }
 }
 JSON
@@ -583,8 +582,7 @@ REVOKE_MSG2=$(cat <<JSON
   "source": "iam-svc",
   "data": {
     "user_id": "${BOB}",
-    "department_id": "f14abc9f-befa-54ff-b57f-c15ab3090062",
-    "role": "reviewer"
+    "department_id": "f14abc9f-befa-54ff-b57f-c15ab3090062"
   }
 }
 JSON

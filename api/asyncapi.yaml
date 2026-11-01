@@ -110,7 +110,7 @@ components:
           description: UUID message identifier
         type:
           type: string
-          description: Event type, matched against the two messages above
+          description: Event type, matched against the four messages above
         tenant_id:
           type: string
           format: uuid
