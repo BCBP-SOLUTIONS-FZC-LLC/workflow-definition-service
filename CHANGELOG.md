@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The inbound event contract matches what Org & Membership publishes: `DepartmentMembershipRevoked` no longer declares a `role` that is never sent, and the LLD names the Delegation Service as the source of the delegation events, states the consumer's permanent and retried statuses, and points to the consumer's LLD for delivery behaviour (LLD rev 1.71). The pin of Execution's internal contract moves to the commit that renames the delegate-impact fields.
 - A rule broken in a library module's body is reported on each call of the workflow that reaches the module, naming the module chain, instead of on the module's own nodes and once (LLD rev 1.70).
 - A revert flow that leads back to a `subProcess` or `callActivity` is refused with the new code `UNSUPPORTED_REVERT_TARGET` on its gateway; it compiled and then failed the instance when taken (LLD rev 1.69).
 - The chart takes `imagePullSecrets`, `podLabels` and `podAnnotations` for the API pods and the migration job; `make helm-check` holds them.

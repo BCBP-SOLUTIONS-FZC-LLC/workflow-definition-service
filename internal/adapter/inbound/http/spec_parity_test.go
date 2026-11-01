@@ -97,4 +97,25 @@ func TestAsyncAPIMessagesMatchHandledEvents(t *testing.T) {
 	assert.Equal(t, handled, documented, "api/asyncapi.yaml must document exactly the event types the inbound handler accepts")
 }
 
+func TestAsyncAPIDepartmentMembershipRevokedDocumentsOnlyProducerFields(t *testing.T) {
+	raw, err := readFile(asyncAPISpec)
+	require.NoError(t, err)
+	var doc struct {
+		Components struct {
+			Schemas map[string]struct {
+				Properties map[string]any `yaml:"properties"`
+			} `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &doc))
+
+	producerFields := map[string]bool{"user_id": true, "tenant_id": true, "department_id": true, "actor_id": true}
+	schema, ok := doc.Components.Schemas["DepartmentMembershipRevokedInbound"]
+	require.True(t, ok)
+	for field := range schema.Properties {
+		assert.True(t, producerFields[field],
+			"%s is not a field Org & Membership publishes on DepartmentMembershipRevoked", field)
+	}
+}
+
 func readFile(path string) ([]byte, error) { return os.ReadFile(path) }

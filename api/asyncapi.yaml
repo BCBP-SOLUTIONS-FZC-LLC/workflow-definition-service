@@ -144,9 +144,6 @@ components:
           type: string
           format: uuid
           description: The department the user left. A value that is not a UUID is answered 400 and is not retried.
-        role:
-          type: string
-          description: The membership role being revoked. Informational; the service does not read it.
 
     MembershipRevokedInbound:
       type: object

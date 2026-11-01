@@ -43,7 +43,6 @@ type tenantOffboarder interface {
 type membershipRevokedPayload struct {
 	UserID       string `json:"user_id"`
 	DepartmentID string `json:"department_id"`
-	Role         string `json:"role"`
 }
 
 func (h *Handler) HandleInternalEvent(c *gin.Context) {

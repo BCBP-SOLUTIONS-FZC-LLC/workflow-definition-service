@@ -15,7 +15,7 @@ The **Workflow Definition Service** acts as the design-time control plane for th
 - **Database Driver**: `platform-pgcommon/v2 v2.0.1` — wraps `github.com/jackc/pgx/v5` with RLS GUC injection (`app.tenant_id`, `app.user_id`, `app.tenant_roles`), slow-query logging, OTel tracing, Prometheus pool metrics, transaction helpers, pool health check, and a golang-migrate-based `migrate.Runner`. See §1.7 for the full integration.
 - **Database Tooling**: `sqlc` for type-safe query generation, `platform-pgcommon/v2 migrate.Runner` for schema migrations.
 - **Distributed Cache / Store**: Valkey 8.0 (Redis-compatible), via `github.com/redis/go-redis/v9`. Used for: compiled-plan caching, idempotency key deduplication (`Idempotency-Key` header), and distributed draft-edit locking (prevents concurrent draft overwrites between sessions).
-- **Events**: this service publishes none and keeps no outbox. `platform-events/v2` v2.1.0 supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /api/v1/internal/events`. See §1.8 for the full integration.
+- **Events**: this service publishes none and keeps no outbox. `platform-events/v2` v2.2.1 supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /api/v1/internal/events`. See §1.8 for the full integration.
 - **Structured Logging**: `go.uber.org/zap` via `platform-gincommon/pkg/logger` — used by middleware chain and all application code. See `coding_style_rules.md §5.1`.
 - **Mocks**: `go.uber.org/mock` (GoMock / `mockgen`) — generates mocks for all `core/port/` interfaces. See §1.5.3.
 
@@ -1958,13 +1958,13 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
     "id": "f0a11222-3844-42bc-938b-665cd42c9999",
     "type": "DepartmentMembershipRevoked",
     "tenant_id": "7ca648b2-b432-4744-884c-35fd556a310c",
-    "data": { "user_id": "3fa1...", "department_id": "...", "role": "reviewer" }
+    "data": { "user_id": "3fa1...", "department_id": "..." }
   }
   ```
 
 - **Responses**:
   - `200 OK` / `204 No Content` — processed. A redelivered `id` is reprocessed and converges on the same state (§2.3.1). The consumer marks the message handled.
-  - `400 Bad Request` — malformed envelope/payload or unknown required field. Non-retryable; the consumer routes the message to its DLQ.
+  - `400 Bad Request` — malformed envelope/payload or unknown required field. Non-retryable; the consumer routes the message to its DLQ after one delivery.
   - `500 Internal Server Error` — transient failure (DB/transaction). The consumer retries and eventually DLQs per its `maxReceiveCount`.
 - **Note**: Unknown `type` values are accepted and ignored (logged, `2xx`) so adding new event types upstream does not break delivery.
 
@@ -3715,7 +3715,8 @@ The queue topology (`membership-workflow-q`, its `membership-workflow-q-dlq` DLQ
 - The endpoint is on an **internal route group** (service-to-service auth — shared-secret header / mTLS / network policy), **not** the gateway-authenticated public API. It is never exposed through the Envoy gateway.
 - **Unknown types are acknowledged with `200` and ignored**, counted against the ingest metric with the received type as its label. A producer adding an event type this service has no handler for never breaks delivery.
 - **Schema-registry payloads.** A producer that encodes through a schema registry (IAM's Org & Membership does when a registry is configured) puts a `dataschema` on the envelope and a base64 string of the registry-framed JSON in `data`. The endpoint decodes that frame with the platform library's decode-only Glue codec, which needs no registry access, before it reads the payload. A payload that is not a base64 string, an unreadable frame, a compressed frame and a non-JSON frame each answer `502 EVENT_DECODE_FAILED`, counted with the result `decode_failed`. An envelope without `dataschema` is read as plain JSON, as before.
-- **Retry contract**: `2xx` marks the message handled; `4xx` (malformed payload) is treated as non-retryable by the consumer and routed to its DLQ; `5xx`/timeouts cause the consumer to retry and eventually DLQ per its `maxReceiveCount`. A `502` is retried and is not a malformed event, as in the Execution Service's ingest.
+- **Retry contract**: `2xx` marks the message handled; `400`, `413` and `422` (malformed request) are permanent, and the consumer routes the message to its DLQ after one delivery; every other failure, `5xx`, timeouts and `401`, `403`, `404`, `408` and `429` included, is redelivered with backoff and dead-lettered after the consumer's receive threshold. A `502` is retried and is not a malformed event, as in the Execution Service's ingest.
+- **Consumer behaviour.** The acknowledgement rule (a message is deleted only after every target it was routed to answers `2xx`), the receive threshold, the dead-letter alert and the consumer's receive-health check are specified in the Workflow Events Consumer LLD §4 and §7. Because this endpoint acknowledges and ignores an unknown type, the consumer's topology routes a new type here only after this service handles it.
 
 #### 7.4.2 Handling `DepartmentMembershipRevoked` Event
 
@@ -3731,8 +3732,7 @@ The queue topology (`membership-workflow-q`, its `membership-workflow-q-dlq` DLQ
     "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
     "data": {
       "user_id": "3fa18cde-7244-47ac-986c-665cd42caaaa",
-      "department_id": "0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a10",
-      "role": "reviewer"
+      "department_id": "0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a10"
     }
   }
   ```
@@ -3812,9 +3812,9 @@ The following IAM events from the HLD event catalog affect **live task assignmen
 
 | Event | Source | Runtime Effect |
 | --- | --- | --- |
-| `UserAvailabilityChanged` | User Profile | Reroutes pending tasks based on OOO status |
-| `DelegationStarted` / `DelegationEnded` | Org & Membership | Temporarily reassigns pending activities to the delegate and back |
-| `UserDeleted` | User Profile | Triggers membership revocations (handled transitively via `DepartmentMembershipRevoked`) and pauses affected live instances |
+| `UserAvailabilityChanged` | User Profile | Pauses the user's instances on out-of-office and resumes them on available; a delegation, not this event, reroutes work |
+| `DelegationStarted` / `DelegationEnded` | Delegation Service, topic `iam.delegation.events` | Temporarily reassigns pending activities to the delegate and back |
+| `UserDeleted` | User Profile | Vacates the user's active assignments in Execution, per assignment, as a safety net |
 
 `TenderAssigneeOverridden` reaches no consumer in the Workflow Engine. The Execution Service applies an assignee override synchronously through its own node-override endpoint, so `event_consumer`'s routing table declares the type with an empty target list, dropping it rather than letting it fall through to the broadcast default. Its consumers elsewhere on the platform are Audit and Notification (`event_consumer`'s routing table records this). The event is owned by IAM's Org & Membership service and published on `iam.membership.events` (confirmed with IAM's Tender question set, item 17).
 
@@ -5012,6 +5012,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.68 | 2026-10-27 | **A problem inside a module is reported on every call that reaches it** (§10.16 resolution). A module version reached by two calls was walked once, so its problems named only the first call; they now name each call that reaches it, through any chain of modules. |
 | 1.69 | 2026-10-27 | **A revert to a subProcess or call is refused** (§3.1.4 new code 48). A revert flow whose way back reaches a `subProcess` or `callActivity` before any task compiled, and the instance failed when the gateway took it: a revert runs one department again, and neither is a stage of one. The validator refuses it with `UNSUPPORTED_REVERT_TARGET` on the gateway. |
 | 1.70 | 2026-10-27 | **A broken rule in a module's body names the calls that reach it** (§10.16 resolution). The bundled document's check of called bodies reported a library module's problems on the module's own nodes, which are not in the workflow's diagram, and once even when two calls reached the module. They are now reported on each call of the workflow that reaches the module, through any chain of modules, as resolution problems are. |
+| 1.71 | 2026-11-01 | **The inbound event contract matches what Org & Membership publishes, and the consumer's delivery rules are stated** (§1, §3.4, §7.4). `DepartmentMembershipRevoked` carries `user_id`, `tenant_id`, `department_id` and `actor_id`; the optional `role` the schema and the examples declared is never published and is removed. The out-of-scope table named Org & Membership as the source of `DelegationStarted` and `DelegationEnded`, said availability changes reroute tasks, and said a deleted user pauses instances; the Delegation Service publishes the first on `iam.delegation.events`, an availability change pauses and resumes, and a deleted user's assignments are vacated. §7.4.1 states the consumer's permanent statuses (`400`, `413`, `422`) against the retried ones, points to the Workflow Events Consumer LLD for acknowledgement, dead-lettering and health, and records that a new type is routed here only after this service handles it. The `platform-events` version is `v2.2.1`. |
 ---
 
 ## Appendix E: Open Items
