@@ -112,6 +112,10 @@ func TestAsyncAPIDepartmentMembershipRevokedDocumentsOnlyProducerFields(t *testi
 	producerFields := map[string]bool{"user_id": true, "tenant_id": true, "department_id": true, "actor_id": true}
 	schema, ok := doc.Components.Schemas["DepartmentMembershipRevokedInbound"]
 	require.True(t, ok)
+	require.NotEmpty(t, schema.Properties, "the schema documents the fields the handler reads")
+	for _, read := range []string{"user_id", "department_id"} {
+		assert.Contains(t, schema.Properties, read, "the handler reads %s", read)
+	}
 	for field := range schema.Properties {
 		assert.True(t, producerFields[field],
 			"%s is not a field Org & Membership publishes on DepartmentMembershipRevoked", field)

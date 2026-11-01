@@ -106,7 +106,7 @@ func envelope(eventType, eventID, tenantID string, payload any) map[string]any {
 func TestInternalEvents_HappyPath(t *testing.T) {
 	rev := &fakeMembershipRevoker{}
 	w := postEvent(rev, envelope("DepartmentMembershipRevoked", ieEventID.String(), ieTenantID.String(),
-		map[string]string{"user_id": ieUserID.String(), "department_id": ieDeptID, "role": "reviewer"}))
+		map[string]string{"user_id": ieUserID.String(), "tenant_id": ieTenantID.String(), "department_id": ieDeptID, "actor_id": uuid.NewString()}))
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.True(t, rev.called)

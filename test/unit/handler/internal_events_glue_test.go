@@ -24,7 +24,7 @@ func registryEnvelope(eventType string, framed string) map[string]any {
 }
 
 func TestInternalEvents_SchemaRegistryPayload_IsDecodedAndHandled(t *testing.T) {
-	body, err := json.Marshal(map[string]string{"user_id": ieUserID.String(), "department_id": ieDeptID, "role": "reviewer"})
+	body, err := json.Marshal(map[string]string{"user_id": ieUserID.String(), "tenant_id": ieTenantID.String(), "department_id": ieDeptID, "actor_id": uuid.NewString()})
 	require.NoError(t, err)
 	rev := &fakeMembershipRevoker{}
 

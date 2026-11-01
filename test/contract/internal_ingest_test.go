@@ -73,7 +73,7 @@ const (
 func envelope(typ, tenant, userID, departmentID string) string {
 	return `{"id":"` + uuid.NewString() + `","type":"` + typ + `","source":"iam","specversion":"1.0",` +
 		`"tenant_id":"` + tenant + `","time":"` + time.Now().UTC().Format(time.RFC3339) + `",` +
-		`"data":{"user_id":"` + userID + `","department_id":"` + departmentID + `","role":"reviewer"}}`
+		`"data":{"user_id":"` + userID + `","tenant_id":"` + tenant + `","department_id":"` + departmentID + `","actor_id":"` + uuid.NewString() + `"}}`
 }
 
 type exchange struct {
