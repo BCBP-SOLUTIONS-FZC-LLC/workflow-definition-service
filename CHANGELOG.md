@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The LLD (revision 1.74) names all four inbound messages and shows the envelope with the library's field names; the internal spec no longer carries the `role` field the producer never sends and no longer calls the ingest route idempotent (a redelivery is reprocessed and converges on the same state); the revision history is one table.
 - The producer-fields test requires the documented schema to be non-empty and to carry the fields the handler reads; the contract and handler fixtures send the four fields Org & Membership publishes. The copy of Execution's internal contract moves to the commit that names the delegate-impact cursor order.
 - The LLD states how the consumer routes a type that no route names (to every target, where this endpoint acknowledges and ignores it) and that unknown types are counted under the label `unknown` (LLD rev 1.73).
 - The LLD names the membership topic as its producer does (`iam-membership-events`) (LLD rev 1.72). The copy of Execution's internal contract moves to the commit that documents the delegate-impact cursor as omitted, never null.

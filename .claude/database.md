@@ -71,4 +71,4 @@ PL/pgSQL functions need no `StatementBegin/End` wrappers — pgx/v5 runs each fi
 
 ## Inbound Event Redelivery
 
-There is no dedup registry. Both consumed types converge on the same state when reprocessed: `SetVersionInvalid` rewrites an identical `is_valid = false`, and no query returns a PUBLISHED version to valid, while the Execution Service's pause-tasks call signals only `RUNNING` instances. Adding an inbound type that is not idempotent by construction means introducing the registry with it (LLD §2.3.1, §10.9).
+There is no dedup registry. The revocation types converge on the same state when reprocessed: `SetVersionInvalid` rewrites an identical `is_valid = false`, and no query returns a PUBLISHED version to valid, while the Execution Service's pause-tasks call signals only `RUNNING` instances. Adding an inbound type that is not idempotent by construction means introducing the registry with it (LLD §2.3.1, §10.9).

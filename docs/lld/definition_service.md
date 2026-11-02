@@ -15,7 +15,7 @@ The **Workflow Definition Service** acts as the design-time control plane for th
 - **Database Driver**: `platform-pgcommon/v2 v2.0.1` — wraps `github.com/jackc/pgx/v5` with RLS GUC injection (`app.tenant_id`, `app.user_id`, `app.tenant_roles`), slow-query logging, OTel tracing, Prometheus pool metrics, transaction helpers, pool health check, and a golang-migrate-based `migrate.Runner`. See §1.7 for the full integration.
 - **Database Tooling**: `sqlc` for type-safe query generation, `platform-pgcommon/v2 migrate.Runner` for schema migrations.
 - **Distributed Cache / Store**: Valkey 8.0 (Redis-compatible), via `github.com/redis/go-redis/v9`. Used for: compiled-plan caching, idempotency key deduplication (`Idempotency-Key` header), and distributed draft-edit locking (prevents concurrent draft overwrites between sessions).
-- **Events**: this service publishes none and keeps no outbox. `platform-events/v2` v2.2.1 supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (e.g. `DepartmentMembershipRevoked`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /api/v1/internal/events`. See §1.8 for the full integration.
+- **Events**: this service publishes none and keeps no outbox. `platform-events/v2` v2.2.1 supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (`DepartmentMembershipRevoked`, `MembershipRevoked`, `TenantMembershipsPurged`, `TenantStateChanged`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /api/v1/internal/events`. See §1.8 for the full integration.
 - **Structured Logging**: `go.uber.org/zap` via `platform-gincommon/pkg/logger` — used by middleware chain and all application code. See `coding_style_rules.md §5.1`.
 - **Mocks**: `go.uber.org/mock` (GoMock / `mockgen`) — generates mocks for all `core/port/` interfaces. See §1.5.3.
 
@@ -27,7 +27,7 @@ The Definition Service operates within a broader ecosystem and interacts with th
 2. **PostgreSQL**: Stores the compiled DSL, draft XMLs, historical versions, and default node assignee mapping records (`workflow_node_assignee`).
 3. **Internal API (HTTP)**: Serves the compiled plan of a workflow version to the Execution Service and its Temporal Worker on the internal route group, `/api/v1/internal`, specified in `api/internal-openapi.yaml` (§3.4.1).
 4. **Org & Membership Service (Outbound REST)**: During publish/execution transactions and validation passes, the Definition Service calls `GET /api/v1/internal/tenants/:t/members/:u/eligibility?department_id=:dept&required_level=:level` as a backend defense-in-depth check to ensure all default assignees are eligible. The call carries the `iam-system` system principal (`x-user-id`, `x-tenant-roles`) and `x-tenant-id`; the tenant in the path is authoritative. The answer is `200` with an `eligible` flag, and `eligible: false` is the only answer that makes an assignee ineligible. A `400`, a `403`, a `5xx`, a transport error or a `200` without the flag is an unavailable dependency, never an ineligible user.
-5. **Event Bus (inbound only)**: This service publishes no events and has no outbox (§7.2, §10.7). It does **not** consume SQS: the shared workflow-events consumer subscribes to `membership-workflow-q` (`iam-membership-events`) and forwards `DepartmentMembershipRevoked` events to `POST /api/v1/internal/events` (§7.4), which triggers template invalidation.
+5. **Event Bus (inbound only)**: This service publishes no events and has no outbox (§7.2, §10.7). It does **not** consume SQS: the shared workflow-events consumer subscribes to `membership-workflow-q` (`iam-membership-events`) and forwards its events (`DepartmentMembershipRevoked`, `MembershipRevoked`, `TenantMembershipsPurged`, `TenantStateChanged`) to `POST /api/v1/internal/events` (§7.4), which invalidates templates or records the tenant for the purge.
 6. **Shared Workflow-Events Consumer (Inbound HTTP)**: A separate engine-wide service consumes the SQS queues and HTTP-routes each envelope to the respective workflow service (Definition or Execution). For the Definition Service it calls the internal `POST /api/v1/internal/events` endpoint.
 7. **Execution Service (Outbound HTTP)**: The Definition Service makes two calls on the Execution Service's internal API (§3.4.2). (a) During archive (`POST /workflows/:id/archive`): the active-instances read refuses the archive with `ACTIVE_INSTANCES_EXIST` (409) if any instance is RUNNING or PAUSED. (b) During membership revocation (`POST /api/v1/internal/events`, §7.4.2): the pause-tasks call has Execution pause the revoked user's active task assignments. Both calls wrap errors as `ErrUpstreamUnavailable` after retries.
 8. **User Profile Service (Display Enrichment)**: The Definition Service stores only UUID references for users (`workflow_node_assignee.user_id`). It does **not** make outbound calls to User Profile — display enrichment (name, email, job title) is performed directly by the frontend calling `POST /api/v1/users:batch` with the UUID list returned by the Definition Service. This keeps the Definition Service identity-agnostic at the service layer.
@@ -145,7 +145,7 @@ The service follows clean architecture: nothing in `core/` imports from `adapter
   - **`api/`** — Contracts (committed).
     - `internal-openapi.yaml` — The internal API this service serves (§3.4).
     - `contracts/` — A byte-identical copy of the Execution Service's internal document, with `SOURCES` naming where it comes from (§3.4).
-    - `asyncapi.yaml` — The inbound event this service consumes (§7).
+    - `asyncapi.yaml` — The four inbound messages this service consumes (§7).
   - **`db/`** — Database migrations and schema definitions.
     - `migrations/` — SQL schema migrations run via Goose. **Committed**.
     - `queries/` — SQL query definitions consumed by sqlc. **Committed**.
@@ -486,7 +486,7 @@ On application startup the tracing initialisation runs first, then the pool is b
 
 #### 1.8.2 Inbound Event Ingest (HTTP)
 
-Inbound domain events are consumed by the shared workflow-events consumer service, which forwards each envelope over HTTP to `POST /api/v1/internal/events`. The handler injects the RLS tenant context (`pgcommon.WithGUCSet`) from the envelope `tenant_id` — the same manual-injection pattern every internal route uses (§3.4, §14) — and dispatches by `env.Type` to the existing handler logic (e.g. `HandleDepartmentMembershipRevoked`). Redelivery is absorbed by handler idempotency (§2.3.1, §10.9). See §7.4 for the full flow.
+Inbound domain events are consumed by the shared workflow-events consumer service, which forwards each envelope over HTTP to `POST /api/v1/internal/events`. The handler injects the RLS tenant context (`pgcommon.WithGUCSet`) from the envelope `tenant_id` — the same manual-injection pattern every internal route uses (§3.4, §14) — and dispatches by `env.Type` to the handler for that type. Redelivery is absorbed by handler idempotency (§2.3.1, §10.9). See §7.4 for the full flow.
 
 #### 1.8.3 Prometheus Metrics
 
@@ -953,7 +953,7 @@ The service has no outbox table: none of its state changes emits an event (§7.2
 
 The Definition Service keeps no dedup registry. At-least-once delivery is absorbed by the handlers themselves: every inbound type this service consumes converges on the same state when reprocessed, so a redelivered envelope needs no `processed_event` row to detect it (§10.9).
 
-Both consumed types — `DepartmentMembershipRevoked` and `MembershipRevoked` (§7.4.2, §7.4.5) — reduce to two writes:
+Both revocation types — `DepartmentMembershipRevoked` and `MembershipRevoked` (§7.4.2, §7.4.5) — reduce to two writes:
 
 - `SetVersionInvalid` sets `is_valid` to `false` and adds the revoked user's nodes to `validation_errors_json`: the stored list first, then the new one, without repeating an entry. Two revocations on one version therefore leave both lists, and a redelivery changes nothing. The payload is built from the revoked user's assignee rows and `ListAssigneesByUser` orders by `(workflow_version_id, node_key)`, so each version's new entries follow `node_key` order rather than the heap's.
 - The Execution Service's pause-tasks call (§3.4.2) signals `instance-pause` only for instances it reads as `RUNNING`. The status transition is applied asynchronously by Temporal, so a redelivery arriving inside that window re-sends the signal; the interpreter's own pause handling absorbs the repeat.
@@ -1667,7 +1667,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 | `/starters/:id` | `DELETE` | Admin | Delete a starter (tenant-scoped rows only, or `platform_operator` for `scope=global`) |
 | `/healthz` | `GET` | Any | Liveness probe (returns 200 OK) |
 | `/readyz` | `GET` | Any | Readiness probe (performs database dependency connection checks, returns 200/503) |
-| `/api/v1/internal/events` | `POST` | Internal (service-to-service) | Ingest a domain-event envelope forwarded by the shared workflow-events consumer (e.g. `DepartmentMembershipRevoked`). Not exposed on the public gateway. |
+| `/api/v1/internal/events` | `POST` | Internal (service-to-service) | Ingest a domain-event envelope forwarded by the shared workflow-events consumer (`DepartmentMembershipRevoked`, `MembershipRevoked`, `TenantMembershipsPurged`, `TenantStateChanged`). Not exposed on the public gateway. |
 | `/internal/workflow-versions/:version_id/compiled-plan` | `GET` | Internal (service-to-service) | A workflow version and its stored compiled plan, read by the Execution Service (§3.4.1) |
 
 ---
@@ -1950,7 +1950,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 
 - **POST** `/api/v1/internal/events`
 - **Caller**: The shared workflow-events consumer (service-to-service). Mounted on an internal route group — **not** behind `ProtectedMiddlewares` and **not** exposed through the Envoy gateway. Authenticated by service-to-service auth (shared-secret header / mTLS / network policy).
-- **Semantics**: Accepts a single `events.Envelope[json.RawMessage]`, injects the RLS GUC from the envelope `tenant_id` (`pgcommon.WithGUCSet`, §14), and dispatches on `type`. Today it handles `DepartmentMembershipRevoked` → `HandleDepartmentMembershipRevoked` (the full flow is in §7.4.2). Redelivery is absorbed by handler idempotency (§2.3.1, §10.9).
+- **Semantics**: Accepts a single `events.Envelope[json.RawMessage]`, injects the RLS GUC from the envelope `tenant_id` (`pgcommon.WithGUCSet`, §14), and dispatches on `type`. It handles the four inbound types: `DepartmentMembershipRevoked` and `MembershipRevoked` invalidate templates (§7.4.2, §7.4.5); `TenantMembershipsPurged`, and `TenantStateChanged` with a status of `offboarded`, record the tenant for the purge (§7.4.4, §7.4.6). Any other type is acknowledged and counted under the label `unknown`. Redelivery is absorbed by handler idempotency (§2.3.1, §10.9).
 - **Request body**:
 
   ```json
@@ -3697,7 +3697,7 @@ The Definition Service emits **no outbound event** today (§10.7). None of its s
 - **Clone** — a clone creates a DRAFT. No downstream service has anything to do with a DRAFT.
 - **Publish / Promote** — emit no event (§10.7).
 
-`api/asyncapi.yaml` documents the one inbound message.
+`api/asyncapi.yaml` documents the four inbound messages.
 
 ### 7.3 Decoupled Service Integrations
 
@@ -3725,11 +3725,10 @@ The queue topology (`membership-workflow-q`, its `membership-workflow-q-dlq` DLQ
 
   ```json
   {
-    "event_id": "f0a11222-3844-42bc-938b-665cd42c9999",
-    "event_type": "DepartmentMembershipRevoked",
-    "timestamp": "2026-05-25T13:51:06.000Z",
+    "id": "f0a11222-3844-42bc-938b-665cd42c9999",
+    "type": "DepartmentMembershipRevoked",
+    "time": "2026-05-25T13:51:06.000Z",
     "tenant_id": "7ca648b2-b432-4744-884c-35fd556a310c",
-    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
     "data": {
       "user_id": "3fa18cde-7244-47ac-986c-665cd42caaaa",
       "department_id": "0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a10"
@@ -3759,7 +3758,7 @@ The queue topology (`membership-workflow-q`, its `membership-workflow-q-dlq` DLQ
   3. **Invalidate Versions**: For each identified `workflow_version_id`:
 
      - Set `is_valid = false` on `workflow_version`.
-     - Replace the version's `validation_errors_json` with one structured error object per affected node:
+     - Add one structured error object per affected node to the version's `validation_errors_json`, after the stored entries and without repeating one:
 
         ```json
         {
@@ -3808,7 +3807,7 @@ This is the automated path triggered when an assignee loses their department mem
 
 #### Out of Scope for the Definition Service — Runtime Reassignment
 
-The following IAM events from the HLD event catalog affect **live task assignments on running instances**. These events are not consumed by the Definition Service. They reach the Execution Service through `event_consumer`, which polls `membership-workflow-q` and `user-wf-q`:
+The following IAM events affect **live task assignments on running instances**. These events are not consumed by the Definition Service. They reach the Execution Service through `event_consumer`, which polls `membership-workflow-q`, `user-wf-q` and `delegation-workflow-q`:
 
 | Event | Source | Runtime Effect |
 | --- | --- | --- |
@@ -4041,7 +4040,7 @@ This section captures the key architectural and design decisions made for the Wo
 
 - **Decision**: This service keeps no `processed_event` table. At-least-once delivery on `POST /api/v1/internal/events` is absorbed by handler idempotency (§2.3.1). The Execution Service, whose inbound surface includes types that are not idempotent by construction, carries the registry instead.
 
-- **Rationale**: Both consumed types are revocations that converge on the same terminal state (§2.3.1). `SetVersionInvalid` replaces `is_valid` and `validation_errors_json` with the same values, and no query sets `is_valid = true` on a PUBLISHED row, so a redelivery cannot undo an operator's recovery — recovery is a new version (§7.4.3 Flow A). The pause-tasks call signals only instances Execution reads as `RUNNING`. A registry would add a table, an index, a daily pruner and a write on the hot path of every inbound event to detect a duplicate whose only trace is a bumped `record_version` on a row no client edit path locks against.
+- **Rationale**: Both revocation types converge on the same terminal state (§2.3.1). `SetVersionInvalid` sets `is_valid` to `false` and adds the new errors to the stored list without repeating an entry, and no query sets `is_valid = true` on a PUBLISHED row, so a redelivery cannot undo an operator's recovery — recovery is a new version (§7.4.3 Flow A). The pause-tasks call signals only instances Execution reads as `RUNNING`. A registry would add a table, an index, a daily pruner and a write on the hot path of every inbound event to detect a duplicate whose only trace is a bumped `record_version` on a row no client edit path locks against.
 
 - **Constraint this places on future work**: the property belongs to these two handlers, not to the endpoint. Adding an inbound type whose handler is not idempotent by construction means introducing the registry alongside it (Appendix E).
 
@@ -4970,7 +4969,6 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.27 | 2026-10-01 | **The Execution Service link is internal HTTP; gRPC is gone** (§1.1–§1.5, §1.6 renumbered, new §3.4, §3.2, §3.3.8, §7.4.2, §7.4.5, §8.2, §9.2, §9.3, §11, §12, glossary). The compiled-plan read is `GET /api/v1/internal/workflow-versions/{version_id}/compiled-plan`, its plan a JSON object; `dsl_schema_version` is dropped, the plan's own `schema_version` being the one source. The archive guard and the pause of a removed member's tasks call the Execution Service's internal API. `api/internal-openapi.yaml` is the authority for every internal route, with a design-repo copy; each caller keeps a byte-identical copy in `api/contracts`, checked against its source by `make contract-check`, and `make contract-breaking` refuses a breaking change against `main` with oasdiff, the gate platform-schemagov's `diff` gives event schemas. Tests hold responses from the real router, and every request a client sends, to the documents. Each caller sends the callee's token under the callee's name (`EXECUTION_SERVICE_TOKEN`, `DEFINITION_SERVICE_TOKEN`), compared in constant time. The gateway routes only the public path prefixes: it had routed all of `/api/v1`, `/api/v1/internal` included. §1.6.2's gRPC interceptor chain, which named an auth interceptor that did not exist, is removed. |
 | 1.28 | 2026-10-01 | **`INTERNAL_API_TOKEN` is required outside dev** (§3.4). It had been required only for `APP_ENV=prod`, so any other non-dev environment served the internal routes with no token check. `DELETE /api/v1/internal/connector-aliases/rest/{alias}` declares its `404` in `api/internal-openapi.yaml`. |
 | 1.29 | 2026-10-02 | **Tasks run in the order the flows give** (§3.1.4 codes 9 and 34 and new code 37, §3.3.12.2, §3.3.18, §4.1.3.2, §4.2, §4.4, boundary event rules). A department was a whole lane, and the Execution Service runs every stage of a department wherever a step names it: a flow returning to a lane ran its later task before the tasks between, the steps after a join ran the lane's earlier tasks again, and an exclusive branch ran every later task in its lane. A department is now a lane segment, a stretch of one lane on one path, keyed `<lane>`, then `<lane>~<n>`; module slots stay one per lane. A gateway's join is its immediate post-dominator in the forward graph, so an inner join or a loop head is no longer taken for it, and each branch stops at that join, so a nested fork no longer compiles the region after its inner join twice. Each exclusive branch carries its work as `Steps` (workflow-models LLD rev 2.14): a call on a branch had been left out of the plan, a subprocess on a branch ran on every branch, and a branch whose first task had a task type named a stage the Execution Service could not find. A boundary's path compiles on its own and stops at a node already compiled, so the task it leads to no longer runs on the normal path, and each node a boundary leads to starts a segment. Back-edges are classified from boundary events too. A compile stops at 1000 stages or 10000 nodes (`TASK_LIMIT_EXCEEDED`): exclusive splits that merge only in part compile their merged tail once per branch. A revert names the segment on its own path. A boundary to a subprocess whose body does not start with a userTask is `UNSUPPORTED_BOUNDARY_TARGET`. New `INVALID_LANE_NAME`: a lane name containing `/`, `::` or `~`. |
-
 | 1.30 | 2026-10-02 | **One pool runs; outside parties' pools and lanes are skipped; modules always run** (§3.1.4 code 20 and new codes 38–39, §4.1.2, §4.2, §4.3). A collaboration had been compiled pool by pool: messages between pools were bridged by a synthetic node, which a call-pool step and an admin stub task completed, department IDs were prefixed by pool, and publish refused a collaboration outright. That machinery is deleted. The workflow is the one process that is executable, not called and not marked ignore; a pool marked ignore, or not executable and not called, is an outside party's and produces nothing. `/validate` judges a collaboration as publish does. A called process runs as a module whether or not it is executable, and a call to a pool marked ignore is refused. A lane marked ignore is an outside party inside the process that runs: its tasks compile to nothing, and the person on the next task waits for the outside party. A call, subprocess or connector task in such a lane, a boundary on one of its tasks and a loop whose way back holds only its tasks are the new `IGNORED_LANE_WORK`, and a call cannot bind a module lane to such a lane; no runnable process is the new `NO_RUNNABLE_PROCESS`. A receive task with no message of its own waits for the message flow into it, or for its own id. `textAnnotation`, `association`, `documentation`, `property` and the data-association children are diagram-only. An outside pool's drawn calls are never made, and only a message flow into a receive task or message boundary that runs needs a name. `CompiledCollaboration.messages`, `CompiledPlan.ignored`, `DepartmentDef.ignore` and `call_pool` steps are gone (workflow-models LLD rev 2.15). |
 | 1.31 | 2026-10-07 | **What an outside party can complete, and no authored credentials** (§3.1.4 new code 40, §3.3.12.2, §4.1.3.3). The published-version nodes read gains `waits`: the receive tasks and message boundaries that no send task of the plan feeds, each with the key the Execution Service takes an outside party's answer by. A message boundary keeps its BPMN id (`MessagePath.BoundaryID`, workflow-models LLD rev 2.16) so it can be addressed. A connector input whose target is a secret field of its connector type is refused (`CONNECTOR_SECRET_AUTHORED`): a connector always uses the tenant's stored credential, so a diagram never names a secret path. A connector input's `source` is `=name` for an instance variable or any other text for a literal. |
 | 1.32 | 2026-10-08 | **The service has no outbox, relay, SNS publisher or Glue codec** (§1.1, §1.2, §1.4, §1.5, §1.8, §2.2, §2.3, §6, §7, §8, §9, §10.2, §10.4, §10.12, §11, Appendix A). It publishes no event, and the apparatus had been kept against a future producer; it also made every cluster boot require SNS and Glue settings no deployment has. The outbox tables and their RLS migration, the relay worker and its alert, the `OutboxRepository` port, the `AWS_USE_STUB`, `SNS_TOPIC_ARN`, `GLUE_REGISTRY_NAME` and `OUTBOX_*` settings and the Glue codec are gone. The Execution Service and Org & Membership URLs and tokens are required whenever `APP_ENV` is not `dev`. A future outbound event designs its contract and consumer first, and brings its own outbox. |
@@ -5015,6 +5013,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.71 | 2026-11-01 | **The inbound event contract matches what Org & Membership publishes, and the consumer's delivery rules are stated** (§1, §3.4, §7.4). `DepartmentMembershipRevoked` carries `user_id`, `tenant_id`, `department_id` and `actor_id`; the optional `role` the schema and the examples declared is never published and is removed. The out-of-scope table named Org & Membership as the source of `DelegationStarted` and `DelegationEnded`, said availability changes reroute tasks, and said a deleted user pauses instances; the Delegation Service publishes the first on `iam.delegation.events`, an availability change pauses and resumes, and a deleted user's assignments are vacated. §7.4.1 states the consumer's permanent statuses (`400`, `413`, `422`) against the retried ones, points to the Workflow Events Consumer LLD for acknowledgement, dead-lettering and health, and records that a new type is routed here only after this service handles it. The `platform-events` version is `v2.2.1`. |
 | 1.72 | 2026-11-01 | **The membership topic is named as its producer names it** (§1, §7.4). Org & Membership publishes on `iam-membership-events`; the text spelled it with dots. |
 | 1.73 | 2026-11-01 | **The consumer's routing and the unknown-type metric are stated as they are** (§7.4.1). The text said the consumer routes a new event type to this service only after the service handles it; the consumer sends a type absent from its routes to every target, and this endpoint acknowledges and ignores it. Unknown types are counted under the label `unknown`, where the text said the received type. |
+| 1.74 | 2026-11-02 | **The inbound documentation names all four messages, and the envelope is shown as the library defines it** (§1.1, §1.2, §3.2, §7.4.2, §14, Appendix D). Several sections still described one or two inbound types, a `membership-workflow-q` and `user-wf-q` pair without `delegation-workflow-q`, and an envelope with `event_id`, `event_type`, `timestamp` and `traceparent`. The four types are `DepartmentMembershipRevoked`, `MembershipRevoked`, `TenantMembershipsPurged` and `TenantStateChanged`; the envelope fields are `id`, `type`, `time`, `tenant_id` and `data`. The revocation write adds the new errors to the stored list without repeating an entry, as §2.3.1 states. The revision history is one table again. |
 ---
 
 ## Appendix E: Open Items
@@ -5023,7 +5022,7 @@ This document had no dedicated Open Items tracker before rev 1.6 — items below
 
 | Theme | Item | Owner |
 | --- | --- | --- |
-| Constraint | **A new inbound event type needs the dedup registry introduced with it, unless its handler is idempotent by construction (§2.3.1, §10.9).** The two types consumed today converge on the same state when reprocessed, which is why no `processed_event` table exists here. That property belongs to those handlers, not to `POST /internal/events`, so it has to be re-established — or the registry built, as the Execution Service has — whenever the inbound surface grows. | Definition Service team, at the time a third inbound type is added |
+| Constraint | **A new inbound event type needs the dedup registry introduced with it, unless its handler is idempotent by construction (§2.3.1, §10.9).** The types consumed today converge on the same state when reprocessed, which is why no `processed_event` table exists here. That property belongs to those handlers, not to `POST /internal/events`, so it has to be re-established — or the registry built, as the Execution Service has — whenever the inbound surface grows. | Definition Service team, at the time a third inbound type is added |
 | Deferred | **Declared start variables.** A workflow declares no variables it needs at start, so the node read (§3.3.12.2) lists only what the Execution Service checks at start: each human task's department, role level and default users. Declaring start variables — on the start event, compiled into the plan and checked at instance start — spans this compiler, workflow-models and the Execution Service. | Definition + Execution Service teams, once a caller needs it |
 | Deferred | **A boundary path that rejoins the main flow runs only its first department.** A boundary carries its path as `Steps`, but a path that continues into a node the main flow compiled carries none and names only its `TargetDept`, whose department runs alone; expressing a continuation into the main flow needs the path's steps to end by naming the node they rejoin. | Definition + Execution Service teams |
 | Deferred | **Module/starter library's product shape (§10.16).** Designed here as "just another versioned BPMN entity" (module) or a simple CRUD row (starter). If the intended UI turns out to be CMS-like — cross-tenant search, tagging, thumbnails, marketplace-style discovery across a large catalog — that product shape could justify pulling this back into a dedicated service later, independent of the data-ownership reasoning that put it here. Not pre-built for; revisit once real product/UI requirements exist. | Definition Service team + product, once UI requirements are known |

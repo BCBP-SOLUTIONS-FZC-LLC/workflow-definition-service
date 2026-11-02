@@ -35,7 +35,7 @@ Frontend Builder ──REST──► Definition Service ◄──internal HTTP�
 
 A workflow is authored once and run many times, often long after the author is done. Separating design from execution gives a published version that never changes under a running instance, a validation gate that runs before any instance can start, and a runtime that never parses BPMN. Without a single owner of templates, every consumer would parse and interpret the diagram on its own and drift from the others.
 
-This service centralises that: one validated, versioned, compiled plan per published version, served read-only to the runtime. It publishes no events and keeps no outbox; its only event path is the inbound membership revocation.
+This service centralises that: one validated, versioned, compiled plan per published version, served read-only to the runtime. It publishes no events and keeps no outbox; its only event path is the four inbound messages (`DepartmentMembershipRevoked`, `MembershipRevoked`, `TenantMembershipsPurged`, `TenantStateChanged`).
 
 ---
 
