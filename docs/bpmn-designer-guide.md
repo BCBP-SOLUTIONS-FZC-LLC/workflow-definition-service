@@ -220,7 +220,7 @@ The operator is `=`, `==` or `!=`. The value is a double-quoted string, a number
 
 The compiler turns each element into plan steps in a fixed way, so the validator refuses a diagram the compiler would turn into something other than what you drew. Draw to these rules and the plan matches the diagram:
 
-- **One way out.** A start event, task, send or receive task, sub-process and call continue along one flow, and the compiler follows only that flow. To run branches at the same time or to choose between them, put a parallel, exclusive or inclusive gateway after the element.
+- **One way out.** A start event, task, send or receive task, sub-process and call continue along one flow, and the compiler follows only that flow. To run branches at the same time or to choose between them, put a parallel or exclusive gateway after the element.
 - **Boundaries sit on work that waits.** A timer or message boundary attaches to a user task, a sub-process or a call, and an error boundary to a sub-process or a call. A task has at most one timer and one message boundary, and a boundary's path is one flow.
 - **A default flow.** At an exclusive gateway the Execution Service evaluates the conditions in order and takes the first flow whose condition holds, or else the first flow with no condition. Give every flow but one a condition, or the others can never run.
 - **A revert returns to earlier work.** A revert flow starts at an exclusive gateway and goes back to a task or a receive task; the compiler does not follow a flow that leaves a receive task backwards.
@@ -240,7 +240,7 @@ These are checked on every upload. Breaking them causes rejection.
 | At least one end event per process | `NO_END_EVENT` |
 | Every node connected (no floating elements) | `DANGLING_NODE` |
 | Every node reachable from start | `UNREACHABLE_NODE` |
-| Parallel/inclusive split has a matching join; an exclusive split has one unless every branch ends | `UNMATCHED_GATEWAY` |
+| A parallel split has a matching join; an exclusive split has one unless every branch ends | `UNMATCHED_GATEWAY` |
 | Lane names have no `/`, `::` or `~` | `INVALID_LANE_NAME` |
 | Revert loops always have a forward exit (guarded) | `UNGUARDED_LOOP` |
 | Sub-processes have their own start and end events | compile error |

@@ -1415,7 +1415,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
 
 2. **`MISSING_NAMESPACE`**
    - **Trigger Scenario**: The uploaded XML lacks standard BPMN 2.0 namespaces or the Zeebe custom modeler extension namespaces in the root `<bpmn:definitions>` tag.
-   - **Trigger Logic**: The parser checks for attributes `xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"` and `xmlns:zeebe="http://camunda.org/schema/1.0/zeebe"`. If absent, compiling Zeebe properties is impossible, triggering this error.
+   - **Trigger Logic**: The parser checks for attributes `xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"` and `xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"`. If absent, compiling Zeebe properties is impossible, triggering this error.
 
 3. **`MISSING_TASK_DEFINITION`**
    - **Trigger Scenario**: A `<bpmn:userTask>` lacks a `<zeebe:taskDefinition>` extension element.
@@ -1423,7 +1423,7 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
 
 4. **`TASK_NOT_IN_LANE`**
    - **Trigger Scenario**: A `<bpmn:userTask>` is not listed under any lane via `<bpmn:flowNodeRef>`.
-   - **Trigger Logic**: The validator builds a `nodeID → laneID` map from all `flowNodeRef` entries. Any `userTask` whose ID is absent from this map — or appears in more than one lane — triggers this error. Department is derived solely from lane membership; no `dept_id` property is read.
+   - **Trigger Logic**: The validator builds a `nodeID → laneID` map from all `flowNodeRef` entries. Any `userTask` whose ID is absent from this map — or appears in more than one lane — triggers this error. The department is the lane that holds the task. The lane carries a `dept_id` Zeebe property with the IAM department UUID, which a task inherits from its lane; a lane without one is refused with `MISSING_DEPT_ID` and a value that is not a UUID with `INVALID_DEPT_ID`.
 
 5. **`UNKNOWN_STAGE_TYPE`** *(warning severity)*
    - **Trigger Scenario**: The `type` attribute of `<zeebe:taskDefinition>` does not match any registered `StageTypeHandler` ID (e.g. `prep`, `review`, `approve`).
@@ -2140,7 +2140,7 @@ A valid BPMN file submitted to this service **must** declare the following names
 | `dc` | `http://www.omg.org/spec/DD/20100524/DC` | Expected (Not Enforced) | Diagram common (bounds) |
 | `di` | `http://www.omg.org/spec/DD/20100524/DI` | Expected (Not Enforced) | Diagram interchange (edges) |
 
-Missing `bpmn` or `zeebe` namespaces cause an immediate `400 Bad Request` before full parsing begins. The diagram interchange namespaces (`bpmndi`, `dc`, `di`) contain layout bounds and coordinates used by visual canvas modeling tools, but are not strictly enforced during execution plan compilation.
+Missing `bpmn` or `zeebe` namespaces end parsing before it starts and are reported as `MISSING_NAMESPACE` inside a `422 BPMN_VALIDATION_FAILED` answer. The diagram interchange namespaces (`bpmndi`, `dc`, `di`) contain layout bounds and coordinates used by visual canvas modeling tools, but are not strictly enforced during execution plan compilation.
 
 ---
 
@@ -2171,7 +2171,7 @@ Elements are classified into three tiers. The raw-XML denylist scan (`rejectedEl
 
 > Flow Nodes
 
-- `<bpmn:startEvent>` — Exactly 1 per process. Supported definitions: blank (manual trigger), `<bpmn:messageEventDefinition>` (correlated start from a messageFlow), `<bpmn:timerEventDefinition>` (scheduled start), `<bpmn:signalEventDefinition>` (broadcast signal start). No incoming flows.
+- `<bpmn:startEvent>` — Exactly 1 per process. Supported definitions: blank (manual trigger), `<bpmn:messageEventDefinition>` (correlated start from a messageFlow), `<bpmn:timerEventDefinition>` (scheduled start). A `<bpmn:signalEventDefinition>` start is refused with `UNSUPPORTED_ELEMENT`. No incoming flows.
 - `<bpmn:endEvent>` — At least 1 per process. Named end events compile to outcome labels. Inside a subprocess, `<bpmn:errorEventDefinition errorRef="..."/>` declares a rejection throw.
 - `<bpmn:userTask>` — 1–1000 per process. Must carry `zeebe:taskDefinition` and `zeebe:assignmentDefinition` (§4.1.3). Belongs to exactly one lane.
 - `<bpmn:sendTask>` — Outbound message to another participant. Must carry `<zeebe:taskDefinition type="..."/>` identifying the message worker.
@@ -2179,8 +2179,6 @@ Elements are classified into three tiers. The raw-XML denylist scan (`rejectedEl
 - `<bpmn:serviceTask>` — **Scoped exception to the Tier 3 rejection below.** Recognized only when `<zeebe:taskDefinition type="connector:<name>"/>` carries the `connector:` prefix — an automatic task, run without a human. Compiles to `StageDef.Type = enums.StageTypeConnector` (`"connector"`) plus `StageDef.ConnectorType = "<name>"` (the prefix is stripped once, at compile time — Execution Service never re-parses it), and `StageDef.IOMapping` from the element's `<zeebe:ioMapping>` (`workflow_models_lib.md` §2.3). Dispatch of the actual connector call happens outside this service entirely — see `workflow_connectors.md` (worker placement is decided there, a `cmd/connector-worker` binary inside `execution_service`'s own repo; this compiler's output was written placement-agnostic and needed no change either way). A `serviceTask` with any other `type`, or none, is still `REJECTED_ELEMENT` exactly as before; this is not a general un-rejection of `serviceTask`. Input mapping via `<zeebe:ioMapping>`, same as `callActivity` (§4.1.2 above). See §4.1.3.3 for the full extension contract.
 - `<bpmn:parallelGateway>` — 0–N. Concurrent department execution. Split/join pairs required.
 - `<bpmn:exclusiveGateway>` — 0–N. Routing-only branching + guarded rework loops. Every outgoing flow of a split carries `<bpmn:conditionExpression>` except at most one default flow, which the Execution Service takes when no condition holds (code 44). Split/join pairs required.
-- `<bpmn:inclusiveGateway>` — 0–N. OR-split/join: one or more branches fire based on `conditionExpression` evaluation. All outgoing flows from a split must carry `<bpmn:conditionExpression>`. Split/join pairs required.
-- `<bpmn:eventBasedGateway>` — 0–N. Exclusive wait for the first of N events (timer or signal). All outgoing flows must target an `intermediateCatchEvent`. At least one timer branch required. Not permitted inside a subprocess.
 - `<bpmn:subProcess>` (embedded, non-event, non-ad-hoc) — 0–N. Grouped sub-flow with its own start/end events, userTasks, and gateways. Must **not** contain an internal `<bpmn:laneSet>` — tasks inside a subprocess belong to the department of the subprocess's containing lane in the parent process. If a subprocess logically spans multiple departments, those tasks must be modelled as separate activities in the parent process lanes connected via parallel gateways. Must use `<bpmn:userTask>` (not plain `<bpmn:task>`) for all internal activities.
 - `<bpmn:callActivity>` — 0–N. References a named reusable sub-process via `<zeebe:calledElement processId="..."/>`. The called process runs as a module whether or not it is executable, and must not be marked ignore. It is either a process in the same file, private to the workflow, or a library module resolved by `processId` and version (§3.3.18). Each called process is **compiled once, into its own plan** in `CompiledCollaboration.Plans`, named by its process id — `<process_id>@v<version_number>` for a library module version — and each call site compiles to one `ExecutionStep.CallPlan` naming that plan (`workflow_models_lib.md` §2.5). Consumers expand calls with `dsl.ExpandCalls` (§2.6 there), so the same module called from two places gives two separate sets of tasks, each in the department its call binds.
   - **Departments.** A lane of the called process that holds work (a task, a callActivity or a subProcess) becomes one of its plan's departments. With a `dept_id` property it is *fixed* to that department, and no call can remap it. Without one it is *open*, and each call binds it to one of the caller's lanes: through the `Depts` input, or, when the called process has exactly one open lane (a laneless process counts as one), by default to the lane the callActivity itself sits in. A bound lane takes the caller lane's department and IAM id. Open lanes are the one place a lane may lack `dept_id`. See the **Depts dict-injection** pattern below and codes 25 and 31.
@@ -2199,7 +2197,6 @@ Elements are classified into three tiers. The raw-XML denylist scan (`rejectedEl
 - `<bpmn:boundaryEvent>` with `<bpmn:timerEventDefinition>` — 0–N. Attached to a `userTask`, `subProcess` or `callActivity`. `cancelActivity="true"` (interrupting) or `"false"` (non-interrupting escalation). Duration: ISO 8601 or Go duration string. Compiles to `StageDef.BoundaryTimer` (userTask), `SubWorkflowStep.TimerPaths` (subProcess) or `CallPlanStep.TimerPaths` (callActivity).
 - `<bpmn:boundaryEvent>` with `<bpmn:errorEventDefinition>` — 0–N. Attached to a `subProcess` or `callActivity`; always interrupting. Catches named errors (or any error when `errorRef` is empty). Compiles to `SubWorkflowStep.ErrorPaths` (subProcess) or `CallPlanStep.ErrorPaths` (callActivity).
 - `<bpmn:boundaryEvent>` with `<bpmn:messageEventDefinition>` — 0–N. Attached to a `userTask`, `subProcess`, or `callActivity`. Interrupting or non-interrupting per `cancelActivity`. Zero outgoing sequence flows is valid — a terminal interrupt notification. Compiles to `StageDef.BoundaryMessage` (userTask), `SubWorkflowStep.MessagePaths` (subProcess), or `CallPlanStep.MessagePaths` (callActivity). Message name resolution: the boundary event's own `messageEventDefinition messageRef` first, falling back to any collaboration `messageFlow` targeting the boundary event's node ID (see §Message Flow Name Resolution).
-- `<bpmn:intermediateCatchEvent>` with `<bpmn:timerEventDefinition>` — 0–N. Standalone timer step; must immediately follow an `eventBasedGateway` outgoing flow.
 
 > Connectivity & Zeebe Extensions
 
@@ -2218,7 +2215,10 @@ Elements are classified into three tiers. The raw-XML denylist scan (`rejectedEl
 
 These elements are recognized but not yet compiled. They return a structured `UNSUPPORTED_ELEMENT` error (not `REJECTED_ELEMENT`) to distinguish "planned" from "never".
 
-- `<bpmn:intermediateCatchEvent>` with `<bpmn:messageEventDefinition>` — external signal branch from event-based gateway.
+- `<bpmn:inclusiveGateway>` — OR-split/join. Refused with `UNSUPPORTED_ELEMENT`: the compiler parses and graph-validates it, has no compile handler for it, and the Execution DSL has no step for it.
+- `<bpmn:eventBasedGateway>` with `<bpmn:intermediateCatchEvent>` branches (timer, message or signal) — exclusive wait for the first of several events. Refused with `UNSUPPORTED_ELEMENT` for the same reason.
+- `<bpmn:startEvent>` with `<bpmn:signalEventDefinition>` — broadcast signal start. Refused with `UNSUPPORTED_ELEMENT`.
+- The shared element allowlist of `workflow-models` and the response of `/bpmn/allowed-elements` still name `inclusiveGateway`, `eventBasedGateway` and `intermediateCatchEvent` as allowed elements. The compiler refuses these three regardless of the list.
 - `<bpmn:intermediateCatchEvent>` with `<bpmn:signalEventDefinition>` — broadcast signal catch.
 - `<bpmn:intermediateThrowEvent>` with `<bpmn:messageEventDefinition>` — outbound notification.
 - `<bpmn:multiInstanceLoopCharacteristics>` on `userTask` — panel voting (all-must-complete with N independent instances).
@@ -2280,7 +2280,7 @@ Stage type — identifies the job worker that handles the task. The default regi
 
 Every `<zeebe:property>` is forwarded verbatim into `StageDef.Extras` (`map[string]string`) — the compiler does not special-case any property name; the Execution Service and job workers own interpretation. For example, `<zeebe:property name="requires_comment" value="true"/>` appears as `extras["requires_comment"] = "true"` (the Execution Service reads this to require a non-empty comment before task completion), and `<zeebe:property name="sla_category" value="high"/>` appears as `extras["sla_category"] = "high"`.
 
-**Department** — derived from lane membership via `<bpmn:flowNodeRef>`. No `dept_id` property needed. Lane `name` → `DepartmentDef.ID` + `DepartmentDef.Label`. Format is owned by the Profile Service and trusted as-is.
+**Department** — derived from lane membership via `<bpmn:flowNodeRef>`. The lane carries a `dept_id` Zeebe property holding the IAM department UUID (publish refuses a lane without one, `MISSING_DEPT_ID`, or with a value that is not a UUID, `INVALID_DEPT_ID`). Lane `name` → `DepartmentDef.ID` + `DepartmentDef.Label`. Format is owned by the Profile Service and trusted as-is.
 
 **Condition expressions** — use standard `<bpmn:conditionExpression>` as a direct child of `<bpmn:sequenceFlow>` (not a Zeebe property). one comparison of a result field with a literal (`= decision = "bid"`, `decision != "no-bid"`, `amount == 5`, `approved == true`); max 4096 chars. For routing decisions only — not for approval state (use error events for rejection/rework; see §4.1.3.1).
 
@@ -2291,7 +2291,7 @@ Every `<zeebe:property>` is forwarded verbatim into `StageDef.Extras` (`map[stri
   <bpmn:extensionElements>
     <zeebe:taskDefinition type="prep"/>
     <zeebe:assignmentDefinition
-      candidateGroups="bd-agent"
+      candidateGroups="preparator"
       candidateUsers="018e1f2a-0000-7000-8000-000000000001"/>
     <zeebe:properties>
       <zeebe:property name="requires_comment" value="false"/>
@@ -2344,7 +2344,7 @@ Full design in `workflow_connectors.md`; this is the parser-facing contract only
 
 **No `<zeebe:assignmentDefinition>`** — a connector task has no human assignee at compile time, and none is ever assigned at runtime either: it completes or fails entirely on its own (`workflow_connectors.md` §5.3/§10 Decision #9), never something authored in the diagram.
 
-**Department** — same as `userTask`: derived from lane membership via `<bpmn:flowNodeRef>`, no separate property needed.
+**Department** — same as `userTask`: derived from lane membership via `<bpmn:flowNodeRef>`, with the lane's `dept_id` property.
 
 ---
 
@@ -2949,7 +2949,7 @@ Prior to saving drafts or completing publishing transactions, the compiler runs 
 
 - **Required Extensions**: Every `<bpmn:userTask>` must declare a `<zeebe:taskDefinition>` and a `<zeebe:assignmentDefinition>` inside its `extensionElements`.
 - **Valid Stage Type**: `taskDefinition.type` must match a registered `StageTypeHandler` ID. The deployment default set is `prep`, `review`, `approve`; the registry is not hardcoded.
-- **Lane Membership**: Every `userTask` must appear in exactly one lane via `<bpmn:flowNodeRef>`. Department is derived from the lane `name`; no `dept_id` property is used.
+- **Lane Membership**: Every `userTask` must appear in exactly one lane via `<bpmn:flowNodeRef>`. The department is the lane that holds the task; the lane's `dept_id` property carries the IAM department UUID.
 - **Valid Timer Duration**: Timer boundary events and intermediate timer catch events must declare durations in ISO 8601 (`PT24H`, `P3D`) or Go duration syntax (`72h`, `3h30m`).
 
 #### Guarded-Loop Enforcement (Revert / Loopback Flows)
@@ -3333,7 +3333,7 @@ sequenceDiagram
    API->>Parser: ParseXML([]byte)
    alt Parse fails (namespace missing, unrecognized root)
        Parser-->>API: parse error
-       API-->>Admin: 400 Bad Request (structured errors)
+       API-->>Admin: 422 BPMN_VALIDATION_FAILED for a missing namespace (MISSING_NAMESPACE); 400 for malformed XML
    end
    Parser-->>API: BPMNProcess AST
    API->>Val: Validate(BPMNProcess)
@@ -5014,6 +5014,9 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.72 | 2026-11-01 | **The membership topic is named as its producer names it** (§1, §7.4). Org & Membership publishes on `iam-membership-events`; the text spelled it with dots. |
 | 1.73 | 2026-11-01 | **The consumer's routing and the unknown-type metric are stated as they are** (§7.4.1). The text said the consumer routes a new event type to this service only after the service handles it; the consumer sends a type absent from its routes to every target, and this endpoint acknowledges and ignores it. Unknown types are counted under the label `unknown`, where the text said the received type. |
 | 1.74 | 2026-11-02 | **The inbound documentation names all four messages, and the envelope is shown as the library defines it** (§1.1, §1.2, §3.2, §7.4.2, §14, Appendix D). Several sections still described one or two inbound types, a `membership-workflow-q` and `user-wf-q` pair without `delegation-workflow-q`, and an envelope with `event_id`, `event_type`, `timestamp` and `traceparent`. The four types are `DepartmentMembershipRevoked`, `MembershipRevoked`, `TenantMembershipsPurged` and `TenantStateChanged`; the envelope fields are `id`, `type`, `time`, `tenant_id` and `data`. The revocation write adds the new errors to the stored list without repeating an entry, as §2.3.1 states. The revision history is one table again. |
+| 1.75 | 2026-11-02 | **The element tiers match the compiler** (§4.1, §4.1.3). The inclusive gateway, the event-based gateway with its catch-event branches, the intermediate timer catch event and the signal start event were listed as Tier 1. The compiler refuses all of them with `UNSUPPORTED_ELEMENT`: it has no compile handler for them and the Execution DSL has no step for them; they have been refused since the compiler's first version. They move to the Tier 2 list. The shared `workflow-models` allowlist and `/bpmn/allowed-elements` still name three of them as allowed elements. |
+| 1.76 | 2026-11-02 | **Where a department comes from** (§3.1.4 code 5, §4.1.3, §4.4). Four passages said no `dept_id` property is read. Publish requires a `dept_id` Zeebe property on the lane, holding the IAM department UUID, and refuses a lane without one (`MISSING_DEPT_ID`) or with a value that is not a UUID (`INVALID_DEPT_ID`), as codes 35 and 36 already state. |
+| 1.77 | 2026-11-02 | **The Zeebe namespace and the status of a missing one** (§3.1.4 code 2, §5.5). The Zeebe namespace is `http://camunda.org/schema/zeebe/1.0`, as §2.4 and the compiler state. A missing `bpmn` or `zeebe` namespace is reported as `MISSING_NAMESPACE` inside a `422 BPMN_VALIDATION_FAILED` answer, not as an immediate `400`. |
 ---
 
 ## Appendix E: Open Items

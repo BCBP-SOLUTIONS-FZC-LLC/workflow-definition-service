@@ -10,6 +10,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The LLD (revisions 1.76 and 1.77) states that publish requires the lane's `dept_id` property, gives the Zeebe namespace as `http://camunda.org/schema/zeebe/1.0` with a missing namespace reported inside a `422`, and uses a valid role value in the task example.
+- The LLD (revision 1.75), ARCHITECTURE and the designer guide state that the inclusive gateway, the event-based gateway, the intermediate timer catch event and the signal start event are refused with `UNSUPPORTED_ELEMENT`, as the compiler has always done.
 - The LLD (revision 1.74) names all four inbound messages and shows the envelope with the library's field names; the internal spec no longer carries the `role` field the producer never sends and no longer calls the ingest route idempotent (a redelivery is reprocessed and converges on the same state); the revision history is one table.
 - The producer-fields test requires the documented schema to be non-empty and to carry the fields the handler reads; the contract and handler fixtures send the four fields Org & Membership publishes. The copy of Execution's internal contract moves to the commit that names the delegate-impact cursor order.
 - The LLD states how the consumer routes a type that no route names (to every target, where this endpoint acknowledges and ignores it) and that unknown types are counted under the label `unknown` (LLD rev 1.73).

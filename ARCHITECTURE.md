@@ -811,20 +811,20 @@ Limits: 1–100 lanes per process.
 | `<bpmn:message>` | Message definition referenced by start/send/receive elements |
 | `<bpmn:process>` | Core container → `CompiledPlan` |
 | `<bpmn:laneSet>` / `<bpmn:lane>` | Department grouping → `DepartmentDef` |
-| `<bpmn:startEvent>` | Blank, `messageEventDefinition`, `timerEventDefinition`, or `signalEventDefinition` — compiled as trigger metadata; no effect on execution graph |
+| `<bpmn:startEvent>` | Blank, `messageEventDefinition` or `timerEventDefinition` — compiled as trigger metadata; no effect on execution graph. A `signalEventDefinition` start is refused with `UNSUPPORTED_ELEMENT` |
 | `<bpmn:endEvent>` | Blank or named (outcome label); `errorEventDefinition` allowed inside subprocess only |
 | `<bpmn:userTask>` | Human work unit → `StageDef` inside its `DepartmentDef`; must carry `zeebe:taskDefinition` + `zeebe:assignmentDefinition`; must be in one lane; optional `zeebe:taskSchedule` for due/follow-up dates |
 | `<bpmn:sendTask>` | Outbound message task → `StageDef` with `type: "send_task"`; message name in `extras["message"]` |
 | `<bpmn:receiveTask>` | Inbound message wait → `StageDef` with `type: "receive_task"`; message name in `extras["message"]` |
 | `<bpmn:parallelGateway>` | Concurrent fan-out/fan-in → parallel `ExecutionStep`; split and join must be matched |
 | `<bpmn:exclusiveGateway>` | Routing decision → `ExclusiveBranch` list; all outgoing flows require `conditionExpression`; back-edges allowed when guarded |
-| `<bpmn:eventBasedGateway>` | Waits for the first of N intermediate catch events |
+| `<bpmn:eventBasedGateway>` | Not supported: refused with `UNSUPPORTED_ELEMENT` (no compile handler, no Execution DSL step) |
 | `<bpmn:subProcess>` | Embedded, non-event, non-ad-hoc → `SubWorkflowStep`; recursively validated; nested `subProcess` inside another `subProcess` is **not supported** (`NESTED_SUBPROCESS_NOT_SUPPORTED`) |
 | `<bpmn:callActivity>` | References a called process by `<zeebe:calledElement processId="..."/>`; the target is a process in the same file or a library module, resolved at publish; the called process compiles once into its own plan and the call to an `ExecutionStep.CallPlan` binding its open lanes to caller lanes (see §Module BPMNs) |
 | `<bpmn:boundaryEvent cancelActivity="…">` + `timerEventDefinition` | SLA deadline → `StageDef.BoundaryTimer` (userTask), `SubWorkflowStep.TimerPaths` (subProcess) or `CallPlanStep.TimerPaths` (callActivity); `cancelActivity="false"` = non-interrupting, `"true"` = interrupting |
 | `<bpmn:boundaryEvent>` + `errorEventDefinition` | Exception catch → `SubWorkflowStep.ErrorPaths` or `CallPlanStep.ErrorPaths`; attached to `subProcess` or `callActivity` |
 | `<bpmn:boundaryEvent cancelActivity="…">` + `messageEventDefinition` | Inbound message interrupt → `StageDef.BoundaryMessage` (userTask), `SubWorkflowStep.MessagePaths` (subProcess), or `CallPlanStep.MessagePaths` (callActivity); attached to `userTask`, `subProcess`, or `callActivity`; zero outgoing flows is a valid terminal interrupt notification |
-| `<bpmn:intermediateCatchEvent>` + `timerEventDefinition` | Wait/delay step |
+| `<bpmn:intermediateCatchEvent>` + `timerEventDefinition` | Not supported: refused with `UNSUPPORTED_ELEMENT` |
 | `<bpmn:sequenceFlow>` | Structural connector |
 | `<bpmn:conditionExpression>` (child of sequenceFlow) | One comparison for routing decisions: `[= ] field (=|==|!=) literal` with a double-quoted string, number, `true` or `false`; stored verbatim; evaluated at runtime by the Execution Service with the same parser; max 4096 chars |
 | `<bpmn:error>` | Error definition referenced by error events |
@@ -862,7 +862,7 @@ Every `<bpmn:userTask>` requires these extension elements:
 
     <!-- Required: who can work on this task -->
     <zeebe:assignmentDefinition
-      candidateGroups="bd-agent"
+      candidateGroups="preparator"
       candidateUsers="018e1f2a-0000-7000-8000-000000000001"/>
 
     <!-- Optional domain flags -->
