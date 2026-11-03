@@ -166,7 +166,7 @@ components:
       properties:
         status:
           type: string
-          description: The tenant's new status; only offboarded is acted on.
+          description: The tenant's new status; offboarded records the tenant for the purge, any other status marks the purge record returned.
         previous_status:
           type: string
         plan:
