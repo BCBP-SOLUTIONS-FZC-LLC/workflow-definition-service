@@ -330,6 +330,10 @@ log.Error(fmt.Sprintf("publish failed for tenant %s: %v", tenantID, err), nil)
 - Define sentinel errors in `core/domain/errors.go`; check with `errors.Is`.
 - HTTP handlers map domain errors to RFC-9457 ProblemDetails responses.
 
+### Platform-library rules
+
+Logs, metrics and traces go through `platform-gincommon`, database access through `platform-pgcommon`, events and the outbox through `platform-events`. `make lint` enforces it: `database/sql`, `log`, `log/slog`, `zap`, the OpenTelemetry SDK and exporters and the Prometheus client (outside `internal/observability`) cannot be imported from non-test code, and pools and connections are built only through `pgcommon`.
+
 ### Architecture rules
 
 Import direction is enforced by `go-arch-lint` (runs in CI lint):
