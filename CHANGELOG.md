@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The AsyncAPI description of `TenantMembershipsPurged` says IAM also sends `tenant_id` and `actor_id` in the payload and that the tenant comes from the envelope.
 - The AsyncAPI description of `TenantStateChanged.status` says that any status other than offboarded marks the purge record returned.
 - The service pins `workflow-models` `v2.1.1-rc.1`: the allowed-elements response no longer lists `eventBasedGateway` and `intermediateCatchEvent`, which the compiler refuses (LLD revision 1.82).
 - The LLD (revision 1.81) states the endpoint latency targets once, in §9.3, and §9.1 says the shipped latency alerts are service-wide guards at 2 s and 25 s.

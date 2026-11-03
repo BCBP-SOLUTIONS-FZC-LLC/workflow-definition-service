@@ -157,7 +157,7 @@ components:
     TenantMembershipsPurgedInbound:
       type: object
       additionalProperties: true
-      description: Not read.
+      description: Not read. The tenant comes from the envelope; IAM also sends tenant_id and actor_id in the payload.
 
     TenantStateChangedInbound:
       type: object
