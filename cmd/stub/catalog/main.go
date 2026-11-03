@@ -2,10 +2,11 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 )
 
 type plan struct {
@@ -16,6 +17,10 @@ type plan struct {
 func limit(n int64) *int64 { return &n }
 
 func main() {
+	lg, err := logger.NewLogger("local")
+	if err != nil {
+		os.Exit(1)
+	}
 	addr := os.Getenv("STUB_ADDR")
 	if addr == "" {
 		addr = ":8084"
@@ -27,7 +32,7 @@ func main() {
 	}
 
 	http.HandleFunc("/api/v1/internal/plans", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.Path)
+		lg.Info("request", map[string]any{"method": r.Method, "path": r.URL.Path})
 		if r.Header.Get("x-tenant-roles") != "iam-system" {
 			w.WriteHeader(http.StatusForbidden)
 			return
@@ -36,9 +41,10 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]any{"plans": plans})
 	})
 
-	log.Printf("catalog stub listening on %s", addr)
+	lg.Info("catalog stub listening", map[string]any{"addr": addr})
 	srv := &http.Server{Addr: addr, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("serve: %v", err)
+		lg.Error("serve failed", map[string]any{"error": err.Error()})
+		os.Exit(1)
 	}
 }

@@ -3,12 +3,12 @@ package service
 import (
 	"context"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/trace"
 )
 
 func stampAudit(ctx context.Context, fields map[string]any) map[string]any {
-	fields["trace_id"] = trace.SpanFromContext(ctx).SpanContext().TraceID().String()
+	fields["trace_id"] = gincommon.SpanTraceID(ctx)
 	return fields
 }
 

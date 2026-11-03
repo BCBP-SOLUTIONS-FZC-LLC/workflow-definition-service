@@ -2,12 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"os"
 	"sync/atomic"
 	"time"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 	"github.com/google/uuid"
 )
 
@@ -19,6 +19,10 @@ var (
 var validLevels = map[string]bool{"preparator": true, "reviewer": true, "approver": true}
 
 func main() {
+	lg, err := logger.NewLogger("local")
+	if err != nil {
+		os.Exit(1)
+	}
 	if os.Getenv("ELIGIBLE") == "false" {
 		ineligible.Store(true)
 	}
@@ -43,12 +47,12 @@ func main() {
 		}
 		ineligible.Store(!body.Eligible)
 		unavailable.Store(body.Unavailable)
-		log.Printf("control: eligible=%v unavailable=%v", body.Eligible, body.Unavailable)
+		lg.Info("control", map[string]any{"eligible": body.Eligible, "unavailable": body.Unavailable})
 		w.WriteHeader(http.StatusOK)
 	})
 
 	http.HandleFunc("GET /api/v1/internal/tenants/{tenant_id}/members/{user_id}/eligibility", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.String())
+		lg.Info("request", map[string]any{"method": r.Method, "url": r.URL.String()})
 
 		if r.Header.Get("x-tenant-roles") != "iam-system" {
 			writeProblem(w, http.StatusForbidden, "FORBIDDEN")
@@ -86,10 +90,11 @@ func main() {
 		_ = json.NewEncoder(w).Encode(answer)
 	})
 
-	log.Printf("membership stub listening on %s (ELIGIBLE=%s)", addr, os.Getenv("ELIGIBLE"))
+	lg.Info("membership stub listening", map[string]any{"addr": addr, "eligible": os.Getenv("ELIGIBLE")})
 	srv := &http.Server{Addr: addr, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("serve: %v", err)
+		lg.Error("serve failed", map[string]any{"error": err.Error()})
+		os.Exit(1)
 	}
 }
 

@@ -14,10 +14,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
-	"github.com/jackc/pgx/v5"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
@@ -235,7 +234,7 @@ func errResponse(c *gin.Context, log port.Logger, err error) {
 			"tenant_id": tenantID,
 			"user_id":   userID,
 			"path":      c.Request.URL.Path,
-			"trace_id":  trace.SpanFromContext(c.Request.Context()).SpanContext().TraceID().String(),
+			"trace_id":  gincommon.SpanTraceID(c.Request.Context()),
 		})
 	}
 	var conflict *domain.DraftConcurrencyError
@@ -249,7 +248,7 @@ func errResponse(c *gin.Context, log port.Logger, err error) {
 func mapErr(err error) (status int, code ErrCode, detail string, params []invalidParam) {
 	var valErr *domain.ValidationFailedError
 	switch {
-	case errors.Is(err, domain.ErrNotFound), errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, domain.ErrNotFound), errors.Is(err, pgcommon.ErrNoRows):
 		return http.StatusNotFound, CodeNotFound, err.Error(), nil
 	case errors.Is(err, domain.ErrNoDraftExists):
 		return http.StatusNotFound, CodeDraftNotFound, err.Error(), nil

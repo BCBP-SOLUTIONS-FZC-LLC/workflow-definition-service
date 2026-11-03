@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Outbound HTTP calls start their client span and inject the trace context through `platform-gincommon`, audit and error logs read the trace id from it, the three development stubs log through the platform logger, and `make lint` forbids `database/sql`, `log`, `log/slog`, `zap`, the OpenTelemetry SDK and exporters and the Prometheus client outside `internal/observability`, plus direct pool and connection construction (LLD revision 1.80).
 - The copy of the Execution Service's internal contract is refreshed to its current commit.
 - The LLD (revision 1.79) matches the code on the error catalogue, the route registry, the tooling statements and its structure; the README endpoint table lists every route; the smoke test header states what it covers.
 - An inclusive gateway whose outgoing flows carry no condition compiles like a parallel gateway (every branch runs, the join waits for all of them); a condition on an outgoing flow is refused with `UNSUPPORTED_ELEMENT` (LLD revision 1.78).

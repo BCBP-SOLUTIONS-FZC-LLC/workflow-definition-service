@@ -104,4 +104,4 @@ Keep docs in sync when making changes — see the full table in [`CONTRIBUTING.m
 | Platform lib upgrade | `ARCHITECTURE.md` § Platform Libraries + this file |
 | New coding pattern or decision | `CONTRIBUTING.md` § Coding Standards + numbered entry in `.claude/CLAUDE.md` + relevant sub-doc |
 
-**Outbound tracing exception.** `platform-gincommon` offers no HTTP client transport, so `internal/adapter/outbound/http/transport.go` wraps the shared client in `otelhttp` directly; it is the only trace instrumentation outside gincommon, and every outbound client is built through it.
+**Outbound tracing.** `internal/adapter/outbound/http/transport.go` wraps the shared client in a transport that starts a client span with `gincommon`'s span tracer and injects the trace context with `gincommon.InjectTraceContext`; every outbound client is built through it, and no code outside `gincommon` touches the OpenTelemetry SDK.

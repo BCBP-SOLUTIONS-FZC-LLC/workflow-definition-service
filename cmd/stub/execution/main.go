@@ -2,14 +2,20 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"os"
 	"sync/atomic"
 	"time"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-var active atomic.Bool
+var (
+	active atomic.Bool
+	lg     port.Logger
+)
 
 func activeInstances(w http.ResponseWriter, r *http.Request) {
 	hasActive := active.Load()
@@ -17,8 +23,10 @@ func activeInstances(w http.ResponseWriter, r *http.Request) {
 	if hasActive {
 		count = 1
 	}
-	log.Printf("active-instances tenant=%s workflow=%s → has_active=%v count=%d",
-		r.URL.Query().Get("tenant_id"), r.PathValue("workflow_id"), hasActive, count)
+	lg.Info("active-instances", map[string]any{
+		"tenant_id": r.URL.Query().Get("tenant_id"), "workflow_id": r.PathValue("workflow_id"),
+		"has_active": hasActive, "count": count,
+	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"has_active": hasActive, "count": count})
 }
@@ -28,7 +36,7 @@ func pauseTasks(w http.ResponseWriter, r *http.Request) {
 		TenantID string `json:"tenant_id"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	log.Printf("pause-tasks tenant=%s user=%s → ok", body.TenantID, r.PathValue("user_id"))
+	lg.Info("pause-tasks", map[string]any{"tenant_id": body.TenantID, "user_id": r.PathValue("user_id")})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -41,11 +49,15 @@ func control(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	active.Store(body.HasActive)
-	log.Printf("control: has_active=%v", body.HasActive)
+	lg.Info("control", map[string]any{"has_active": body.HasActive})
 	w.WriteHeader(http.StatusOK)
 }
 
 func main() {
+	var err error
+	if lg, err = logger.NewLogger("local"); err != nil {
+		os.Exit(1)
+	}
 	if os.Getenv("HAS_ACTIVE") == "true" {
 		active.Store(true)
 	}
@@ -58,9 +70,10 @@ func main() {
 	mux.HandleFunc("POST /api/v1/internal/users/{user_id}/pause-tasks", pauseTasks)
 	mux.HandleFunc("POST /control", control)
 
-	log.Printf("execution stub listening on %s (HAS_ACTIVE=%s)", addr, os.Getenv("HAS_ACTIVE"))
+	lg.Info("execution stub listening", map[string]any{"addr": addr, "has_active": os.Getenv("HAS_ACTIVE")})
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("serve: %v", err)
+		lg.Error("serve failed", map[string]any{"error": err.Error()})
+		os.Exit(1)
 	}
 }
