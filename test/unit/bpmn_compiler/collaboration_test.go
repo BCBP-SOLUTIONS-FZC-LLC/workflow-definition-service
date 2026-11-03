@@ -706,11 +706,9 @@ func TestValidate_Collaboration_TargetRef_UnknownNode(t *testing.T) {
 	}
 }
 
-// TestValidate_InclusiveGateway_SplitJoin_Unsupported verifies that an inclusive
-// gateway produces UNSUPPORTED_ELEMENT (Tier 2). The gateway is parsed and
-// graph-validated correctly, but has no compile handler and is listed in
-// unsupportedBPMNElems to prevent silent incorrect output.
-func TestValidate_InclusiveGateway_SplitJoin_Unsupported(t *testing.T) {
+// TestValidate_InclusiveGateway_SplitJoin_WithoutConditions_IsAccepted verifies that an
+// inclusive split and join with no conditions on the outgoing flows validates cleanly.
+func TestValidate_InclusiveGateway_SplitJoin_WithoutConditions_IsAccepted(t *testing.T) {
 	bpmnXML := `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions
   xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -780,8 +778,8 @@ func TestValidate_InclusiveGateway_SplitJoin_Unsupported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
 	}
-	if !hasCode(errs, domain.BPMNErrUnsupportedElement) {
-		t.Errorf("expected UNSUPPORTED_ELEMENT for inclusive gateway; got %v", errCodes(errs))
+	if len(errs) != 0 {
+		t.Errorf("an inclusive split and join without conditions must validate cleanly; got %v", errCodes(errs))
 	}
 }
 

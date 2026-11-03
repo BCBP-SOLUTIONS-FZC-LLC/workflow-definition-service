@@ -838,7 +838,7 @@ Limits: 1–100 lanes per process.
 
 | Element | Notes |
 |---|---|
-| `<bpmn:inclusiveGateway>` | OR-split/join; parsed and graph-validated but no compile handler — returns `UNSUPPORTED_ELEMENT` |
+| `<bpmn:inclusiveGateway>` with a conditionExpression on an outgoing flow | Not supported: refused with `UNSUPPORTED_ELEMENT` (an unconditioned inclusive gateway is accepted and compiles like a parallel gateway) |
 | `<bpmn:intermediateCatchEvent>` + `messageEventDefinition` | Catch an inbound message mid-process |
 | `<bpmn:intermediateCatchEvent>` + `signalEventDefinition` | Catch a broadcast signal mid-process |
 | `<bpmn:multiInstanceLoopCharacteristics>` on `userTask` | Panel voting (all-must-complete) |
@@ -1034,7 +1034,7 @@ A `<bpmn:boundaryEvent>` with a `messageEventDefinition` can be attached to a `u
 
 **Exclusive gateway.** All outgoing flows from a split must carry a `<bpmn:conditionExpression>`. Back-edges (rework loops) are allowed only when the originating XOR split has at least one forward-exiting branch (guarded exit). Compiler validates via DFS + Tarjan SCC. Unguarded cycles → `CYCLE_DETECTED` / `UNGUARDED_LOOP`.
 
-**Inclusive gateway.** One or more branches fire based on condition evaluation. Join waits for all active branches. *(Tier 2 — parsed/graph-validated, no compile handler yet.)*
+**Inclusive gateway.** Without conditions on its outgoing flows it compiles like a parallel gateway: every branch runs and the join waits for all of them. Conditions are refused with `UNSUPPORTED_ELEMENT`. *(Tier 1 for the unconditioned form.)*
 
 **Multiple end events.** A process may have more than one `<bpmn:endEvent>`. Use the `name` attribute to label outcomes:
 
@@ -1228,7 +1228,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `UNKNOWN_CONNECTOR_TYPE` | *(warning severity)* A connector `serviceTask` names a connector type the registry does not know |
 | `CONNECTOR_TASK_HAS_ASSIGNMENT` | *(warning severity)* A connector `serviceTask` carries a `zeebe:assignmentDefinition`, which it ignores |
 | `CONNECTOR_SECRET_AUTHORED` | A connector `serviceTask` input targets a secret field of its connector type; the tenant's stored credential is always used |
-| `UNSUPPORTED_ELEMENT` | Tier 2 element present (e.g. `inclusiveGateway`) — parsed but compile handler absent |
+| `UNSUPPORTED_ELEMENT` | Tier 2 element present (e.g. `eventBasedGateway`), or an inclusive gateway with a conditionExpression on an outgoing flow |
 
 > **Unparseable documents.** Documents that fail XML parsing (bad XML, `DOCTYPE`/entity injection, token-cap exceeded) return **400 `INVALID_BPMN_XML`** — not a BPMN validation code. Forbidden `DOCTYPE`/entity additionally triggers an internal security log with client IP and tenant ID; the client sees only the generic 400.
 

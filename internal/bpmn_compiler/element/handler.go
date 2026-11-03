@@ -13,6 +13,7 @@ func DefaultElementHandlers() map[bpmncore.FlowNodeType]bpmncore.ElementHandler 
 		CallActivityHandler{},
 		ExclusiveGatewayHandler{},
 		ParallelGatewayHandler{},
+		InclusiveGatewayHandler{},
 		ErrorBoundaryHandler{},
 		TimerBoundaryHandler{},
 		MessageBoundaryHandler{},

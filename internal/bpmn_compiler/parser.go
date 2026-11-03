@@ -47,7 +47,6 @@ func init() {
 		"dataObject": {}, "dataObjectReference": {},
 	}
 	tier2Elems = map[string]struct{}{
-		"inclusiveGateway":       {},
 		"eventBasedGateway":      {},
 		"intermediateCatchEvent": {},
 	}

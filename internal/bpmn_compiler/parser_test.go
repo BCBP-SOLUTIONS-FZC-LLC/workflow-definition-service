@@ -154,7 +154,7 @@ func TestScanRejected_ServiceTaskRejectedSubProcessAllowed(t *testing.T) {
 	}
 }
 
-func TestScanRejected_InclusiveGatewayIsUnsupported(t *testing.T) {
+func TestScanRejected_InclusiveGatewayIsAccepted(t *testing.T) {
 	xmlData := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="` + nsBPMN + `" xmlns:zeebe="` + nsZeebe + `">
   <bpmn:process id="P1">
@@ -162,9 +162,8 @@ func TestScanRejected_InclusiveGatewayIsUnsupported(t *testing.T) {
     <bpmn:userTask id="T1"/>
   </bpmn:process>
 </bpmn:definitions>`
-	errs := scanRejected(xmlData)
-	if !hasCodeIn(errs, domain.BPMNErrUnsupportedElement) {
-		t.Fatalf("inclusiveGateway must produce UNSUPPORTED_ELEMENT; got %v", errCodesOf(errs))
+	if errs := scanRejected(xmlData); len(errs) != 0 {
+		t.Fatalf("inclusiveGateway must pass the scan; got %v", errCodesOf(errs))
 	}
 }
 
