@@ -3948,10 +3948,8 @@ To ensure optimal connection management, the service connects to PostgreSQL thro
 ### 9.1 Performance Targets
 
 - **BPMN upload & parse**: p99 ≤ 300 ms for files up to 10 MB on a `t3.medium` equivalent instance.
-- **Draft save** (`PUT /draft`): p99 ≤ 50 ms — single UPDATE with no compilation.
-- **Publish** (full flow): p99 ≤ 800 ms — includes parse, validate, compile, hash, diff check, and the serializable transaction (publish emits no event, §7.2).
-- **List workflows** (`GET /workflows`): p99 ≤ 100 ms — tenant-indexed paginated query.
-- **Validation-only** (`POST /validate`): p99 ≤ 200 ms — stateless, no DB writes.
+- **Every endpoint's p99 target is the one in §9.3.** That table is binding; this section repeats none of its numbers.
+- **The shipped latency alerts are service-wide guards**, not the per-endpoint targets: a warning when the p99 of all requests stays above 2 s for ten minutes, a critical alert above 25 s for five minutes. A regression against a single endpoint's target is read from `platform_http_request_duration_seconds`.
 
 ### 9.2 Dependency Failure Matrix
 
@@ -5024,6 +5022,7 @@ Developer documentation is the repository's Markdown: `README.md`, `ARCHITECTURE
 | 1.78 | 2026-11-03 | **An inclusive gateway without conditions is a parallel gateway** (§4.1.2, §4.1.3). The compiler accepted an inclusive gateway in its first version, as a pass-through, and refused it from July 2026 because no handler gave it a meaning. A gateway whose outgoing flows carry no condition now compiles exactly like a parallel gateway: every branch runs and the join waits for all of them, which is what BPMN says an unconditioned inclusive gateway does. A condition on an outgoing flow is refused with `UNSUPPORTED_ELEMENT`, because choosing a subset of branches at run time is not supported. Split and join pairing is checked as for a parallel gateway. Revision 1.75 listed the inclusive gateway as refused; this revision replaces that for this element. |
 | 1.79 | 2026-11-03 | **Error catalogue, route registry, tooling and structure match the code** (§1.5, §1.6, §3.1.4, §3.2, §4.1, §12, Appendix D). `INVALID_INPUT` and `EVENT_DECODE_FAILED` join the catalogue; `WORKFLOW_CONCURRENCY_VIOLATION` and `DATABASE_DISCONNECTED`, which no code returns, leave it, and a stale draft save is `DRAFT_CONCURRENCY`. `UPSTREAM_UNAVAILABLE` names every upstream that can cause it. `CONNECTOR_TASK_HAS_ASSIGNMENT` is code 49. The registry lists the credential revoke route and the three connector alias routes, with the internal routes under `/api/v1/internal`. A nested subprocess is `NESTED_SUBPROCESS_NOT_SUPPORTED`; an XXE or token-bomb document is a `400 INVALID_BPMN_XML`; readiness reports the cache as `degraded` and stays ready. The GUC middleware paragraph names the identity middleware and `WithValidatedGUCSet`. Migrations run by the golang-migrate runner, the local database is PostgreSQL 18, the make target is `migrate`, and no static-site generator exists (Appendix D). The LLD has a table of contents and §1.5.5 to §1.5.7 sit inside §1.5. The README endpoint table lists every route, and the smoke test states what it covers. |
 | 1.80 | 2026-11-03 | **The outbound transport and the lint gate follow the platform-library rules** (§6.2.2). The outbound HTTP transport starts its client span and injects the trace context through the platform tracing library, not through an OpenTelemetry instrumentation package. |
+| 1.81 | 2026-11-03 | **The latency numbers are stated once** (§9.1, §9.3). §9.1 listed endpoint targets that disagreed with §9.3's table (list 100 ms against 30 ms, draft save 50 ms against 100 ms, publish 800 ms against 500 ms, validation 200 ms against 300 ms). §9.3's per-endpoint table is the binding set; §9.1 keeps the upload-and-parse sizing and states that the shipped alerts are the service-wide guards at 2 s and 25 s. |
 ---
 
 ## Appendix E: Open Items
