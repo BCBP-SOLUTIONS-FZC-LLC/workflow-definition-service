@@ -324,10 +324,28 @@ rctx := gincommon.RequestContext(c)
 | `GET` | `/api/v1/workflows/:id/versions/:version_id/nodes` | Any | A published version's human tasks, module tasks included: node key, department, role level, default users |
 | `GET` | `/api/v1/workflows/:id/versions/:version_id/export` | Any | Download raw BPMN XML |
 | `GET` | `/api/v1/workflows/:id/versions/:version_id/diff/:target_version_id` | Any | Structural diff between two versions |
+| `GET` | `/api/v1/workflows/:id/versions/:version_id/validation` | Any | Re-run the structural validator against a stored version |
+| `GET` | `/api/v1/connectors/registry` | Any | Element templates for connector tasks |
+| `POST` | `/api/v1/connectors/credentials` | Admin | Accept a provider credential for a connector task |
+| `DELETE` | `/api/v1/connectors/credentials/:connector_type/:field_name` | Admin | Revoke a provider credential |
+| `GET` | `/api/v1/bpmn/allowed-elements` | Any | The BPMN element allowlist for modelers |
+| `GET`, `POST` | `/api/v1/modules` | Any, Admin | List and create reusable BPMN modules |
+| `GET`, `DELETE` | `/api/v1/modules/:id` | Any, Admin | Get or archive a module |
+| `GET`, `POST` | `/api/v1/modules/:id/versions` | Any, Admin | List and add module versions |
+| `GET` | `/api/v1/modules/:id/versions/:version_id` | Any | A module version, a pending draft included |
+| `GET` | `/api/v1/modules/:id/versions/:version_id/contract` | Any | What a caller of the module version binds and names |
+| `POST` | `/api/v1/modules/:id/versions/:version_id/publish` | Admin | Publish a module draft version |
+| `GET` | `/api/v1/modules/:id/usages` | Any | Workflow versions that hold a snapshot of the module |
+| `GET`, `POST` | `/api/v1/starters` | Any, Admin | List and create starter workflows |
+| `POST` | `/api/v1/starters/from-workflow-version/:version_id` | Admin | Snapshot a published workflow version as a starter |
+| `GET`, `DELETE` | `/api/v1/starters/:id` | Any, Admin | Get or delete a starter |
 | `GET` | `/healthz` | Public | Liveness probe |
 | `GET` | `/readyz` | Public | Readiness probe (database; a Valkey outage is reported as `cache: degraded`, not unready) |
 | `GET` | `/metrics` | Metrics port `9091` | Prometheus metrics |
 | `POST` | `/api/v1/internal/events` | Internal | Ingest a domain-event envelope from the shared workflow-events consumer (`DepartmentMembershipRevoked`, `MembershipRevoked`, and the tenant offboarding events `TenantMembershipsPurged` and `TenantStateChanged`) |
+| `GET` | `/api/v1/internal/workflow-versions/:version_id/compiled-plan` | Internal | A version and its stored compiled plan, read by the Execution Service |
+| `GET` | `/api/v1/internal/connector-aliases` | Internal | List the REST-call connector aliases, read by the connector worker |
+| `POST`, `DELETE` | `/api/v1/internal/connector-aliases/rest`, `/api/v1/internal/connector-aliases/rest/:alias` | Internal | Create, update or delete a REST-call connector alias |
 
 **Admin** = requires `tenant_admin` or `tenant_owner` in `x-tenant-roles`. **Internal** = service-to-service only; not exposed on the public gateway. Authenticated with `x-internal-token` (`INTERNAL_API_TOKEN`, required outside dev); the handler sets the RLS tenant from the envelope `tenant_id`. Returns 2xx (incl. idempotent no-op), 400 (malformed — non-retryable), or 500 (transient — retried).
 
@@ -466,7 +484,7 @@ helm upgrade workflow-definition-service ./deploy/helm --install --namespace wor
 
 **Namespace, mesh and admission.** The release runs in `workflow-app`, inside the Istio mesh with mTLS and under its chart name (no `nameOverride`), because Org & Membership and Catalog admit it by namespace, pod label and ServiceAccount `workflow-definition-service`. The NetworkPolicy allows egress to Org & Membership (`iam`, port 8080) and Catalog (`iam`, port 8081). The route-level `SecurityPolicy` sets `mergeType: StrategicMerge` (Envoy Gateway 1.8 or later), so enabling it keeps the gateway's JWT validation and authorisation filter on these routes; on an older gateway, keep it disabled.
 
-**Ports and probes.** The Service and Deployment both expose named `http` (8080) and `metrics` (9091) ports. `startupProbe`/`livenessProbe`/`readinessProbe` all target `http` — `/healthz` is a trivial liveness check, `/readyz` actually verifies the Postgres pool and Valkey are reachable (`internal/adapter/inbound/http/router.go`), so a pod only receives traffic once its real dependencies are up.
+**Ports and probes.** The Service and Deployment both expose named `http` (8080) and `metrics` (9091) ports. `startupProbe`/`livenessProbe`/`readinessProbe` all target `http` — `/healthz` is a trivial liveness check, `/readyz` verifies the Postgres pool and reports Valkey as `cache: degraded` when it is unreachable without failing readiness, so a pod only receives traffic once its database is up.
 
 **Migrations run as a Helm hook, not at boot.** `cmd/server/main.go` never migrates on the normal server boot path — schema changes are applied by a dedicated `migrate` subcommand (`/server migrate`) that runs this service's domain migrations, then exits. Running that inline at boot would let two replicas race on `golang-migrate`'s advisory lock during a rolling deploy, stalling the loser and risking a readiness-probe timeout for no reason.
 

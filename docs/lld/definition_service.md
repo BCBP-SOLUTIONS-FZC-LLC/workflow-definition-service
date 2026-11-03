@@ -2,6 +2,28 @@
 
 > This is the in-repo copy of the LLD (`docs/lld/`), kept content-identical to the design repo's published copy. The two are intentionally allowed to differ only on embed-vs-link mechanics (e.g. this copy may link to this repo's own `api/asyncapi.yaml` instead of embedding it) — never on content.
 
+## Table of Contents
+
+1. Service Overview & Responsibilities
+2. Database Schema
+3. API Contracts
+4. Core Modules: Parser, Compiler & Validation
+5. Publish Transaction Flow
+6. Observability
+7. Eventing & Integration
+8. Security
+9. Non-Functional Requirements
+10. Design Decisions
+11. Deployment, Scaling & DR
+12. Testing Strategy
+
+- Appendix A: Database Migration Scripts
+- Appendix B: Coding Style & Formatting Rules
+- Appendix C: Glossary
+- Appendix D: Docs Infrastructure
+- Appendix E: Open Items
+- Changelog (revision history)
+
 ## 1. Service Overview & Responsibilities
 
 The **Workflow Definition Service** acts as the design-time control plane for the BPMN-driven Workflow Engine. It is responsible for parsing, validating, and versioning business processes defined by tenant administrators. Unlike the Execution Service, which handles real-time runtime state, the Definition Service is heavily focused on ensuring the structural integrity, and immutable versioning of workflow templates before they are allowed to execute.
@@ -147,13 +169,13 @@ The service follows clean architecture: nothing in `core/` imports from `adapter
     - `contracts/` — A byte-identical copy of the Execution Service's internal document, with `SOURCES` naming where it comes from (§3.4).
     - `asyncapi.yaml` — The four inbound messages this service consumes (§7).
   - **`db/`** — Database migrations and schema definitions.
-    - `migrations/` — SQL schema migrations run via Goose. **Committed**.
+    - `migrations/` — SQL schema migrations run by the `platform-pgcommon` golang-migrate runner. **Committed**.
     - `queries/` — SQL query definitions consumed by sqlc. **Committed**.
   - `sqlc.yaml` — Config file mapping schemas and queries to sqlc Go builders.
   - `.golangci.yml` — Linter configuration.
-  - `docker-compose.yml` — Local infra: PostgreSQL 16, Valkey 8, PgBouncer.
+  - `docker-compose.yml` — Local infra: PostgreSQL 18, Valkey 8, PgBouncer.
   - `.env.example` — All required env vars documented with defaults.
-  - `Makefile` — Targets: `tools`, `generate`, `mock`, `migrate-up/down`, `build`, `test`, `test-integration`, `lint`, `contract-check`, `contract-breaking`, `docker-up/down`.
+  - `Makefile` — Targets: `tools`, `generate`, `mock`, `migrate`, `build`, `test`, `test-integration`, `lint`, `contract-check`, `contract-breaking`, `docker-up/down`.
 
 #### 1.5.1 Layer Responsibilities
 
@@ -200,7 +222,108 @@ Test files import the generated mocks directly — no hand-written test doubles.
 
 #### 1.5.4 Docs Infrastructure
 
-Developer docs are served via MkDocs (installed via `brew install mkdocs`). See [Appendix D] for full details.
+Developer documentation is the repository's Markdown: the README, ARCHITECTURE, this LLD and the `.claude` notes. No static-site generator is used.
+
+#### 1.5.5 Dependency Direction and Component Class Diagram
+
+```mermaid
+---
+config:
+  layout: elk
+---
+classDiagram
+    direction LR
+    class HTTPHandler {
+        +CreateWorkflow()
+        +GetWorkflowById()
+        +PublishDraft()
+        +ArchiveWorkflow()
+        +CloneWorkflow()
+        +ValidateWorkflow()
+    }
+
+    class HTTPMiddleware {
+        +TenantContext()
+        +ValidatePlanQuotas()
+    }
+
+    class PublisherService {
+        +PublishDraft()
+        +CreateDraft()
+        +ArchiveWorkflow()
+        -validateAndCompile()
+        -applyStructuralGuard()
+        -validateAssignees()
+    }
+
+    class Validator {
+        +ValidateBPMN()
+        -checkCycles()
+        -validateExtensions()
+    }
+
+    class DraftCompiler {
+        +CompileToDSL()
+        -buildGraph()
+        -resolveSequenceFlows()
+        -processGateways()
+    }
+
+    class PlanService {
+        <<interface>>
+        +EnforcePlanQuotas()
+    }
+
+    class MembershipService {
+        <<interface>>
+        +ValidateAssigneeEligibility()
+    }
+
+    class WorkflowRepository {
+        <<interface>>
+        +CreateWorkflowVersion()
+        +GetWorkflowVersion()
+        +UpdateActiveVersion()
+        +ArchiveVersion()
+    }
+
+    HTTPHandler --> HTTPMiddleware : Uses middleware chain
+    HTTPHandler --> PublisherService : Dispatches requests
+    HTTPHandler --> Validator : Calls stateless validation
+
+    PublisherService --> Validator : Validates BPMN
+    PublisherService --> DraftCompiler : Compiles execution plan
+    PublisherService --> PlanService : Verifies template quotas
+    PublisherService --> MembershipService : Verifies assignee eligibility
+    PublisherService --> WorkflowRepository : Persists workflow and versions
+
+```
+
+##### Core Component Descriptions
+
+- **HTTPHandler (Inbound Adapter)**: Exposes REST APIs, enforces size limits (10MB) on incoming payloads, validates request schemas, and delegates workflow management use cases to core services.
+- **HTTPMiddleware (Inbound Adapter)**: Extracts gateway-injected identity headers (`x-tenant-id`, `x-user-id`, `x-tenant-roles`, etc.) and manages transactional session boundaries (such as configuring the PostgreSQL GUC for RLS).
+- **PublisherService (Core Application Service)**: Orchestrates the draft compilation and publish lifecycle. Initiates database transactions, calls the validation engine and compiler, and verifies assignee eligibility via external ports.
+- **DraftCompiler (Domain Service)**: Traverses the unmarshalled BPMN sequence flows to construct the compiled JSON DSL execution plan for the runtime.
+- **Validator (Domain Service)**: Runs topological correctness rules (back-edge classification, guarded-loop checking, and gateway matching over the forward graph — see §4.4) on the parsed process definition.
+- **Ports (WorkflowRepository, PlanService, MembershipService)**: Explicit interface contracts isolating the core business logic from database schema libraries (`sqlc`) and external HTTP services.
+
+---
+
+#### 1.5.6 Key Component File Mapping
+
+- **publish.go**: Entrypoint orchestrator for publishing a draft workflow version.
+- **validator.go**: Structural, semantic, metadata, and guarded-loop validation (back-edge classification + Tarjan SCC).
+- **compiler.go**: Graph traversal engine mapping BPMN sequence flows to the JSON DSL execution steps.
+
+#### 1.5.7 Interface Contracts (Ports)
+
+To maintain clean architecture, core services rely on explicitly defined port interfaces located in `core/port/`:
+
+- **`WorkflowRepository`**: Handles transaction boundaries and schema interactions (`GetDraft`, `CreateVersion`, `UpdateActiveVersion`).
+- **`Transactor`**: Wraps `pgcommon.RunInTx`. The publish path requires `SERIALIZABLE` isolation with retry on `40001`/`40P01` — the port interface must expose a `RunInTxWithRetry` method (or accept `pgx.TxOptions` + retry config) so `VersionService.Publish` can use `pgcommon.RunInTxWithRetry` without importing pgcommon directly. See §10.8.
+
+---
 
 ### 1.6 Middleware Integration (`platform-gincommon`)
 
@@ -380,23 +503,7 @@ pool, err := pgcommon.NewPool(ctx, app)
 
 `platform-pgcommon` injects PostgreSQL GUC parameters (`app.tenant_id`, `app.user_id`, `app.tenant_roles`) automatically on every connection acquired from the pool, using the value stored in the request context by the GUC middleware.
 
-**Middleware responsibility** (implemented in `internal/adapter/inbound/http/middleware/gucrls.go`):
-
-```go
-// Runs after gincommon.ContextMiddleware in the /api group.
-func GUCMiddleware(pool *pgcommon.Pool) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        reqCtx, _ := gincommon.RequestContext(c)
-        ctx := pgcommon.WithGUCSet(c.Request.Context(), pgcommon.GUCSet{
-            TenantID:    reqCtx.TenantID,
-            UserID:      reqCtx.UserID,
-            TenantRoles: reqCtx.Roles,
-        })
-        c.Request = c.Request.WithContext(ctx)
-        c.Next()
-    }
-}
-```
+**Middleware responsibility.** After the gateway headers are read, the identity middleware parses `x-tenant-id` and `x-user-id` as UUIDs and sets the GUC set (`app.tenant_id`, `app.user_id`, `app.tenant_roles`) on the request context through `pgcommon.WithValidatedGUCSet`. A header that is missing, not a UUID, or not acceptable to the library answers `401 UNAUTHORIZED` before any handler or database access.
 
 #### 1.7.3 Readiness Check
 
@@ -507,107 +614,6 @@ Inbound domain events are consumed by the shared workflow-events consumer servic
 - `bpmn_compiler/element` imports `core/domain`, `bpmn_compiler/bpmncore`, and `bpmn_compiler/validator`.
 - `bpmn_compiler` (root) imports all three sub-packages plus `core/domain` and `core/port`.
 - Nothing in `core/` or `bpmn_compiler/` imports from `adapter/`.
-
-#### 1.5.5 Dependency Direction and Component Class Diagram
-
-```mermaid
----
-config:
-  layout: elk
----
-classDiagram
-    direction LR
-    class HTTPHandler {
-        +CreateWorkflow()
-        +GetWorkflowById()
-        +PublishDraft()
-        +ArchiveWorkflow()
-        +CloneWorkflow()
-        +ValidateWorkflow()
-    }
-
-    class HTTPMiddleware {
-        +TenantContext()
-        +ValidatePlanQuotas()
-    }
-
-    class PublisherService {
-        +PublishDraft()
-        +CreateDraft()
-        +ArchiveWorkflow()
-        -validateAndCompile()
-        -applyStructuralGuard()
-        -validateAssignees()
-    }
-
-    class Validator {
-        +ValidateBPMN()
-        -checkCycles()
-        -validateExtensions()
-    }
-
-    class DraftCompiler {
-        +CompileToDSL()
-        -buildGraph()
-        -resolveSequenceFlows()
-        -processGateways()
-    }
-
-    class PlanService {
-        <<interface>>
-        +EnforcePlanQuotas()
-    }
-
-    class MembershipService {
-        <<interface>>
-        +ValidateAssigneeEligibility()
-    }
-
-    class WorkflowRepository {
-        <<interface>>
-        +CreateWorkflowVersion()
-        +GetWorkflowVersion()
-        +UpdateActiveVersion()
-        +ArchiveVersion()
-    }
-
-    HTTPHandler --> HTTPMiddleware : Uses middleware chain
-    HTTPHandler --> PublisherService : Dispatches requests
-    HTTPHandler --> Validator : Calls stateless validation
-
-    PublisherService --> Validator : Validates BPMN
-    PublisherService --> DraftCompiler : Compiles execution plan
-    PublisherService --> PlanService : Verifies template quotas
-    PublisherService --> MembershipService : Verifies assignee eligibility
-    PublisherService --> WorkflowRepository : Persists workflow and versions
-
-```
-
-##### Core Component Descriptions
-
-- **HTTPHandler (Inbound Adapter)**: Exposes REST APIs, enforces size limits (10MB) on incoming payloads, validates request schemas, and delegates workflow management use cases to core services.
-- **HTTPMiddleware (Inbound Adapter)**: Extracts gateway-injected identity headers (`x-tenant-id`, `x-user-id`, `x-tenant-roles`, etc.) and manages transactional session boundaries (such as configuring the PostgreSQL GUC for RLS).
-- **PublisherService (Core Application Service)**: Orchestrates the draft compilation and publish lifecycle. Initiates database transactions, calls the validation engine and compiler, and verifies assignee eligibility via external ports.
-- **DraftCompiler (Domain Service)**: Traverses the unmarshalled BPMN sequence flows to construct the compiled JSON DSL execution plan for the runtime.
-- **Validator (Domain Service)**: Runs topological correctness rules (back-edge classification, guarded-loop checking, and gateway matching over the forward graph — see §4.4) on the parsed process definition.
-- **Ports (WorkflowRepository, PlanService, MembershipService)**: Explicit interface contracts isolating the core business logic from database schema libraries (`sqlc`) and external HTTP services.
-
----
-
-#### 1.5.6 Key Component File Mapping
-
-- **publish.go**: Entrypoint orchestrator for publishing a draft workflow version.
-- **validator.go**: Structural, semantic, metadata, and guarded-loop validation (back-edge classification + Tarjan SCC).
-- **compiler.go**: Graph traversal engine mapping BPMN sequence flows to the JSON DSL execution steps.
-
-#### 1.5.7 Interface Contracts (Ports)
-
-To maintain clean architecture, core services rely on explicitly defined port interfaces located in `core/port/`:
-
-- **`WorkflowRepository`**: Handles transaction boundaries and schema interactions (`GetDraft`, `CreateVersion`, `UpdateActiveVersion`).
-- **`Transactor`**: Wraps `pgcommon.RunInTx`. The publish path requires `SERIALIZABLE` isolation with retry on `40001`/`40P01` — the port interface must expose a `RunInTxWithRetry` method (or accept `pgx.TxOptions` + retry config) so `VersionService.Publish` can use `pgcommon.RunInTxWithRetry` without importing pgcommon directly. See §10.8.
-
----
 
 ### 1.9 Valkey Cache Integration
 
@@ -819,7 +825,7 @@ The full database DDL migrations and RLS policies are documented in [Appendix A:
 
 **Rules**:
 
-- **Optimistic locking via `record_version`**: `PATCH /workflows/:id` (planned, not built) supplies the token via `If-Match: "<record_version>"` header (preferred) or the `record_version` body field (§10.11). The update query filters on `AND record_version = :client_version`; if another update has been applied in the interim, `RowsAffected = 0` → `WORKFLOW_CONCURRENCY_VIOLATION` (409). Using a monotonic counter rather than `updated_at` avoids false negatives from sub-millisecond concurrent writes.
+- **Optimistic locking via `record_version`**: `PUT /workflows/:id/draft` supplies the token via the `If-Match: "<record_version>"` header (preferred) or the `record_version` body field (§10.11). The update query filters on `AND record_version = :client_version`; if another update has been applied in the interim, `RowsAffected = 0` → `DRAFT_CONCURRENCY` (409). Using a monotonic counter rather than `updated_at` avoids false negatives from sub-millisecond concurrent writes.
 
 **Purpose**:
 Stores the logical workflow definition independent of versions.
@@ -1134,7 +1140,6 @@ Below is the complete registry of application-specific error codes returned insi
 | `DUPLICATE_TEMPLATE_KEY` | `409 Conflict` | Workflow Template Key Conflict | A workflow with the specified `template_key` already exists within the tenant boundary. |
 | `DRAFT_ALREADY_EXISTS` | `409 Conflict` | Draft Already Exists | An active workspace draft already exists for this workflow (must publish or discard it first). |
 | `DRAFT_CONCURRENCY` | `409 Conflict` | Draft Concurrency Violation | Stale draft update — client's `record_version` does not match the current value; another update has been applied since the draft was last read. The problem carries `current_record_version`, the value to retry with after the client has reconciled. |
-| `WORKFLOW_CONCURRENCY_VIOLATION` | `409 Conflict` | Workflow Concurrency Violation | Stale workflow metadata update — client's `record_version` on the `workflow` row does not match; another name/description update has been applied since the client last read. _(planned — pending `PATCH /workflows/:id` endpoint) |
 | `IDEMPOTENCY_KEY_REPLAY` | `409 Conflict` | Idempotent Request Replayed | The request was submitted with a previously processed `Idempotency-Key` but a different body or `If-Match`. |
 | `IDEMPOTENCY_REQUEST_IN_PROGRESS` | `409 Conflict` | Idempotency Request In Progress | A request with the same `Idempotency-Key` is still running; retry once it finishes. |
 | `NO_ACTIVE_VERSION` | `409 Conflict` | No Active Version | The operation (e.g. archiving or promoting) requires an active version, but none is set. |
@@ -1144,9 +1149,10 @@ Below is the complete registry of application-specific error codes returned insi
 | `INVALID_VERSION_STATUS` | `409 Conflict` | Invalid Version Status | The requested operation is not permitted for the version's current status (e.g. cloning a DRAFT, promoting an ARCHIVED version). |
 | `BPMN_VALIDATION_FAILED` | `422 Unprocessable Entity` | BPMN Validation Failed | BPMN semantic or structural validation failed. The `invalid_params` array carries per-node `BpmnErrorCode` details. |
 | `ASSIGNEE_INELIGIBLE` | `422 Unprocessable Entity` | Ineligible Assignee | A default assignee validation failed eligibility checks against the Org & Membership Service. |
+| `INVALID_INPUT` | `400 Bad Request` or `422 Unprocessable Entity` | Invalid Input | A query parameter or a field value is outside what the endpoint accepts (a malformed list filter, a field over its length limit, a module field the module rules refuse). |
+| `EVENT_DECODE_FAILED` | `502 Bad Gateway` | Event Decode Failed | The inbound event's schema-registry framed payload could not be decoded; the shared consumer redelivers it (§7.4). |
 | `INTERNAL_ERROR` | `500 Internal Server Error` | Internal Server Error | An unexpected server error occurred (e.g., database connection failure or unhandled panic). |
-| `UPSTREAM_UNAVAILABLE` | `503 Service Unavailable` | Upstream Service Unavailable | The Execution Service is unreachable or returned an error during the archive guard call. The archive is not committed while the guard is unresolvable. |
-| `DATABASE_DISCONNECTED` | `503 Service Unavailable` | Database Connection Failed | The readiness probe failed to connect to the database. The pod is removed from load balancer rotation until connectivity is restored. |
+| `UPSTREAM_UNAVAILABLE` | `503 Service Unavailable` | Upstream Service Unavailable | An upstream dependency is unreachable or returned an error: the Execution Service during the archive guard or the pause call, Org & Membership during the publish-time eligibility check, or the Catalog Service during the plan read. The archive is not committed while the guard is unresolvable. |
 
 #### 3.1.3 Error Code Flow & Trigger Logic
 
@@ -1621,6 +1627,11 @@ When a request returns the top-level error `BPMN_VALIDATION_FAILED` (HTTP 422), 
     - **Trigger Scenario**: A revert flow leads back to a `subProcess` or a `callActivity`: the first task on its way back is one of them.
     - **Trigger Logic**: A revert runs its target's department again from the target, then decides at the gateway once more. A `subProcess` or `callActivity` is a step of its own, not a stage of a department, so the Execution Service has nothing to run again. The error is emitted on the exclusive gateway the revert flow leaves; looping back to a userTask before the call or subProcess is valid.
 
+49. **`CONNECTOR_TASK_HAS_ASSIGNMENT`** *(warning severity)*
+    - **Trigger Scenario**: A connector `serviceTask` also carries a `<zeebe:assignmentDefinition>`.
+    - **Trigger Logic**: Connector tasks are automation-only. The assignment is ignored, and compilation continues.
+    - **Resolution**: Remove the `<zeebe:assignmentDefinition>` from the connector task.
+
 ---
 
 ### 3.2 Endpoint Registry
@@ -1649,6 +1660,7 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 | `/workflows/:id/versions/:version_id/diff/:target_version_id` | `GET` | Any | Get structural and metadata diff between two versions |
 | `/connectors/registry` | `GET` | Any | Serve the modeler-facing element-template (authoring form) list/detail for each registered connector type, generated from `pkg/registry` (§10.14/§10.15) |
 | `/connectors/credentials` | `POST` | Admin | Accept a provider credential for a connector task at authoring time (`storage`/`send-email`), write it to OpenBao, and return the resulting secret path for use in the task's compiled `IOMapping` (§10.15) |
+| `/connectors/credentials/:connector_type/:field_name` | `DELETE` | Admin | Revoke a provider credential for a connector task at authoring time; `connector_type` must be a registered connector type and `field_name` matches `^[a-zA-Z0-9_-]+$` before either reaches the secret path |
 | `/bpmn/allowed-elements` | `GET` | Any | Serve the modeler-facing BPMN element allowlist (§4.1.2's enforcement list, mirrored) so the frontend's Camunda-based canvas can restrict its palette to what this service will actually accept. UX convenience only — this service's own §4.1.2 422 rejection remains the authoritative enforcement, not the palette (§10.17) |
 | `/modules` | `GET` | Any | List reusable BPMN modules visible to the caller (global + their own tenant's), `?scope=`/`?q=` filters (§3.3.18) |
 | `/modules` | `POST` | Admin | Create a new module (tenant-scoped; `platform_operator` role required for `scope=global`, §10.16) |
@@ -1668,7 +1680,10 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 | `/healthz` | `GET` | Any | Liveness probe (returns 200 OK) |
 | `/readyz` | `GET` | Any | Readiness probe (performs database dependency connection checks, returns 200/503) |
 | `/api/v1/internal/events` | `POST` | Internal (service-to-service) | Ingest a domain-event envelope forwarded by the shared workflow-events consumer (`DepartmentMembershipRevoked`, `MembershipRevoked`, `TenantMembershipsPurged`, `TenantStateChanged`). Not exposed on the public gateway. |
-| `/internal/workflow-versions/:version_id/compiled-plan` | `GET` | Internal (service-to-service) | A workflow version and its stored compiled plan, read by the Execution Service (§3.4.1) |
+| `/api/v1/internal/workflow-versions/:version_id/compiled-plan` | `GET` | Internal (service-to-service) | A workflow version and its stored compiled plan, read by the Execution Service (§3.4.1) |
+| `/api/v1/internal/connector-aliases` | `GET` | Internal (service-to-service) | List every REST-call connector alias, read by the connector worker |
+| `/api/v1/internal/connector-aliases/rest` | `POST` | Internal (service-to-service) | Create or update a REST-call connector alias |
+| `/api/v1/internal/connector-aliases/rest/:alias` | `DELETE` | Internal (service-to-service) | Delete a REST-call connector alias |
 
 ---
 
@@ -2997,7 +3012,7 @@ so that termination is always possible. Uncontrolled cycles are rejected.
 
 - **Internal completeness**: A `bpmn:subProcess` must contain exactly one start event, at least one end event, at least one user task, and all standard structural rules (dangling nodes, reachability, etc.) apply recursively to the embedded process graph.
 - **Single incoming / single outgoing**: The subprocess element in the parent flow must have exactly one incoming and one outgoing sequence flow.
-- **No nested subprocesses in v1**: A `bpmn:subProcess` inside a `bpmn:subProcess` is rejected with `REJECTED_ELEMENT`.
+- **No nested subprocesses in v1**: A `bpmn:subProcess` inside a `bpmn:subProcess` is rejected with `NESTED_SUBPROCESS_NOT_SUPPORTED`.
 - **No event-based gateway inside subprocess in v1**: An `bpmn:eventBasedGateway` inside a subprocess is rejected with `UNSUPPORTED_ELEMENT`.
 - **`bpmn:task` without required extensions**: A plain `bpmn:task` inside a subprocess that lacks `zeebe:taskDefinition` emits `MISSING_TASK_DEFINITION`.
 
@@ -4126,7 +4141,7 @@ Valkey is a pure operational cache — it holds no primary data and contributes 
 
 - Compiled plan cache_ (`wf:plan:<tenantID>:<versionID>`, 1 h TTL): On failover or cold-start, the cache is empty. The first compiled-plan read for each version triggers a DB fallback and repopulates the entry; subsequent calls are served from cache. No data is lost — the compiled plan is always re-derivable from `compiled_plan_json` in `workflow_version`.
 - Idempotency keys_ (`idem:<tenantID>:<method>:<path>:<key>`, 24 h TTL): A cache outage opens a window where duplicate HTTP mutations from the same `Idempotency-Key` may be re-applied. The window is bounded by the cache downtime. SQS-delivered events are unaffected: their redelivery safety is a property of the handlers themselves (§2.3.1), not of the cache.
-- Draft-edit locks_ (`draft-lock:<tenantID>:<workflowID>`, 30 s TTL): The lock is taken for the duration of a save. While the cache is unreachable a draft save fails, since the lock cannot be taken; the `record_version` optimistic-lock check in Postgres remains the hard guarantee that only one of two saves commits. Readiness reports not ready while the cache is unreachable.
+- Draft-edit locks_ (`draft-lock:<tenantID>:<workflowID>`, 30 s TTL): The lock is taken for the duration of a save. While the cache is unreachable a draft save fails, since the lock cannot be taken; the `record_version` optimistic-lock check in Postgres remains the hard guarantee that only one of two saves commits. Readiness reports the cache as `degraded` while it is unreachable and stays ready.
 
 ElastiCache Multi-AZ replication (with automatic failover) is the primary mitigation. RTO for the cache tier matches ElastiCache's automatic replica promotion, typically under 60 seconds.
 
@@ -4142,8 +4157,8 @@ All automated tests live under `test/` (black-box) or co-located `_test.go` file
 
 | Layer | Approach | Key scenarios |
 | --- | --- | --- |
-| Unit — `core/service`, `core/domain` | Pure Go; ports mocked with GoMock (`make mock`) | BPMN sub-error codes fire on correct invalid input; plan quota enforcement (Starter 5, Pro 50, Enterprise unlimited — skips DB count); optimistic `record_version` conflict → `ErrDraftConcurrency`; `template_key` pattern `^[a-z0-9]+(-[a-z0-9]+)*$`; `buildEnvelope` attaches `WithTraceID` only when OTel span is valid |
-| Unit — BPMN compiler (`internal/bpmn_compiler`) | Pure Go; no DB or network | All 24 sub-error codes fire; cycle detection (SCC); split/join gateway pairing; well-formed BPMN produces expected DSL shape; XXE entity and XML token bomb rejected; empty process → `NO_START_EVENT` |
+| Unit — `core/service`, `core/domain` | Pure Go; ports mocked with GoMock (`make mock`) | BPMN sub-error codes fire on correct invalid input; plan quota enforcement (Starter 5, Pro 50, Enterprise unlimited — skips DB count); optimistic `record_version` conflict → `ErrDraftConcurrency` |
+| Unit — BPMN compiler (`internal/bpmn_compiler`) | Pure Go; no DB or network | Every BPMN validation code fires; cycle detection (SCC); split/join gateway pairing; well-formed BPMN produces expected DSL shape; XXE entity and XML token bomb rejected; empty process → `NO_START_EVENT` |
 | Unit — HTTP handlers (`test/unit/handler`) | Hand-rolled fakes; `gincommon.ProtectedMiddlewares` for request context | Each handler maps domain errors to correct HTTP status + RFC-9457 code; missing `x-tenant-id` → 401; non-admin role → 403; idempotency header absent → passes through; `record_version` absent on PUT /draft → 400 |
 | Unit — inbound event handler (`test/unit/handler`) | Hand-rolled `fakeMembershipRevoker` + `fakeLogger` | `HandleDepartmentMembershipRevoked` marks affected versions `is_valid=false`; silently skips version on `GetByID` error; a redelivered envelope reprocesses to the same result |
 | Unit — outbound clients | `httptest.NewServer` | `ExecutionClient` reads active instances and pauses tasks, every request held to the copy of the Execution Service's spec (`test/contract`); `MembershipClient` returns eligibility; both return `ErrUpstreamUnavailable` on connection failure |
@@ -4152,7 +4167,7 @@ All automated tests live under `test/` (black-box) or co-located `_test.go` file
 | Integration — draft concurrency | testcontainers Postgres | Two concurrent PUT /draft with same `record_version` → one wins 200, one gets `DRAFT_CONCURRENCY` 409 |
 | Contract — internal API | The real router (`test/contract`) | Every response of the compiled-plan read is one `api/internal-openapi.yaml` declares; both documents are valid OpenAPI 3; `make contract-breaking` refuses a breaking change against `main` and `make contract-check` a stale copy |
 | Event correctness | Unit (`core/service`) | No event is emitted by Publish, Promote, Clone, or Archive — this service has no outbound event of any kind (§7.2); the pause-tasks call made with the correct `tenantID`/`userID` on membership revocation |
-| Security | Integration | DB role has `BYPASSRLS=false`; BPMN with XXE → 422; BPMN token bomb → 422; missing `x-tenant-id` → 401; cross-tenant GUC → zero rows; `RLSCrossTenantAccess` alert rule fires when counter increments |
+| Security | Integration | DB role has `BYPASSRLS=false`; BPMN with XXE → 400 `INVALID_BPMN_XML`; BPMN token bomb → 400 `INVALID_BPMN_XML`; missing `x-tenant-id` → 401; cross-tenant GUC → zero rows; `RLSCrossTenantAccess` alert rule fires when counter increments |
 | Smoke (post-deploy) | Scripted | `/healthz` 200; `/readyz` 200 with `db_utilization`; one `GET /workflows`; one internal compiled-plan read for a known PUBLISHED version |
 
 ### 12.1 CI Gates
@@ -4913,19 +4928,7 @@ This section provides definitions for key terms, concepts, and acronyms used thr
 
 ## Appendix D: Docs Infrastructure
 
-Developer documentation is served locally via **MkDocs** (installed via `brew install mkdocs`). No pip, Docker, or third-party extensions are used — only extensions bundled with the Homebrew MkDocs package.
-
-| Item | Value |
-| --- | --- |
-| Tool | `mkdocs` (Homebrew) |
-| Theme | `readthedocs` (built-in) |
-| Extensions | `admonition`, `tables`, `fenced_code`, `toc` (all standard) |
-| Config | `mkdocs.yml` (project root, committed) |
-| Source | `docs/` (committed) |
-| Build output | `site/` (gitignored; regenerated via `make docs-build`) |
-| Local URL | <http://localhost:8001> (`make docs-serve`) |
-
-**Pages in `docs/`**: `index.md`, `setup.md`, `architecture.md`, `configuration.md`, `standards.md`, `testing.md`, `api.md`, `database.md`.
+Developer documentation is the repository's Markdown: `README.md`, `ARCHITECTURE.md`, this LLD, the BPMN designer and UI enrichment guides under `docs/`, and the notes under `.claude/`. No static-site generator is used and no documentation build target exists.
 
 ### Changelog
 
@@ -5019,6 +5022,7 @@ Developer documentation is served locally via **MkDocs** (installed via `brew in
 | 1.76 | 2026-11-02 | **Where a department comes from** (§3.1.4 code 5, §4.1.3, §4.4). Four passages said no `dept_id` property is read. Publish requires a `dept_id` Zeebe property on the lane, holding the IAM department UUID, and refuses a lane without one (`MISSING_DEPT_ID`) or with a value that is not a UUID (`INVALID_DEPT_ID`), as codes 35 and 36 already state. |
 | 1.77 | 2026-11-02 | **The Zeebe namespace and the status of a missing one** (§3.1.4 code 2, §5.5). The Zeebe namespace is `http://camunda.org/schema/zeebe/1.0`, as §2.4 and the compiler state. A missing `bpmn` or `zeebe` namespace is reported as `MISSING_NAMESPACE` inside a `422 BPMN_VALIDATION_FAILED` answer, not as an immediate `400`. |
 | 1.78 | 2026-11-03 | **An inclusive gateway without conditions is a parallel gateway** (§4.1.2, §4.1.3). The compiler accepted an inclusive gateway in its first version, as a pass-through, and refused it from July 2026 because no handler gave it a meaning. A gateway whose outgoing flows carry no condition now compiles exactly like a parallel gateway: every branch runs and the join waits for all of them, which is what BPMN says an unconditioned inclusive gateway does. A condition on an outgoing flow is refused with `UNSUPPORTED_ELEMENT`, because choosing a subset of branches at run time is not supported. Split and join pairing is checked as for a parallel gateway. Revision 1.75 listed the inclusive gateway as refused; this revision replaces that for this element. |
+| 1.79 | 2026-11-03 | **Error catalogue, route registry, tooling and structure match the code** (§1.5, §1.6, §3.1.4, §3.2, §4.1, §12, Appendix D). `INVALID_INPUT` and `EVENT_DECODE_FAILED` join the catalogue; `WORKFLOW_CONCURRENCY_VIOLATION` and `DATABASE_DISCONNECTED`, which no code returns, leave it, and a stale draft save is `DRAFT_CONCURRENCY`. `UPSTREAM_UNAVAILABLE` names every upstream that can cause it. `CONNECTOR_TASK_HAS_ASSIGNMENT` is code 49. The registry lists the credential revoke route and the three connector alias routes, with the internal routes under `/api/v1/internal`. A nested subprocess is `NESTED_SUBPROCESS_NOT_SUPPORTED`; an XXE or token-bomb document is a `400 INVALID_BPMN_XML`; readiness reports the cache as `degraded` and stays ready. The GUC middleware paragraph names the identity middleware and `WithValidatedGUCSet`. Migrations run by the golang-migrate runner, the local database is PostgreSQL 18, the make target is `migrate`, and no static-site generator exists (Appendix D). The LLD has a table of contents and §1.5.5 to §1.5.7 sit inside §1.5. The README endpoint table lists every route, and the smoke test states what it covers. |
 ---
 
 ## Appendix E: Open Items

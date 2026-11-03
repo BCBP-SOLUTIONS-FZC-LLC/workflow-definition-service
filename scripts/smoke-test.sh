@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Full automated end-to-end smoke test for the definition service.
 #
-# Covers every HTTP route and the internal routes: the compiled-plan read and
-# /api/v1/internal/events (DepartmentMembershipRevoked).
+# Covers the workflow routes (create, draft, validate, publish, clone, promote,
+# archive, export, diff), the compiled-plan read and /api/v1/internal/events
+# (DepartmentMembershipRevoked). The nodes, validation, module, starter,
+# connector and alias routes and the other inbound events are covered by the
+# contract and integration tests.
 #
 # Prerequisites (all must be running before this script):
 #   make docker-up                             # postgres + valkey + pgbouncer
