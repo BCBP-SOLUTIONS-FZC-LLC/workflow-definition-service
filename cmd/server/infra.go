@@ -2,80 +2,82 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events/mock"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/valkey"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-func newDBPool(ctx context.Context, cfg *config.Config) (*pgcommon.Pool, error) {
-	pool, err := pgcommon.NewPool(ctx, pgcommon.Config{
-		DSN:                cfg.DatabaseURL,
-		MaxConns:           cfg.PGMaxConns,
-		MinConns:           cfg.PGMinConns,
-		SlowQueryThreshold: time.Duration(cfg.PGSlowQueryThresholdMS) * time.Millisecond,
-		GUCProvider:        pgcommon.GUCSetFromContext,
-	})
+const systemPoolMaxConns = 3
+
+type poolConfigs struct {
+	app      pgcommon.Config
+	fallback pgcommon.Config
+	system   pgcommon.Config
+}
+
+func newPoolConfigs(cfg *config.Config, log port.Logger) (poolConfigs, []pgcommon.ConfigWarning) {
+	base, warnings := pgcommon.ConfigFromEnv()
+	base.Logger = newPGCommonLogger(log)
+	base.Tracer = gincommon.NewSpanTracer(cfg.OTELServiceName)
+
+	app := base
+	app.DSN = cfg.DatabaseURL
+	app.GUCProvider = pgcommon.GUCSetFromContext
+
+	fallback := app
+	fallback.DSN = cfg.DatabaseFallbackURL
+	fallback.PGBouncerMode = false
+
+	system := base
+	system.DSN = cfg.SystemDSN()
+	system.MaxConns = systemPoolMaxConns
+	system.MinConns = 0
+	system.PoolName = "system"
+	system.PGBouncerMode = true
+	system.GUCProvider = nil
+
+	return poolConfigs{app: app, fallback: fallback, system: system}, warnings
+}
+
+func newDBPool(ctx context.Context, pools poolConfigs, hasFallback bool) (*pgcommon.Pool, error) {
+	pool, err := pgcommon.NewPool(ctx, pools.app)
+	if err != nil && hasFallback {
+		pool, err = pgcommon.NewPool(ctx, pools.fallback)
+		if err != nil {
+			return nil, fmt.Errorf("db pool (primary and fallback both failed): %w", err)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("db pool: %w", err)
 	}
 	return pool, nil
 }
 
-func newCacheStore(ctx context.Context, cfg *config.Config) (port.CacheStore, error) {
+func newSystemDBPool(ctx context.Context, pools poolConfigs) (*pgcommon.Pool, error) {
+	pool, err := pgcommon.NewPool(ctx, pools.system)
+	if err != nil {
+		return nil, fmt.Errorf("system db pool: %w", err)
+	}
+	return pool, nil
+}
+
+func newCacheStore(ctx context.Context, cfg *config.Config, log port.Logger) (port.CacheStore, *redis.Client) {
 	client := redis.NewClient(&redis.Options{
-		Addr:     cfg.ValkeyAddr,
-		Password: cfg.ValkeyPassword,
+		Addr:         cfg.ValkeyAddr,
+		Password:     cfg.ValkeyPassword,
+		DialTimeout:  cfg.ValkeyDialTimeout,
+		ReadTimeout:  cfg.ValkeyReadTimeout,
+		WriteTimeout: cfg.ValkeyWriteTimeout,
 	})
 	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("valkey ping: %w", err)
+		log.Warn("valkey unreachable at startup, serving without the cache until it returns", map[string]any{"error": err.Error()})
 	}
-	return valkey.NewCache(client), nil
-}
-
-func newPublisher(cfg *config.Config, log port.Logger) (events.Publisher, error) {
-	if cfg.AWSUseStub {
-		return &mock.Publisher{}, nil
-	}
-	pub, err := events.NewSNSPublisher(events.SNSConfig{
-		TopicARN:    cfg.SNSTopicARN,
-		Region:      cfg.AWSRegion,
-		EndpointURL: cfg.AWSEndpointURL,
-		Logger:      log,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("sns publisher: %w", err)
-	}
-	return pub, nil
-}
-
-func newConsumer(cfg *config.Config, log port.Logger, handler func(context.Context, events.Envelope[json.RawMessage]) error) (events.Consumer, error) {
-	if cfg.AWSUseStub {
-		c := &mock.Consumer{}
-		c.SetHandler(handler)
-		return c, nil
-	}
-	consumer, err := events.NewSQSConsumer(
-		events.SQSConfig{
-			QueueURL:    cfg.SQSQueueURL,
-			Region:      cfg.AWSRegion,
-			EndpointURL: cfg.AWSEndpointURL,
-			Logger:      log,
-		},
-		handler,
-		events.WithConcurrency(cfg.SQSConcurrency),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("sqs consumer: %w", err)
-	}
-	return consumer, nil
+	return valkey.NewCache(client), client
 }

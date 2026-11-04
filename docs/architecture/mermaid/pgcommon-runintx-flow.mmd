@@ -1,0 +1,23 @@
+sequenceDiagram
+    participant Caller
+    participant RunInTx
+    participant DB as PostgreSQL
+
+    Caller ->>+ RunInTx: RunInTx(ctx, pool, opts, fn)
+    RunInTx ->>+ DB: pool.BeginTx(ctx, opts)
+    DB -->>- RunInTx: tx
+
+    RunInTx ->>+ Caller: fn(ctx, tx)
+
+    alt fn returns nil
+        Caller -->>- RunInTx: nil
+        RunInTx ->> DB: tx.Commit(ctx)
+        RunInTx -->> Caller: nil
+    else fn returns error
+        Caller -->> RunInTx: error
+        RunInTx ->> DB: tx.Rollback(context.Background())
+        RunInTx -->>- Caller: fn error
+    else fn panics
+        RunInTx ->> DB: tx.Rollback(context.Background())
+        RunInTx ->>- Caller: re-panic
+    end

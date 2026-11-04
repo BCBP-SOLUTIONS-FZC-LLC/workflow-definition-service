@@ -1,0 +1,30 @@
+-- Purge bookkeeping for departed tenants (LLD §7.4.6). No RLS and no foreign
+-- key: like connector_rest_alias it is operational state read across tenants
+-- by the purge sweep, and it outlives the tenant's own rows. Credentials and
+-- the design-time artifacts have separate periods and separate completion marks.
+CREATE TABLE tenant_retention (
+    tenant_id              UUID        PRIMARY KEY,
+    offboarded_at          TIMESTAMPTZ,
+    credentials_purge_after TIMESTAMPTZ,
+    artifacts_purge_after  TIMESTAMPTZ,
+    credentials_purged_at  TIMESTAMPTZ,
+    purged_at              TIMESTAMPTZ,
+    returned_at            TIMESTAMPTZ,
+    attempts               INTEGER     NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at        TIMESTAMPTZ NOT NULL,
+    record_version         BIGINT      NOT NULL DEFAULT 1 CHECK (record_version > 0),
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((offboarded_at IS NULL) = (credentials_purge_after IS NULL)
+       AND (offboarded_at IS NULL) = (artifacts_purge_after IS NULL)),
+    CHECK (offboarded_at IS NOT NULL OR returned_at IS NOT NULL)
+);
+
+CREATE TRIGGER update_tenant_retention_meta
+    BEFORE UPDATE ON tenant_retention
+    FOR EACH ROW
+    WHEN (OLD.* IS DISTINCT FROM NEW.*)
+    EXECUTE PROCEDURE update_meta_columns();
+
+CREATE INDEX idx_tenant_retention_credentials_due ON tenant_retention (credentials_purge_after) WHERE credentials_purged_at IS NULL;
+CREATE INDEX idx_tenant_retention_artifacts_due ON tenant_retention (artifacts_purge_after) WHERE purged_at IS NULL;

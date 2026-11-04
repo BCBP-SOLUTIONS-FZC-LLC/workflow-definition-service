@@ -1,0 +1,271 @@
+package postgres_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
+	"github.com/google/uuid"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
+)
+
+func newTestModule(t *testing.T, ctx context.Context, pool *pgcommon.Pool, tenantID uuid.UUID) *domain.Module {
+	t.Helper()
+	repo := postgres.NewModuleRepo(pool)
+	m := &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), TenantID: &tenantID, Scope: domain.ScopeTenant, Name: "M"}
+	if err := repo.Create(ctx, m); err != nil {
+		t.Fatalf("create module: %v", err)
+	}
+	return m
+}
+
+func newDraftModuleVersion(moduleID uuid.UUID, tenantID *uuid.UUID, scope domain.CatalogScope) *domain.ModuleVersion {
+	return &domain.ModuleVersion{
+		ID: uuid.New(), ModuleID: moduleID, TenantID: tenantID, Scope: scope,
+		Status: domain.VersionStatusDraft, BPMNXML: "<bpmn/>", ProcessID: "P1", IsValid: true,
+	}
+}
+
+func TestModuleVersionRepo_CreateAndGet(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	mod := newTestModule(t, ctx, pool, tenantID)
+	v := newDraftModuleVersion(mod.ID, &tenantID, domain.ScopeTenant)
+	if err := repo.Create(ctx, v); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, tenantID, v.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ModuleID != mod.ID || got.ProcessID != "P1" || got.Status != domain.VersionStatusDraft {
+		t.Errorf("unexpected version: %+v", got)
+	}
+}
+
+func TestModuleVersionRepo_GetByID_NotFound(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+
+	_, err := repo.GetByID(context.Background(), uuid.New(), uuid.New())
+	if err != domain.ErrNotFound {
+		t.Errorf("GetByID = %v, want ErrNotFound", err)
+	}
+}
+
+func TestModuleVersionRepo_ListByModule(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	mod := newTestModule(t, ctx, pool, tenantID)
+	draft := newDraftModuleVersion(mod.ID, &tenantID, domain.ScopeTenant)
+	if err := repo.Create(ctx, draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	results, total, err := repo.ListByModule(ctx, tenantID, mod.ID, 1, 20)
+	if err != nil {
+		t.Fatalf("ListByModule: %v", err)
+	}
+	if total != 1 || len(results) != 1 {
+		t.Errorf("expected 1 version; got total=%d len=%d", total, len(results))
+	}
+}
+
+func TestModuleVersionRepo_Publish(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	mod := newTestModule(t, ctx, pool, tenantID)
+	draft := newDraftModuleVersion(mod.ID, &tenantID, domain.ScopeTenant)
+	if err := repo.Create(ctx, draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	if err := repo.Publish(ctx, tenantID, draft.ID, 1); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	got, err := repo.GetByID(ctx, tenantID, draft.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Status != domain.VersionStatusPublished || got.VersionNumber == nil || *got.VersionNumber != 1 {
+		t.Errorf("unexpected published version: %+v", got)
+	}
+}
+
+func TestModuleVersionRepo_Publish_NotDraft(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	mod := newTestModule(t, ctx, pool, tenantID)
+	draft := newDraftModuleVersion(mod.ID, &tenantID, domain.ScopeTenant)
+	if err := repo.Create(ctx, draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+	if err := repo.Publish(ctx, tenantID, draft.ID, 1); err != nil {
+		t.Fatalf("first publish: %v", err)
+	}
+
+	if err := repo.Publish(ctx, tenantID, draft.ID, 2); err != domain.ErrVersionNotDraft {
+		t.Errorf("re-publish = %v, want ErrVersionNotDraft", err)
+	}
+}
+
+func TestModuleVersionRepo_Publish_NotFound(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+
+	err := repo.Publish(context.Background(), uuid.New(), uuid.New(), 1)
+	if err != domain.ErrNotFound {
+		t.Errorf("Publish = %v, want ErrNotFound", err)
+	}
+}
+
+func TestModuleVersionRepo_Archive(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	mod := newTestModule(t, ctx, pool, tenantID)
+	draft := newDraftModuleVersion(mod.ID, &tenantID, domain.ScopeTenant)
+	if err := repo.Create(ctx, draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+	if err := repo.Publish(ctx, tenantID, draft.ID, 1); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	if err := repo.Archive(ctx, tenantID, draft.ID); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	got, err := repo.GetByID(ctx, tenantID, draft.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Status != domain.VersionStatusArchived {
+		t.Errorf("Status = %v, want ARCHIVED", got.Status)
+	}
+}
+
+func TestModuleVersionRepo_Archive_NotPublished(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	mod := newTestModule(t, ctx, pool, tenantID)
+	draft := newDraftModuleVersion(mod.ID, &tenantID, domain.ScopeTenant)
+	if err := repo.Create(ctx, draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	if err := repo.Archive(ctx, tenantID, draft.ID); err != domain.ErrVersionNotPublished {
+		t.Errorf("Archive DRAFT = %v, want ErrVersionNotPublished", err)
+	}
+}
+
+func TestModuleVersionRepo_NextVersionNumber(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	mod := newTestModule(t, ctx, pool, tenantID)
+	draft := newDraftModuleVersion(mod.ID, &tenantID, domain.ScopeTenant)
+	if err := repo.Create(ctx, draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+	if err := repo.Publish(ctx, tenantID, draft.ID, 1); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	n, err := repo.NextVersionNumber(ctx, mod.ID)
+	if err != nil {
+		t.Fatalf("NextVersionNumber: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("NextVersionNumber = %d, want 2", n)
+	}
+}
+
+func TestModuleVersionRepo_DraftAlreadyExists(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+	ctx := context.Background()
+
+	tenantID := uuid.New()
+	mod := newTestModule(t, ctx, pool, tenantID)
+	v1 := newDraftModuleVersion(mod.ID, &tenantID, domain.ScopeTenant)
+	if err := repo.Create(ctx, v1); err != nil {
+		t.Fatalf("create first draft: %v", err)
+	}
+
+	v2 := newDraftModuleVersion(mod.ID, &tenantID, domain.ScopeTenant)
+	if err := repo.Create(ctx, v2); err != domain.ErrDraftAlreadyExists {
+		t.Errorf("create second draft = %v, want ErrDraftAlreadyExists", err)
+	}
+}
+
+func TestModuleVersionRepo_PublishAndArchive_AreScopedToTheCallersTenant(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+	ctx := context.Background()
+
+	owner, stranger := uuid.New(), uuid.New()
+	mod := newTestModule(t, ctx, pool, owner)
+	draft := newDraftModuleVersion(mod.ID, &owner, domain.ScopeTenant)
+	if err := repo.Create(ctx, draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	if err := repo.Publish(ctx, stranger, draft.ID, 1); err != domain.ErrNotFound {
+		t.Errorf("another tenant's Publish = %v, want ErrNotFound", err)
+	}
+	got, err := repo.GetByID(ctx, owner, draft.ID)
+	if err != nil || got.Status != domain.VersionStatusDraft {
+		t.Fatalf("after a foreign Publish the version is %+v, %v; want it untouched in DRAFT", got, err)
+	}
+
+	if err := repo.Publish(ctx, owner, draft.ID, 1); err != nil {
+		t.Fatalf("owner Publish: %v", err)
+	}
+	if err := repo.Archive(ctx, stranger, draft.ID); err != domain.ErrNotFound {
+		t.Errorf("another tenant's Archive = %v, want ErrNotFound", err)
+	}
+	if got, _ := repo.GetByID(ctx, owner, draft.ID); got == nil || got.Status != domain.VersionStatusPublished {
+		t.Errorf("after a foreign Archive the version is %+v, want it still PUBLISHED", got)
+	}
+}
+
+func TestModuleVersionRepo_GlobalVersionsArePublishedByAnyCallerTenant(t *testing.T) {
+	pool := newTestPool(t)
+	repo := postgres.NewModuleVersionRepo(pool)
+	moduleRepo := postgres.NewModuleRepo(pool)
+	ctx := context.Background()
+
+	m := &domain.Module{ID: uuid.New(), ProcessID: "Process_" + uuid.NewString(), Scope: domain.ScopeGlobal, Name: "G"}
+	if err := moduleRepo.Create(ctx, m); err != nil {
+		t.Fatalf("create global module: %v", err)
+	}
+	draft := newDraftModuleVersion(m.ID, nil, domain.ScopeGlobal)
+	if err := repo.Create(ctx, draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+	if err := repo.Publish(ctx, uuid.New(), draft.ID, 1); err != nil {
+		t.Errorf("Publish of a global version: %v", err)
+	}
+}

@@ -1,0 +1,99 @@
+rule_files:
+  - app-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: a purge failure alerts for the sweep interval plus two hours, then clears
+    interval: 1h
+    input_series:
+      - series: 'workflow_definition_service_tenant_purge_failures_total{job="workflow-definition-service"}'
+        values: '0 1x30'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: WorkflowDefinitionServiceTenantPurgeFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: platform
+            exp_annotations:
+              runbook: workflow-definition-service/tenant-purge
+              summary: A departed tenant's data purge keeps failing
+              description: "A tenant's workflows, modules, starters or connector credentials could not be fully deleted after its retention period; the sweep retries on its next run (LLD §7.4.6)."
+      - eval_time: 25h
+        alertname: WorkflowDefinitionServiceTenantPurgeFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: platform
+            exp_annotations:
+              runbook: workflow-definition-service/tenant-purge
+              summary: A departed tenant's data purge keeps failing
+              description: "A tenant's workflows, modules, starters or connector credentials could not be fully deleted after its retention period; the sweep retries on its next run (LLD §7.4.6)."
+      - eval_time: 27h
+        alertname: WorkflowDefinitionServiceTenantPurgeFailing
+        exp_alerts: []
+
+  - name: one blocked cross-tenant row alerts at once
+    interval: 1m
+    input_series:
+      - series: 'workflow_definition_service_rls_violations_total{job="workflow-definition-service", violation_type="cross_tenant_access"}'
+        values: '0 0 1 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: WorkflowDefinitionServiceRLSCrossTenantAccess
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: WorkflowDefinitionServiceRLSCrossTenantAccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: platform
+              job: workflow-definition-service
+              violation_type: cross_tenant_access
+            exp_annotations:
+              runbook: workflow-definition-service/rls
+              summary: Cross-tenant row access blocked by RLS
+              description: "An authenticated session touched another tenant's rows. Possible service bug or active probing. The count is a 1% sample of blocked rows."
+
+  - name: more than five failed event ingests in fifteen minutes alert after five minutes
+    interval: 1m
+    input_series:
+      - series: 'workflow_definition_service_internal_events_ingest_total{job="workflow-definition-service", event_type="MembershipRevoked", result="error"}'
+        values: '0 2 4 6 8 10 12 14 16 18 20'
+      - series: 'workflow_definition_service_internal_events_ingest_total{job="workflow-definition-service", event_type="MembershipRevoked", result="ok"}'
+        values: '0+100x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: WorkflowDefinitionServiceInternalEventIngestFailures
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: WorkflowDefinitionServiceInternalEventIngestFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: platform
+            exp_annotations:
+              runbook: workflow-definition-service/event-ingest
+              summary: "POST /api/v1/internal/events is rejecting or failing on inbound events"
+              description: "More than 5 bad_payload/error results on /api/v1/internal/events in 15 minutes — either the shared workflow-events consumer's envelope contract has drifted, or the downstream HandleDepartmentMembershipRevoked call is failing."
+
+  - name: no healthy target alerts after two minutes
+    interval: 1m
+    input_series:
+      - series: 'up{job="workflow-definition-service"}'
+        values: '1 1 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: WorkflowDefinitionServiceDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: WorkflowDefinitionServiceDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: platform
+            exp_annotations:
+              runbook: workflow-definition-service/service-down
+              summary: workflow-definition-service has no healthy instances
+              description: "No workflow-definition-service pods have been scraped as healthy for 2 minutes. Check pod readiness: kubectl get pods -l app.kubernetes.io/name=workflow-definition-service"

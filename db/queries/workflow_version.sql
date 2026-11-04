@@ -9,21 +9,23 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
 -- name: GetWorkflowVersionByID :one
 SELECT id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
        artifact_hash, version_number, published_at, created_by_user_id,
-       is_valid, validation_errors_json, created_at, updated_at
+       is_valid, validation_errors_json, created_at, updated_at, record_version,
+       module_refs
 FROM workflow_version
 WHERE tenant_id = $1 AND id = $2;
 
 -- name: GetDraftVersion :one
 SELECT id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
        artifact_hash, version_number, published_at, created_by_user_id,
-       is_valid, validation_errors_json, created_at, updated_at
+       is_valid, validation_errors_json, created_at, updated_at, record_version,
+       module_refs
 FROM workflow_version
 WHERE tenant_id = $1 AND workflow_id = $2 AND status = 'DRAFT';
 
 -- name: ListVersionsByWorkflow :many
-SELECT id, workflow_id, tenant_id, status, bpmn_xml, compiled_plan_json,
-       artifact_hash, version_number, published_at, created_by_user_id,
-       is_valid, validation_errors_json, created_at, updated_at
+-- Summary columns only: a page of versions never reads the BPMN or the compiled plan.
+SELECT id, workflow_id, tenant_id, status, version_number, published_at,
+       created_by_user_id, is_valid, created_at, updated_at, record_version
 FROM workflow_version
 WHERE tenant_id = $1 AND workflow_id = $2
 ORDER BY created_at DESC
@@ -33,43 +35,73 @@ OFFSET $4;
 -- name: CountVersionsByWorkflow :one
 SELECT COUNT(*) FROM workflow_version WHERE tenant_id = $1 AND workflow_id = $2;
 
--- name: UpdateDraftVersion :exec
+-- name: UpdateDraftVersion :one
+-- updated_at and record_version are bumped by the update_meta_columns trigger.
+-- The record_version predicate ($8) is the optimistic-lock guard; 0 rows means
+-- not-found, wrong-status, or a concurrent write (disambiguated by the repo).
 UPDATE workflow_version
 SET bpmn_xml               = $3,
     compiled_plan_json      = $4,
     artifact_hash           = $5,
     is_valid                = $6,
-    validation_errors_json  = $7,
-    updated_at              = now()
-WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT';
+    validation_errors_json  = $7
+WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT' AND record_version = $8
+RETURNING record_version;
 
--- name: PublishVersion :exec
+-- name: PublishVersion :execresult
 UPDATE workflow_version
 SET status          = 'PUBLISHED',
     version_number  = $3,
     compiled_plan_json = $4,
     artifact_hash   = $5,
+    module_refs     = $6,
     published_at    = now(),
     updated_at      = now()
-WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT';
+WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT' AND record_version = $7;
 
--- name: ArchiveVersion :exec
+-- name: ArchiveVersion :execresult
 UPDATE workflow_version
 SET status = 'ARCHIVED', updated_at = now()
 WHERE tenant_id = $1 AND id = $2 AND status = 'PUBLISHED';
 
--- name: DeleteDraftVersion :exec
+-- name: DeleteDraftVersion :execresult
 DELETE FROM workflow_version
 WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT';
 
--- name: SetVersionInvalid :exec
+-- name: SetVersionInvalid :execresult
+-- Each revocation adds its nodes to the version's errors: the stored list
+-- first, then the new one, without repeating an entry.
 UPDATE workflow_version
 SET is_valid               = false,
-    validation_errors_json  = $3,
+    validation_errors_json  = (
+        SELECT COALESCE(jsonb_agg(merged.entry ORDER BY merged.pos), '[]'::jsonb)
+        FROM (
+            SELECT DISTINCT ON (t.entry) t.entry, t.pos
+            FROM jsonb_array_elements(
+                CASE WHEN jsonb_typeof(validation_errors_json) = 'array' THEN validation_errors_json ELSE '[]'::jsonb END
+                || CASE WHEN jsonb_typeof(sqlc.arg(validation_errors_json)::jsonb) = 'array' THEN sqlc.arg(validation_errors_json)::jsonb ELSE '[]'::jsonb END
+            ) WITH ORDINALITY AS t(entry, pos)
+            ORDER BY t.entry, t.pos
+        ) AS merged
+    ),
     updated_at              = now()
-WHERE tenant_id = $1 AND id = $2;
+WHERE tenant_id = sqlc.arg(tenant_id) AND id = sqlc.arg(id);
 
 -- name: NextVersionNumber :one
 SELECT COALESCE(MAX(version_number), 0) + 1
 FROM workflow_version
 WHERE tenant_id = $1 AND workflow_id = $2 AND status != 'DRAFT';
+
+-- name: ListModuleUsages :many
+-- A workflow version holds one module_refs entry per module version, so a
+-- module appears at most once per version unless two of its versions coexist.
+SELECT wv.id AS version_id, wv.workflow_id, w.template_key, w.name AS workflow_name,
+       wv.version_number, wv.status,
+       (ref ->> 'version_number')::int AS module_version_number
+FROM workflow_version wv
+JOIN workflow w ON w.id = wv.workflow_id
+CROSS JOIN LATERAL jsonb_array_elements(wv.module_refs) AS ref
+WHERE wv.tenant_id = sqlc.arg(tenant_id)
+  AND wv.module_refs @> jsonb_build_array(jsonb_build_object('module_id', sqlc.arg(module_id)::text))
+  AND ref ->> 'module_id' = sqlc.arg(module_id)::text
+ORDER BY w.name, wv.version_number DESC NULLS LAST, module_version_number;

@@ -1,0 +1,25 @@
+flowchart LR
+    main(["cmd/server"])
+    http_h(["adapter/inbound/http/handler"])
+    pg(["adapter/outbound/postgres"])
+    vk(["adapter/outbound/valkey"])
+    mc(["adapter/outbound/http"])
+    svc(["core/service"])
+    port(["core/port"])
+    dom(["core/domain"])
+    cmp(["bpmn_compiler"])
+
+    main --> http_h
+    main --> pg
+    main --> vk
+    main --> mc
+    main --> svc
+    http_h --> port
+    http_h --> dom
+    pg --> port
+    pg --> dom
+    vk --> port
+    svc --> port
+    svc --> dom
+    svc --> cmp
+    port --> dom
