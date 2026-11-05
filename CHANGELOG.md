@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The compat job runs against the Execution Service branch that has the same name as this one when it exists, otherwise against its `main`, and prints the ref it chose (`compat_peer_ref` still overrides it). `api/contracts/SOURCES` tracks `main`. Neither depends on a branch that gets deleted any more.
 - Dependency updates: `workflow-models` v2.1.1 and `workflow-connectors` v2.3.0 (the releases of the release candidates this service pinned), `platform-pgcommon/v2` v2.0.2, and the `golang.org/x` modules they pull in (`x/net` v0.62.0 among them).
 - CI: the `sqlc` binary of the compat job is cached by the Makefile hash, so the job no longer compiles it on every run. No job, dependency or check name changes.
 - The AsyncAPI description of `TenantMembershipsPurged` says IAM also sends `tenant_id` and `actor_id` in the payload and that the tenant comes from the envelope.
