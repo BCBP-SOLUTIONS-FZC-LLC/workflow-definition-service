@@ -37,20 +37,32 @@ func chainedDiamonds(count int) string {
 	return flowDocument([]flowLane{{"Engineering", engDeptID, nodes}}, body.String())
 }
 
+// The bound is on growth, not wall time, so it holds on a slow runner and
+// under the race detector: refusing a process three times larger takes about
+// three times as long, where analysing every split would take nine.
 func TestValidate_VeryDeepProcess_IsRefusedWithoutAnalysingEverySplit(t *testing.T) {
-	bpmnXML := chainedDiamonds(1200)
+	validate := func(diamonds int) ([]domain.BPMNValidationError, time.Duration) {
+		t.Helper()
+		bpmnXML := chainedDiamonds(diamonds)
+		start := time.Now()
+		errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("Validate of %d diamonds: %v", diamonds, err)
+		}
+		if !hasCode(errs, domain.BPMNErrMaxDepthExceeded) && !hasCode(errs, domain.BPMNErrTaskLimitExceeded) {
+			t.Errorf("%d diamonds: errors = %v, want MAX_DEPTH_EXCEEDED or TASK_LIMIT_EXCEEDED", diamonds, errCodes(errs))
+		}
+		return errs, elapsed
+	}
 
-	start := time.Now()
-	errs, err := bpmn_compiler.New().Validate(context.Background(), bpmnXML)
-	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
+	if _, err := bpmn_compiler.New().Validate(context.Background(), chainedDiamonds(100)); err != nil {
+		t.Fatalf("Validate of the warm-up process: %v", err)
 	}
-	if !hasCode(errs, domain.BPMNErrMaxDepthExceeded) && !hasCode(errs, domain.BPMNErrTaskLimitExceeded) {
-		t.Errorf("errors = %v, want MAX_DEPTH_EXCEEDED or TASK_LIMIT_EXCEEDED", errCodes(errs))
-	}
-	if elapsed > 3*time.Second {
-		t.Errorf("Validate of a process the limits refuse took %s", elapsed)
+	_, short := validate(800)
+	_, long := validate(2400)
+	if long > 6*short {
+		t.Errorf("a 2400-diamond process took %s, more than 6 times the %s of an 800-diamond process", long, short)
 	}
 }
 
