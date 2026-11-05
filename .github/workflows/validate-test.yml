@@ -16,10 +16,10 @@ name: Validate Test
         required: false
         default: ''
       compat_peer_ref:
-        description: 'Branch or tag of the Execution Service the compat job runs against'
+        description: 'Branch or tag of the Execution Service the compat job runs against; empty means the branch named like this one if the Execution Service has it, otherwise main'
         type: string
         required: false
-        default: feat/service
+        default: ''
       compat_consumer_ref:
         description: 'Branch or tag of the Workflow-Events Consumer the compat job runs'
         type: string
@@ -115,7 +115,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      COMPAT_PEER_REF: ${{ inputs.compat_peer_ref }}
       TESTCONTAINERS_RYUK_DISABLED: "true"
       AWS_ACCESS_KEY_ID: test # pragma: allowlist secret
       AWS_SECRET_ACCESS_KEY: test # pragma: allowlist secret
@@ -127,11 +126,29 @@ jobs:
           persist-credentials: false
           token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
+      - name: Resolve the Execution Service ref
+        id: peer
+        env:
+          PEER_REF: ${{ inputs.compat_peer_ref }}
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          READ_TOKEN: ${{ secrets.CI_REPO_READ_TOKEN || secrets.GO_PRIVATE_TOKEN }}
+        run: |
+          set -euo pipefail
+          ref="$PEER_REF"
+          if [ -z "$ref" ]; then
+            ref=main
+            if git ls-remote --exit-code --heads "https://x-access-token:${READ_TOKEN}@github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-execution-service.git" "refs/heads/${HEAD_REF}" >/dev/null 2>&1; then
+              ref="$HEAD_REF"
+            fi
+          fi
+          echo "Execution Service ref: ${ref}"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout the Execution Service
         uses: actions/checkout@v6
         with:
           repository: BCBP-SOLUTIONS-FZC-LLC/workflow-execution-service
-          ref: ${{ env.COMPAT_PEER_REF }}
+          ref: ${{ steps.peer.outputs.ref }}
           path: peer/execution_service
           persist-credentials: false
           token: ${{ secrets.CI_REPO_READ_TOKEN || secrets.GO_PRIVATE_TOKEN }}
