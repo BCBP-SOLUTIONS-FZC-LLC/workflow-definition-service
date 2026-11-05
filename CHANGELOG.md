@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- `TestValidate_VeryDeepProcess_IsRefusedWithoutAnalysingEverySplit` bounds the growth of the refusal time (a process three times larger may take at most six times as long) instead of a 3-second wall-clock limit, which failed at 3.0 s on a loaded two-CPU runner while the work was unchanged. The test is the same shape as `TestValidate_LongChainOfTasklessGateways_IsRefusedQuickly`.
 - CI: the `sqlc` binary of the compat job is cached by the Makefile hash, so the job no longer compiles it on every run. No job, dependency or check name changes.
 - The AsyncAPI description of `TenantMembershipsPurged` says IAM also sends `tenant_id` and `actor_id` in the payload and that the tenant comes from the envelope.
 - The AsyncAPI description of `TenantStateChanged.status` says that any status other than offboarded marks the purge record returned.
