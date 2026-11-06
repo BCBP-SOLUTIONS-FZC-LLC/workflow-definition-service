@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Tests only: `POST .../versions/:version_id/publish` (request body handling, module-lookup failures, a concurrent publish of one draft), `GET .../validation` (module resolution, id errors, the failure counter), `GET .../diff/...` (failures) and `GET .../export` (database outage) are covered. No production code changes.
 - Tests only: `GET /workflows/:id/versions` (list), `POST .../versions/:version_id/clone` (field limits counted in characters, outcome metric and log line), `POST .../promote` (outcome metric) and `GET .../versions/:version_id/nodes` (stored-version failures) are covered, including tenant isolation through row-level security on the version list. No production code changes.
 - Tests only: `GET /workflows` filters and paging, `POST /workflows/:id/archive` failures, the draft routes (read, create, discard), `GET /workflows/:id/versions/:version_id` and the Execution client's handling of an unusable response are covered, including tenant isolation through row-level security and a concurrent draft create. No production code changes.
 - Tests only: `POST /workflows/validate` is covered for unreadable and mistyped request bodies and for structural errors hiding the publish-only checks; `GET /workflows/:id` is covered for input handling, tenant scoping, 503 and 500 mapping and archived workflows; the version-list repository is covered for paging defaults and error mapping. No production code changes.
