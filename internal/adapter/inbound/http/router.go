@@ -11,7 +11,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	httpmiddleware "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/middleware"
@@ -99,6 +99,7 @@ func NewRouter(cfg RouterConfig) *Router {
 	RegisterInternalRoutes(internal, h)
 
 	api := r.Group("/api/v1")
+	api.Use(httpmiddleware.RequireIdentityHeaders(cfg.Log))
 	for _, mw := range gincommon.ProtectedMiddlewares(cfg.GinConfig) {
 		api.Use(mw)
 	}
