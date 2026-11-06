@@ -1979,6 +1979,11 @@ paths:
                         code:     { type: string, example: CANDIDATE_USERS_EMPTY }
                         message:  { type: string }
                         severity: { $ref: '#/components/schemas/BpmnValidationSeverity' }
+        "400":
+          description: An id in the path is not a UUID, or the stored BPMN XML cannot be parsed (`INVALID_BPMN_XML`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "500": { $ref: '#/components/responses/InternalError' }
@@ -2099,6 +2104,7 @@ paths:
         "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "500": { $ref: '#/components/responses/InternalError' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
   # Health Checks
@@ -2115,7 +2121,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  status: { type: string, example: "OK" }
+                  status: { type: string, example: "ok" }
         "500": { $ref: '#/components/responses/InternalError' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -2674,7 +2680,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ModuleContract' }
         "400":
-          description: An id in the path is not a UUID.
+          description: An id in the path is not a UUID, or the stored BPMN XML cannot be parsed (`INVALID_BPMN_XML`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
