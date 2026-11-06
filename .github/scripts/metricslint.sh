@@ -19,13 +19,13 @@ ALLOW_PROPOSED_OWNERS="platform-gincommon,platform-events,platform-pgcommon"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-gincommon_version=$(go list -m -f '{{.Version}}' github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon)
+gincommon_version=$(go list -m -f '{{.Version}}' github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2)
 mkdir "$work/tool"
 (
   cd "$work/tool"
   go mod init metricslint-build >/dev/null 2>&1
-  GOFLAGS=-mod=mod go get "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon@${gincommon_version}" >/dev/null
-  GOFLAGS=-mod=mod go build -o "$work/metricslint" github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/cmd/metricslint
+  GOFLAGS=-mod=mod go get "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2@${gincommon_version}" >/dev/null
+  GOFLAGS=-mod=mod go build -o "$work/metricslint" github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/cmd/metricslint
 )
 
 METRICS_SCRAPE_OUT="$work/scrape.txt" \
@@ -50,7 +50,7 @@ echo "metricslint check passed."
 "$work/metricslint" refs deploy docs
 echo "metricslint refs passed."
 
-gincommon_dir=$(GOFLAGS=-mod=mod go list -m -f '{{.Dir}}' github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon)
+gincommon_dir=$(GOFLAGS=-mod=mod go list -m -f '{{.Dir}}' github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2)
 inventory=docs/observability/metric-registry.md
 python3 .github/scripts/metrics-inventory.py "$gincommon_dir/internal/obsregistry/registry.json" \
   "$work/scrape.txt" "$gincommon_version" >"$work/metric-registry.md"

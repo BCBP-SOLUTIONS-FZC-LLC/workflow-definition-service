@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
 
 	httpmiddleware "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/middleware"
 )
@@ -130,6 +130,57 @@ func TestRequireIdentity_StoresTheParsedIdentity(t *testing.T) {
 	assert.Equal(t, testUserID, got.UserID)
 	assert.Equal(t, []string{"tenant_admin"}, got.Roles)
 }
+
+func TestRequireIdentityHeaders_AbsentOrBlankIsRefusedInTheServiceFormat(t *testing.T) {
+	cases := []struct {
+		name       string
+		tenant     *string
+		user       *string
+		wantStatus int
+		wantDetail string
+	}{
+		{"tenant header blank", strPtr(" "), strPtr(testUserID.String()), http.StatusUnauthorized, "x-tenant-id must be a UUID"},
+		{"tenant header absent", nil, strPtr(testUserID.String()), http.StatusUnauthorized, "x-tenant-id must be a UUID"},
+		{"user header blank", strPtr(testTenantID.String()), strPtr(""), http.StatusUnauthorized, "x-user-id must be a UUID"},
+		{"user header absent", strPtr(testTenantID.String()), nil, http.StatusUnauthorized, "x-user-id must be a UUID"},
+		{"both present reaches the handler", strPtr(testTenantID.String()), strPtr(testUserID.String()), http.StatusOK, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			logger := &fakeLogger{}
+			reached := false
+			r := gin.New()
+			r.Use(httpmiddleware.RequireIdentityHeaders(logger))
+			r.GET("/test", func(c *gin.Context) { reached = true; c.Status(http.StatusOK) })
+
+			httpReq, _ := http.NewRequest(http.MethodGet, "/test", nil)
+			if tc.tenant != nil {
+				httpReq.Header.Set("x-tenant-id", *tc.tenant)
+			}
+			if tc.user != nil {
+				httpReq.Header.Set("x-user-id", *tc.user)
+			}
+			w := do(r, httpReq)
+
+			assert.Equal(t, tc.wantStatus, w.Code)
+			if tc.wantStatus == http.StatusOK {
+				assert.True(t, reached)
+				assert.Empty(t, logger.warnCalls)
+				return
+			}
+			assert.False(t, reached, "a refused request must not reach the handler")
+			assert.Equal(t, "application/problem+json", w.Header().Get("Content-Type"))
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+			assert.Equal(t, "UNAUTHORIZED", body["code"])
+			assert.Equal(t, tc.wantDetail, body["detail"])
+			assert.Equal(t, []string{"auth: request rejected"}, logger.warnCalls)
+		})
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 func httpReqWithCtx(method, path string) *http.Request {
 	r, _ := http.NewRequest(method, path, nil)

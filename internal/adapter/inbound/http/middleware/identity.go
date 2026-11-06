@@ -2,11 +2,12 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
 	pgdomain "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 
@@ -28,6 +29,34 @@ func IdentityFrom(c *gin.Context) (Identity, bool) {
 	}
 	id, ok := v.(Identity)
 	return id, ok
+}
+
+// RequireIdentityHeaders answers 401 in this service's problem format when the tenant or user
+// header is absent or blank. It runs ahead of the platform auth middleware, which refuses the
+// same requests in its own body shape and so would break the documented error schema.
+func RequireIdentityHeaders(log port.Logger) gin.HandlerFunc {
+	headers := [...]struct{ name, detail string }{
+		{"x-tenant-id", "x-tenant-id must be a UUID"},
+		{"x-user-id", "x-user-id must be a UUID"},
+	}
+	return func(c *gin.Context) {
+		for _, h := range headers {
+			if strings.TrimSpace(c.GetHeader(h.name)) != "" {
+				continue
+			}
+			if log != nil {
+				log.Warn("auth: request rejected", map[string]any{
+					"reason": "missing or blank " + h.name,
+					"method": c.Request.Method,
+					"route":  c.FullPath(),
+					"status": http.StatusUnauthorized,
+				})
+			}
+			abortIdentity(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unauthorized Access", h.detail)
+			return
+		}
+		c.Next()
+	}
 }
 
 func RequireIdentity(log port.Logger) gin.HandlerFunc {

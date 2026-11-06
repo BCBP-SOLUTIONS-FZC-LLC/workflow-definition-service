@@ -4,7 +4,6 @@ go 1.26.10
 
 // Direct dependencies
 require (
-	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.6.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.24.1
@@ -68,6 +67,7 @@ require (
 
 require (
 	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.2.1
+	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2 v2.3.0
 	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.2
 	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors/v2 v2.3.0
 	github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2 v2.1.1
