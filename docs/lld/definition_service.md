@@ -32,13 +32,13 @@ The **Workflow Definition Service** acts as the design-time control plane for th
 
 - **Language**: Go 1.26
 - **HTTP Framework**: Gin (REST APIs)
-- **Shared Middleware Library**: `platform-gincommon v1.6.0` — the only path for logs, metrics and traces: correlation IDs, OTel HTTP/gRPC spans, the `platform_http_*` Prometheus series, structured Zap logging, panic recovery, gateway header authentication, tenant context propagation, per-route RBAC, per-request timeout middleware, and graceful telemetry shutdown. See §1.6 for the full middleware integration.
+- **Shared Middleware Library**: `platform-gincommon/v2` v2.3.0 — the only path for logs, metrics and traces: correlation IDs, OTel HTTP/gRPC spans, the `platform_http_*` Prometheus series, structured Zap logging, panic recovery, gateway header authentication, tenant context propagation, per-route RBAC, per-request timeout middleware, and graceful telemetry shutdown. See §1.6 for the full middleware integration.
 - **Database**: PostgreSQL (schema: `workflow_definition`)
 - **Database Driver**: `platform-pgcommon/v2 v2.0.1` — wraps `github.com/jackc/pgx/v5` with RLS GUC injection (`app.tenant_id`, `app.user_id`, `app.tenant_roles`), slow-query logging, OTel tracing, Prometheus pool metrics, transaction helpers, pool health check, and a golang-migrate-based `migrate.Runner`. See §1.7 for the full integration.
 - **Database Tooling**: `sqlc` for type-safe query generation, `platform-pgcommon/v2 migrate.Runner` for schema migrations.
 - **Distributed Cache / Store**: Valkey 8.0 (Redis-compatible), via `github.com/redis/go-redis/v9`. Used for: compiled-plan caching, idempotency key deduplication (`Idempotency-Key` header), and distributed draft-edit locking (prevents concurrent draft overwrites between sessions).
 - **Events**: this service publishes none and keeps no outbox. `platform-events/v2` v2.2.1 supplies only the typed envelope that inbound events arrive in. The Definition Service is **API-only on the inbound path** and runs no SQS consumer. Inbound events (`DepartmentMembershipRevoked`, `MembershipRevoked`, `TenantMembershipsPurged`, `TenantStateChanged`) are consumed by the **shared workflow-events consumer** service, which forwards them over HTTP to `POST /api/v1/internal/events`. See §1.8 for the full integration.
-- **Structured Logging**: `go.uber.org/zap` via `platform-gincommon/pkg/logger` — used by middleware chain and all application code. See `coding_style_rules.md §5.1`.
+- **Structured Logging**: `go.uber.org/zap` via `platform-gincommon/v2/pkg/logger` — used by middleware chain and all application code. See `coding_style_rules.md §5.1`.
 - **Mocks**: `go.uber.org/mock` (GoMock / `mockgen`) — generates mocks for all `core/port/` interfaces. See §1.5.3.
 
 ### 1.2 Key Integration Points
@@ -419,7 +419,7 @@ Tracing starts once at startup, before the metrics identity is fixed and before 
 1. OS signal received
 2. Readiness fails (`/readyz` answers 503) and the pod waits `SHUTDOWN_DRAIN_DELAY` (default 5 s), so the gateway and the Execution Service drop it from their endpoint lists
 3. HTTP server: stop accepting new connections and finish in-flight requests, bounded by `SHUTDOWN_GRACE` (default 30 s)
-4. gincommon.Shutdown(logger)   — flushes OTel HTTP spans + Zap buffer (platform-gincommon v1.6.0)
+4. gincommon.Shutdown(logger)   — flushes OTel HTTP spans + Zap buffer (platform-gincommon/v2 v2.3.0)
 5. DB pools: each drains within its own `SHUTDOWN_POOL_DRAIN_TIMEOUT` (default 10 s), the application pool first, then the system pool
 ```
 
@@ -5034,6 +5034,7 @@ Developer documentation is the repository's Markdown: `README.md`, `ARCHITECTURE
 | 1.86 | 2026-11-06 | **Validate response, health body, id spelling and length limits match the service** (§3.1 Idempotency and Identifiers; §3.1.3 code 16; §3.1.4 codes 6 and 46; §3.3.12; §3.3.15; §3.4.1; §4.1.2; §5.5; §10.15). POST /workflows/validate answers 200 whenever the document can be read, lists its results as `issues` with a severity, and is_valid is false when any issue has error severity, a missing namespace included; XML that cannot be parsed is 400 INVALID_BPMN_XML. GET /healthz answers status `ok`, GET /readyz `OK`. A path or query id is read in any UUID spelling and answered in the lower-case hyphenated form. The limits on a condition expression (4096), candidate groups (256) and an alias path template (2048) count bytes of UTF-8 text. |
 | 1.87 | 2026-11-06 | **Membership revocation, publish without a membership address and the startup database fallback match the service** (§1.7.1; §5.1 assignee eligibility; §7.4.2; §7.4.3; §7.4.5; §12). A revocation marks every draft and published version that names the user as a default assignee as not valid and leaves archived versions unchanged. A version that no longer exists is skipped; any other read or write failure stops the event with 500 before tasks are paused. Each version is invalidated in its own write, and redelivery converges on the same state. ORG_MEMBERSHIP_BASE_URL is required in every environment except dev, where publish skips the eligibility check when it is unset. DATABASE_FALLBACK_URL is optional and is used at startup only, for the application pool. |
 | 1.88 | 2026-11-06 | **Identity header spelling and refusal, the publish conflict field and the module scope read match the service** (§3.1 identity headers and the DRAFT_CONCURRENCY entry; §3.3.18). `x-tenant-id` and `x-user-id` are read in any UUID spelling and carried in lower-case hyphenated form; a missing or blank header is refused with 401 UNAUTHORIZED in the service's problem format before the shared authentication step, tenant first. A refused draft save carries current_record_version and a refused publish does not. Adding, publishing or archiving a module version reads the module with its active version first to settle the caller's scope. |
+| 1.89 | 2026-11-06 | **The shared middleware library is platform-gincommon/v2 v2.3.0** (§1.1; §1.6.1 shutdown order). Every import of the library, the logger package included, carries the `/v2` module path. |
 ---
 
 ## Appendix E: Open Items
