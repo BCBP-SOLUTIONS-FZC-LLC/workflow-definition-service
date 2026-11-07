@@ -12,7 +12,13 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
+const maxFieldNameLength = 128
+
 var validConnectorSegment = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+func validFieldName(fieldName string) bool {
+	return len(fieldName) <= maxFieldNameLength && validConnectorSegment.MatchString(fieldName)
+}
 
 type ConnectorDeps struct {
 	Secrets           port.SecretsClient
@@ -49,8 +55,8 @@ func (s *ConnectorService) WriteCredential(
 	if _, ok := registry.All()[connectorType]; !ok {
 		return "", fmt.Errorf("%w: unrecognized connector_type %q", domain.ErrInvalidConnectorCredentialInput, connectorType)
 	}
-	if !validConnectorSegment.MatchString(fieldName) {
-		return "", fmt.Errorf("%w: field_name must match %s", domain.ErrInvalidConnectorCredentialInput, validConnectorSegment.String())
+	if !validFieldName(fieldName) {
+		return "", fmt.Errorf("%w: field_name must match %s and be at most %d characters", domain.ErrInvalidConnectorCredentialInput, validConnectorSegment.String(), maxFieldNameLength)
 	}
 	if s.secrets == nil {
 		return "", fmt.Errorf("%w: OpenBao is not configured", domain.ErrUpstreamUnavailable)
@@ -70,8 +76,8 @@ func (s *ConnectorService) RevokeCredential(ctx context.Context, tenantID, userI
 	if _, ok := registry.All()[connectorType]; !ok {
 		return fmt.Errorf("%w: unrecognized connector_type %q", domain.ErrInvalidConnectorCredentialInput, connectorType)
 	}
-	if !validConnectorSegment.MatchString(fieldName) {
-		return fmt.Errorf("%w: field_name must match %s", domain.ErrInvalidConnectorCredentialInput, validConnectorSegment.String())
+	if !validFieldName(fieldName) {
+		return fmt.Errorf("%w: field_name must match %s and be at most %d characters", domain.ErrInvalidConnectorCredentialInput, validConnectorSegment.String(), maxFieldNameLength)
 	}
 	if s.secrets == nil {
 		return fmt.Errorf("%w: OpenBao is not configured", domain.ErrUpstreamUnavailable)
