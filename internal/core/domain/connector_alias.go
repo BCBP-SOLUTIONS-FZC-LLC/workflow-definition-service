@@ -82,6 +82,9 @@ func ValidateBaseURLHost(baseURL string, allowedHosts []string) error {
 	if u.User != nil {
 		return fmt.Errorf("%w: baseURL must not carry userinfo credentials", ErrInvalidConnectorAliasInput)
 	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(baseURL, "#") {
+		return fmt.Errorf("%w: baseURL must not carry a query or fragment", ErrInvalidConnectorAliasInput)
+	}
 	host := strings.ToLower(u.Hostname())
 	if host == "" {
 		return fmt.Errorf("%w: baseURL has no host", ErrInvalidConnectorAliasInput)
