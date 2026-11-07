@@ -163,11 +163,6 @@ func storeIfSuccess(c *gin.Context, cache port.CacheStore, log port.Logger, cach
 	entry := cachedResp{Status: status, Body: rec.buf.Bytes(), BodyHash: incomingHash}
 	b, _ := json.Marshal(entry)
 	if err := cache.Set(c.Request.Context(), cacheKey, string(b), ttl); err != nil {
-		if log != nil {
-			log.Warn("idempotency: failed to cache response", map[string]any{
-				"cache_key": cacheKey,
-				"error":     err.Error(),
-			})
-		}
+		warnIdempotency(log, "idempotency: failed to cache response", cacheKey, err)
 	}
 }
