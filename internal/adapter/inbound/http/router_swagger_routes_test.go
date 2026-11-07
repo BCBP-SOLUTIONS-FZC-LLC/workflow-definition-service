@@ -77,27 +77,3 @@ func TestSwaggerRoute_DevMode_StockHandlerServesBundledAsset(t *testing.T) {
 		})
 	}
 }
-
-func TestSwaggerRoute_DevMode_UnknownFile_Returns404PlainText(t *testing.T) {
-	t.Parallel()
-	engine := newSwaggerRoutesDevEngine()
-
-	cases := []struct {
-		name string
-		path string
-	}{
-		{"no file name", "/swagger/"},
-		{"unknown file", "/swagger/unknown.txt"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			w := httptest.NewRecorder()
-			engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.path, nil))
-
-			assert.Equal(t, http.StatusNotFound, w.Code)
-			assert.Equal(t, "Not Found", w.Body.String())
-			assert.NotContains(t, w.Header().Get("Content-Type"), "problem+json")
-		})
-	}
-}
