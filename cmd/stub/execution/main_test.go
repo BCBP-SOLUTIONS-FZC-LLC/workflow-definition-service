@@ -249,15 +249,7 @@ func cmdExeRunChild(t *testing.T, mode, hasActive, stubAddr string) (*exec.Cmd, 
 	exe, err := os.Executable()
 	require.NoError(t, err)
 	cmd := exec.CommandContext(ctx, exe, "-test.run=^$")
-	env := make([]string, 0, len(os.Environ())+4)
-	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "HAS_ACTIVE=") || strings.HasPrefix(kv, "STUB_ADDR=") ||
-			strings.HasPrefix(kv, "LOG_FILE=") || strings.HasPrefix(kv, "LOG_LEVEL=") ||
-			strings.HasPrefix(kv, "LOG_SAMPLING=") || strings.HasPrefix(kv, cmdExeHelperEnv+"=") {
-			continue
-		}
-		env = append(env, kv)
-	}
+	env := cmdExeKeptEnv()
 	env = append(env, "LOG_LEVEL=info", cmdExeHelperEnv+"="+mode, "HAS_ACTIVE="+hasActive, "STUB_ADDR="+stubAddr)
 	cmd.Env = env
 	return cmd, ctx
@@ -325,4 +317,18 @@ func TestStubExecution_Startup_HasActiveEnv_OnlyExactTrueSetsFlag(t *testing.T) 
 			assert.Equal(t, tc.want, reported == 1)
 		})
 	}
+}
+
+func cmdExeKeptEnv() []string {
+	keep := map[string]bool{}
+	for _, k := range strings.Fields("GOCOVERDIR GOTOOLCHAIN GOFLAGS GOMODCACHE GOPATH GOCACHE HOME LANG PATH TMPDIR TZ") {
+		keep[k] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && keep[k] {
+			env = append(env, kv)
+		}
+	}
+	return env
 }

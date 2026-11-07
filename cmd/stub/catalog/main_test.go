@@ -136,16 +136,7 @@ func TestCmdCatStub_HelperProcess(t *testing.T) {
 // cmdCatChildEnv is the parent environment without the logging variables a
 // developer may have set, plus an info log level and the given extra entries.
 func cmdCatChildEnv(extra ...string) []string {
-	var env []string
-	for _, kv := range os.Environ() {
-		switch {
-		case strings.HasPrefix(kv, "LOG_FILE="),
-			strings.HasPrefix(kv, "LOG_LEVEL="),
-			strings.HasPrefix(kv, "LOG_SAMPLING="):
-		default:
-			env = append(env, kv)
-		}
-	}
+	env := cmdCatKeptEnv()
 	env = append(env, "LOG_LEVEL=info")
 	return append(env, extra...)
 }
@@ -165,4 +156,18 @@ func TestCmdCatStub_MalformedListenAddress_LogsServeFailedAndExits1(t *testing.T
 	assert.Equal(t, 1, exitErr.ExitCode())
 	assert.Contains(t, string(out), "serve failed", "child output: %s", out)
 	assert.Contains(t, string(out), "too many colons", "child output: %s", out)
+}
+
+func cmdCatKeptEnv() []string {
+	keep := map[string]bool{}
+	for _, k := range strings.Fields("GOCOVERDIR GOTOOLCHAIN GOFLAGS GOMODCACHE GOPATH GOCACHE HOME LANG PATH TMPDIR TZ") {
+		keep[k] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && keep[k] {
+			env = append(env, kv)
+		}
+	}
+	return env
 }

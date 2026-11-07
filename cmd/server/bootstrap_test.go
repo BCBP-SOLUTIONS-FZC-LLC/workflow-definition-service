@@ -382,13 +382,7 @@ func cmdSrvRunMain(t *testing.T, args string, env map[string]string) cmdSrvMainR
 	defer cancel()
 	cmd := exec.CommandContext(ctx, exe, "-test.run=^TestCmdSrvMainHelper$")
 	cmd.Dir = t.TempDir()
-	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "LOG_FILE=") || strings.HasPrefix(kv, "LOG_LEVEL=") ||
-			strings.HasPrefix(kv, "LOG_SAMPLING=") {
-			continue
-		}
-		cmd.Env = append(cmd.Env, kv)
-	}
+	cmd.Env = append(cmd.Env, cmdSrvKeptEnv()...)
 	cmd.Env = append(cmd.Env, "LOG_LEVEL=info", cmdSrvMainHelperEnv+"="+args)
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
@@ -465,4 +459,18 @@ func TestMain_ServerMode_DatabaseDownExitsWithInitError(t *testing.T) {
 	assert.Equal(t, 1, res.exitCode)
 	assert.Contains(t, res.stderr, "init error: db pool: ")
 	assert.NotContains(t, res.stderr, id, "a connection password must never reach stderr")
+}
+
+func cmdSrvKeptEnv() []string {
+	keep := map[string]bool{}
+	for _, k := range strings.Fields("GOCOVERDIR GOTOOLCHAIN GOFLAGS GOMODCACHE GOPATH GOCACHE HOME LANG PATH TMPDIR TZ") {
+		keep[k] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && keep[k] {
+			env = append(env, kv)
+		}
+	}
+	return env
 }
