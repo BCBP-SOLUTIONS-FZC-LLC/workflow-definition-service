@@ -158,6 +158,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Fixed
 
+- Idempotent writes now check the admin role before looking up a stored answer (a former admin gets 403, not the stored success), key the cache on the parsed tenant and user ids (braces or no dashes no longer make a new key), and log a hash instead of the full key when a reply cannot be stored.
 - A send task, a receive task or a connector stage no longer produces `workflow_node_assignee` rows: a free-text `candidateGroups` longer than the 64-character `role` column failed the publish insert with a 500, and nothing is routed to a person at such a stage.
 - The 2000-node path limit applies from the implicit start of a process with no start event; it was skipped there.
 - A `standardLoopCharacteristics` or `multiInstanceLoopCharacteristics` inside a connector `serviceTask` is `REJECTED_ELEMENT` on the task; it was ignored and the task ran once.
