@@ -51,7 +51,10 @@ COVER_THRESHOLD    := 95  # target 97%; postgres adapter and generated pkgs excl
 # Per-package floors: packages not listed must meet COVER_THRESHOLD.
 # internal/adapter/inbound/http: AsyncAPI renderer is 500 lines of HTML template
 # logic only exercisable via a live dev server; swagger handlers are trivially tested.
-COVER_PKG_FLOORS   := internal/adapter/inbound/http:3 \
+COVER_PKG_FLOORS   := cmd/stub/catalog:90 \
+                      cmd/stub/execution:94 \
+                      cmd/stub/membership:94 \
+                      internal/adapter/inbound/http:3 \
                       internal/adapter/outbound/http:85 \
                       internal/bpmn_compiler:90 \
                       internal/bpmn_compiler/element:75 \
@@ -150,13 +153,13 @@ migrate:
 dev:
 	go run ./cmd/server
 
-## test: Run unit tests with race detector and coverage (internal, test/unit, test/contract)
+## test: Run unit tests with race detector and coverage (internal, cmd, test/unit, test/contract)
 test:
 	@mkdir -p $(COVERAGE_DIR)
 	go test -race -count=1 \
 	    -coverpkg=$$(go list ./internal/... ./cmd/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
 	    -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
-	    ./internal/... ./test/unit/... ./test/contract/...
+	    ./internal/... ./cmd/... ./test/unit/... ./test/contract/...
 	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/unit.out > $(COVERAGE_DIR)/unit.out.filtered && mv $(COVERAGE_DIR)/unit.out.filtered $(COVERAGE_DIR)/unit.out
 	@go tool cover -func=$(COVERAGE_DIR)/unit.out | awk '/^total:/{print "total:", $$NF}'
 
@@ -165,10 +168,10 @@ test-integration:
 	@mkdir -p $(COVERAGE_DIR)
 	TESTCONTAINERS_RYUK_DISABLED=true \
 	go test -race -count=1 -tags integration \
-	    -coverpkg=$$(go list ./internal/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
+	    -coverpkg=$$(go list ./internal/... ./cmd/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
 	    -coverprofile=$(COVERAGE_DIR)/integration.out \
 	    -covermode=atomic \
-	    ./test/integration/... ./test/e2e/...
+	    ./test/integration/... ./test/e2e/... ./cmd/server/...
 	@grep -v '$(COVER_EXCLUDE_FILE)' $(COVERAGE_DIR)/integration.out > $(COVERAGE_DIR)/integration.out.filtered && mv $(COVERAGE_DIR)/integration.out.filtered $(COVERAGE_DIR)/integration.out
 	@go tool cover -func=$(COVERAGE_DIR)/integration.out | tail -1
 
