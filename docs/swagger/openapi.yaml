@@ -2266,7 +2266,7 @@ paths:
               required: [connector_type, field_name, value]
               properties:
                 connector_type: { type: string, description: Must match a registered connector type. }
-                field_name:     { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' }
+                field_name:     { type: string, pattern: '^[a-zA-Z0-9_-]+$' }
                 value:          { type: string }
       responses:
         "201":
@@ -2321,7 +2321,7 @@ paths:
         - in: path
           name: field_name
           required: true
-          schema: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' }
+          schema: { type: string, pattern: '^[a-zA-Z0-9_-]+$' }
       responses:
         "204": { description: Credential field revoked. No response body. }
         "400":
