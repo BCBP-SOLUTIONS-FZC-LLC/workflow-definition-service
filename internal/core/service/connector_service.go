@@ -120,6 +120,8 @@ func (s *ConnectorService) DeleteRestAlias(ctx context.Context, alias string) (b
 	if err != nil {
 		return false, err
 	}
-	s.log.Info("connector alias deleted", stampAudit(ctx, map[string]any{"alias": alias, "found": found}))
+	if found {
+		s.log.Info("connector alias deleted", stampAudit(ctx, map[string]any{"alias": alias, "found": found}))
+	}
 	return found, nil
 }
