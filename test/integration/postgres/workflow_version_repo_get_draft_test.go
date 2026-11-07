@@ -133,24 +133,20 @@ func TestWorkflowVersionRepo_GetDraft_ConnectionLostMidTransaction_ReturnsUpstre
 
 func terminateOtherBackends(t *testing.T, admin *pgcommon.Pool) {
 	t.Helper()
-	err := admin.WithConn(context.Background(), func(ctx context.Context, conn *pgxpool.Conn) error {
-		_, err := conn.Exec(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-			WHERE datname = current_database() AND pid <> pg_backend_pid()`)
-		return err
-	})
-	if err != nil {
-		t.Fatalf("terminate backends: %v", err)
-	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		var remaining int
 		err := admin.WithConn(context.Background(), func(ctx context.Context, conn *pgxpool.Conn) error {
+			if _, err := conn.Exec(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+				WHERE datname = current_database() AND backend_type = 'client backend' AND pid <> pg_backend_pid()`); err != nil {
+				return err
+			}
 			return conn.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
 				WHERE datname = current_database() AND backend_type = 'client backend'
 				AND pid <> pg_backend_pid()`).Scan(&remaining)
 		})
 		if err != nil {
-			t.Fatalf("count backends: %v", err)
+			t.Fatalf("terminate backends: %v", err)
 		}
 		if remaining == 0 {
 			return

@@ -2,11 +2,14 @@ package validator
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 )
+
+const bestOfRuns = 5
 
 type chainShape int
 
@@ -69,14 +72,18 @@ func TestValidateGatewayMatching_CostGrowsLinearlyWithTheChain(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			measure := func(gateways int) time.Duration {
 				t.Helper()
-				proc, g, backEdges := exclusiveChainWithExits(gateways, tt.shape)
-				start := time.Now()
-				errs := ValidateGatewayMatching(proc, g, backEdges)
-				elapsed := time.Since(start)
-				if tt.shape == chainReachable && len(errs) != 0 {
-					t.Fatalf("a chain of %d exclusive gateways whose branches all end: errors %v", gateways, errs)
+				best := time.Duration(math.MaxInt64)
+				for attempt := 0; attempt < bestOfRuns; attempt++ {
+					proc, g, backEdges := exclusiveChainWithExits(gateways, tt.shape)
+					start := time.Now()
+					errs := ValidateGatewayMatching(proc, g, backEdges)
+					elapsed := time.Since(start)
+					if tt.shape == chainReachable && len(errs) != 0 {
+						t.Fatalf("a chain of %d exclusive gateways whose branches all end: errors %v", gateways, errs)
+					}
+					best = min(best, elapsed)
 				}
-				return elapsed
+				return best
 			}
 
 			measure(500)
