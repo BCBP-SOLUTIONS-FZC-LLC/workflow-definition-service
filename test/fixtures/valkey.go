@@ -21,6 +21,14 @@ import (
 // Skipped when testing.Short() is true (Docker required).
 func NewTestValkey(t *testing.T) port.CacheStore {
 	t.Helper()
+	return valkeyadapter.NewCache(NewTestValkeyClient(t))
+}
+
+// NewTestValkeyClient starts a valkey/valkey:8-alpine container and returns a
+// client connected to it. Registers t.Cleanup to close the client and terminate
+// the container. Skipped when testing.Short() is true (Docker required).
+func NewTestValkeyClient(t *testing.T) *redis.Client {
+	t.Helper()
 
 	if testing.Short() {
 		t.Skip("skipping integration test: -short flag set (Docker required)")
@@ -48,5 +56,5 @@ func NewTestValkey(t *testing.T) port.CacheStore {
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
 
-	return valkeyadapter.NewCache(client)
+	return client
 }
