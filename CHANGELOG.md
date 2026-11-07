@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Tests only: the router's answers for unmatched paths (404 problem body, instance without the query, trace and request ids, routes missing outside dev), the dev-only swagger routes and the health route's request id handling are covered. No production code changes.
 - Tests only: the AsyncAPI page (rendering and environment badge), the router wiring, the identity middleware (non-canonical id spellings), the Execution, membership and secrets clients' resilience (retries, timeouts, cancellation), the cache (ping timeout, key boundaries against a real Valkey), and workflow version repository paging offsets and create and publish errors are covered. No production code changes.
 - Tests only: the connector alias routes (list, write, delete, including timeout limits, database outages and the base URL host check), the internal events endpoint (envelope errors, failed writes, content type), the internal compiled-plan endpoint (revocation edges), membership event handling and the readiness drain are covered. No production code changes.
 - Tests only: `POST /workflows` (field limits, body errors, tenant, user and plan passed on, submission counter, key and name storage, simultaneous creates of one key and at the plan limit with overlapping transactions) and `PUT /workflows/:id/draft` (name and description limits, ids and record version passed on, repository save outcomes) are covered. No production code changes.
