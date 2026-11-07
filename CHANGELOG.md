@@ -158,6 +158,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Fixed
 
+- Connector input checks: an alias base URL with a query or fragment is refused (the connector worker could never load it), a credential `field_name` over 128 characters is refused (the public spec says `maxLength: 128`), deleting an alias that does not exist no longer writes the "connector alias deleted" audit line, and the path-template length error says bytes.
 - Idempotent writes now check the admin role before looking up a stored answer (a former admin gets 403, not the stored success), key the cache on the parsed tenant and user ids (braces or no dashes no longer make a new key), and log a hash instead of the full key when a reply cannot be stored.
 - A send task, a receive task or a connector stage no longer produces `workflow_node_assignee` rows: a free-text `candidateGroups` longer than the 64-character `role` column failed the publish insert with a 500, and nothing is routed to a person at such a stage.
 - The 2000-node path limit applies from the implicit start of a process with no start event; it was skipped there.
