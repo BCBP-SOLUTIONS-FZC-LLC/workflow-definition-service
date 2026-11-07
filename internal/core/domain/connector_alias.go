@@ -54,7 +54,7 @@ func (a ConnectorRestAlias) Validate() error {
 func validatePathTemplate(p string) error {
 	switch {
 	case len(p) > maxAliasPathLength:
-		return fmt.Errorf("%w: pathTemplate is longer than %d characters", ErrInvalidConnectorAliasInput, maxAliasPathLength)
+		return fmt.Errorf("%w: pathTemplate is longer than %d bytes", ErrInvalidConnectorAliasInput, maxAliasPathLength)
 	case !strings.HasPrefix(p, "/"):
 		return fmt.Errorf("%w: pathTemplate must start with /", ErrInvalidConnectorAliasInput)
 	case strings.HasPrefix(p, "//"), strings.Contains(p, ".."), strings.Contains(p, "@"), strings.Contains(p, `\`):
