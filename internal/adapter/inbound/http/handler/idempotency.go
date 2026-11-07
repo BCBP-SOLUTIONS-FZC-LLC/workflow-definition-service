@@ -43,6 +43,16 @@ func (h *Handler) Idempotent(fn gin.HandlerFunc) gin.HandlerFunc {
 	return WithIdempotency(h.cache, h.log, h.idempotencyTTL, fn)
 }
 
+func (h *Handler) AdminIdempotent(fn gin.HandlerFunc) gin.HandlerFunc {
+	wrapped := h.Idempotent(fn)
+	return func(c *gin.Context) {
+		if _, _, ok := mustAdminCtx(c); !ok {
+			return
+		}
+		wrapped(c)
+	}
+}
+
 const (
 	maxIdempotencyKeyLength = 256
 	idempotencyPendingTTL   = time.Minute
