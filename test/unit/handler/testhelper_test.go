@@ -35,6 +35,8 @@ type fakeWorkflowSvc struct {
 	create  func(context.Context, uuid.UUID, uuid.UUID, string, string, string, string) (*domain.Workflow, *domain.WorkflowVersion, error)
 	get     func(context.Context, uuid.UUID, uuid.UUID, int) (*domain.Workflow, []*domain.WorkflowVersion, error)
 	archive func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error
+
+	lastPlanTier string
 }
 
 func (f *fakeWorkflowSvc) List(ctx context.Context, tenantID uuid.UUID, filter port.WorkflowFilter) ([]*domain.Workflow, int64, error) {
@@ -44,6 +46,7 @@ func (f *fakeWorkflowSvc) List(ctx context.Context, tenantID uuid.UUID, filter p
 	return nil, 0, nil
 }
 func (f *fakeWorkflowSvc) Create(ctx context.Context, tenantID, userID uuid.UUID, templateKey, name, description, bpmnXML, planTier string) (*domain.Workflow, *domain.WorkflowVersion, error) {
+	f.lastPlanTier = planTier
 	if f.create != nil {
 		return f.create(ctx, tenantID, userID, templateKey, name, description, bpmnXML)
 	}
