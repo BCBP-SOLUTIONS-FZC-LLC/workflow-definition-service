@@ -510,14 +510,7 @@ func TestCmdMemChildProcess(t *testing.T) {
 // cmdMemChildEnvironment is the parent environment without the logging
 // variables a developer may have set, plus an info log level and the extras.
 func cmdMemChildEnvironment(extra ...string) []string {
-	var env []string
-	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "LOG_FILE=") || strings.HasPrefix(kv, "LOG_LEVEL=") ||
-			strings.HasPrefix(kv, "LOG_SAMPLING=") {
-			continue
-		}
-		env = append(env, kv)
-	}
+	env := cmdMemKeptEnv()
 	env = append(env, "LOG_LEVEL=info")
 	return append(env, extra...)
 }
@@ -569,4 +562,18 @@ func TestCmdMemStartup_UnusableListenAddress_LogsAndExitsWithCode1(t *testing.T)
 	assert.Equal(t, 1, exitErr.ExitCode())
 	assert.Contains(t, out, "serve failed")
 	assert.Contains(t, out, "not-a-port")
+}
+
+func cmdMemKeptEnv() []string {
+	keep := map[string]bool{}
+	for _, k := range strings.Fields("GOCOVERDIR GOTOOLCHAIN GOFLAGS GOMODCACHE GOPATH GOCACHE HOME LANG PATH TMPDIR TZ") {
+		keep[k] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && keep[k] {
+			env = append(env, kv)
+		}
+	}
+	return env
 }
