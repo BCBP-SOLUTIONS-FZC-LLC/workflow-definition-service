@@ -3,13 +3,18 @@ package validator
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 )
 
-const bestOfRuns = 5
+const (
+	bestOfRuns    = 5
+	maxGrowth     = 16
+	maxTimeGrowth = 24
+)
 
 type chainShape int
 
@@ -57,8 +62,10 @@ func exclusiveChainWithExits(gateways int, shape chainShape) (*bpmncore.BPMNProc
 }
 
 // The bound is on growth, not wall time, so it holds on a slow runner and
-// under the race detector: a chain four times longer takes about four times
-// as long, where a search below every gateway takes sixteen.
+// under the race detector. A chain eight times longer allocates about eight
+// times the bytes and takes about eight times as long; a search below every
+// gateway would be about sixty-four times. Bytes allocated do not depend on
+// machine load; the time bound is a loose second check with a wide margin.
 func TestValidateGatewayMatching_CostGrowsLinearlyWithTheChain(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -70,27 +77,37 @@ func TestValidateGatewayMatching_CostGrowsLinearlyWithTheChain(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			measure := func(gateways int) time.Duration {
+			measure := func(gateways int) (time.Duration, uint64) {
 				t.Helper()
 				best := time.Duration(math.MaxInt64)
+				var bytes uint64
 				for attempt := 0; attempt < bestOfRuns; attempt++ {
 					proc, g, backEdges := exclusiveChainWithExits(gateways, tt.shape)
+					var before, after runtime.MemStats
+					runtime.ReadMemStats(&before)
 					start := time.Now()
 					errs := ValidateGatewayMatching(proc, g, backEdges)
 					elapsed := time.Since(start)
+					runtime.ReadMemStats(&after)
 					if tt.shape == chainReachable && len(errs) != 0 {
 						t.Fatalf("a chain of %d exclusive gateways whose branches all end: errors %v", gateways, errs)
 					}
 					best = min(best, elapsed)
+					bytes = after.TotalAlloc - before.TotalAlloc
 				}
-				return best
+				return best, bytes
 			}
 
 			measure(500)
-			short := measure(2000)
-			long := measure(8000)
-			if long > 8*short {
-				t.Errorf("an 8000-gateway chain took %s, more than 8 times the %s of a 2000-gateway chain", long, short)
+			shortTime, shortBytes := measure(2000)
+			longTime, longBytes := measure(16000)
+			if longBytes > maxGrowth*shortBytes {
+				t.Errorf("a 16000-gateway chain allocated %d bytes, more than %d times the %d bytes of a 2000-gateway chain",
+					longBytes, maxGrowth, shortBytes)
+			}
+			if longTime > maxTimeGrowth*shortTime {
+				t.Errorf("a 16000-gateway chain took %s, more than %d times the %s of a 2000-gateway chain",
+					longTime, maxTimeGrowth, shortTime)
 			}
 		})
 	}
