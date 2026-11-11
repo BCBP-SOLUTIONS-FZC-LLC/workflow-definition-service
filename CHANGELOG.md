@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Tests only: stronger checks for the publish pre-flight errors and divergence check, version clone limits and diff shapes, draft init and its edit lock, validation gates, workflow and version service edges, the tenant purge credential paths, connector alias check order, and the BPMN compiler core helpers. No production code changes.
 - Tests only: stronger checks for the BPMN compiler core (node traversal and the stage and node budgets, branch state, call-activity inputs and lane properties, graph walks, type helpers), the compiler and validator rules, the error mapper when one error matches two cases, empty and whitespace JSON bodies, idempotency when the cache fails or the client disconnects, connector alias and plan limits, and a purge racing a tenant return. No production code changes.
 - Tests only: the gateway matching cost test now compares the best of five runs per chain length, and the draft connection-lost test keeps terminating reconnected backends until none are left, so neither depends on a quiet machine.
 - Tests only: stronger checks for rows that were only partly asserted, covering response bodies of the version, module, starter and workflow reads, connector credential revoke and registry writes, starter and alias list and delete paths, draft discard and delete failures, row-level security of the compiled plan read, the readiness and swagger routes, and the compiler and module-resolution publish paths.
