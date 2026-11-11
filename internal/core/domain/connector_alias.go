@@ -54,7 +54,7 @@ func (a ConnectorRestAlias) Validate() error {
 func validatePathTemplate(p string) error {
 	switch {
 	case len(p) > maxAliasPathLength:
-		return fmt.Errorf("%w: pathTemplate is longer than %d characters", ErrInvalidConnectorAliasInput, maxAliasPathLength)
+		return fmt.Errorf("%w: pathTemplate is longer than %d bytes", ErrInvalidConnectorAliasInput, maxAliasPathLength)
 	case !strings.HasPrefix(p, "/"):
 		return fmt.Errorf("%w: pathTemplate must start with /", ErrInvalidConnectorAliasInput)
 	case strings.HasPrefix(p, "//"), strings.Contains(p, ".."), strings.Contains(p, "@"), strings.Contains(p, `\`):
@@ -81,6 +81,9 @@ func ValidateBaseURLHost(baseURL string, allowedHosts []string) error {
 	}
 	if u.User != nil {
 		return fmt.Errorf("%w: baseURL must not carry userinfo credentials", ErrInvalidConnectorAliasInput)
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(baseURL, "#") {
+		return fmt.Errorf("%w: baseURL must not carry a query or fragment", ErrInvalidConnectorAliasInput)
 	}
 	host := strings.ToLower(u.Hostname())
 	if host == "" {

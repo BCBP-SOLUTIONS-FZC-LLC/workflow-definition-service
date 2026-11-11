@@ -121,7 +121,7 @@ func RegisterInternalRoutes(internal gin.IRoutes, h *handler.Handler) {
 }
 
 func RegisterAPIRoutes(api *gin.RouterGroup, h *handler.Handler) {
-	idem := h.Idempotent
+	idem := h.AdminIdempotent
 
 	wf := api.Group("/workflows")
 	wf.GET("", h.ListWorkflows)

@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
+	httpmiddleware "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/middleware"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
@@ -43,6 +43,16 @@ func (h *Handler) Idempotent(fn gin.HandlerFunc) gin.HandlerFunc {
 	return WithIdempotency(h.cache, h.log, h.idempotencyTTL, fn)
 }
 
+func (h *Handler) AdminIdempotent(fn gin.HandlerFunc) gin.HandlerFunc {
+	wrapped := h.Idempotent(fn)
+	return func(c *gin.Context) {
+		if _, _, ok := mustAdminCtx(c); !ok {
+			return
+		}
+		wrapped(c)
+	}
+}
+
 const (
 	maxIdempotencyKeyLength = 256
 	idempotencyPendingTTL   = time.Minute
@@ -59,7 +69,7 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, 
 			writeProblem(c, http.StatusBadRequest, CodeBadRequest, "Idempotency-Key must be at most 256 characters", nil)
 			return
 		}
-		rc, exists := gincommon.RequestContext(c)
+		id, exists := httpmiddleware.IdentityFrom(c)
 		if !exists {
 			h(c)
 			return
@@ -69,7 +79,7 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, 
 		if !ok {
 			if log != nil {
 				log.Warn("idempotency: failed to read request body, bypassing idempotency protection", map[string]any{
-					"tenant_id": rc.TenantID,
+					"tenant_id": id.TenantID.String(),
 					"path":      c.Request.URL.Path,
 				})
 			}
@@ -78,7 +88,7 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, 
 		}
 		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-		cacheKey := idempotencyCacheKey(rc.TenantID, rc.UserID, c.Request.Method, c.Request.URL.Path, key)
+		cacheKey := idempotencyCacheKey(id.TenantID, id.UserID, c.Request.Method, c.Request.URL.Path, key)
 		if replayIfCached(c, cache, log, cacheKey, incomingHash) {
 			return
 		}
@@ -125,8 +135,8 @@ func warnIdempotency(log port.Logger, msg, cacheKey string, err error) {
 	log.Warn(msg, map[string]any{"cache_key_hash": hashBody([]byte(cacheKey))[:16], "error": err.Error()})
 }
 
-func idempotencyCacheKey(tenantID, userID, method, path, key string) string {
-	return "idem:" + tenantID + ":" + userID + ":" + method + ":" + path + ":" + key
+func idempotencyCacheKey(tenantID, userID uuid.UUID, method, path, key string) string {
+	return "idem:" + tenantID.String() + ":" + userID.String() + ":" + method + ":" + path + ":" + key
 }
 
 func drainBody(c *gin.Context) (body []byte, hash string, ok bool) {
@@ -163,11 +173,6 @@ func storeIfSuccess(c *gin.Context, cache port.CacheStore, log port.Logger, cach
 	entry := cachedResp{Status: status, Body: rec.buf.Bytes(), BodyHash: incomingHash}
 	b, _ := json.Marshal(entry)
 	if err := cache.Set(c.Request.Context(), cacheKey, string(b), ttl); err != nil {
-		if log != nil {
-			log.Warn("idempotency: failed to cache response", map[string]any{
-				"cache_key": cacheKey,
-				"error":     err.Error(),
-			})
-		}
+		warnIdempotency(log, "idempotency: failed to cache response", cacheKey, err)
 	}
 }

@@ -134,14 +134,15 @@ func (p *TenantPurger) purgeCredentials(ctx context.Context, d port.TenantPurgeD
 	if !d.Credentials {
 		return version, nil
 	}
-	if p.deps.Secrets != nil {
-		for _, path := range tenantCredentialPaths(d.TenantID) {
-			if err := p.deps.Retention.Current(ctx, d.TenantID, version); err != nil {
-				return version, fmt.Errorf("purge tenant %s: %w", d.TenantID, err)
-			}
-			if err := p.deps.Secrets.Delete(ctx, path); err != nil {
-				return version, fmt.Errorf("purge tenant %s: delete credential %s: %w", d.TenantID, path, err)
-			}
+	if p.deps.Secrets == nil {
+		return version, nil
+	}
+	for _, path := range tenantCredentialPaths(d.TenantID) {
+		if err := p.deps.Retention.Current(ctx, d.TenantID, version); err != nil {
+			return version, fmt.Errorf("purge tenant %s: %w", d.TenantID, err)
+		}
+		if err := p.deps.Secrets.Delete(ctx, path); err != nil {
+			return version, fmt.Errorf("purge tenant %s: delete credential %s: %w", d.TenantID, path, err)
 		}
 	}
 	next, err := p.deps.Retention.MarkCredentialsPurged(ctx, d.TenantID, version, p.deps.Now())
