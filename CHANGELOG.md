@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Tests only: the gateway matching cost test now compares the best of five runs per chain length, and the draft connection-lost test keeps terminating reconnected backends until none are left, so neither depends on a quiet machine.
 - `make test` now also runs the tests of `./cmd/...`, `make test-integration` also runs `./cmd/server/...`, and both count the coverage of `./cmd/...`, so the server bootstrap and stub tests run in CI and locally with the same commands. `cmd/server` meets the 95% floor (95.1% merged); the three development stubs are listed in the per-package floors (catalog 90, execution 94, membership 94) because their remaining lines run only in a child process. No production code changes.
 - Tests only: the compiled-plan cache, connector credential checks, alias store failures, module resolution, workflow create with modules, the tenant purger, archive re-read failure, stored-plan reads, publish plan limits and metrics, version diff resolution and concurrent publish numbering are covered. No production code changes.
 - Tests only: the server bootstrap (database pool and logger errors, migrations on an empty database, migrate mode, role posture, purger start) and the local-development catalog, execution and membership stubs (startup address and settings, status codes, body shapes, concurrent control calls) are covered. No production code changes.
