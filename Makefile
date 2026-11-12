@@ -60,7 +60,7 @@ COVER_PKG_FLOORS   := cmd/stub/catalog:90 \
                       internal/bpmn_compiler/element:75 \
                       internal/config:90
 
-.PHONY: alerts-test helm-check metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-breaking design-sync-check design-sync-check-test \
+.PHONY: alerts-test helm-check metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-check-test contract-breaking design-sync-check design-sync-check-test \
         build migrate test test-integration test-ci merge-coverage \
         cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
@@ -286,6 +286,8 @@ check:
 	$(MAKE) contract-breaking
 	@echo "==> design-sync-check-test"
 	$(MAKE) design-sync-check-test
+	@echo "==> contract-check-test"
+	$(MAKE) contract-check-test
 	@echo "==> test-ci (unit + integration, merged coverage gate)"
 	$(MAKE) cover-check
 	@echo "✓ all checks passed"
@@ -310,9 +312,13 @@ design-sync-check:
 design-sync-check-test:
 	@scripts/design-sync-check_test.sh
 
-## contract-check: Fail if a copied contract in api/contracts differs from its source (CONTRACT_SRC_DIR=<checkout> reads it locally)
+## contract-check: Fail if a copied contract in api/contracts differs from its source; the source ref is the same-named branch of the source repo if it exists, else main (CONTRACT_SRC_REF overrides, CONTRACT_SRC_DIR=<checkout> reads it locally)
 contract-check:
 	@scripts/contract-check.sh
+
+## contract-check-test: Test the contract-check script against throwaway repositories
+contract-check-test:
+	@scripts/contract-check_test.sh
 
 ## contract-breaking: Fail on a breaking change to api/internal-openapi.yaml or docs/swagger/openapi.yaml against CONTRACT_BASE_REF (default origin/main)
 contract-breaking:
