@@ -94,13 +94,13 @@ func TestAsyncAPIHandler_SpecEditedBetweenRequests_SecondPageReflectsTheEdit(t *
 	t.Chdir(dir)
 
 	c1, w1 := newTestContext()
-	AsyncAPIHandler(c1)
+	NewAsyncAPIHandler("")(c1)
 	require.Equal(t, http.StatusOK, w1.Code)
 	assert.Contains(t, w1.Body.String(), "<title>First Title — AsyncAPI</title>")
 
 	asyncInfraWriteSpec(t, dir, "asyncapi: 3.0.0\ninfo:\n  title: Second Title\n  version: 1.0.0\n")
 	c2, w2 := newTestContext()
-	AsyncAPIHandler(c2)
+	NewAsyncAPIHandler("")(c2)
 
 	require.Equal(t, http.StatusOK, w2.Code)
 	assert.Contains(t, w2.Body.String(), "<title>Second Title — AsyncAPI</title>")

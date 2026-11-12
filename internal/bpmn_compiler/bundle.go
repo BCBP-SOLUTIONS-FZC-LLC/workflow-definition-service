@@ -68,10 +68,12 @@ func bundleDefinitions(defs, modDefs *bpmncore.BPMNDefinitions, proc *bpmncore.B
 		e.ID = own(e.ID)
 		defs.Errors = append(defs.Errors, e)
 	}
-	renameRefs(proc.SendTasks, proc.ReceiveTasks, proc.BoundaryEvents, proc.SubProcesses, own)
+	renameRefs(proc.StartEvents, proc.EndEvents, proc.SendTasks, proc.ReceiveTasks, proc.BoundaryEvents, proc.SubProcesses, own)
 }
 
-func renameRefs(sends []bpmncore.BPMNSendTask, receives []bpmncore.BPMNReceiveTask, boundaries []bpmncore.BPMNBoundaryEvent, subs []bpmncore.BPMNSubProcess, own func(string) string) {
+func renameRefs(starts, ends []bpmncore.BPMNEvent, sends []bpmncore.BPMNSendTask, receives []bpmncore.BPMNReceiveTask, boundaries []bpmncore.BPMNBoundaryEvent, subs []bpmncore.BPMNSubProcess, own func(string) string) {
+	renameEventRefs(starts, own)
+	renameEventRefs(ends, own)
 	for i := range sends {
 		sends[i].MessageRef = own(sends[i].MessageRef)
 	}
@@ -87,7 +89,18 @@ func renameRefs(sends []bpmncore.BPMNSendTask, receives []bpmncore.BPMNReceiveTa
 		}
 	}
 	for i := range subs {
-		renameRefs(subs[i].SendTasks, subs[i].ReceiveTasks, subs[i].BoundaryEvents, subs[i].SubProcesses, own)
+		renameRefs(subs[i].StartEvents, subs[i].EndEvents, subs[i].SendTasks, subs[i].ReceiveTasks, subs[i].BoundaryEvents, subs[i].SubProcesses, own)
+	}
+}
+
+func renameEventRefs(events []bpmncore.BPMNEvent, own func(string) string) {
+	for i := range events {
+		if m := events[i].Message; m != nil {
+			m.MessageRef = own(m.MessageRef)
+		}
+		if e := events[i].Error; e != nil {
+			e.ErrorRef = own(e.ErrorRef)
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
@@ -37,6 +39,7 @@ const (
 	CodeActiveInstances      ErrCode = "ACTIVE_INSTANCES_EXIST"
 	CodeStructuralDiv        ErrCode = "STRUCTURAL_DIVERGENCE"
 	CodeModuleProcessID      ErrCode = "MODULE_PROCESS_ID_CONFLICT"
+	CodeModuleInUse          ErrCode = "MODULE_IN_USE"
 	CodePlanQuota            ErrCode = "PLAN_QUOTA_EXCEEDED"
 	CodeAssigneeIneligible   ErrCode = "ASSIGNEE_INELIGIBLE"
 	CodeUpstream             ErrCode = "UPSTREAM_UNAVAILABLE"
@@ -57,17 +60,28 @@ type invalidParam struct {
 	Code   ErrCode `json:"code,omitempty"`
 }
 
+type moduleUseParam struct {
+	WorkflowID    uuid.UUID            `json:"workflow_id"`
+	WorkflowKey   string               `json:"workflow_key"`
+	Status        domain.VersionStatus `json:"status"`
+	VersionNumber *int32               `json:"version_number,omitempty"`
+}
+
 type problemDetails struct {
-	Type                 string         `json:"type"`
-	Title                string         `json:"title"`
-	Status               int            `json:"status"`
-	Detail               string         `json:"detail"`
-	Instance             string         `json:"instance"`
-	Code                 ErrCode        `json:"code"`
-	TraceID              string         `json:"trace_id,omitempty"`
-	RequestID            string         `json:"request_id,omitempty"`
-	CurrentRecordVersion *int64         `json:"current_record_version,omitempty"`
-	InvalidParams        []invalidParam `json:"invalid_params,omitempty"`
+	Type                 string           `json:"type"`
+	Title                string           `json:"title"`
+	Status               int              `json:"status"`
+	Detail               string           `json:"detail"`
+	Instance             string           `json:"instance"`
+	Code                 ErrCode          `json:"code"`
+	TraceID              string           `json:"trace_id,omitempty"`
+	RequestID            string           `json:"request_id,omitempty"`
+	CurrentRecordVersion *int64           `json:"current_record_version,omitempty"`
+	InvalidParams        []invalidParam   `json:"invalid_params,omitempty"`
+	Uses                 []moduleUseParam `json:"uses,omitempty"`
+	PlanCode             string           `json:"plan_code,omitempty"`
+	Limit                *int64           `json:"limit,omitempty"`
+	CurrentCount         *int64           `json:"current_count,omitempty"`
 }
 
 const (
@@ -104,6 +118,7 @@ var codeTitles = map[ErrCode]string{
 	CodeActiveInstances:      "Active Instances Exist",
 	CodeStructuralDiv:        "Structural Divergence",
 	CodeModuleProcessID:      "Module Process Id Conflict",
+	CodeModuleInUse:          "Module In Use",
 	CodePlanQuota:            "Plan Quota Exceeded",
 	CodeAssigneeIneligible:   "Assignee Ineligible",
 	CodeUpstream:             "Upstream Service Unavailable",
@@ -123,36 +138,66 @@ func writeProblem(c *gin.Context, status int, code ErrCode, detail string, param
 }
 
 func writeProblemWithVersion(c *gin.Context, status int, code ErrCode, detail string, params []invalidParam, currentRecordVersion *int64) {
+	p := newProblem(c, status, code, detail, params)
+	p.CurrentRecordVersion = currentRecordVersion
+	writeProblemDocument(c, p)
+}
+
+func writeProblemWithUses(c *gin.Context, status int, code ErrCode, detail string, uses []domain.ModuleUse) {
+	p := newProblem(c, status, code, detail, nil)
+	p.Uses = make([]moduleUseParam, len(uses))
+	for i, u := range uses {
+		p.Uses[i] = moduleUseParam{WorkflowID: u.WorkflowID, WorkflowKey: u.WorkflowKey, Status: u.Status, VersionNumber: u.VersionNumber}
+	}
+	writeProblemDocument(c, p)
+}
+
+func writeProblemWithQuota(c *gin.Context, status int, code ErrCode, detail string, quota *domain.PlanQuotaError) {
+	p := newProblem(c, status, code, detail, nil)
+	p.PlanCode = quota.Plan
+	p.Limit = &quota.Limit
+	p.CurrentCount = &quota.Count
+	writeProblemDocument(c, p)
+}
+
+func writeProblemDocument(c *gin.Context, p problemDetails) {
+	c.Header("Content-Type", problemContentType)
+	c.JSON(p.Status, p)
+}
+
+func newProblem(c *gin.Context, status int, code ErrCode, detail string, params []invalidParam) problemDetails {
 	typeURI, ok := problemTypes[status]
 	if !ok {
 		typeURI = errBase + "internal-error"
 	}
-	c.Header("Content-Type", problemContentType)
-	c.JSON(status, problemDetails{
-		Type:                 typeURI,
-		Title:                codeTitles[code],
-		Status:               status,
-		Detail:               detail,
-		Instance:             c.Request.URL.Path,
-		Code:                 code,
-		TraceID:              c.Writer.Header().Get("X-Trace-ID"),
-		RequestID:            c.Writer.Header().Get("X-Request-ID"),
-		CurrentRecordVersion: currentRecordVersion,
-		InvalidParams:        params,
-	})
+	return problemDetails{
+		Type:          typeURI,
+		Title:         codeTitles[code],
+		Status:        status,
+		Detail:        detail,
+		Instance:      c.Request.URL.Path,
+		Code:          code,
+		TraceID:       c.Writer.Header().Get("X-Trace-ID"),
+		RequestID:     c.Writer.Header().Get("X-Request-ID"),
+		InvalidParams: params,
+	}
 }
 
 type lengthLimit struct {
-	field string
-	value string
-	max   int
+	field    string
+	value    string
+	max      int
+	notBlank bool
 }
 
 func rejectInvalidText(c *gin.Context, limits ...lengthLimit) bool {
 	var invalids []invalidParam
-	var tooLong, hasNul bool
+	var tooLong, hasNul, hasBlank bool
 	for _, l := range limits {
 		switch {
+		case l.notBlank && strings.TrimSpace(l.value) == "":
+			hasBlank = true
+			invalids = append(invalids, invalidParam{Name: l.field, Reason: "must not be blank"})
 		case strings.ContainsRune(l.value, 0):
 			hasNul = true
 			invalids = append(invalids, invalidParam{Name: l.field, Reason: "must not contain NUL characters"})
@@ -166,6 +211,10 @@ func rejectInvalidText(c *gin.Context, limits ...lengthLimit) bool {
 	}
 	detail := "request fields exceed maximum length"
 	switch {
+	case hasBlank && (hasNul || tooLong):
+		detail = "request fields are blank, exceed maximum length or contain NUL characters"
+	case hasBlank:
+		detail = "request fields must not be blank"
 	case hasNul && tooLong:
 		detail = "request fields exceed maximum length or contain NUL characters"
 	case hasNul:
@@ -212,7 +261,11 @@ func describeBindError(err error) (string, []invalidParam) {
 		}
 		return "request body has missing or invalid fields", params
 	case errors.As(err, &wrongType):
-		return "request body has a field of the wrong type", []invalidParam{{Name: wrongType.Field, Reason: "has the wrong type"}}
+		name := wrongType.Field
+		if name == "" {
+			name = "body"
+		}
+		return "request body has a field of the wrong type", []invalidParam{{Name: name, Reason: "has the wrong type"}}
 	case errors.As(err, &unknown):
 		params := make([]invalidParam, 0, len(unknown.names))
 		for _, name := range unknown.names {
@@ -255,12 +308,24 @@ func errResponse(c *gin.Context, log port.Logger, err error) {
 		writeProblemWithVersion(c, status, code, detail, params, &conflict.Current)
 		return
 	}
+	var inUse *domain.ModuleInUseError
+	if errors.As(err, &inUse) {
+		writeProblemWithUses(c, status, code, detail, inUse.Uses)
+		return
+	}
+	var quota *domain.PlanQuotaError
+	if errors.As(err, &quota) {
+		writeProblemWithQuota(c, status, code, detail, quota)
+		return
+	}
 	writeProblem(c, status, code, detail, params)
 }
 
 func mapErr(err error) (status int, code ErrCode, detail string, params []invalidParam) {
 	var valErr *domain.ValidationFailedError
 	switch {
+	case errors.Is(err, domain.ErrUpstreamUnavailable):
+		return http.StatusServiceUnavailable, CodeUpstream, "an upstream dependency is temporarily unavailable", nil
 	case errors.Is(err, domain.ErrNotFound), errors.Is(err, pgcommon.ErrNoRows):
 		return http.StatusNotFound, CodeNotFound, err.Error(), nil
 	case errors.Is(err, domain.ErrNoDraftExists):
@@ -290,12 +355,16 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 		return http.StatusConflict, CodeStructuralDiv, err.Error(), nil
 	case errors.Is(err, domain.ErrModuleProcessIDTaken), errors.Is(err, domain.ErrModuleProcessIDChanged):
 		return http.StatusConflict, CodeModuleProcessID, err.Error(), nil
+	case errors.Is(err, domain.ErrModuleInUse):
+		return http.StatusConflict, CodeModuleInUse,
+			"the module is used by published workflow versions or workflow drafts; remove those uses before archiving it", nil
 	case errors.Is(err, domain.ErrIdempotencyKeyReplay):
 		return http.StatusConflict, CodeIdempotencyReplay, err.Error(), nil
 	case errors.Is(err, domain.ErrIdempotencyInProgress):
 		return http.StatusConflict, CodeIdempotencyRunning, err.Error(), nil
 	case errors.Is(err, domain.ErrPlanQuotaExceeded):
-		return http.StatusForbidden, CodePlanQuota, err.Error(), nil
+		return http.StatusForbidden, CodePlanQuota,
+			"the workflow template limit of the plan has been reached; archive a workflow that is no longer used or move to a larger plan", nil
 	case errors.Is(err, domain.ErrAssigneeIneligible):
 		return http.StatusUnprocessableEntity, CodeAssigneeIneligible, err.Error(), nil
 	case errors.Is(err, domain.ErrInvalidConnectorCredentialInput):
@@ -309,10 +378,10 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 		}
 		return http.StatusUnprocessableEntity, CodeBPMNValidation,
 			"BPMN semantic or structural validation failed.", p
-	case errors.Is(err, domain.ErrUpstreamUnavailable):
-		return http.StatusServiceUnavailable, CodeUpstream, "an upstream dependency is temporarily unavailable", nil
 	case errors.Is(err, domain.ErrMalformedBPMN):
 		return http.StatusBadRequest, CodeInvalidBPMNXML, "the BPMN document could not be parsed", nil
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return http.StatusServiceUnavailable, CodeUpstream, "the request was cancelled or its deadline passed", nil
 	default:
 		return http.StatusInternalServerError, CodeInternal, "an unexpected error occurred", nil
 	}

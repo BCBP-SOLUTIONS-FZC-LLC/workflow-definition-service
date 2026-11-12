@@ -54,7 +54,7 @@ func TestSwaggerInitializerHandler(t *testing.T) {
 // 500 rather than panic.
 func TestAsyncAPIHandler_FileNotFound(t *testing.T) {
 	c, w := newTestContext()
-	AsyncAPIHandler(c)
+	NewAsyncAPIHandler("")(c)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 (spec file not present in test CWD)", w.Code)
 	}
@@ -66,7 +66,7 @@ func TestAsyncAPIHandler_FileNotFound(t *testing.T) {
 func TestAsyncAPIHandler_ListsEveryInboundMessageAndSchema(t *testing.T) {
 	t.Chdir("../../../..")
 	c, w := newTestContext()
-	AsyncAPIHandler(c)
+	NewAsyncAPIHandler("")(c)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}

@@ -30,6 +30,7 @@ func wireModuleService(tenantPool, systemPool *pgcommon.Pool) *service.ModuleSer
 		GlobalModules:    pgadapter.NewModuleRepo(systemPool),
 		Versions:         pgadapter.NewModuleVersionRepo(tenantPool),
 		GlobalVersions:   pgadapter.NewModuleVersionRepo(systemPool),
+		WorkflowVersions: pgadapter.NewWorkflowVersionRepo(tenantPool),
 		Compiler:         compiler,
 	})
 }

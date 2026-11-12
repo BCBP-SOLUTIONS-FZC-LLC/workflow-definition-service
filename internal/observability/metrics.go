@@ -112,7 +112,7 @@ func registerServiceMetrics() {
 }
 
 func AddRLSViolations(violationType string, n float64) {
-	if RLSViolationsTotal != nil {
+	if RLSViolationsTotal != nil && n >= 0 {
 		RLSViolationsTotal.WithLabelValues(violationType).Add(n)
 	}
 }
@@ -127,7 +127,7 @@ func InitTenantPurgeTables(tables []string) {
 }
 
 func AddTenantPurgeRows(table string, n int64) {
-	if TenantPurgeRowsDeletedTotal != nil {
+	if TenantPurgeRowsDeletedTotal != nil && n >= 0 {
 		TenantPurgeRowsDeletedTotal.WithLabelValues(table).Add(float64(n))
 	}
 }

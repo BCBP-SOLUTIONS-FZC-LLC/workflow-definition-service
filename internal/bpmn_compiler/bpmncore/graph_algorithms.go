@@ -1,5 +1,10 @@
 package bpmncore
 
+import (
+	"maps"
+	"slices"
+)
+
 func ClassifyBackEdges(g *Graph, roots ...string) map[[2]string]bool {
 	backEdges := make(map[[2]string]bool)
 	onStack := make(map[string]bool)
@@ -96,7 +101,7 @@ func (r *tarjanRunner) strongconnect(g *Graph, v string) {
 
 func TarjanSCC(g *Graph) [][]string {
 	r := &tarjanRunner{nodeStates: make(map[string]*sccState, len(g.NodeIDs))}
-	for id := range g.NodeIDs {
+	for _, id := range slices.Sorted(maps.Keys(g.NodeIDs)) {
 		if _, seen := r.nodeStates[id]; !seen {
 			r.strongconnect(g, id)
 		}

@@ -509,8 +509,10 @@ func TestValidateBoundaryEvents_NoDefinition_SkipsHostPerKindAndTargetChecks(t *
 	if len(errs) != 1 || errs[0].NodeID != "BE" {
 		t.Fatalf("got %v, want exactly one error on BE", errs)
 	}
+	if errs[0].Code != domain.BPMNErrInvalidBoundaryAttachment {
+		t.Errorf("a definition-less boundary reported %s, want INVALID_BOUNDARY_ATTACHMENT", errs[0].Code)
+	}
 	for _, skipped := range []domain.BPMNErrorCode{
-		domain.BPMNErrInvalidBoundaryAttachment,
 		domain.BPMNErrSplitWithoutGateway,
 		domain.BPMNErrUnsupportedBoundaryTarget,
 	} {

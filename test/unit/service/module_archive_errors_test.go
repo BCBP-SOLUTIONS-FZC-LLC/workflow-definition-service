@@ -37,6 +37,7 @@ func TestModuleService_Archive_FailurePropagatesSentinel(t *testing.T) {
 			setup: func(m moduleMocks, tenantID, moduleID, activeID uuid.UUID) {
 				m.modules.EXPECT().GetByID(gomock.Any(), tenantID, moduleID).
 					Return(&domain.Module{ID: moduleID, Scope: domain.ScopeTenant, ActiveVersionID: &activeID}, nil).Times(2)
+				expectNotInUse(m, tenantID, moduleID)
 				m.versions.EXPECT().Archive(gomock.Any(), tenantID, activeID).Return(domain.ErrNotFound)
 			},
 			wantErr: domain.ErrNotFound,
@@ -53,6 +54,7 @@ func TestModuleService_Archive_FailurePropagatesSentinel(t *testing.T) {
 			setup: func(m moduleMocks, tenantID, moduleID, activeID uuid.UUID) {
 				m.modules.EXPECT().GetByID(gomock.Any(), tenantID, moduleID).
 					Return(&domain.Module{ID: moduleID, Scope: domain.ScopeTenant, ActiveVersionID: &activeID}, nil).Times(2)
+				expectNotInUse(m, tenantID, moduleID)
 				m.versions.EXPECT().Archive(gomock.Any(), tenantID, activeID).Return(outage)
 			},
 			wantErr: domain.ErrUpstreamUnavailable,
@@ -120,28 +122,3 @@ func TestModuleService_Get_FailurePropagatesSentinel(t *testing.T) {
 }
 
 var errArchiveScanFailed = errors.New("scan failed")
-
-func TestModuleService_Archive_ModuleStillUsedByWorkflows_Archives(t *testing.T) {
-	cases := []struct {
-		name string
-	}{
-		{name: "no usage lookup stands in the way"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			ctrl := gomock.NewController(t)
-			svc, m := newLibraryModuleService(ctrl)
-			passthrough(m.tx)
-			tenantID, moduleID, activeID := uuid.New(), uuid.New(), uuid.New()
-			m.modules.EXPECT().GetByID(gomock.Any(), tenantID, moduleID).
-				Return(&domain.Module{ID: moduleID, Scope: domain.ScopeTenant, ActiveVersionID: &activeID}, nil).Times(2)
-			m.versions.EXPECT().Archive(gomock.Any(), tenantID, activeID).Return(nil)
-			m.modules.EXPECT().UpdateActiveVersion(gomock.Any(), moduleID, (*uuid.UUID)(nil)).Return(nil)
-
-			if err := svc.Archive(context.Background(), tenantID, uuid.New(), moduleID); err != nil {
-				t.Fatalf("Archive() = %v, want nil: a module in use by workflows may still be archived", err)
-			}
-		})
-	}
-}

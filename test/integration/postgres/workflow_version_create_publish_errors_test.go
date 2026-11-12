@@ -80,54 +80,6 @@ func TestWorkflowVersionRepo_Create_SecondPublishedVersionWithTheSameNumber_Retu
 	}
 }
 
-func TestWorkflowVersionRepo_Create_WorkflowMissingOrOfAnotherTenant_ReturnsTheForeignKeyViolation(t *testing.T) {
-	const foreignKeyViolation = "23503"
-	cases := []struct {
-		name       string
-		workflowOf func(t *testing.T, pool *postgres.WorkflowRepo, caller uuid.UUID) uuid.UUID
-	}{
-		{
-			name: "workflow does not exist",
-			workflowOf: func(*testing.T, *postgres.WorkflowRepo, uuid.UUID) uuid.UUID {
-				return uuid.New()
-			},
-		},
-		{
-			name: "workflow belongs to another tenant",
-			workflowOf: func(t *testing.T, repo *postgres.WorkflowRepo, _ uuid.UUID) uuid.UUID {
-				return versionWriteErrorsWorkflow(t, repo, uuid.New()).ID
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			pool := newTestPool(t)
-			ctx := context.Background()
-			repo := postgres.NewWorkflowVersionRepo(pool)
-			caller := uuid.New()
-			workflowID := tc.workflowOf(t, postgres.NewWorkflowRepo(pool), caller)
-			v := newDraftVersion(workflowID, caller)
-
-			err := repo.Create(ctx, v)
-
-			var pgErr *pgconn.PgError
-			if !errors.As(err, &pgErr) || pgErr.Code != foreignKeyViolation {
-				t.Fatalf("Create = %v, want the raw foreign-key violation %s", err, foreignKeyViolation)
-			}
-			for _, notWanted := range []error{
-				domain.ErrNotFound, domain.ErrDraftAlreadyExists, domain.ErrDraftConcurrency, domain.ErrUpstreamUnavailable,
-			} {
-				if errors.Is(err, notWanted) {
-					t.Errorf("err = %v, must not be classified as %v", err, notWanted)
-				}
-			}
-			if _, getErr := repo.GetByID(ctx, caller, v.ID); !errors.Is(getErr, domain.ErrNotFound) {
-				t.Errorf("GetByID after the refused create = %v, want ErrNotFound", getErr)
-			}
-		})
-	}
-}
-
 func TestWorkflowVersionRepo_Publish_EmptyCompiledPlan_IsRefusedAndTheDraftStaysADraft(t *testing.T) {
 	cases := []struct {
 		name string

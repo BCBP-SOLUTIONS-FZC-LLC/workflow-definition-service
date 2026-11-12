@@ -10,7 +10,7 @@ import (
 )
 
 func ValidateCallGraph(defs *bpmncore.BPMNDefinitions) []domain.BPMNValidationError {
-	errs := validateUniqueProcessIDs(defs)
+	errs := slices.Concat(validateUniqueProcessIDs(defs), validateRepeatedProperties(defs))
 
 	const (
 		unvisited = iota

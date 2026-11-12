@@ -76,6 +76,19 @@ type ModuleUsage struct {
 	Behind              bool
 }
 
+type ModuleUse struct {
+	WorkflowID    uuid.UUID
+	WorkflowKey   string
+	Status        VersionStatus
+	VersionNumber *int32
+}
+
+type DraftSource struct {
+	WorkflowID  uuid.UUID
+	WorkflowKey string
+	BPMNXML     string
+}
+
 type ModuleDeclarations struct {
 	Messages   []string
 	ErrorCodes []string

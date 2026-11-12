@@ -83,7 +83,7 @@ func boundaryPaths(nodeID string, cs *bpmncore.CompileState) ([]dsl.ErrorPath, [
 			timerPaths = append(timerPaths, dsl.TimerPath{
 				BoundaryID:   be.ID,
 				Duration:     be.Timer.Duration,
-				Interrupting: be.CancelActivity != "false",
+				Interrupting: bpmncore.IsInterrupting(be.CancelActivity),
 				TargetDept:   targetDept,
 				Terminates:   terminates,
 			})
@@ -96,7 +96,7 @@ func boundaryPaths(nodeID string, cs *bpmncore.CompileState) ([]dsl.ErrorPath, [
 			messagePaths = append(messagePaths, dsl.MessagePath{
 				MessageName:  msgName,
 				BoundaryID:   be.ID,
-				Interrupting: be.CancelActivity != "false",
+				Interrupting: bpmncore.IsInterrupting(be.CancelActivity),
 				TargetDept:   targetDept,
 				Terminates:   terminates,
 			})

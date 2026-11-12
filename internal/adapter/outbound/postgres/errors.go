@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -15,6 +16,7 @@ import (
 const (
 	constraintWorkflowTemplateKey      = "workflow_tenant_id_template_key_key"
 	constraintWorkflowVersionDraft     = "idx_wv_single_draft"
+	constraintWorkflowVersionWorkflow  = "workflow_version_workflow_id_tenant_id_fkey"
 	constraintWorkflowVersionPublished = "uq_workflow_version_published"
 	constraintModuleVersionDraft       = "idx_mv_single_draft"
 	constraintModuleVersionPublished   = "uq_module_version_published"
@@ -48,8 +50,25 @@ func mapErr(err error) error {
 	return asUnavailable(err)
 }
 
+func mapMissingParent(err error, constraint string) error {
+	if pgcommon.IsForeignKeyViolation(err) && pgcommon.ConstraintName(err) == constraint {
+		return domain.ErrNotFound
+	}
+	return mapErr(err)
+}
+
 func asUnavailable(err error) error {
 	if err == nil || errors.Is(err, domain.ErrUpstreamUnavailable) || !isUnavailable(err) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", domain.ErrUpstreamUnavailable, err)
+}
+
+func asRetryExhausted(err error) error {
+	if err == nil || errors.Is(err, domain.ErrUpstreamUnavailable) {
+		return err
+	}
+	if !pgcommon.IsSerializationFailure(err) && !pgcommon.IsDeadlock(err) {
 		return err
 	}
 	return fmt.Errorf("%w: %w", domain.ErrUpstreamUnavailable, err)
@@ -63,6 +82,7 @@ func isUnavailable(err error) bool {
 		pgcommon.IsOperatorIntervention(err) ||
 		pgcommon.IsQueryCanceled(err) ||
 		pgcommon.IsPoolClosed(err) ||
+		errors.Is(err, context.Canceled) ||
 		errors.As(err, &dialErr) ||
 		errors.As(err, &netErr)
 }

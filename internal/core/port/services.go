@@ -33,6 +33,7 @@ type PlanCompiler interface {
 	Compile(ctx context.Context, bpmnXML string) (*dsl.CompiledPlan, error)
 	CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error)
 	CompileDraft(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error)
+	CheckWellFormed(ctx context.Context, bpmnXML string) error
 	Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error)
 	ValidateForPublish(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error)
 	ValidateModule(ctx context.Context, bpmnXML, moduleProcessID string, global bool) ([]domain.BPMNValidationError, error)

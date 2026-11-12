@@ -246,6 +246,8 @@ func TestRevertBranches_MultipleBackEdges(t *testing.T) {
 	}
 	state := bpmncore.NewCompileState(proc, g, nil, condExprs, map[[2]string]bool{}, defaultStageTypes(), element.DefaultElementHandlers(), nil)
 
+	state.MarkNodeSegment("TaskRev1", "design")
+	state.MarkNodeSegment("TaskRev2", "contracts")
 	state.AppendStep(dsl.ExecutionStep{Exclusive: state.RevertBranches("GW", []string{"TaskRev1", "TaskRev2"})})
 	state.ResolveTargets()
 	branches := state.CollectedSteps()[0].Exclusive

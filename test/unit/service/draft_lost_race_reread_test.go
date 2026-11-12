@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	bpmncompiler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port/mocks"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
@@ -59,7 +60,7 @@ func TestDraftService_Update_LostSaveRace_RereadOutcomeDecidesTheAnswer(t *testi
 			vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
 			log := &draftRaceLog{}
 			svc := service.NewDraftService(service.DraftDeps{
-				Cache: cache, Workflows: wfRepo, Versions: vRepo, Log: log,
+				Cache: cache, Workflows: wfRepo, Versions: vRepo, Log: log, Compiler: bpmncompiler.New(),
 			})
 			cache.EXPECT().SetNX(gomock.Any(), gomock.Any(), gomock.Any(), 30*time.Second).Return(true, nil)
 			cache.EXPECT().DelIfEqual(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()

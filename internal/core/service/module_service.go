@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -401,6 +402,66 @@ func (s *ModuleService) Publish(
 	return draft, nil
 }
 
+func (s *ModuleService) requireUnused(ctx context.Context, callerTenantID, moduleID uuid.UUID, processID string) error {
+	published, err := s.publishedUses(ctx, callerTenantID, moduleID)
+	if err != nil {
+		return err
+	}
+	drafts, err := s.draftUses(ctx, callerTenantID, processID)
+	if err != nil {
+		return err
+	}
+	uses := slices.Concat(published, drafts)
+	if len(uses) > 0 {
+		return &domain.ModuleInUseError{Uses: uses}
+	}
+	return nil
+}
+
+func (s *ModuleService) publishedUses(ctx context.Context, callerTenantID, moduleID uuid.UUID) ([]domain.ModuleUse, error) {
+	usages, err := s.workflowVersions.ListModuleUsages(ctx, callerTenantID, moduleID)
+	if err != nil {
+		return nil, fmt.Errorf("list module usages: %w", err)
+	}
+	var uses []domain.ModuleUse
+	seen := make(map[uuid.UUID]bool, len(usages))
+	for _, u := range usages {
+		if u.Status != domain.VersionStatusPublished || seen[u.VersionID] {
+			continue
+		}
+		seen[u.VersionID] = true
+		uses = append(uses, domain.ModuleUse{
+			WorkflowID:    u.WorkflowID,
+			WorkflowKey:   u.WorkflowKey,
+			Status:        u.Status,
+			VersionNumber: u.VersionNumber,
+		})
+	}
+	return uses, nil
+}
+
+func (s *ModuleService) draftUses(ctx context.Context, callerTenantID uuid.UUID, processID string) ([]domain.ModuleUse, error) {
+	drafts, err := s.workflowVersions.ListDraftSources(ctx, callerTenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list workflow drafts: %w", err)
+	}
+	var uses []domain.ModuleUse
+	for _, d := range drafts {
+		calls, _, err := s.compiler.ModuleCalls(ctx, d.BPMNXML)
+		if err != nil {
+			return nil, fmt.Errorf("read module calls of draft %s: %w", d.WorkflowID, err)
+		}
+		if slices.ContainsFunc(calls, func(c domain.ModuleCall) bool { return c.ProcessID == processID }) {
+			uses = append(uses, domain.ModuleUse{
+				WorkflowID:  d.WorkflowID,
+				WorkflowKey: d.WorkflowKey,
+				Status:      domain.VersionStatusDraft,
+			})
+		}
+	}
+	return uses, nil
+}
+
 func (s *ModuleService) Archive(ctx context.Context, callerTenantID, userID, moduleID uuid.UUID) error {
 	m, err := s.modules.GetByID(ctx, callerTenantID, moduleID)
 	if err != nil {
@@ -422,6 +483,9 @@ func (s *ModuleService) Archive(ctx context.Context, callerTenantID, userID, mod
 			return domain.ErrNoActiveVersion
 		}
 		activeVersionID = *current.ActiveVersionID
+		if err := s.requireUnused(ctx, callerTenantID, moduleID, current.ProcessID); err != nil {
+			return err
+		}
 		if err := versions.Archive(ctx, callerTenantID, activeVersionID); err != nil {
 			return err
 		}

@@ -38,5 +38,8 @@ func runInnerState(inner *bpmncore.BPMNProcess, state *bpmncore.CompileState) er
 			}
 		}
 	}
-	return state.CompileBoundaryPaths()
+	if err := state.CompileBoundaryPaths(); err != nil {
+		return err
+	}
+	return state.CheckStageBudget()
 }

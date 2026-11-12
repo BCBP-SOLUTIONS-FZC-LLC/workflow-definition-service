@@ -15,14 +15,13 @@ import (
 )
 
 type moduleMocks struct {
-	tx             *mocks.MockTransactor
-	globalTx       *mocks.MockTransactor
-	modules        *mocks.MockModuleRepository
-	globalModules  *mocks.MockModuleRepository
-	versions       *mocks.MockModuleVersionRepository
-	globalVersions *mocks.MockModuleVersionRepository
-	compiler       *mocks.MockPlanCompiler
-	// workflowVersions is set only by newLibraryModuleService.
+	tx               *mocks.MockTransactor
+	globalTx         *mocks.MockTransactor
+	modules          *mocks.MockModuleRepository
+	globalModules    *mocks.MockModuleRepository
+	versions         *mocks.MockModuleVersionRepository
+	globalVersions   *mocks.MockModuleVersionRepository
+	compiler         *mocks.MockPlanCompiler
 	workflowVersions *mocks.MockWorkflowVersionRepository
 }
 
@@ -35,6 +34,8 @@ func newModuleService(ctrl *gomock.Controller) (*service.ModuleService, moduleMo
 		versions:       mocks.NewMockModuleVersionRepository(ctrl),
 		globalVersions: mocks.NewMockModuleVersionRepository(ctrl),
 		compiler:       mocks.NewMockPlanCompiler(ctrl),
+
+		workflowVersions: mocks.NewMockWorkflowVersionRepository(ctrl),
 	}
 	svc := service.NewModuleService(service.ModuleDeps{
 		Transactor:       m.tx,
@@ -43,6 +44,7 @@ func newModuleService(ctrl *gomock.Controller) (*service.ModuleService, moduleMo
 		GlobalModules:    m.globalModules,
 		Versions:         m.versions,
 		GlobalVersions:   m.globalVersions,
+		WorkflowVersions: m.workflowVersions,
 		Compiler:         m.compiler,
 	})
 	return svc, m
@@ -616,6 +618,11 @@ func TestModuleService_Publish_UpdateActiveVersionError(t *testing.T) {
 	}
 }
 
+func expectNotInUse(m moduleMocks, tenantID, moduleID uuid.UUID) {
+	m.workflowVersions.EXPECT().ListModuleUsages(gomock.Any(), tenantID, moduleID).Return(nil, nil)
+	m.workflowVersions.EXPECT().ListDraftSources(gomock.Any(), tenantID).Return(nil, nil)
+}
+
 func TestModuleService_Archive_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, m := newModuleService(ctrl)
@@ -624,6 +631,7 @@ func TestModuleService_Archive_OK(t *testing.T) {
 	tenantID, userID, moduleID, activeID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	m.modules.EXPECT().GetByID(gomock.Any(), tenantID, moduleID).
 		Return(&domain.Module{ID: moduleID, Scope: domain.ScopeTenant, ActiveVersionID: &activeID}, nil).Times(2)
+	expectNotInUse(m, tenantID, moduleID)
 	m.versions.EXPECT().Archive(gomock.Any(), gomock.Any(), activeID).Return(nil)
 	m.modules.EXPECT().UpdateActiveVersion(gomock.Any(), moduleID, (*uuid.UUID)(nil)).Return(nil)
 
@@ -645,6 +653,7 @@ func TestModuleService_Archive_ArchivesTheVersionActiveInsideTheTransaction(t *t
 		m.modules.EXPECT().GetByID(gomock.Any(), tenantID, moduleID).
 			Return(&domain.Module{ID: moduleID, Scope: domain.ScopeTenant, ActiveVersionID: &publishedMeanwhile}, nil),
 	)
+	expectNotInUse(m, tenantID, moduleID)
 	m.versions.EXPECT().Archive(gomock.Any(), gomock.Any(), publishedMeanwhile).Return(nil)
 	m.modules.EXPECT().UpdateActiveVersion(gomock.Any(), moduleID, (*uuid.UUID)(nil)).Return(nil)
 
@@ -658,15 +667,16 @@ func TestModuleService_Archive_GlobalScope_UsesSystemPool(t *testing.T) {
 	svc, m := newModuleService(ctrl)
 	passthrough(m.globalTx)
 
-	moduleID, activeID := uuid.New(), uuid.New()
+	tenantID, moduleID, activeID := uuid.New(), uuid.New(), uuid.New()
 	m.modules.EXPECT().GetByID(gomock.Any(), gomock.Any(), moduleID).
 		Return(&domain.Module{ID: moduleID, Scope: domain.ScopeGlobal, ActiveVersionID: &activeID}, nil)
 	m.globalModules.EXPECT().GetByID(gomock.Any(), gomock.Any(), moduleID).
 		Return(&domain.Module{ID: moduleID, Scope: domain.ScopeGlobal, ActiveVersionID: &activeID}, nil)
+	expectNotInUse(m, tenantID, moduleID)
 	m.globalVersions.EXPECT().Archive(gomock.Any(), gomock.Any(), activeID).Return(nil)
 	m.globalModules.EXPECT().UpdateActiveVersion(gomock.Any(), moduleID, (*uuid.UUID)(nil)).Return(nil)
 
-	if err := svc.Archive(context.Background(), uuid.New(), uuid.New(), moduleID); err != nil {
+	if err := svc.Archive(context.Background(), tenantID, uuid.New(), moduleID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -700,12 +710,13 @@ func TestModuleService_Archive_ArchiveError(t *testing.T) {
 	svc, m := newModuleService(ctrl)
 	passthrough(m.tx)
 
-	activeID := uuid.New()
-	m.modules.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).
+	tenantID, moduleID, activeID := uuid.New(), uuid.New(), uuid.New()
+	m.modules.EXPECT().GetByID(gomock.Any(), tenantID, moduleID).
 		Return(&domain.Module{ActiveVersionID: &activeID}, nil).Times(2)
+	expectNotInUse(m, tenantID, moduleID)
 	m.versions.EXPECT().Archive(gomock.Any(), gomock.Any(), activeID).Return(errors.New("db error"))
 
-	if err := svc.Archive(context.Background(), uuid.New(), uuid.New(), uuid.New()); err == nil {
+	if err := svc.Archive(context.Background(), tenantID, uuid.New(), moduleID); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -715,13 +726,14 @@ func TestModuleService_Archive_UpdateActiveVersionError(t *testing.T) {
 	svc, m := newModuleService(ctrl)
 	passthrough(m.tx)
 
-	activeID := uuid.New()
-	m.modules.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).
+	tenantID, moduleID, activeID := uuid.New(), uuid.New(), uuid.New()
+	m.modules.EXPECT().GetByID(gomock.Any(), tenantID, moduleID).
 		Return(&domain.Module{ActiveVersionID: &activeID}, nil).Times(2)
+	expectNotInUse(m, tenantID, moduleID)
 	m.versions.EXPECT().Archive(gomock.Any(), gomock.Any(), activeID).Return(nil)
 	m.modules.EXPECT().UpdateActiveVersion(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("db error"))
 
-	if err := svc.Archive(context.Background(), uuid.New(), uuid.New(), uuid.New()); err == nil {
+	if err := svc.Archive(context.Background(), tenantID, uuid.New(), moduleID); err == nil {
 		t.Fatal("expected error")
 	}
 }

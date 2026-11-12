@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -56,6 +57,11 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 		return
 	}
 
+	if !slices.Contains(HandledEventTypes(), env.Type) {
+		h.acknowledgeUnknownEventType(c, env.Type)
+		return
+	}
+
 	if env.SchemaID != "" {
 		decoded, ok := h.decodeSchemaRegistryPayload(c, env)
 		if !ok {
@@ -73,8 +79,6 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 		h.handleTenantOffboarding(c, env, eventTenantMembershipsPurged, true)
 	case eventTenantStateChanged:
 		h.handleTenantOffboarding(c, env, eventTenantStateChanged, false)
-	default:
-		h.acknowledgeUnknownEventType(c, env.Type)
 	}
 }
 

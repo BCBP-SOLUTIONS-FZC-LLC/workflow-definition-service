@@ -172,8 +172,8 @@ func (h *Handler) CreateModule(c *gin.Context) {
 		return
 	}
 	if rejectInvalidText(c,
-		lengthLimit{"name", req.Name, 255},
-		lengthLimit{"description", req.Description, 2000},
+		lengthLimit{"name", req.Name, 255, true},
+		lengthLimit{"description", req.Description, 2000, false},
 	) {
 		return
 	}

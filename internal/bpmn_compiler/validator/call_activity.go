@@ -32,7 +32,8 @@ func ValidateCallActivity(ca bpmncore.BPMNCallActivity, caller *bpmncore.BPMNPro
 			fmt.Sprintf("callActivity references processId %q which has no start event", ext.ProcessID))
 	}
 	c := callSite{ca: ca, caller: caller, called: calledProc, defs: defs, inputs: bpmncore.ParseCallInputs(ca)}
-	errs := c.retiredInputs()
+	errs := c.repeatedInputs()
+	errs = append(errs, c.retiredInputs()...)
 	errs = append(errs, c.departments()...)
 	if !defs.ModuleProcesses[caller.ID] {
 		errs = append(errs, c.boundLanesHaveDepartments()...)
@@ -60,6 +61,15 @@ func displayName(name, id string) string {
 
 func (c callSite) err(code domain.BPMNErrorCode, format string, args ...any) domain.BPMNValidationError {
 	return domain.BPMNValidationError{Code: code, NodeID: c.ca.ID, Message: fmt.Sprintf(format, args...), Severity: domain.SeverityError}
+}
+
+func (c callSite) repeatedInputs() []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	for _, name := range slices.Sorted(slices.Values(c.inputs.Repeated)) {
+		errs = append(errs, c.err(domain.BPMNErrInvalidZeebeProperty,
+			"call %q gives the %s input more than once; give each input once, because only one value can be used", c.name(), name))
+	}
+	return errs
 }
 
 func (c callSite) retiredInputs() []domain.BPMNValidationError {

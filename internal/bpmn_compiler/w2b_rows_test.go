@@ -36,16 +36,16 @@ func w2bTaskIDs(tasks []bpmncore.BPMNUserTask) []string {
 	return ids
 }
 
-func TestParse_SequenceFlowWithoutBothRefs_IsDroppedAtEveryLevel(t *testing.T) {
-	dropped := []struct {
+func TestParse_SequenceFlowWithoutBothRefs_IsKeptAtEveryLevel(t *testing.T) {
+	halfDrawn := []struct {
 		name string
 		flow string
 	}{
-		{"sourceRef attribute missing", `<bpmn:sequenceFlow id="Dropped" targetRef="E"/>`},
-		{"targetRef attribute missing", `<bpmn:sequenceFlow id="Dropped" sourceRef="S"/>`},
-		{"sourceRef empty", `<bpmn:sequenceFlow id="Dropped" sourceRef="" targetRef="E"/>`},
-		{"targetRef empty", `<bpmn:sequenceFlow id="Dropped" sourceRef="S" targetRef=""/>`},
-		{"both refs missing", `<bpmn:sequenceFlow id="Dropped"/>`},
+		{"sourceRef attribute missing", `<bpmn:sequenceFlow id="HalfDrawn" targetRef="E"/>`},
+		{"targetRef attribute missing", `<bpmn:sequenceFlow id="HalfDrawn" sourceRef="S"/>`},
+		{"sourceRef empty", `<bpmn:sequenceFlow id="HalfDrawn" sourceRef="" targetRef="E"/>`},
+		{"targetRef empty", `<bpmn:sequenceFlow id="HalfDrawn" sourceRef="S" targetRef=""/>`},
+		{"both refs missing", `<bpmn:sequenceFlow id="HalfDrawn"/>`},
 	}
 	const keptFirst = `<bpmn:sequenceFlow id="KeptFirst" sourceRef="S" targetRef="E"/>`
 	const keptLast = `<bpmn:sequenceFlow id="KeptLast" sourceRef="E" targetRef="S"/>`
@@ -70,15 +70,15 @@ func TestParse_SequenceFlowWithoutBothRefs_IsDroppedAtEveryLevel(t *testing.T) {
 		},
 	}
 	for _, level := range levels {
-		for _, tc := range dropped {
+		for _, tc := range halfDrawn {
 			t.Run(level.name+"/"+tc.name, func(t *testing.T) {
 				t.Parallel()
 				defs, err := parse(context.Background(), w2bDefinitions(level.wrap(keptFirst+tc.flow+keptLast)))
 				if err != nil {
-					t.Fatalf("parse returned an error, want the flow dropped silently: %v", err)
+					t.Fatalf("parse returned an error, want the half-drawn flow kept for the validator to refuse: %v", err)
 				}
 				got := w2bFlowIDs(level.got(defs.Processes[0]))
-				if want := []string{"KeptFirst", "KeptLast"}; !slices.Equal(got, want) {
+				if want := []string{"KeptFirst", "HalfDrawn", "KeptLast"}; !slices.Equal(got, want) {
 					t.Errorf("sequence flows after parse = %v, want %v", got, want)
 				}
 			})

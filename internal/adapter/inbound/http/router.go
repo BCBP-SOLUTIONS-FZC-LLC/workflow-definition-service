@@ -90,7 +90,7 @@ func NewRouter(cfg RouterConfig) *Router {
 				stdSwagger(c)
 			}
 		})
-		r.GET("/asyncapi", AsyncAPIHandler)
+		r.GET("/asyncapi", NewAsyncAPIHandler(cfg.AppEnv))
 	}
 
 	internal := r.Group("/api/v1/internal")

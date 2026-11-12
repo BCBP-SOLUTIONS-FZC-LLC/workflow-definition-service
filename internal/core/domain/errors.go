@@ -29,6 +29,7 @@ var (
 	ErrInvalidConnectorAliasInput      = errors.New("invalid connector alias input")
 	ErrModuleProcessIDTaken            = errors.New("module process id is already in use")
 	ErrModuleProcessIDChanged          = errors.New("module version must keep its module's process id")
+	ErrModuleInUse                     = errors.New("module is in use")
 	ErrTenantRetentionChanged          = errors.New("tenant retention record changed since it was read")
 )
 
@@ -124,3 +125,21 @@ type DraftConcurrencyError struct {
 func (e *DraftConcurrencyError) Error() string { return ErrDraftConcurrency.Error() }
 
 func (e *DraftConcurrencyError) Unwrap() error { return ErrDraftConcurrency }
+
+type ModuleInUseError struct {
+	Uses []ModuleUse
+}
+
+func (e *ModuleInUseError) Error() string { return ErrModuleInUse.Error() }
+
+func (e *ModuleInUseError) Unwrap() error { return ErrModuleInUse }
+
+type PlanQuotaError struct {
+	Plan  string
+	Limit int64
+	Count int64
+}
+
+func (e *PlanQuotaError) Error() string { return ErrPlanQuotaExceeded.Error() }
+
+func (e *PlanQuotaError) Unwrap() error { return ErrPlanQuotaExceeded }

@@ -213,8 +213,8 @@ func TestParse_SubProcessGenericTaskPromotion(t *testing.T) {
 	if !found {
 		t.Errorf("expected generic task GT1 promoted into subProcess.UserTasks; got %+v", sp.UserTasks)
 	}
-	if len(sp.SequenceFlows) != 0 {
-		t.Errorf("empty-ref sequence flow should be stripped from subProcess; got %+v", sp.SequenceFlows)
+	if len(sp.SequenceFlows) != 1 || sp.SequenceFlows[0].ID != "F1" {
+		t.Errorf("empty-ref sequence flow should be kept in subProcess for the validator to refuse; got %+v", sp.SequenceFlows)
 	}
 }
 

@@ -107,7 +107,7 @@ func (s *WorkflowService) Create(
 		return nil, nil, err
 	}
 	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
-		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, limit); err != nil {
+		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, planCode, limit); err != nil {
 			return err
 		}
 		if err := s.workflows.Create(ctx, wf); err != nil {

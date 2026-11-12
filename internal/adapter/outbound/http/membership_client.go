@@ -100,7 +100,7 @@ func (c *MembershipClient) tryCheckEligibility(
 		Reason   string `json:"reason"`
 	}
 	if err := json.NewDecoder(limitedBody(resp.Body)).Decode(&body); err != nil {
-		return domain.Eligibility{}, false, fmt.Errorf("decode eligibility response: %w", err)
+		return domain.Eligibility{}, false, fmt.Errorf("%w: decode eligibility response: %w", domain.ErrUpstreamUnavailable, err)
 	}
 	if body.Eligible == nil {
 		return domain.Eligibility{}, false, fmt.Errorf("%w: membership eligibility response has no eligible flag", domain.ErrUpstreamUnavailable)

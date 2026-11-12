@@ -53,9 +53,10 @@ func TestProcessID_ZeroOrSeveralProcesses_AreRefusedWithTheCount(t *testing.T) {
 		name      string
 		bpmnXML   string
 		wantCount string
+		wantCode  domain.BPMNErrorCode
 	}{
-		{"no process", sgADefinitionsOpen + "\n</bpmn:definitions>", "got 0"},
-		{"two processes", sgADefinitionsOpen + "\n" + sgAPool("P1", "X") + sgAPool("P2", "X") + "</bpmn:definitions>", "got 2"},
+		{"no process", sgADefinitionsOpen + "\n</bpmn:definitions>", "got 0", domain.BPMNErrNoRunnableProcess},
+		{"two processes", sgADefinitionsOpen + "\n" + sgAPool("P1", "X") + sgAPool("P2", "X") + "</bpmn:definitions>", "got 2", domain.BPMNErrMultipleProcesses},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,7 +68,7 @@ func TestProcessID_ZeroOrSeveralProcesses_AreRefusedWithTheCount(t *testing.T) {
 			require.True(t, errors.As(err, &failed), "err = %v", err)
 			assert.Empty(t, id)
 			require.Len(t, failed.Errors, 1)
-			assert.Equal(t, domain.BPMNErrMultipleProcesses, failed.Errors[0].Code)
+			assert.Equal(t, tc.wantCode, failed.Errors[0].Code)
 			assert.Equal(t, domain.SeverityError, failed.Errors[0].Severity)
 			assert.Contains(t, failed.Errors[0].Message, tc.wantCount)
 		})

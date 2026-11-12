@@ -10,6 +10,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
 const compCoreIAMDept = "018e1f2a-0000-7000-8000-000000000099"
@@ -194,7 +195,7 @@ func TestCallActivityHandler_Compile_CalledProcessFails_WrapsTheInnerError(t *te
 	}
 }
 
-func TestCompile_ProcessThatCallsItself_Terminates(t *testing.T) {
+func TestCompile_ProcessThatCallsItself_IsRefusedAsACallCycle(t *testing.T) {
 	root := &bpmncore.BPMNProcess{
 		ID:             "P",
 		Name:           "P",
@@ -205,16 +206,17 @@ func TestCompile_ProcessThatCallsItself_Terminates(t *testing.T) {
 	}
 	defs := &bpmncore.BPMNDefinitions{Processes: []bpmncore.BPMNProcess{*root}}
 
-	plan, called := compCoreCompile(t, root, defs)
+	_, called, err := bpmncore.Compile(root, bpmncore.BuildGraph(root), map[string]bpmncore.StageTypeHandler{}, DefaultElementHandlers(), defs)
 
-	if len(plan.Execution.Steps) != 1 || plan.Execution.Steps[0].CallPlan == nil {
-		t.Fatalf("root steps = %+v, want one call step", plan.Execution.Steps)
+	var refused *domain.ValidationFailedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("Compile() error = %v, want a ValidationFailedError", err)
 	}
-	if got := plan.Execution.Steps[0].CallPlan; got.NodeID != "CA" || got.Plan != "P" {
-		t.Errorf("root call = {NodeID:%q Plan:%q}, want {CA P}", got.NodeID, got.Plan)
+	if len(refused.Errors) != 1 || refused.Errors[0].Code != domain.BPMNErrCalledElementCycle || refused.Errors[0].NodeID != "CA" {
+		t.Errorf("issues = %+v, want one CALLED_ELEMENT_CYCLE on CA", refused.Errors)
 	}
-	if len(called) != 1 {
-		t.Fatalf("called plans = %v, want exactly one (the compile must stop)", called)
+	if len(called) != 0 {
+		t.Errorf("called plans = %v, want none: the call is refused before the called plan is compiled", called)
 	}
 }
 

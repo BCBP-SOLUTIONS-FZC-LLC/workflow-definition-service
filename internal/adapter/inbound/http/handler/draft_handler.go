@@ -32,7 +32,7 @@ func (h *Handler) GetDraft(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, toVersionResp(draft))
+	c.JSON(http.StatusOK, h.toVersionResp(draft))
 }
 
 func (h *Handler) InitDraft(c *gin.Context) {
@@ -79,8 +79,8 @@ func (h *Handler) UpdateDraft(c *gin.Context) {
 	}
 
 	if rejectInvalidText(c,
-		lengthLimit{"name", deref(req.Name), 255},
-		lengthLimit{"description", deref(req.Description), 2000},
+		lengthLimit{"name", deref(req.Name), 255, false},
+		lengthLimit{"description", deref(req.Description), 2000, false},
 	) {
 		return
 	}

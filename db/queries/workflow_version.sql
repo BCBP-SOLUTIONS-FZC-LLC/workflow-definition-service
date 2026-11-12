@@ -28,7 +28,7 @@ SELECT id, workflow_id, tenant_id, status, version_number, published_at,
        created_by_user_id, is_valid, created_at, updated_at, record_version
 FROM workflow_version
 WHERE tenant_id = $1 AND workflow_id = $2
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 LIMIT $3
 OFFSET $4;
 
@@ -105,3 +105,10 @@ WHERE wv.tenant_id = sqlc.arg(tenant_id)
   AND wv.module_refs @> jsonb_build_array(jsonb_build_object('module_id', sqlc.arg(module_id)::text))
   AND ref ->> 'module_id' = sqlc.arg(module_id)::text
 ORDER BY w.name, wv.version_number DESC NULLS LAST, module_version_number;
+
+-- name: ListDraftSources :many
+SELECT wv.workflow_id, w.template_key, wv.bpmn_xml
+FROM workflow_version wv
+JOIN workflow w ON w.id = wv.workflow_id
+WHERE wv.tenant_id = $1 AND wv.status = 'DRAFT'
+ORDER BY w.template_key, wv.workflow_id;

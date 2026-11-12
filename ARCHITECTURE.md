@@ -753,6 +753,7 @@ A `<bpmn:callActivity>` calls either a process in the same file, private to that
 - Diagrams in module BPMNs are discarded — only process elements are merged.
 - Nested `<bpmn:subProcess>` inside another subProcess is not supported (`NESTED_SUBPROCESS_NOT_SUPPORTED`).
 - A published workflow keeps its module snapshot: a new module version, or archiving the module, changes nothing until the workflow is republished. A clone copies only the main BPMN; its calls resolve again at publish.
+- Archiving a module is refused (`409 MODULE_IN_USE`, with the uses listed) while a PUBLISHED workflow version of the caller's tenant holds it in `module_refs` or a workflow draft of the caller's tenant calls it. The check runs in the archive's serializable transaction. Archived workflow versions do not count, and publishing a new draft of an archived module makes it active again. A global module is checked against the caller's tenant only.
 
 **Example — calling a module with two generic lanes:**
 

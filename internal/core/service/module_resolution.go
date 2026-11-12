@@ -158,6 +158,11 @@ func (w *moduleWalk) visit(ctx context.Context, doc pendingDoc, call domain.Modu
 	if err != nil {
 		return err
 	}
+	if v == nil || v.VersionNumber == nil {
+		w.failed[key] = true
+		w.report(doc, unresolvedCall(call))
+		return nil
+	}
 	w.resolvedTo[key] = v
 	w.reach(doc, call, v)
 	number := *v.VersionNumber

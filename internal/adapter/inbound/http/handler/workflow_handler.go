@@ -135,9 +135,9 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 	}
 
 	if rejectInvalidText(c,
-		lengthLimit{"key", req.Key, 255},
-		lengthLimit{"name", req.Name, 255},
-		lengthLimit{"description", req.Description, 2000},
+		lengthLimit{"key", req.Key, 255, true},
+		lengthLimit{"name", req.Name, 255, true},
+		lengthLimit{"description", req.Description, 2000, false},
 	) {
 		return
 	}

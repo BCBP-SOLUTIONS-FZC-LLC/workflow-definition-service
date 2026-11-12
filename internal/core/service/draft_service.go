@@ -114,6 +114,12 @@ func (s *DraftService) Update(
 	tenantID, userID, workflowID uuid.UUID,
 	req UpdateDraftReq,
 ) (*domain.WorkflowVersion, error) {
+	if req.BPMNXML != nil {
+		if err := s.compiler.CheckWellFormed(ctx, *req.BPMNXML); err != nil {
+			return nil, err
+		}
+	}
+
 	releaseLock, err := s.acquireDraftLock(ctx, tenantID, workflowID)
 	if err != nil {
 		return nil, err
@@ -133,6 +139,7 @@ func (s *DraftService) Update(
 		draft.BPMNXML = *req.BPMNXML
 		clearCompiledArtifacts(draft)
 		draft.IsValid = true
+		draft.ValidationErrorsJSON = nil
 	}
 
 	if err := s.runUpdateTx(ctx, tenantID, workflowID, draft, req); err != nil {

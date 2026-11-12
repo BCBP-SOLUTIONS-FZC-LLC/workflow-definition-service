@@ -108,7 +108,11 @@ func workflowFromDB(row db.Workflow) *domain.Workflow {
 	}
 }
 
-func workflowVersionFromDB(row db.WorkflowVersion) *domain.WorkflowVersion {
+func workflowVersionFromDB(row db.WorkflowVersion) (*domain.WorkflowVersion, error) {
+	refs, err := moduleRefsFromDB(row.ModuleRefs)
+	if err != nil {
+		return nil, fmt.Errorf("workflow version %s: %w", row.ID, err)
+	}
 	return &domain.WorkflowVersion{
 		ID:                   row.ID,
 		WorkflowID:           row.WorkflowID,
@@ -125,8 +129,8 @@ func workflowVersionFromDB(row db.WorkflowVersion) *domain.WorkflowVersion {
 		CreatedAt:            row.CreatedAt,
 		UpdatedAt:            row.UpdatedAt,
 		RecordVersion:        row.RecordVersion,
-		ModuleRefs:           moduleRefsFromDB(row.ModuleRefs),
-	}
+		ModuleRefs:           refs,
+	}, nil
 }
 
 func workflowVersionSummaryFromDB(row db.ListVersionsByWorkflowRow) *domain.WorkflowVersion {
@@ -219,12 +223,15 @@ func assigneeFromDB(row db.WorkflowNodeAssignee) *domain.NodeAssignee {
 	}
 }
 
-func moduleRefsFromDB(raw []byte) []domain.ModuleRef {
+func moduleRefsFromDB(raw []byte) ([]domain.ModuleRef, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
 	var refs []domain.ModuleRef
 	if err := json.Unmarshal(raw, &refs); err != nil {
-		return nil
+		return nil, fmt.Errorf("decode module refs: %w", err)
 	}
-	return refs
+	return refs, nil
 }
 
 func moduleRefsToDB(refs []domain.ModuleRef) ([]byte, error) {

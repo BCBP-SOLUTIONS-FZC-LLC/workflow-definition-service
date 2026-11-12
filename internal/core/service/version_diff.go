@@ -2,7 +2,9 @@ package service
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 )
@@ -12,12 +14,12 @@ func computeDiff(base, target *dsl.CompiledPlan) DiffChanges {
 	baseDepts := deptSet(base)
 	targetDepts := deptSet(target)
 
-	for id := range targetDepts {
+	for _, id := range slices.Sorted(maps.Keys(targetDepts)) {
 		if _, ok := baseDepts[id]; !ok {
 			changes.AddedDepartments = append(changes.AddedDepartments, id)
 		}
 	}
-	for id := range baseDepts {
+	for _, id := range slices.Sorted(maps.Keys(baseDepts)) {
 		if _, ok := targetDepts[id]; !ok {
 			changes.RemovedDepartments = append(changes.RemovedDepartments, id)
 		}
@@ -58,12 +60,14 @@ func diffSteps(baseSteps, targetSteps []dsl.ExecutionStep) []StepChange {
 
 func diffStages(base, target *dsl.CompiledPlan) []StageChange {
 	baseStages := stagesByNodeKey(base)
+	targetStages := stagesByNodeKey(target)
 	var changes []StageChange
 	for _, dept := range target.Departments {
 		for i := range dept.Stages {
 			key := dsl.NodeKey(dept.ID, &dept.Stages[i])
 			before, ok := baseStages[key]
 			if !ok {
+				changes = append(changes, StageChange{NodeKey: key, Description: "stage added"})
 				continue
 			}
 			after := dept.Stages[i]
@@ -74,6 +78,14 @@ func diffStages(base, target *dsl.CompiledPlan) []StageChange {
 				changes = append(changes, StageChange{NodeKey: key, Description: "message boundary changed"})
 			case before.ConnectorType != after.ConnectorType:
 				changes = append(changes, StageChange{NodeKey: key, Description: "connector type changed"})
+			}
+		}
+	}
+	for _, dept := range base.Departments {
+		for i := range dept.Stages {
+			key := dsl.NodeKey(dept.ID, &dept.Stages[i])
+			if _, ok := targetStages[key]; !ok {
+				changes = append(changes, StageChange{NodeKey: key, Description: "stage removed"})
 			}
 		}
 	}

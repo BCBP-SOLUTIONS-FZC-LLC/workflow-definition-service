@@ -81,6 +81,8 @@ func (s *VersionService) publishPreFlight(
 		if err := s.checkAssigneeEligibility(ctx, tenantID, plan); err != nil {
 			return nil, nil, err
 		}
+	} else if _, err := distinctEligibilityChecks(plan); err != nil {
+		return nil, nil, err
 	}
 
 	compiledJSON, err := marshalPlan(collab)

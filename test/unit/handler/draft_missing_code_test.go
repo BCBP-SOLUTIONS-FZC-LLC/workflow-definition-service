@@ -10,6 +10,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
+	bpmncompiler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port/mocks"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
@@ -20,7 +21,7 @@ func newWiredDraftRouter(t *testing.T) (*mocks.MockWorkflowRepository, *mocks.Mo
 	ctrl := gomock.NewController(t)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewDraftService(service.DraftDeps{Workflows: wfRepo, Versions: vRepo})
+	svc := service.NewDraftService(service.DraftDeps{Workflows: wfRepo, Versions: vRepo, Compiler: bpmncompiler.New()})
 	return wfRepo, vRepo, newRouter(handler.New(handler.Services{Drafts: svc}))
 }
 

@@ -68,6 +68,20 @@ func validatePathTemplate(p string) error {
 	return nil
 }
 
+func validateBasePath(u *url.URL) error {
+	for _, p := range []string{u.Path, u.EscapedPath()} {
+		if strings.Contains(p, "..") || strings.Contains(p, "//") || strings.Contains(p, "@") || strings.Contains(p, `\`) {
+			return fmt.Errorf("%w: baseURL path must not contain .., //, @ or a backslash", ErrInvalidConnectorAliasInput)
+		}
+		for _, r := range p {
+			if r <= ' ' || r == 0x7f {
+				return fmt.Errorf("%w: baseURL path must not contain whitespace or control characters", ErrInvalidConnectorAliasInput)
+			}
+		}
+	}
+	return nil
+}
+
 func ValidateBaseURLHost(baseURL string, allowedHosts []string) error {
 	if len(allowedHosts) == 0 {
 		return fmt.Errorf("%w: no allowed connector alias hosts are configured; set CONNECTOR_ALIAS_ALLOWED_HOSTS before writing rest-call aliases", ErrInvalidConnectorAliasInput)
@@ -88,6 +102,9 @@ func ValidateBaseURLHost(baseURL string, allowedHosts []string) error {
 	host := strings.ToLower(u.Hostname())
 	if host == "" {
 		return fmt.Errorf("%w: baseURL has no host", ErrInvalidConnectorAliasInput)
+	}
+	if err := validateBasePath(u); err != nil {
+		return err
 	}
 	port := u.Port()
 	if port == "" {

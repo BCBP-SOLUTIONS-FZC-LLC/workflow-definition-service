@@ -26,7 +26,7 @@ func NewStarterRepo(pool *pgcommon.Pool) *StarterRepo {
 
 func (r *StarterRepo) Create(ctx context.Context, s *domain.StarterTemplate) error {
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		return mapErr(db.New(dbtx).CreateStarter(ctx, db.CreateStarterParams{
+		stored, err := db.New(dbtx).CreateStarter(ctx, db.CreateStarterParams{
 			ID:                      s.ID,
 			TenantID:                toPgtypeUUID(s.TenantID),
 			Scope:                   toCatalogScope(s.Scope),
@@ -36,7 +36,13 @@ func (r *StarterRepo) Create(ctx context.Context, s *domain.StarterTemplate) err
 			BpmnXml:                 s.BPMNXML,
 			SourceWorkflowVersionID: toPgtypeUUID(s.SourceWorkflowVersionID),
 			CreatedByUserID:         toPgtypeUUID(s.CreatedByUserID),
-		}))
+		})
+		if err != nil {
+			return mapErr(err)
+		}
+		s.CreatedAt = stored.CreatedAt
+		s.UpdatedAt = stored.UpdatedAt
+		return nil
 	})
 }
 
@@ -111,7 +117,7 @@ func listStarters(
 		fmt.Fprintf(&where, "  AND category = %s\n", nextArg(*f.Category))
 	}
 	if f.Search != nil {
-		fmt.Fprintf(&where, "  AND name ILIKE %s\n", nextArg("%"+*f.Search+"%"))
+		fmt.Fprintf(&where, "  AND name ILIKE %s\n", nextArg(containsPattern(*f.Search)))
 	}
 
 	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM workflow_template\n%s", where.String())
@@ -134,7 +140,7 @@ func listStarters(
 		`SELECT id, tenant_id, scope, name, description, category, bpmn_xml,
 		        source_workflow_version_id, created_by_user_id, created_at, updated_at, record_version
 		 FROM workflow_template
-		 %sORDER BY created_at DESC
+		 %sORDER BY created_at DESC, id DESC
 		 LIMIT %s OFFSET %s`,
 		where.String(), nextArg(clampInt32(limit)), nextArg(clampInt32(offset)),
 	)

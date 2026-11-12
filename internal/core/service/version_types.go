@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 
@@ -23,7 +24,7 @@ func resolveTemplateLimit(ctx context.Context, limits port.PlanLimits, planCode 
 	return limit, nil
 }
 
-func enforceWorkflowQuota(ctx context.Context, workflows port.WorkflowRepository, tenantID uuid.UUID, limit *int64) error {
+func enforceWorkflowQuota(ctx context.Context, workflows port.WorkflowRepository, tenantID uuid.UUID, planCode string, limit *int64) error {
 	if limit == nil {
 		return nil
 	}
@@ -32,7 +33,7 @@ func enforceWorkflowQuota(ctx context.Context, workflows port.WorkflowRepository
 		return fmt.Errorf("count workflows: %w", err)
 	}
 	if count >= *limit {
-		return domain.ErrPlanQuotaExceeded
+		return &domain.PlanQuotaError{Plan: strings.ToLower(strings.TrimSpace(planCode)), Limit: *limit, Count: count}
 	}
 	return nil
 }

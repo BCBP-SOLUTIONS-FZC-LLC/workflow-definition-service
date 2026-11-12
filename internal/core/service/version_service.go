@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 
@@ -195,7 +197,7 @@ func (s *VersionService) Clone(
 		return nil, nil, err
 	}
 	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
-		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, limit); err != nil {
+		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, planCode, limit); err != nil {
 			return err
 		}
 		if err := s.workflows.Create(ctx, newWF); err != nil {
@@ -268,7 +270,7 @@ func (s *VersionService) Promote(
 				}
 				limitResolved = true
 			}
-			if err := s.enforceQuotaUnlessCounted(ctx, tenantID, workflowID, limit); err != nil {
+			if err := s.enforceQuotaUnlessCounted(ctx, tenantID, workflowID, planCode, limit); err != nil {
 				return err
 			}
 		}
@@ -286,7 +288,7 @@ func (s *VersionService) Promote(
 	return v, nil
 }
 
-func (s *VersionService) enforceQuotaUnlessCounted(ctx context.Context, tenantID, workflowID uuid.UUID, limit *int64) error {
+func (s *VersionService) enforceQuotaUnlessCounted(ctx context.Context, tenantID, workflowID uuid.UUID, planCode string, limit *int64) error {
 	_, err := s.versions.GetDraft(ctx, tenantID, workflowID)
 	if err == nil {
 		return nil
@@ -294,7 +296,7 @@ func (s *VersionService) enforceQuotaUnlessCounted(ctx context.Context, tenantID
 	if !errors.Is(err, domain.ErrNotFound) {
 		return fmt.Errorf(errGetDraft, err)
 	}
-	return enforceWorkflowQuota(ctx, s.workflows, tenantID, limit)
+	return enforceWorkflowQuota(ctx, s.workflows, tenantID, planCode, limit)
 }
 
 func (s *VersionService) Export(
@@ -312,7 +314,16 @@ func (s *VersionService) Export(
 	if err != nil {
 		return "", "", fmt.Errorf(errGetWorkflow, err)
 	}
-	return v.BPMNXML, fmt.Sprintf("%s-v%s.bpmn", wf.TemplateKey, versionLabel(v)), nil
+	return v.BPMNXML, fmt.Sprintf("%s-v%s.bpmn", exportNameSafe(wf.TemplateKey), versionLabel(v)), nil
+}
+
+func exportNameSafe(key string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || unicode.IsControl(r) {
+			return '_'
+		}
+		return r
+	}, key)
 }
 
 func (s *VersionService) Diff(
