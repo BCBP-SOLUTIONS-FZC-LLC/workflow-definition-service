@@ -5,16 +5,19 @@ info:
   description: |
     Service-to-service endpoints under /api/v1/internal. They are not routed by
     the public gateway and carry no gateway identity headers: the caller
-    presents x-internal-token, and the tenant comes from the request (a query
-    parameter or the payload), not from x-tenant-id. This document is the
+    presents the reserved system identity (`x-tenant-roles: iam-system` and an
+    `x-user-id`) under the mesh's mutual TLS, and the tenant comes from the
+    request (a query parameter or the payload), not from x-tenant-id. This document is the
     authority for these endpoints. A service that calls them keeps a
     byte-identical copy and tests its requests against it (definition LLD §3.4).
 
     Behaviour shared by every operation:
 
-    - **Token.** A missing or wrong `x-internal-token` is `401 UNAUTHORIZED`
-      (detail `missing or invalid x-internal-token`) before anything else runs.
-      With no token configured (local dev only) the check is off.
+    - **Caller identity.** A request without `x-tenant-roles: iam-system` or
+      without an `x-user-id` is `401 UNAUTHORIZED` (detail `missing or invalid
+      internal caller identity`) before anything else runs. The mesh and a
+      network policy decide who can reach the routes; the headers alone are
+      not a credential.
     - **Body size.** A request body is limited to 10 MiB (10,485,760 bytes); a
       larger body that the operation reads is `413 PAYLOAD_TOO_LARGE`.
     - **Content type.** These routes do not check `Content-Type`; a JSON body is
@@ -39,13 +42,16 @@ components:
     InternalServiceAuth:
       type: apiKey
       in: header
-      name: x-internal-token
+      name: x-tenant-roles
       description: >
-        This service's INTERNAL_API_TOKEN, compared in constant time. Each caller
-        holds it under its own name for this target: DEFINITION_SERVICE_TOKEN in
-        the Execution Service and in event_consumer. Kubernetes NetworkPolicy
-        admits only those callers. A missing or wrong token is 401 with a
-        ProblemDetails body. With no token configured (local dev) the check is off.
+        The reserved system role `iam-system`, sent with an `x-user-id`, the way the
+        IAM services call each other. Mutual TLS in the mesh names the caller, and the
+        authorization policy admits each route group for its own callers: `events`
+        (the shared events consumer), `compiled-plans` (the Execution Service API
+        and worker), `connector-alias-read` (the Execution Service connector worker)
+        and `connector-alias-write` (the service that owns the aliases). A Kubernetes
+        NetworkPolicy admits only the named caller pods. A request without both
+        headers is 401 with a ProblemDetails body.
 
   schemas:
 
@@ -303,7 +309,7 @@ components:
             code: "BAD_REQUEST"
 
     Unauthorized:
-      description: UNAUTHORIZED — missing or wrong x-internal-token (detail `missing or invalid x-internal-token`).
+      description: UNAUTHORIZED — missing or wrong internal caller identity (detail `missing or invalid internal caller identity`).
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -311,7 +317,7 @@ components:
             type: "https://api.workflow.platform/errors/unauthorized"
             title: "Unauthorized"
             status: 401
-            detail: "missing or invalid x-internal-token"
+            detail: "missing or invalid internal caller identity"
             instance: "/api/v1/internal/connector-aliases"
             code: "UNAUTHORIZED"
 
@@ -380,7 +386,7 @@ paths:
         Responses:
         - `200` — the version, in any status.
         - `400 BAD_REQUEST` — version_id is not a UUID, or tenant_id is absent, blank or not a UUID (checked in that order).
-        - `401 UNAUTHORIZED` — missing or wrong x-internal-token.
+        - `401 UNAUTHORIZED` — missing or wrong internal caller identity.
         - `404 NOT_FOUND` — no version with this id in this tenant.
         - `500 INTERNAL_ERROR` — unexpected failure.
         - `503 UPSTREAM_UNAVAILABLE` — database outage or the deadline passed.
@@ -433,7 +439,7 @@ paths:
         Responses:
         - `200` — handled, or ignored because the type is not one this service handles. Empty body.
         - `400 BAD_REQUEST` — not retryable; the consumer routes it to its DLQ. Details: `invalid event envelope` (the body is not a JSON object of the envelope's field types, e.g. a `time` that is not RFC 3339), `invalid <type> payload`, `invalid event id`, `invalid tenant_id`, `invalid user_id in payload`, `invalid department_id in payload`.
-        - `401 UNAUTHORIZED` — missing or wrong x-internal-token.
+        - `401 UNAUTHORIZED` — missing or wrong internal caller identity.
         - `413 PAYLOAD_TOO_LARGE` — body over 10 MiB.
         - `500 INTERNAL_ERROR` — applying the event failed (detail `failed to process event`), whatever the cause: a database outage, a lost transaction, the Execution Service's pause call, a cache eviction or the request deadline. Retryable.
         - `502 EVENT_DECODE_FAILED` — the schema-registry payload could not be decoded. Retryable.
@@ -634,8 +640,8 @@ paths:
                   type: string
                   description: >
                     Must be http(s) and its host must appear in the configured
-                    internal-host allowlist. Dispatch sends the caller's real
-                    internal service token and department headers to this host,
+                    internal-host allowlist. Dispatch sends the caller identity
+                    headers and an alias-call token to this host,
                     so an unlisted one is rejected rather than trusted. The
                     check is fail-closed: with no allowlist configured, every
                     baseURL is rejected. Credentials embedded in the URL
@@ -647,17 +653,22 @@ paths:
                     (a URL without a port has 80 or 443); an entry without a
                     port matches any port.
                     A path is allowed (a base such as `https://svc.internal/v2`)
-                    and is stored as sent, but it must not contain `..`, `//`,
-                    `@`, a backslash, whitespace or control characters, the
-                    same rules as pathTemplate, in either its decoded or its
-                    percent-encoded form.
+                    and is stored as sent, but it must not contain `..`, `//`
+                    anywhere, `@`, a backslash, whitespace or a control character,
+                    in its plain form or percent-decoded up to three times. A
+                    double-encoded dot is refused.
                 pathTemplate:
                   type: string
                   maxLength: 2048
                   description: >
-                    Must start with `/`, and must not start with `//` or contain
-                    `..`, `@`, a backslash, whitespace or control characters. At
-                    most 2048 bytes.
+                    Must start with `/`, and must not contain `#`, whitespace or
+                    control characters. It must not start with `//` or contain
+                    `..`, `@` or a backslash, in its plain form or percent-decoded
+                    up to three times. Outside a `{name}` placeholder it must not
+                    contain `"`, `<`, `>`, `^`, a backtick or `|`, and a `{` must
+                    be closed. A `%` in the path must start a valid escape. A `?`
+                    with fixed query parameters is allowed; the query must parse
+                    and must not contain `;`. At most 2048 bytes.
                 timeoutMs:
                   type: integer
                   format: int64

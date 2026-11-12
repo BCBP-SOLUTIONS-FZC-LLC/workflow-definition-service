@@ -12,8 +12,12 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-func goSafe(name string, log port.Logger, fn func()) {
+// goSafe runs fn in a goroutine that logs a panic instead of crashing the
+// process. The returned channel is closed once the goroutine has ended.
+func goSafe(name string, log port.Logger, fn func()) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		defer func() {
 			if r := recover(); r != nil {
 				log.Error("goroutine panicked", map[string]any{
@@ -25,10 +29,15 @@ func goSafe(name string, log port.Logger, fn func()) {
 		}()
 		fn()
 	}()
+	return done
 }
 
-func goSafeRestart(ctx context.Context, name string, log port.Logger, delay time.Duration, fn func()) {
+// goSafeRestart runs fn again after a panic until it returns or ctx ends. The
+// returned channel is closed once the goroutine has ended.
+func goSafeRestart(ctx context.Context, name string, log port.Logger, delay time.Duration, fn func()) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for {
 			if runRecovered(name, log, fn) {
 				return
@@ -40,6 +49,7 @@ func goSafeRestart(ctx context.Context, name string, log port.Logger, delay time
 			}
 		}
 	}()
+	return done
 }
 
 func runRecovered(name string, log port.Logger, fn func()) (completed bool) {
@@ -56,8 +66,8 @@ func runRecovered(name string, log port.Logger, fn func()) (completed bool) {
 	return true
 }
 
-func serve(name string, srv *http.Server, log port.Logger, fatal chan<- error) {
-	goSafe(name, log, func() {
+func serve(name string, srv *http.Server, log port.Logger, fatal chan<- error) <-chan struct{} {
+	return goSafe(name, log, func() {
 		log.Info(name+" server starting", map[string]any{"addr": srv.Addr})
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			select {

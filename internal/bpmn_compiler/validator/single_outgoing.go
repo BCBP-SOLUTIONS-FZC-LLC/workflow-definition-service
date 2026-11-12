@@ -78,7 +78,7 @@ func repeatedFlowErrors(id, kind string, targets []string) []domain.BPMNValidati
 	var errs []domain.BPMNValidationError
 	for _, to := range slices.Sorted(maps.Keys(count)) {
 		if n := count[to]; n > 1 {
-			errs = AppendErr(errs, domain.BPMNErrSplitWithoutGateway, id,
+			errs = AppendErr(errs, domain.BPMNErrDuplicateSequenceFlow, id,
 				fmt.Sprintf("%s has %d flows to %q; two identical flows count as two branches, so keep one flow to each target", kind, n, to))
 		}
 	}

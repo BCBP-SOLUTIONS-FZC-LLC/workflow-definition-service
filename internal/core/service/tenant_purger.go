@@ -18,6 +18,8 @@ import (
 const (
 	tenantsPerPurgeTick = 100
 	maxPurgeBackoff     = 7 * 24 * time.Hour
+	// the failure record is written even when shutdown has cancelled the pass
+	recordFailureTimeout = 5 * time.Second
 )
 
 type TenantPurgerDeps struct {
@@ -47,6 +49,9 @@ func NewTenantPurger(deps TenantPurgerDeps) *TenantPurger {
 func (p *TenantPurger) Tick(ctx context.Context) error {
 	due, err := p.deps.Retention.ListDue(ctx, p.deps.Now(), tenantsPerPurgeTick)
 	if err != nil {
+		if !isStop(ctx, err) {
+			p.deps.Failed()
+		}
 		return fmt.Errorf("list tenants due for purge: %w", err)
 	}
 	var failures []error
@@ -60,13 +65,19 @@ func (p *TenantPurger) purgeTenant(ctx context.Context, d port.TenantPurgeDue) [
 	version := d.RecordVersion
 	attempts := d.Attempts
 	var failures []error
+	realFailures := 0
 	for _, part := range []func(context.Context, port.TenantPurgeDue, int64) (int64, error){p.purgeCredentials, p.purgeArtifacts} {
 		next, err := part(ctx, d, version)
 		if errors.Is(err, domain.ErrTenantRetentionChanged) {
 			p.log.Info("tenant purge skipped: its record changed", map[string]any{"tenant_id": d.TenantID.String()})
 			return nil
 		}
+		if err != nil && isStop(ctx, err) {
+			failures = append(failures, err)
+			break
+		}
 		if err != nil {
+			realFailures++
 			p.deps.Failed()
 			p.log.Error("tenant purge failed", map[string]any{"tenant_id": d.TenantID.String(), "error": err.Error()})
 			failures = append(failures, err)
@@ -77,14 +88,22 @@ func (p *TenantPurger) purgeTenant(ctx context.Context, d port.TenantPurgeDue) [
 		}
 		version = next
 	}
-	if len(failures) > 0 {
+	if realFailures > 0 {
 		attempts++
-		err := p.deps.Retention.RecordFailure(ctx, d.TenantID, version, attempts, p.deps.Now().Add(p.backoff(attempts)))
+		recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordFailureTimeout)
+		defer cancel()
+		err := p.deps.Retention.RecordFailure(recordCtx, d.TenantID, version, attempts, p.deps.Now().Add(p.backoff(attempts)))
 		if err != nil && !errors.Is(err, domain.ErrTenantRetentionChanged) {
 			failures = append(failures, fmt.Errorf("record tenant %s purge failure: %w", d.TenantID, err))
 		}
 	}
 	return failures
+}
+
+// isStop reports an error caused by the run's own context ending, as at
+// shutdown: it is returned to the caller but is not a purge failure.
+func isStop(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && errors.Is(err, ctx.Err())
 }
 
 func (p *TenantPurger) backoff(attempts int) time.Duration {
@@ -169,7 +188,7 @@ func (p *TenantPurger) Run(ctx context.Context) {
 	ticker := time.NewTicker(p.deps.Interval)
 	defer ticker.Stop()
 	for {
-		if err := p.Tick(ctx); err != nil {
+		if err := p.Tick(ctx); err != nil && !isStop(ctx, err) {
 			p.log.Error("tenant purge sweep failed", map[string]any{"error": err.Error()})
 		}
 		select {

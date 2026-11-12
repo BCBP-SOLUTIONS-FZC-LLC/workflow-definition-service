@@ -153,7 +153,9 @@ components:
         with no active version look up the plan's workflow template limit by it in
         the catalog's plan table, after trimming spaces and lowering its case. A
         missing, blank or unknown code, or a plan table that cannot be read, answers
-        503 UPSTREAM_UNAVAILABLE. Other operations do not read it.
+        503 UPSTREAM_UNAVAILABLE. When the service reads the limit per tenant from
+        Entitlements instead, the header is not used for the limit and only fills
+        plan_code of a quota refusal. Other operations do not read it.
 
     FeatureFlags:
       name: x-feature-flags
@@ -1146,11 +1148,11 @@ components:
           description: Present on DRAFT_CONCURRENCY. The draft's current record_version, to retry with after reconciling.
         plan_code:
           type: string
-          description: Present on PLAN_QUOTA_EXCEEDED. The plan code the limit was read for.
+          description: Present on PLAN_QUOTA_EXCEEDED. The plan code of the request's x-plan header, trimmed and in lower case; the limit itself comes from the plan table or, per tenant, from Entitlements.
         limit:
           type: integer
           format: int64
-          description: Present on PLAN_QUOTA_EXCEEDED. The workflow template limit of the plan; 0 means no workflow may be created.
+          description: Present on PLAN_QUOTA_EXCEEDED. The tenant's workflow template limit; 0 means no workflow may be created.
         current_count:
           type: integer
           format: int64
@@ -1254,6 +1256,7 @@ components:
         - CALLED_ELEMENT_CYCLE          # a chain of callActivity calls returns to a process already on it
         - DUPLICATE_PROCESS_ID          # two bpmn:process elements in the bundled document share an id
         - SPLIT_WITHOUT_GATEWAY         # a start event, task, send or receive task, subProcess, callActivity or boundary event has more than one outgoing flow; a flow splits only at a gateway
+        - DUPLICATE_SEQUENCE_FLOW       # a parallel, exclusive or inclusive gateway has two or more flows to the same target
         - END_EVENT_WITH_OUTGOING_FLOW  # an end event has an outgoing flow
         - DUPLICATE_ELEMENT_ID          # two elements of one process share an id
         - INVALID_TASK_SCHEDULE         # a task's dueDate or followUpDate is not an RFC 3339 date-time
@@ -1438,8 +1441,9 @@ components:
         UPSTREAM_UNAVAILABLE — a dependency is temporarily unavailable: the database
         (unreachable, out of connections, shut down, a statement cancelled), a transaction
         that lost every serialization retry, the Valkey lock store, the OpenBao secret store,
-        the Execution Service, Org & Membership, or the catalog's plan table (including a
-        missing or unknown x-plan) — detail `an upstream dependency is temporarily
+        the Execution Service, Org & Membership, the catalog's plan table (including a
+        missing or unknown x-plan), or Entitlements (including a limit not read within
+        the freshness bound) — detail `an upstream dependency is temporarily
         unavailable` — or the request was cancelled or passed its 30-second deadline
         (detail `the request was cancelled or its deadline passed`). A request still
         unanswered at the deadline gets the shared library's 503 (`PlatformProblem`,
@@ -1619,8 +1623,9 @@ paths:
       description: |
         Creates a workflow and its first DRAFT version from the BPMN. The BPMN is
         validated as an authored document (library calls resolved against the library
-        as it is now); the publish-only checks run at publish. Then the plan's workflow
-        template limit is read by `x-plan`, and the workflow is counted and inserted in
+        as it is now); the publish-only checks run at publish. Then the tenant's workflow
+        template limit is read (by `x-plan` from the plan table, or per tenant from
+        Entitlements), and the workflow is counted and inserted in
         one transaction. Workflows with a DRAFT or PUBLISHED version count against the
         limit; archived ones do not.
 
@@ -1633,8 +1638,8 @@ paths:
         - `422 INVALID_INPUT` — key or name only whitespace, a field over its limit, or a NUL character.
         - `400 INVALID_BPMN_XML` — the BPMN cannot be parsed.
         - `422 BPMN_VALIDATION_FAILED` — the BPMN has an error-severity issue; `invalid_params` lists every issue found, warnings included.
-        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan, catalog, module lookups or database.
-        - `403 PLAN_QUOTA_EXCEEDED` — the tenant is at its plan's limit; carries plan_code, limit and current_count.
+        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan, catalog, Entitlements, module lookups or database.
+        - `403 PLAN_QUOTA_EXCEEDED` — the tenant is at its template limit; carries plan_code, limit and current_count.
         - `409 DUPLICATE_TEMPLATE_KEY` — the key is taken in this tenant.
         - `401 UNAUTHORIZED`, `415 UNSUPPORTED_MEDIA_TYPE`, `500 INTERNAL_ERROR` — as for every operation.
       tags: [Workflows]
@@ -2085,7 +2090,7 @@ paths:
         - `400 BAD_REQUEST` — Idempotency-Key over 256 bytes; id not a UUID; malformed body, unknown field, a second JSON value.
         - `409 IDEMPOTENCY_KEY_REPLAY`, `IDEMPOTENCY_REQUEST_IN_PROGRESS`.
         - `413 PAYLOAD_TOO_LARGE`.
-        - `422 INVALID_INPUT` — name over 255 or description over 2000 characters, or a NUL character in either. An empty or whitespace-only name is accepted.
+        - `422 INVALID_INPUT` — a present name of only whitespace (detail `request fields must not be blank`) or over 255 characters, a description over 2000 characters, or a NUL character in either.
         - `400 INVALID_BPMN_XML` — bpmn_xml is not well-formed XML (empty text included), has a document type declaration or is over the token limit.
         - `503 UPSTREAM_UNAVAILABLE` — the lock store (Valkey) or the database is unavailable.
         - `409 DRAFT_CONCURRENCY` — another save holds the edit lock (no current_record_version).
@@ -2122,7 +2127,7 @@ paths:
                 name:
                   type: string
                   maxLength: 255
-                  description: The workflow's new name. Over 255 characters or a NUL character is 422 INVALID_INPUT; empty or whitespace-only is accepted and stored as sent. Omitted or null leaves the name unchanged.
+                  description: The workflow's new name. Only whitespace, over 255 characters or a NUL character is 422 INVALID_INPUT, as on create; stored as sent. Omitted or null leaves the stored name unchanged.
                   example: Updated Tender Review Process
                 description:
                   type: string
@@ -2304,7 +2309,7 @@ paths:
         Archives the workflow's active version and clears the active pointer, after
         asking the Execution Service whether instances are running. The version active
         when the archive commits is the one archived. A DRAFT is kept. Archiving frees
-        the workflow's slot in the plan's template limit unless it still has a draft.
+        the workflow's slot in the tenant's template limit unless it still has a draft.
         Takes no body.
 
         Responses:
@@ -2470,7 +2475,7 @@ paths:
         - `409 INVALID_VERSION_STATUS` — the version is not a DRAFT.
         - `400 INVALID_BPMN_XML` — the draft's BPMN cannot be parsed.
         - `422 BPMN_VALIDATION_FAILED` — the draft has error-severity issues, its library calls included.
-        - `409 STRUCTURAL_DIVERGENCE` — the plan differs structurally from the active version's, or the active version no longer compiles, and force_publish_structural is false.
+        - `409 STRUCTURAL_DIVERGENCE` — the plan differs structurally from the active version's (an added or removed stage or a changed required role included), or the active version no longer compiles, and force_publish_structural is false.
         - `422 ASSIGNEE_INELIGIBLE` — a default assignee is not a UUID v7, is named for a role that is not preparator, reviewer or approver, or Org & Membership answers not eligible.
         - `503 UPSTREAM_UNAVAILABLE` — Org & Membership could not answer, module lookups or the database failed, or the deadline passed.
         - `409 DRAFT_CONCURRENCY` — the draft was saved after the publish read it, or another publish took the number; publish again.
@@ -2500,7 +2505,12 @@ paths:
                 force_publish_structural:
                   type: boolean
                   default: false
-                  description: Publish even when the plan differs structurally from the active version's, or the active version no longer compiles. Ignored when the workflow has no active version.
+                  description: >-
+                    Publish even when the plan differs structurally from the active version's, or the active version no longer compiles.
+                    A structural difference is an added or removed department, a changed execution step, an added or removed stage,
+                    or a stage whose timer boundary, message boundary, connector type or required role changed. A change of due date
+                    alone is not structural. Without this flag a structural difference answers `409 STRUCTURAL_DIVERGENCE`.
+                    Ignored when the workflow has no active version.
             example:
               force_publish_structural: true
       responses:
@@ -2579,7 +2589,7 @@ paths:
       description: |
         Creates a new workflow whose first DRAFT holds a copy of the source version's
         BPMN. The source must be PUBLISHED or ARCHIVED. The new workflow counts against
-        the plan's workflow template limit, read by `x-plan`. The BPMN is not
+        the tenant's workflow template limit, read as for workflow creation. The BPMN is not
         revalidated here.
 
         Responses, in the order the checks run:
@@ -2591,8 +2601,8 @@ paths:
         - `422 INVALID_INPUT` — new_key or new_name only whitespace, a field over its limit, or a NUL character.
         - `404 NOT_FOUND` — no such source version, or it belongs to another workflow.
         - `409 INVALID_VERSION_STATUS` — the source is a DRAFT.
-        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan, catalog or database.
-        - `403 PLAN_QUOTA_EXCEEDED` — the tenant is at its plan's limit; carries plan_code, limit and current_count.
+        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan, catalog, Entitlements or database.
+        - `403 PLAN_QUOTA_EXCEEDED` — the tenant is at its template limit; carries plan_code, limit and current_count.
         - `409 DUPLICATE_TEMPLATE_KEY` — new_key is taken in this tenant.
         - `401 UNAUTHORIZED`; `415 UNSUPPORTED_MEDIA_TYPE`; `500 INTERNAL_ERROR`.
       tags: [Versions]
@@ -2720,8 +2730,8 @@ paths:
         Makes a PUBLISHED, valid version the workflow's active version. Promoting the
         version that is already active changes nothing and answers 200. Making a
         published version active on a workflow that has no active version and no draft
-        counts that workflow against the plan's template limit, as a new workflow is,
-        and fails with `PLAN_QUOTA_EXCEEDED` at the limit; only then is `x-plan` read.
+        counts that workflow against the tenant's template limit, as a new workflow is,
+        and fails with `PLAN_QUOTA_EXCEEDED` at the limit; only then is the limit read.
         Takes no body.
 
         Responses, in the order the checks run:
@@ -2731,7 +2741,7 @@ paths:
         - `409 IDEMPOTENCY_KEY_REPLAY`, `IDEMPOTENCY_REQUEST_IN_PROGRESS`.
         - `404 NOT_FOUND` — no such version or workflow, or the version belongs to another workflow.
         - `409 INVALID_VERSION_STATUS` — the version is not PUBLISHED, or a membership revocation marked it invalid.
-        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan (when the limit applies), catalog or database.
+        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan (when the limit applies), catalog, Entitlements or database.
         - `403 PLAN_QUOTA_EXCEEDED` — carries plan_code, limit and current_count.
         - `401 UNAUTHORIZED`; `415 UNSUPPORTED_MEDIA_TYPE` (a non-JSON body); `500 INTERNAL_ERROR`.
       tags: [Versions]
@@ -3235,15 +3245,14 @@ paths:
         Writes one field of a connector's credential material to OpenBao at
         connectors/<tenantID>/<connector_type>/<field_name>. Requires
         tenant_admin or tenant_owner. Writing a field again replaces its value
-        (a new KV-v2 version). The value is never echoed or logged.
+        (a new KV-v2 version). The value is never echoed or logged. The route takes no Idempotency-Key: the header is ignored, nothing is cached for it, and a repeated request writes another version.
 
         Responses, in the order the checks run:
         - `201` — written.
         - `403 FORBIDDEN` — no tenant_admin or tenant_owner role.
-        - `400 BAD_REQUEST` — Idempotency-Key over 256 bytes; malformed body, unknown field, or connector_type, field_name or value missing or empty.
-        - `409 IDEMPOTENCY_KEY_REPLAY`, `IDEMPOTENCY_REQUEST_IN_PROGRESS`.
+        - `400 BAD_REQUEST` — malformed body, unknown field, or connector_type, field_name or value missing or empty.
         - `413 PAYLOAD_TOO_LARGE`.
-        - `400 INVALID_INPUT` — connector_type is not a registered type, or field_name does not match `^[a-zA-Z0-9_-]+$` or is over 128 characters.
+        - `400 INVALID_INPUT` — connector_type is not a registered type, or field_name does not match `^[a-zA-Z0-9_-]+$` or is over 128 characters; value is only whitespace.
         - `503 UPSTREAM_UNAVAILABLE` — the secret store is not configured, unreachable or refuses the write.
         - `401 UNAUTHORIZED`; `415 UNSUPPORTED_MEDIA_TYPE`; `500 INTERNAL_ERROR`.
       tags: [Connectors]
@@ -3254,7 +3263,6 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -3266,7 +3274,7 @@ paths:
               properties:
                 connector_type: { type: string, description: "Must match a registered connector type exactly (see GET /connectors/registry); otherwise 400 INVALID_INPUT." }
                 field_name:     { type: string, pattern: '^[a-zA-Z0-9_-]+$', description: "The credential field; at most 128 characters, refused with 400 INVALID_INPUT above that or when it does not match the pattern." }
-                value:          { type: string, description: "The secret value, stored as sent. Empty is 400 BAD_REQUEST." }
+                value:          { type: string, description: "The secret value, stored as sent, surrounding whitespace included. Empty is 400 BAD_REQUEST; a value of only whitespace is 400 INVALID_INPUT." }
             example:
               connector_type: rest-call
               field_name: api_key
@@ -3284,10 +3292,9 @@ paths:
                 secret_path: "connectors/7ca648b2-b432-4744-884c-35fd556a310c/rest-call/api_key"
         "400":
           description: >-
-            BAD_REQUEST — malformed body, unknown field, a missing or empty connector_type,
-            field_name or value, or an Idempotency-Key over 256 bytes. INVALID_INPUT —
-            unrecognized connector_type, or a field_name that does not match the pattern or is
-            over 128 characters.
+            BAD_REQUEST — malformed body, unknown field, or a missing or empty connector_type,
+            field_name or value. INVALID_INPUT — unrecognized connector_type, a field_name that
+            does not match the pattern or is over 128 characters, or a value of only whitespace.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -3301,7 +3308,6 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
-        "409": { $ref: '#/components/responses/Conflict' }
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
         "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }

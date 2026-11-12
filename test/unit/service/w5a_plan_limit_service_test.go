@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -29,7 +31,7 @@ func TestPlanLimitService_ABlankPlanCodeIsUnavailableWithoutReadingTheCatalog(t 
 			reader := &fakePlanTableReader{table: map[string]*int64{"starter": limitOf(5)}}
 			svc := newPlanLimits(reader, &planClock{now: time.Unix(0, 0)})
 
-			got, err := svc.WorkflowTemplateLimit(context.Background(), tc.code)
+			got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, tc.code)
 
 			assert.Nil(t, got)
 			assert.ErrorIs(t, err, domain.ErrUpstreamUnavailable)
@@ -42,7 +44,7 @@ func TestPlanLimitService_ACodeWithPaddingAndCapitalsIsTrimmedBeforeTheTableIsRe
 	reader := &fakePlanTableReader{table: map[string]*int64{"pro": limitOf(50)}}
 	svc := newPlanLimits(reader, &planClock{now: time.Unix(0, 0)})
 
-	got, err := svc.WorkflowTemplateLimit(context.Background(), "  PrO\t")
+	got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "  PrO\t")
 
 	require.NoError(t, err)
 	require.NotNil(t, got)
@@ -76,7 +78,7 @@ func TestPlanLimitService_AFailedForcedRereadForAnUnknownPlan_IsUnavailableAndTh
 	clock := &planClock{now: time.Unix(0, 0)}
 	log := &w5aRecordingLog{}
 	svc := service.NewPlanLimitService(service.PlanLimitDeps{Reader: reader, TTL: time.Minute, Now: clock.Now, Log: log})
-	_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 
 	reader.mu.Lock()
@@ -84,7 +86,7 @@ func TestPlanLimitService_AFailedForcedRereadForAnUnknownPlan_IsUnavailableAndTh
 	reader.mu.Unlock()
 	clock.now = clock.now.Add(10 * time.Second)
 
-	got, err := svc.WorkflowTemplateLimit(context.Background(), "platinum")
+	got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "platinum")
 
 	assert.Nil(t, got)
 	require.Error(t, err)
@@ -95,7 +97,7 @@ func TestPlanLimitService_AFailedForcedRereadForAnUnknownPlan_IsUnavailableAndTh
 	assert.Equal(t, "plan table refresh failed, keeping the last table", warnings[0].msg)
 	assert.Equal(t, "catalog down", warnings[0].fields["error"])
 
-	held, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	held, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	require.NotNil(t, held)
 	assert.Equal(t, int64(5), *held, "the table held before the failed re-read keeps answering")
@@ -118,7 +120,7 @@ func TestPlanLimitService_ACallerCancelledWhileTheColdReadRuns_FailsAloneAndTheR
 	}
 	first := make(chan outcome, 1)
 	go func() {
-		limit, err := svc.WorkflowTemplateLimit(ctx, "starter")
+		limit, err := svc.WorkflowTemplateLimit(ctx, uuid.Nil, "starter")
 		first <- outcome{limit, err}
 	}()
 	<-started
@@ -131,7 +133,7 @@ func TestPlanLimitService_ACallerCancelledWhileTheColdReadRuns_FailsAloneAndTheR
 	assert.ErrorIs(t, res.err, context.Canceled)
 
 	close(reader.release)
-	got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, int64(5), *got)
@@ -144,7 +146,7 @@ func TestPlanLimitService_ASuccessfulReadAfterFailures_ServesTheNewTableAndKeeps
 	log := &w5aRecordingLog{}
 	svc := service.NewPlanLimitService(service.PlanLimitDeps{Reader: reader, TTL: time.Minute, Now: clock.Now, Log: log})
 
-	_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.ErrorIs(t, err, domain.ErrUpstreamUnavailable)
 	require.Empty(t, log.recorded(), "a failure with no table held has nothing to keep, so it does not warn")
 
@@ -153,14 +155,14 @@ func TestPlanLimitService_ASuccessfulReadAfterFailures_ServesTheNewTableAndKeeps
 	reader.err = nil
 	reader.table = map[string]*int64{"starter": limitOf(8)}
 	reader.mu.Unlock()
-	got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, int64(8), *got)
 	require.Equal(t, 2, reader.callCount())
 
 	clock.now = clock.now.Add(30 * time.Second)
-	_, err = svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err = svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	assert.Equal(t, 2, reader.callCount(), "the successful read stamped its time, so the table is fresh")
 
@@ -168,7 +170,7 @@ func TestPlanLimitService_ASuccessfulReadAfterFailures_ServesTheNewTableAndKeeps
 	reader.err = errors.New("catalog down again")
 	reader.mu.Unlock()
 	clock.now = clock.now.Add(2 * time.Minute)
-	got, err = svc.WorkflowTemplateLimit(context.Background(), "starter")
+	got, err = svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, int64(8), *got, "the table from the successful read answers while its refresh fails")
@@ -182,7 +184,7 @@ func TestPlanLimitService_WithoutNowOrLog_UsesTheRealClockAndKeepsServingTheHeld
 	svc := service.NewPlanLimitService(service.PlanLimitDeps{Reader: reader, TTL: time.Hour})
 
 	for range 3 {
-		got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Equal(t, int64(5), *got)
@@ -191,18 +193,18 @@ func TestPlanLimitService_WithoutNowOrLog_UsesTheRealClockAndKeepsServingTheHeld
 
 	expiring := &fakePlanTableReader{table: map[string]*int64{"starter": limitOf(5)}}
 	noLog := service.NewPlanLimitService(service.PlanLimitDeps{Reader: expiring})
-	_, err := noLog.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err := noLog.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	expiring.mu.Lock()
 	expiring.err = errors.New("catalog down")
 	expiring.mu.Unlock()
-	got, err := noLog.WorkflowTemplateLimit(context.Background(), "starter")
+	got, err := noLog.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, int64(5), *got)
 	assert.Eventually(t, func() bool { return expiring.callCount() == 2 }, 5*time.Second, time.Millisecond)
 
-	again, err := noLog.WorkflowTemplateLimit(context.Background(), "starter")
+	again, err := noLog.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	require.NotNil(t, again)
 	assert.Equal(t, int64(5), *again, "the held table keeps answering once the failed refresh has settled")

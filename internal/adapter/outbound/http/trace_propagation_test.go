@@ -38,8 +38,8 @@ func TestExecutionClient_PropagatesTraceContext(t *testing.T) {
 	srv := captureTraceparent(&traceparent)
 	defer srv.Close()
 
-	c := NewExecutionClient(srv.URL, "token", time.Second)
-	_, _ = c.try(tracedContext(t), http.MethodGet, srv.URL+"/x", nil, http.StatusOK, nil)
+	c := NewExecutionClient(srv.URL, time.Second)
+	_, _ = c.try(tracedContext(t), uuid.New(), http.MethodGet, srv.URL+"/x", nil, http.StatusOK, nil)
 
 	if traceparent == "" {
 		t.Error("traceparent header missing on the Execution Service call")

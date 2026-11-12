@@ -663,7 +663,7 @@ func renderPropsTable(w *bytes.Buffer, sc *asyncSchema, schemaID string) {
 			rowID = fmt.Sprintf(` id="field--%s--%s"`, html.EscapeString(schemaID), html.EscapeString(k))
 		}
 		fmt.Fprintf(w, `<tr%s>
-<td onclick="copyText('%s')" title="Click to copy" style="cursor:pointer"><span class="prop-name">%s</span></td>
+<td data-copy="%s" onclick="copyText(this.dataset.copy)" title="Click to copy" style="cursor:pointer"><span class="prop-name">%s</span></td>
 <td>%s</td>
 <td>%s</td>
 <td><span class="prop-desc">%s</span>%s%s%s</td>

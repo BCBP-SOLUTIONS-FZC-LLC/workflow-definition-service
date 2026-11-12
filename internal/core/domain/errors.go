@@ -87,6 +87,7 @@ const (
 	BPMNErrCalledElementCycle             BPMNErrorCode = "CALLED_ELEMENT_CYCLE"
 	BPMNErrDuplicateProcessID             BPMNErrorCode = "DUPLICATE_PROCESS_ID"
 	BPMNErrSplitWithoutGateway            BPMNErrorCode = "SPLIT_WITHOUT_GATEWAY"
+	BPMNErrDuplicateSequenceFlow          BPMNErrorCode = "DUPLICATE_SEQUENCE_FLOW"
 	BPMNErrEndEventWithOutgoingFlow       BPMNErrorCode = "END_EVENT_WITH_OUTGOING_FLOW"
 	BPMNErrDuplicateElementID             BPMNErrorCode = "DUPLICATE_ELEMENT_ID"
 	BPMNErrInvalidTaskSchedule            BPMNErrorCode = "INVALID_TASK_SCHEDULE"

@@ -17,7 +17,16 @@ const (
 )
 
 func newClient(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout, Transport: traceTransport{base: http.DefaultTransport, tracer: gincommon.NewSpanTracer(clientTraceScope)}}
+	return newClientOver(timeout, http.DefaultTransport)
+}
+
+func newClientOver(timeout time.Duration, base http.RoundTripper) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: traceTransport{base: base, tracer: gincommon.NewSpanTracer(clientTraceScope)},
+		// a redirect would replay the system identity, the vault token and the body at another address
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 type traceTransport struct {

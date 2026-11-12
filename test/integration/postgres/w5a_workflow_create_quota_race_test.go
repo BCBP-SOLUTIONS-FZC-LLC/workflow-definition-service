@@ -23,7 +23,7 @@ import (
 
 type w5aLimits map[string]int64
 
-func (l w5aLimits) WorkflowTemplateLimit(_ context.Context, planCode string) (*int64, error) {
+func (l w5aLimits) WorkflowTemplateLimit(_ context.Context, _ uuid.UUID, planCode string) (*int64, error) {
 	limit, ok := l[planCode]
 	if !ok {
 		return nil, domain.ErrUpstreamUnavailable

@@ -100,7 +100,7 @@ func declaredNamespaces(xmlData string) (rootSpace string, zeebeDeclared bool) {
 		for _, a := range se.Attr {
 			isDefault := a.Name.Space == "" && a.Name.Local == "xmlns"
 			if (isDefault || a.Name.Space == "xmlns") && a.Value == nsZeebe {
-				zeebeDeclared = true
+				return rootSpace, true
 			}
 		}
 	}

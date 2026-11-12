@@ -11,11 +11,9 @@ import (
 
 	inboundhttp "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http"
 	httphandler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
-	outboundhttp "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/http"
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres"
 	bpmncompiler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/config"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
@@ -74,16 +72,19 @@ func newApp(cfg *config.Config) (*app, error) {
 		Logger:    log,
 	})
 
-	cache, redisClient := newCacheStore(context.Background(), cfg, log)
+	planLimits, err := newPlanLimits(cfg, log)
+	if err != nil {
+		pool.Close()
+		systemPool.Close()
+		tracingShutdown()
+		return nil, err
+	}
+
+	cache, cachePinger, cacheClients := newCacheStore(context.Background(), cfg, log)
 
 	membershipSvc := newMembershipService(cfg)
-	planLimits := newPlanLimits(cfg, log)
 	executionSvc := newExecutionService(cfg)
-	var secretsSvc port.SecretsClient
-
-	if cfg.OpenBaoAddr != "" {
-		secretsSvc = outboundhttp.NewSecretsClient(cfg.OpenBaoAddr, cfg.OpenBaoToken, cfg.OpenBaoMount, cfg.SecretsClientTimeout)
-	}
+	secretsSvc := newSecretsClient(cfg)
 
 	transactor := pgadapter.NewTransactor(pool)
 	globalTransactor := pgadapter.NewTransactor(systemPool)
@@ -206,13 +207,12 @@ func newApp(cfg *config.Config) (*app, error) {
 	})
 
 	router := inboundhttp.NewRouter(inboundhttp.RouterConfig{
-		GinConfig:        ginCfg,
-		AppEnv:           cfg.AppEnv,
-		InternalAPIToken: cfg.InternalAPIToken,
-		Log:              log,
-		Handler:          h,
-		DB:               dbPinger{pool: pool},
-		Cache:            cache,
+		GinConfig: ginCfg,
+		AppEnv:    cfg.AppEnv,
+		Log:       log,
+		Handler:   h,
+		DB:        dbPinger{pool: pool},
+		Cache:     cachePinger,
 	})
 
 	srv := newHTTPServer(cfg.HTTPPort, router.Handler())
@@ -233,6 +233,6 @@ func newApp(cfg *config.Config) (*app, error) {
 		tenantPurger:  tenantPurger,
 		shutdown:      tracingShutdown,
 		beginDrain:    router.BeginDrain,
-		cacheClose:    redisClient,
+		cacheClose:    cacheClients,
 	}, nil
 }

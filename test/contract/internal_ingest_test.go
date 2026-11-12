@@ -77,9 +77,9 @@ func envelope(typ, tenant, userID, departmentID string) string {
 }
 
 type exchange struct {
-	name, method, path, body, token string
-	want                            int
-	validReq                        bool
+	name, method, path, body, caller string
+	want                             int
+	validReq                         bool
 }
 
 func runExchanges(t *testing.T, spec *contract.Spec, router http.Handler, cases []exchange) {
@@ -96,8 +96,9 @@ func runExchanges(t *testing.T, spec *contract.Spec, router http.Handler, cases 
 			if tc.body != "" {
 				req.Header.Set("Content-Type", "application/json")
 			}
-			if tc.token != "" {
-				req.Header.Set("x-internal-token", tc.token)
+			if tc.caller != "" {
+				req.Header.Set("x-user-id", tc.caller)
+				req.Header.Set("x-tenant-roles", tc.caller)
 			}
 			if tc.validReq {
 				spec.Request(t, req)
@@ -127,31 +128,31 @@ func glueFramed(payload string) string {
 func TestInternalContract_Events(t *testing.T) {
 	spec := contract.Load(t, internalSpec)
 	tenant, user, dept := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	const token = "internal-secret"
+	const caller = "iam-system"
 	ok := ingestRouter(t, fakeMembership{}, fakeConnectors{})
 	failing := ingestRouter(t, fakeMembership{err: errors.New("db down")}, fakeConnectors{})
 
 	runExchanges(t, spec, ok, []exchange{
-		{"department revoked", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", tenant, user, dept), token, http.StatusOK, true},
-		{"tenant membership revoked", http.MethodPost, eventsPath, envelope("MembershipRevoked", tenant, user, ""), token, http.StatusOK, true},
-		{"schema-registry payload", http.MethodPost, eventsPath, registryEnvelope("MembershipRevoked", tenant, glueFramed(`{"user_id":"`+user+`"}`)), token, http.StatusOK, true},
-		{"undecodable schema-registry payload", http.MethodPost, eventsPath, registryEnvelope("MembershipRevoked", tenant, "bm90LWEtZnJhbWU="), token, http.StatusBadGateway, true},
-		{"unhandled type", http.MethodPost, eventsPath, envelope("UserDeleted", tenant, user, ""), token, http.StatusOK, true},
-		{"not json", http.MethodPost, eventsPath, `{`, token, http.StatusBadRequest, false},
-		{"bad user id", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", tenant, "x", dept), token, http.StatusBadRequest, true},
-		{"bad tenant id", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", "x", user, dept), token, http.StatusBadRequest, false},
-		{"bad department id", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", tenant, user, "x"), token, http.StatusBadRequest, true},
-		{"no token", http.MethodPost, eventsPath, envelope("MembershipRevoked", tenant, user, ""), "", http.StatusUnauthorized, true},
-		{"oversized body", http.MethodPost, eventsPath, `{"data":"` + strings.Repeat("a", 11<<20) + `"}`, token, http.StatusRequestEntityTooLarge, false},
+		{"department revoked", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", tenant, user, dept), caller, http.StatusOK, true},
+		{"tenant membership revoked", http.MethodPost, eventsPath, envelope("MembershipRevoked", tenant, user, ""), caller, http.StatusOK, true},
+		{"schema-registry payload", http.MethodPost, eventsPath, registryEnvelope("MembershipRevoked", tenant, glueFramed(`{"user_id":"`+user+`"}`)), caller, http.StatusOK, true},
+		{"undecodable schema-registry payload", http.MethodPost, eventsPath, registryEnvelope("MembershipRevoked", tenant, "bm90LWEtZnJhbWU="), caller, http.StatusBadGateway, true},
+		{"unhandled type", http.MethodPost, eventsPath, envelope("UserDeleted", tenant, user, ""), caller, http.StatusOK, true},
+		{"not json", http.MethodPost, eventsPath, `{`, caller, http.StatusBadRequest, false},
+		{"bad user id", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", tenant, "x", dept), caller, http.StatusBadRequest, true},
+		{"bad tenant id", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", "x", user, dept), caller, http.StatusBadRequest, false},
+		{"bad department id", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", tenant, user, "x"), caller, http.StatusBadRequest, true},
+		{"no caller identity", http.MethodPost, eventsPath, envelope("MembershipRevoked", tenant, user, ""), "", http.StatusUnauthorized, true},
+		{"oversized body", http.MethodPost, eventsPath, `{"data":"` + strings.Repeat("a", 11<<20) + `"}`, caller, http.StatusRequestEntityTooLarge, false},
 	})
 	runExchanges(t, spec, failing, []exchange{
-		{"processing failure", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", tenant, user, dept), token, http.StatusInternalServerError, true},
+		{"processing failure", http.MethodPost, eventsPath, envelope("DepartmentMembershipRevoked", tenant, user, dept), caller, http.StatusInternalServerError, true},
 	})
 }
 
 func TestInternalContract_ConnectorAliases(t *testing.T) {
 	spec := contract.Load(t, internalSpec)
-	const token = "internal-secret"
+	const caller = "iam-system"
 	alias := `{"alias":"crm","method":"POST","baseURL":"http://crm.internal","pathTemplate":"/v1/x","timeoutMs":2500}`
 	listed := ingestRouter(t, fakeMembership{}, fakeConnectors{aliases: []domain.ConnectorRestAlias{
 		{Alias: "crm", Method: "POST", BaseURL: "http://crm.internal", PathTemplate: "/v1/x", Timeout: 2500 * time.Millisecond},
@@ -163,26 +164,26 @@ func TestInternalContract_ConnectorAliases(t *testing.T) {
 	restPath := aliasesPath + "/rest"
 
 	runExchanges(t, spec, listed, []exchange{
-		{"list", http.MethodGet, aliasesPath, "", token, http.StatusOK, true},
-		{"list without token", http.MethodGet, aliasesPath, "", "", http.StatusUnauthorized, true},
-		{"write", http.MethodPost, restPath, alias, token, http.StatusNoContent, true},
-		{"write with a missing field", http.MethodPost, restPath, `{"alias":"crm"}`, token, http.StatusBadRequest, false},
-		{"write without token", http.MethodPost, restPath, alias, "", http.StatusUnauthorized, true},
-		{"write with an oversized body", http.MethodPost, restPath, `{"alias":"` + strings.Repeat("a", 11<<20) + `"}`, token, http.StatusRequestEntityTooLarge, false},
+		{"list", http.MethodGet, aliasesPath, "", caller, http.StatusOK, true},
+		{"list without caller identity", http.MethodGet, aliasesPath, "", "", http.StatusUnauthorized, true},
+		{"write", http.MethodPost, restPath, alias, caller, http.StatusNoContent, true},
+		{"write with a missing field", http.MethodPost, restPath, `{"alias":"crm"}`, caller, http.StatusBadRequest, false},
+		{"write without caller identity", http.MethodPost, restPath, alias, "", http.StatusUnauthorized, true},
+		{"write with an oversized body", http.MethodPost, restPath, `{"alias":"` + strings.Repeat("a", 11<<20) + `"}`, caller, http.StatusRequestEntityTooLarge, false},
 	})
 	runExchanges(t, spec, invalid, []exchange{
-		{"write refused by validation", http.MethodPost, restPath, alias, token, http.StatusBadRequest, true},
+		{"write refused by validation", http.MethodPost, restPath, alias, caller, http.StatusBadRequest, true},
 	})
 	runExchanges(t, spec, broken, []exchange{
-		{"list fails", http.MethodGet, aliasesPath, "", token, http.StatusInternalServerError, true},
-		{"write fails", http.MethodPost, restPath, alias, token, http.StatusInternalServerError, true},
-		{"delete fails", http.MethodDelete, restPath + "/crm", "", token, http.StatusInternalServerError, true},
+		{"list fails", http.MethodGet, aliasesPath, "", caller, http.StatusInternalServerError, true},
+		{"write fails", http.MethodPost, restPath, alias, caller, http.StatusInternalServerError, true},
+		{"delete fails", http.MethodDelete, restPath + "/crm", "", caller, http.StatusInternalServerError, true},
 	})
 	runExchanges(t, spec, found, []exchange{
-		{"delete", http.MethodDelete, restPath + "/crm", "", token, http.StatusNoContent, true},
+		{"delete", http.MethodDelete, restPath + "/crm", "", caller, http.StatusNoContent, true},
 	})
 	runExchanges(t, spec, missing, []exchange{
-		{"delete unknown", http.MethodDelete, restPath + "/crm", "", token, http.StatusNotFound, true},
-		{"delete without token", http.MethodDelete, restPath + "/crm", "", "", http.StatusUnauthorized, true},
+		{"delete unknown", http.MethodDelete, restPath + "/crm", "", caller, http.StatusNotFound, true},
+		{"delete without caller identity", http.MethodDelete, restPath + "/crm", "", "", http.StatusUnauthorized, true},
 	})
 }

@@ -83,6 +83,12 @@ func (c *CatalogClient) readPlanTable(ctx context.Context) (map[string]*int64, e
 		if err := json.Unmarshal(p.WorkflowTemplateLimit, &limit); err != nil {
 			return nil, fmt.Errorf("%w: catalog plan %q has an unreadable workflow_template_limit: %w", domain.ErrUpstreamUnavailable, code, err)
 		}
+		if limit != nil && *limit < 0 {
+			return nil, fmt.Errorf("%w: catalog plan %q has a negative workflow_template_limit", domain.ErrUpstreamUnavailable, code)
+		}
+		if _, dup := table[code]; dup {
+			return nil, fmt.Errorf("%w: catalog lists plan %q more than once", domain.ErrUpstreamUnavailable, code)
+		}
 		table[code] = limit
 	}
 	return table, nil

@@ -38,12 +38,11 @@ func asyncInfraDevEngine(t *testing.T, spec string) *gin.Engine {
 	t.Chdir(dir)
 	gin.SetMode(gin.TestMode)
 	return NewRouter(RouterConfig{
-		GinConfig:        testGinConfig,
-		AppEnv:           "dev",
-		InternalAPIToken: "asyncapi-infra-secret",
-		Handler:          handler.New(handler.Services{}),
-		DB:               fakeDBPinger{},
-		Cache:            fakePinger{},
+		GinConfig: testGinConfig,
+		AppEnv:    "dev",
+		Handler:   handler.New(handler.Services{}),
+		DB:        fakeDBPinger{},
+		Cache:     fakePinger{},
 	}).engine
 }
 

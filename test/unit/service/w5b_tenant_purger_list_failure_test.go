@@ -60,7 +60,7 @@ func (s *w5bPurgeSecrets) Delete(_ context.Context, path string) error {
 	return nil
 }
 
-func TestTenantPurger_Tick_ListDueFails_ReturnsWrappedErrorAndPurgesNothing(t *testing.T) {
+func TestTenantPurger_Tick_ListDueFails_ReturnsWrappedErrorCountsItAndPurgesNothing(t *testing.T) {
 	t.Parallel()
 
 	cause := errors.New("retention table unreachable")
@@ -87,5 +87,5 @@ func TestTenantPurger_Tick_ListDueFails_ReturnsWrappedErrorAndPurgesNothing(t *t
 	assert.Empty(t, data.calls, "no tenant data is touched")
 	assert.Empty(t, secrets.deleted, "no credential is deleted")
 	assert.Zero(t, recorded)
-	assert.Zero(t, failed, "a failed listing is not counted as a failed tenant purge")
+	assert.Equal(t, 1, failed, "a failed listing is counted so the failure alert can fire")
 }

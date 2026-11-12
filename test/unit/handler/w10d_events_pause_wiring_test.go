@@ -33,7 +33,6 @@ import (
 )
 
 const (
-	w10dExecToken        = "w10d-execution-token"
 	w10dEventsPath       = "/api/v1/internal/events"
 	w10dProblemBase      = "https://api.workflow.platform/errors/"
 	w10dInvalidationText = "Default assignee is no longer eligible: Department membership revoked"
@@ -48,7 +47,7 @@ var (
 )
 
 type w10dExecCall struct {
-	method, path, token, contentType, body string
+	method, path, tenantHeader, contentType, body string
 }
 
 type w10dExecServer struct {
@@ -64,7 +63,7 @@ func w10dNewExecServer(t *testing.T, statuses ...int) *w10dExecServer {
 		b, _ := io.ReadAll(r.Body)
 		s.mu.Lock()
 		s.calls = append(s.calls, w10dExecCall{
-			method: r.Method, path: r.URL.Path, token: r.Header.Get("x-internal-token"),
+			method: r.Method, path: r.URL.Path, tenantHeader: r.Header.Get("x-tenant-id"),
 			contentType: r.Header.Get("Content-Type"), body: string(b),
 		})
 		n := len(s.calls)
@@ -116,7 +115,7 @@ func w10dNewEventsRig(t *testing.T, executionURL string) *w10dEventsRig {
 	}
 	svc := service.NewVersionService(service.VersionDeps{
 		Versions: rig.versions, Assignees: rig.assignees, Log: testkit.FakeLogger{},
-		Execution: outboundhttp.NewExecutionClient(executionURL, w10dExecToken, 5*time.Second),
+		Execution: outboundhttp.NewExecutionClient(executionURL, 5*time.Second),
 	})
 	r := gin.New()
 	httpadapter.RegisterInternalRoutes(r.Group("/api/v1/internal"), handler.New(handler.Services{Membership: svc, Log: testkit.FakeLogger{}}))
@@ -201,7 +200,7 @@ func TestInternalEvents_PauseTasksFailingWithAServerErrorOnEveryAttempt_Is500Aft
 	require.Len(t, calls, 3)
 	for _, c := range calls {
 		assert.Equal(t, w10dExecCall{
-			method: http.MethodPost, path: w10dPausePath(), token: w10dExecToken,
+			method: http.MethodPost, path: w10dPausePath(), tenantHeader: w10dTenantID.String(),
 			contentType: "application/json", body: w10dDepartmentPauseBody(),
 		}, c)
 	}
@@ -236,7 +235,7 @@ func TestInternalEvents_PauseTasksFailingOnceThenAccepted_Is200WithAnEmptyBodyAn
 			require.Len(t, calls, 2)
 			for _, c := range calls {
 				assert.Equal(t, w10dExecCall{
-					method: http.MethodPost, path: w10dPausePath(), token: w10dExecToken,
+					method: http.MethodPost, path: w10dPausePath(), tenantHeader: w10dTenantID.String(),
 					contentType: "application/json", body: tc.wantBody,
 				}, c)
 			}

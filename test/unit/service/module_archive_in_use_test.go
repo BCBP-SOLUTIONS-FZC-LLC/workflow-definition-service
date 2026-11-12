@@ -72,7 +72,7 @@ func (f archiveFixture) expectArchived(m moduleMocks) {
 
 func TestModuleService_Archive_RefusedWhileInUse(t *testing.T) {
 	wfPublished, wfDraft, wfBoth, claimsV7 := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	draftXML, otherXML := "<draft-calls-module/>", "<draft-calls-other/>"
+	draftXML, otherXML := `<draft-calls-module processId="`+archiveModuleProcessID+`"/>`, `<draft-mentions-module-id processId="`+archiveModuleProcessID+`_v2"/>`
 	cases := []struct {
 		name     string
 		usages   []*domain.ModuleUsage
@@ -162,7 +162,7 @@ func TestModuleService_Archive_RefusedWhileInUse(t *testing.T) {
 
 func TestModuleService_Archive_NotInUse_Archives(t *testing.T) {
 	wfOld, wfDraft := uuid.New(), uuid.New()
-	draftXML := "<draft-calls-other/>"
+	draftXML := `<draft-mentions-module-id processId="` + archiveModuleProcessID + `_v2"/>`
 	cases := []struct {
 		name   string
 		usages []*domain.ModuleUsage
@@ -212,7 +212,7 @@ func TestModuleService_Archive_UsageCheckRunsInsideTheArchiveTransaction(t *test
 	svc, m := newModuleService(ctrl)
 	markedTransaction(m, false)
 	f := newArchiveFixture(domain.ScopeTenant)
-	draftXML := "<draft/>"
+	draftXML := `<draft processId="` + archiveModuleProcessID + `"/>`
 	m.modules.EXPECT().GetByID(gomock.Any(), f.tenantID, f.moduleID).Return(f.module, nil).Times(2)
 	gomock.InOrder(
 		m.workflowVersions.EXPECT().ListModuleUsages(insideArchiveTx{}, f.tenantID, f.moduleID).Return(nil, nil),
@@ -264,7 +264,7 @@ func TestModuleService_Archive_GlobalModule_ChecksOnlyTheCallersTenantInsideTheS
 
 func TestModuleService_Archive_UsageCheckFailure_ArchivesNothing(t *testing.T) {
 	outage := fmt.Errorf("%w: connection refused", domain.ErrUpstreamUnavailable)
-	draftXML := "<draft/>"
+	draftXML := `<draft processId="` + archiveModuleProcessID + `"/>`
 	cases := []struct {
 		name    string
 		setup   func(m moduleMocks, f archiveFixture)

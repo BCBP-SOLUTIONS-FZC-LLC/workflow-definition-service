@@ -79,7 +79,7 @@ func (h *Handler) UpdateDraft(c *gin.Context) {
 	}
 
 	if rejectInvalidText(c,
-		lengthLimit{"name", deref(req.Name), 255, false},
+		lengthLimit{"name", deref(req.Name), 255, req.Name != nil},
 		lengthLimit{"description", deref(req.Description), 2000, false},
 	) {
 		return

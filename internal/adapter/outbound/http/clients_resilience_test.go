@@ -49,7 +49,7 @@ func TestExecutionClient_CallerCancelsWhileRequestInFlight_DoesNotRetry(t *testi
 	var calls atomic.Int32
 	srv := resilienceBlockingServer(t, &calls, cancel)
 
-	_, _, err := NewExecutionClient(srv.URL, "tok", 30*time.Second).
+	_, _, err := NewExecutionClient(srv.URL, 30*time.Second).
 		CheckActiveInstances(ctx, uuid.New(), uuid.New())
 
 	require.Error(t, err)
@@ -67,7 +67,7 @@ func TestExecutionClient_CallerCancelsDuringBackoff_StopsBeforeNextAttempt(t *te
 	defer srv.Close()
 
 	var roundTrips atomic.Int32
-	client := NewExecutionClient(srv.URL, "tok", 30*time.Second)
+	client := NewExecutionClient(srv.URL, 30*time.Second)
 	base := client.client.Transport
 	client.client.Transport = resilienceRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		roundTrips.Add(1)
@@ -87,7 +87,7 @@ func TestExecutionClient_CallerCancelsDuringBackoff_StopsBeforeNextAttempt(t *te
 func TestExecutionClient_ClientTimeoutWithLiveContext_RetriesThenFails(t *testing.T) {
 	var serverCalls, attempts atomic.Int32
 	srv := resilienceBlockingServer(t, &serverCalls, nil)
-	client := NewExecutionClient(srv.URL, "tok", 40*time.Millisecond)
+	client := NewExecutionClient(srv.URL, 40*time.Millisecond)
 	base := client.client.Transport
 	client.client.Transport = resilienceRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		attempts.Add(1)

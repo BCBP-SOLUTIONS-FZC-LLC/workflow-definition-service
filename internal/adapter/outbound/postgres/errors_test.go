@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -94,4 +95,15 @@ func refusedDial(t *testing.T) error {
 		t.Fatalf("a refused dial = %v, want a *pgconn.ConnectError", err)
 	}
 	return err
+}
+
+func TestMapErr_ACancelledContext_IsUnavailableAndStillACancel(t *testing.T) {
+	got := mapErr(fmt.Errorf("get workflow: %w", context.Canceled))
+
+	if !errors.Is(got, domain.ErrUpstreamUnavailable) {
+		t.Errorf("a cancelled context must map to ErrUpstreamUnavailable, got %v", got)
+	}
+	if !errors.Is(got, context.Canceled) {
+		t.Errorf("the cancel must stay in the chain so the handler can tell a hang-up from an outage, got %v", got)
+	}
 }

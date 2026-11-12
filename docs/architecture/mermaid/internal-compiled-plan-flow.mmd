@@ -5,7 +5,7 @@ sequenceDiagram
     participant Cache as Valkey
     participant Repo as WorkflowVersionRepo
 
-    ExecSvc ->>+ H: GET /api/v1/internal/workflow-versions/{id}/compiled-plan?tenant_id= (x-internal-token)
+    ExecSvc ->>+ H: GET /api/v1/internal/workflow-versions/{id}/compiled-plan?tenant_id= (x-user-id, x-tenant-roles: iam-system)
     H ->> H: pgcommon.WithGUCSet(ctx, GUCSet{TenantID: tenant_id})
     Note right of H: RLS GUC from the query — no gateway identity on internal routes
     H ->>+ Svc: Get(tenantID, versionID)

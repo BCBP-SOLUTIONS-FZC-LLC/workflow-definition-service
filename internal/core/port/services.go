@@ -20,8 +20,11 @@ type PlanTableReader interface {
 	ReadPlanTable(ctx context.Context) (map[string]*int64, error)
 }
 
+// PlanLimits answers a tenant's workflow template limit; nil means unlimited.
+// The Entitlements source keys on tenantID and ignores planCode; the plan table
+// keys on planCode and ignores tenantID.
 type PlanLimits interface {
-	WorkflowTemplateLimit(ctx context.Context, planCode string) (*int64, error)
+	WorkflowTemplateLimit(ctx context.Context, tenantID uuid.UUID, planCode string) (*int64, error)
 }
 
 type ExecutionService interface {
@@ -47,4 +50,8 @@ type PlanCompiler interface {
 type SecretsClient interface {
 	Write(ctx context.Context, path string, data map[string]string) error
 	Delete(ctx context.Context, path string) error
+}
+
+type EntitlementsReader interface {
+	ReadWorkflowTemplateLimit(ctx context.Context, tenantID uuid.UUID) (*int64, error)
 }

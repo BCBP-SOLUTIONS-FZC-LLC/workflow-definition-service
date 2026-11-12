@@ -192,7 +192,7 @@ func (s *VersionService) Clone(
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
-	limit, err := resolveTemplateLimit(ctx, s.planLimits, planCode)
+	limit, err := resolveTemplateLimit(ctx, s.planLimits, tenantID, planCode)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -249,33 +249,23 @@ func (s *VersionService) Promote(
 	var limit *int64
 	limitResolved := false
 	if wf.ActiveVersionID == nil {
-		limit, err = resolveTemplateLimit(ctx, s.planLimits, planCode)
+		limit, err = resolveTemplateLimit(ctx, s.planLimits, tenantID, planCode)
 		if err != nil {
 			return nil, err
 		}
 		limitResolved = true
 	}
-	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
-		current, err := s.workflows.GetByID(ctx, tenantID, workflowID)
-		if err != nil {
-			return fmt.Errorf(errGetWorkflow, err)
+	err = s.promoteInTx(ctx, tenantID, workflowID, versionID, planCode, limit, limitResolved)
+	if errors.Is(err, errPromoteNeedsLimit) {
+		// A concurrent archive cleared the active version after the first read.
+		// The limit is never looked up inside the transaction (it can be a network
+		// call), so look it up here and run the transaction again.
+		if limit, err = resolveTemplateLimit(ctx, s.planLimits, tenantID, planCode); err != nil {
+			return nil, err
 		}
-		if current.ActiveVersionID != nil && *current.ActiveVersionID == versionID {
-			return nil
-		}
-		if current.ActiveVersionID == nil {
-			if !limitResolved {
-				if limit, err = resolveTemplateLimit(ctx, s.planLimits, planCode); err != nil {
-					return err
-				}
-				limitResolved = true
-			}
-			if err := s.enforceQuotaUnlessCounted(ctx, tenantID, workflowID, planCode, limit); err != nil {
-				return err
-			}
-		}
-		return s.workflows.UpdateActiveVersion(ctx, tenantID, workflowID, &versionID)
-	}); err != nil {
+		err = s.promoteInTx(ctx, tenantID, workflowID, versionID, planCode, limit, true)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("promote version: %w", err)
 	}
 
@@ -286,6 +276,35 @@ func (s *VersionService) Promote(
 		"version_id":  versionID.String(),
 	})
 	return v, nil
+}
+
+var errPromoteNeedsLimit = errors.New("promote needs the workflow template limit")
+
+func (s *VersionService) promoteInTx(
+	ctx context.Context,
+	tenantID, workflowID, versionID uuid.UUID,
+	planCode string,
+	limit *int64,
+	limitResolved bool,
+) error {
+	return s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
+		current, err := s.workflows.GetByID(ctx, tenantID, workflowID)
+		if err != nil {
+			return fmt.Errorf(errGetWorkflow, err)
+		}
+		if current.ActiveVersionID != nil && *current.ActiveVersionID == versionID {
+			return nil
+		}
+		if current.ActiveVersionID == nil {
+			if !limitResolved {
+				return errPromoteNeedsLimit
+			}
+			if err := s.enforceQuotaUnlessCounted(ctx, tenantID, workflowID, planCode, limit); err != nil {
+				return err
+			}
+		}
+		return s.workflows.UpdateActiveVersion(ctx, tenantID, workflowID, &versionID)
+	})
 }
 
 func (s *VersionService) enforceQuotaUnlessCounted(ctx context.Context, tenantID, workflowID uuid.UUID, planCode string, limit *int64) error {

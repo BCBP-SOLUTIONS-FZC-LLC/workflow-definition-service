@@ -180,6 +180,32 @@ merge-coverage:
 	@python3 scripts/merge_coverage.py $(COVERAGE_DIR)/unit.out $(COVERAGE_DIR)/integration.out > $(COVER_PROFILE)
 	@echo "✓ $(COVER_PROFILE) merged from unit + integration suites"
 
+# Local black-box checks against a running stack (the one scripts/smoke-test.sh describes). Not part of CI.
+API_BASE        ?= http://localhost:8080
+METRICS_BASE    ?= http://localhost:9091
+SCENARIO_TENANT ?= 11111111-1111-4111-8111-111111111111
+SCENARIO_USER   ?= 018f2d3c-0000-7000-8000-0000000000a1
+SCHEMATHESIS_VERSION := 4.33.2
+
+## hurl: Run the Hurl scenarios in test/hurl against a running local stack (needs hurl: brew install hurl)
+hurl:
+	@command -v hurl >/dev/null || { echo "hurl is not installed: brew install hurl"; exit 1; }
+	hurl --test --jobs 1 --variable host=$(API_BASE) --variable metrics=$(METRICS_BASE) \
+	    --variable tenant=$(SCENARIO_TENANT) --variable run=$$(date +%s) \
+	    -H 'x-tenant-id: $(SCENARIO_TENANT)' -H 'x-user-id: $(SCENARIO_USER)' \
+	    -H 'x-tenant-roles: tenant_admin' -H 'x-plan: enterprise' test/hurl/*.hurl
+	hurl --test --jobs 1 --variable host=$(API_BASE) --variable tenant=$(SCENARIO_TENANT) \
+	    --variable run=$$(date +%s) test/hurl/auth/*.hurl
+
+## fuzz-api: Fuzz every route of the public spec with Schemathesis against a running local stack; it writes data, so use a throwaway database (needs uv)
+fuzz-api:
+	@command -v uvx >/dev/null || { echo "uv is not installed: brew install uv"; exit 1; }
+	@mkdir -p $(COVERAGE_DIR)/schemathesis
+	uvx --from schemathesis==$(SCHEMATHESIS_VERSION) schemathesis run docs/swagger/openapi.yaml --url $(API_BASE) \
+	    -H 'x-tenant-id: $(SCENARIO_TENANT)' -H 'x-user-id: $(SCENARIO_USER)' \
+	    -H 'x-tenant-roles: tenant_admin' -H 'x-plan: enterprise' \
+	    --max-examples 20 --workers 2 --report junit --report-dir $(COVERAGE_DIR)/schemathesis
+
 ## test-ci: Run unit + integration suites and merge coverage
 test-ci: test test-integration merge-coverage
 	@go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print "total:", $$NF}'
@@ -432,6 +458,16 @@ helm-check:
 		|| { echo "helm-check: the release deploy does not pass the published digest, so its digest check can never fail"; exit 1; }
 	@if helm template workflow-definition-service deploy/helm --set existingSecret=workflow-definition-service-secrets > /dev/null 2>&1; then \
 		echo "helm-check: the chart renders for prod without ORG_MEMBERSHIP_BASE_URL, CATALOG_ADMIN_BASE_URL, OPENBAO_ADDR and VALKEY_ADDR"; exit 1; fi
+	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/authorizationpolicy.yaml \
+		| grep -q 'sa/workflow-execution-service-api' \
+		|| { echo "helm-check: the AuthorizationPolicy does not name the Execution Service on the internal routes"; exit 1; }
+	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/authorizationpolicy.yaml \
+		| grep -q 'sa/workflow-execution-service-worker' \
+		|| { echo "helm-check: the AuthorizationPolicy does not name the Execution worker on the compiled-plan route"; exit 1; }
+	@if helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) --set env.APP_ENV=dev --set authorizationPolicy.enabled=false -s templates/authorizationpolicy.yaml > /dev/null 2>&1; then \
+		echo "helm-check: authorizationPolicy.enabled=false still renders the AuthorizationPolicy"; exit 1; fi
+	@if helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) --set authorizationPolicy.enabled=false > /dev/null 2>&1; then \
+		echo "helm-check: a prod render with authorizationPolicy.enabled=false is not refused"; exit 1; fi
 
 ## pin-base-images: Resolve current digests for Dockerfile base images and pin them (writes .docker-digests)
 pin-base-images:

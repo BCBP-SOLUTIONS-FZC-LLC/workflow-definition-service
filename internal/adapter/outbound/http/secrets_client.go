@@ -48,7 +48,7 @@ func (c *SecretsClient) write(ctx context.Context, path string, data map[string]
 	url := fmt.Sprintf("%s/v1/%s/data/%s", strings.TrimRight(c.addr, "/"), c.mount, strings.TrimLeft(path, "/"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build openbao write request: %w", err)
+		return fmt.Errorf("%w: build openbao write request: %w", domain.ErrUpstreamUnavailable, err)
 	}
 	req.Header.Set("X-Vault-Token", c.token)
 	req.Header.Set("Content-Type", "application/json")
@@ -75,7 +75,7 @@ func (c *SecretsClient) remove(ctx context.Context, path string) error {
 	url := fmt.Sprintf("%s/v1/%s/metadata/%s", strings.TrimRight(c.addr, "/"), c.mount, strings.TrimLeft(path, "/"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
-		return fmt.Errorf("build openbao delete request: %w", err)
+		return fmt.Errorf("%w: build openbao delete request: %w", domain.ErrUpstreamUnavailable, err)
 	}
 	req.Header.Set("X-Vault-Token", c.token)
 

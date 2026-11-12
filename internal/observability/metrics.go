@@ -39,7 +39,15 @@ var (
 	TenantPurgeRowsDeletedTotal *prometheus.CounterVec
 	TenantPurgeFailuresTotal    prometheus.Counter
 
+	ReadinessCachePingFailuresTotal prometheus.Counter
+	SystemCallerRejectedTotal       *prometheus.CounterVec
+
 	DependencyRequestSeconds *prometheus.HistogramVec
+
+	EntitlementsCallErrorsTotal        *prometheus.CounterVec
+	EntitlementsStaleServedTotal       prometheus.Counter
+	EntitlementsOldestServedAgeSeconds prometheus.Gauge
+	EntitlementsReadPanicsTotal        prometheus.Counter
 )
 
 var registerOnce sync.Once
@@ -108,7 +116,30 @@ func registerServiceMetrics() {
 		"table"))
 	TenantPurgeFailuresTotal = must(gincommon.NewCounter(nil,
 		"workflow_definition_service_tenant_purge_failures_total",
-		"Tenant purges that failed part-way and will be retried on the next sweep."))
+		"Tenant purge failures, a part of a purge or the listing of the tenants due, that are retried on the next sweep."))
+	ReadinessCachePingFailuresTotal = must(gincommon.NewCounter(nil,
+		"workflow_definition_service_readiness_cache_ping_failures_total",
+		"Readiness checks where the cache ping failed. The pod stays ready and reports cache degraded."))
+	SystemCallerRejectedTotal = must(gincommon.NewCounterVec(nil,
+		"workflow_definition_service_system_caller_rejected_total",
+		"Internal API requests refused for a missing system caller identity, by reason (missing_user or missing_role).",
+		"reason"))
+	EntitlementsCallErrorsTotal = must(gincommon.NewCounterVec(nil,
+		"workflow_definition_service_entitlements_call_errors_total",
+		"Failed Entitlements limit reads, by reason (transport, status or response).",
+		"reason"))
+	EntitlementsStaleServedTotal = must(gincommon.NewCounter(nil,
+		"workflow_definition_service_entitlements_stale_served_total",
+		"Workflow template limit answers served from a held value older than its TTL while a refresh runs or backs off."))
+	EntitlementsOldestServedAgeSeconds = must(gincommon.NewGauge(nil,
+		"workflow_definition_service_entitlements_oldest_served_age_seconds",
+		"Age in seconds of the oldest held limit served past its TTL, over the last TTL window; 0 when none was."))
+	EntitlementsReadPanicsTotal = must(gincommon.NewCounter(nil,
+		"workflow_definition_service_entitlements_read_panics_total",
+		"Entitlements reads that panicked and were recovered; each counts as a failed read."))
+	for _, reason := range []string{"transport", "status", "response"} {
+		EntitlementsCallErrorsTotal.WithLabelValues(reason)
+	}
 }
 
 func AddRLSViolations(violationType string, n float64) {
@@ -159,6 +190,12 @@ func IncCounter(c prometheus.Counter) {
 func IncCounterVec(cv *prometheus.CounterVec, labelValues ...string) {
 	if cv != nil {
 		cv.WithLabelValues(labelValues...).Inc()
+	}
+}
+
+func SetGauge(g prometheus.Gauge, v float64) {
+	if g != nil {
+		g.Set(v)
 	}
 }
 

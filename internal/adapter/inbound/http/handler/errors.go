@@ -294,7 +294,7 @@ func SpecUnavailable(c *gin.Context) {
 
 func errResponse(c *gin.Context, log port.Logger, err error) {
 	status, code, detail, params := mapErr(err)
-	if log != nil && status >= 500 {
+	if log != nil && status >= 500 && !errors.Is(err, context.Canceled) {
 		tenantID, userID := "unknown", "unknown"
 		if rc, ok := gincommon.RequestContext(c); ok {
 			tenantID = rc.TenantID

@@ -16,7 +16,7 @@ func TestNewCacheStore_ADeadCacheDoesNotStopStartup(t *testing.T) {
 		ValkeyWriteTimeout: 200 * time.Millisecond,
 	}
 
-	store, client := newCacheStore(context.Background(), cfg, nopLogger{})
+	store, _, client := newCacheStore(context.Background(), cfg, nopLogger{})
 	t.Cleanup(func() { _ = client.Close() })
 	if store == nil {
 		t.Fatal("no cache store")

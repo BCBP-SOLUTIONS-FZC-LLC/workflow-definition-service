@@ -205,7 +205,11 @@ func (s *DraftService) acquireDraftLock(ctx context.Context, tenantID, workflowI
 	if !acquired {
 		return nil, domain.ErrDraftConcurrency
 	}
-	return func() { _ = s.cache.DelIfEqual(context.WithoutCancel(ctx), lockKey, token) }, nil
+	return func() {
+		if err := s.cache.DelIfEqual(context.WithoutCancel(ctx), lockKey, token); err != nil {
+			s.log.Warn("draft lock release failed", map[string]any{"lock_key": lockKey, "error": err.Error()})
+		}
+	}, nil
 }
 
 func failFastOnStaleRecordVersion(draft *domain.WorkflowVersion, recordVersion int64) error {

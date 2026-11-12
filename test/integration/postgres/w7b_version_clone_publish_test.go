@@ -32,7 +32,7 @@ import (
 
 type w7bUnlimitedPlans struct{}
 
-func (w7bUnlimitedPlans) WorkflowTemplateLimit(context.Context, string) (*int64, error) {
+func (w7bUnlimitedPlans) WorkflowTemplateLimit(context.Context, uuid.UUID, string) (*int64, error) {
 	return nil, nil
 }
 

@@ -20,8 +20,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 )
 
-const w5dInternalToken = "w5d-internal-secret"
-
 type w5dCountingDB struct {
 	health DBHealth
 	calls  atomic.Int32
@@ -51,12 +49,11 @@ type w5dProblem struct {
 func w5dRouter(appEnv string, db DBPinger, cache Pinger) *Router {
 	gin.SetMode(gin.TestMode)
 	return NewRouter(RouterConfig{
-		GinConfig:        testGinConfig,
-		AppEnv:           appEnv,
-		InternalAPIToken: w5dInternalToken,
-		Handler:          handler.New(handler.Services{}),
-		DB:               db,
-		Cache:            cache,
+		GinConfig: testGinConfig,
+		AppEnv:    appEnv,
+		Handler:   handler.New(handler.Services{}),
+		DB:        db,
+		Cache:     cache,
 	})
 }
 
@@ -290,28 +287,29 @@ func TestAsyncAPIRoute_SpecUnavailable_Returns500ProblemThatHidesTheCause(t *tes
 	}
 }
 
-func TestInternalRoutes_WrongEmptyOrMissingToken_IsRefusedAsUnauthorized(t *testing.T) {
+func TestInternalRoutes_WithoutTheSystemCallerIdentity_IsRefusedAsUnauthorized(t *testing.T) {
 	t.Parallel()
 
 	engine := w5dRouter("test", fakeDBPinger{}, fakePinger{}).engine
 	body := `{"id":"x","type":"Unhandled","data":{"pad":"small"}}`
 
 	cases := []struct {
-		name  string
-		token string
-		set   bool
+		name    string
+		headers map[string]string
 	}{
-		{name: "a wrong token", token: "not-the-token", set: true},
-		{name: "an empty token", token: "", set: true},
-		{name: "no token header", set: false},
+		{name: "an ordinary user role", headers: map[string]string{"x-user-id": "u", "x-tenant-roles": "tenant_admin"}},
+		{name: "the system role without a user id", headers: map[string]string{"x-tenant-roles": "iam-system"}},
+		{name: "a user id without roles", headers: map[string]string{"x-user-id": "iam-system"}},
+		{name: "the retired token header alone", headers: map[string]string{"x-internal-token": "secret"}},
+		{name: "no headers"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/events", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
-			if tc.set {
-				req.Header.Set("x-internal-token", tc.token)
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
 			}
 			w := httptest.NewRecorder()
 
@@ -321,7 +319,7 @@ func TestInternalRoutes_WrongEmptyOrMissingToken_IsRefusedAsUnauthorized(t *test
 			p := w5dDecodeProblem(t, w)
 			assert.Equal(t, "UNAUTHORIZED", p.Code)
 			assert.Equal(t, "https://api.workflow.platform/errors/unauthorized", p.Type)
-			assert.Equal(t, "missing or invalid x-internal-token", p.Detail)
+			assert.Equal(t, "missing or invalid internal caller identity", p.Detail)
 			assert.Equal(t, "/api/v1/internal/events", p.Instance)
 		})
 	}

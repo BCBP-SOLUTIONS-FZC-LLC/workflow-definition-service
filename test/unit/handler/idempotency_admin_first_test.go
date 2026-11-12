@@ -31,7 +31,6 @@ func TestIdempotentAdminRoutes_NonAdminWithKey_Gets403WithoutTouchingTheCache(t 
 		{"publish version", http.MethodPost, "/api/v1/workflows/" + wf + "/versions/" + ver + "/publish"},
 		{"clone version", http.MethodPost, "/api/v1/workflows/" + wf + "/versions/" + ver + "/clone"},
 		{"promote version", http.MethodPost, "/api/v1/workflows/" + wf + "/versions/" + ver + "/promote"},
-		{"write connector credential", http.MethodPost, "/api/v1/connectors/credentials"},
 		{"create module", http.MethodPost, "/api/v1/modules"},
 		{"add module version", http.MethodPost, "/api/v1/modules/" + wf + "/versions"},
 		{"publish module version", http.MethodPost, "/api/v1/modules/" + wf + "/versions/" + ver + "/publish"},

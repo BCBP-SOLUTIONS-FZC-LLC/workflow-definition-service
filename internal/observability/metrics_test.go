@@ -72,6 +72,9 @@ func TestRegister_EveryMetricIsScrapable(t *testing.T) {
 	observability.IncCounterVec(observability.InternalEventsIngestTotal, "DepartmentMembershipRevoked", "ok")
 	observability.AddTenantPurgeRows("workflow", 1)
 	observability.IncCounter(observability.TenantPurgeFailuresTotal)
+	observability.IncCounter(observability.EntitlementsStaleServedTotal)
+	observability.SetGauge(observability.EntitlementsOldestServedAgeSeconds, 1)
+	observability.IncCounter(observability.EntitlementsReadPanicsTotal)
 
 	body := scrape(t)
 
@@ -89,6 +92,10 @@ func TestRegister_EveryMetricIsScrapable(t *testing.T) {
 		"workflow_definition_service_internal_events_ingest_total",
 		"workflow_definition_service_tenant_purge_rows_deleted_total",
 		"workflow_definition_service_tenant_purge_failures_total",
+		"workflow_definition_service_entitlements_call_errors_total",
+		"workflow_definition_service_entitlements_stale_served_total",
+		"workflow_definition_service_entitlements_oldest_served_age_seconds",
+		"workflow_definition_service_entitlements_read_panics_total",
 	}
 
 	for _, name := range metricNames {
@@ -128,6 +135,7 @@ func TestNilSafeHelpers_Noop(t *testing.T) {
 		observability.IncCounter(nil)
 		observability.IncCounterVec(nil, "a", "b")
 		observability.ObserveHistogram(nil, 1.23)
+		observability.SetGauge(nil, 1)
 	})
 }
 

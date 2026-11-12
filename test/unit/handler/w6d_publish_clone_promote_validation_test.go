@@ -312,7 +312,7 @@ func TestPublishVersion_SameIdempotencyKeyFromAnotherCaller_IsNotReplayed(t *tes
 
 type w6dPlanLimits map[string]*int64
 
-func (l w6dPlanLimits) WorkflowTemplateLimit(_ context.Context, planCode string) (*int64, error) {
+func (l w6dPlanLimits) WorkflowTemplateLimit(_ context.Context, _ uuid.UUID, planCode string) (*int64, error) {
 	limit, ok := l[planCode]
 	if !ok {
 		return nil, domain.ErrUpstreamUnavailable

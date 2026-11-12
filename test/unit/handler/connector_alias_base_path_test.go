@@ -44,3 +44,36 @@ func TestWriteConnectorRestAlias_RealService_BasePath(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteConnectorRestAlias_RealService_PathTemplate(t *testing.T) {
+	cases := []struct {
+		name       string
+		template   string
+		wantStatus int
+	}{
+		{"an ordinary template is stored", "/v1/tenders/{id}", http.StatusNoContent},
+		{"a fixed query is stored", "/v1/tenders?a=b", http.StatusNoContent},
+		{"a fragment marker is a 400", "/v1/tenders#?role=user", http.StatusBadRequest},
+		{"an encoded dot dot is a 400", "/v1/%2e%2e/admin", http.StatusBadRequest},
+		{"an upper case encoded dot dot is a 400", "/v1/%2E%2E/admin", http.StatusBadRequest},
+		{"a double-encoded dot dot is a 400", "/v1/%252e%252e/admin", http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			repo := mocks.NewMockConnectorAliasRepository(ctrl)
+			if tc.wantStatus == http.StatusNoContent {
+				repo.EXPECT().UpsertRest(gomock.Any(), gomock.AssignableToTypeOf(domain.ConnectorRestAlias{})).Return(nil)
+			}
+			svc := service.NewConnectorService(service.ConnectorDeps{Aliases: repo, AliasAllowedHosts: []string{"tender-service.internal"}})
+			body := map[string]any{"alias": "tender-get", "method": "GET", "baseURL": "https://tender-service.internal", "pathTemplate": tc.template}
+
+			w := do(aliasRouter(handler.New(handler.Services{Connectors: svc})), req(http.MethodPost, "/api/v1/internal/connector-aliases/rest", body))
+
+			require.Equal(t, tc.wantStatus, w.Code, w.Body.String())
+			if tc.wantStatus == http.StatusBadRequest {
+				assert.Equal(t, "INVALID_INPUT", decodeProblem(t, w)["code"])
+			}
+		})
+	}
+}

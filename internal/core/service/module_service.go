@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -447,6 +448,9 @@ func (s *ModuleService) draftUses(ctx context.Context, callerTenantID uuid.UUID,
 	}
 	var uses []domain.ModuleUse
 	for _, d := range drafts {
+		if !mayCallProcess(d.BPMNXML, processID) {
+			continue
+		}
 		calls, _, err := s.compiler.ModuleCalls(ctx, d.BPMNXML)
 		if err != nil {
 			return nil, fmt.Errorf("read module calls of draft %s: %w", d.WorkflowID, err)
@@ -460,6 +464,13 @@ func (s *ModuleService) draftUses(ctx context.Context, callerTenantID uuid.UUID,
 		}
 	}
 	return uses, nil
+}
+
+// mayCallProcess is a cheap pre-check before a full parse: a draft that does
+// not contain the process id cannot call it, unless a character reference
+// (&#...;) spells the id differently in the attribute.
+func mayCallProcess(bpmnXML, processID string) bool {
+	return strings.Contains(bpmnXML, processID) || strings.Contains(bpmnXML, "&#")
 }
 
 func (s *ModuleService) Archive(ctx context.Context, callerTenantID, userID, moduleID uuid.UUID) error {

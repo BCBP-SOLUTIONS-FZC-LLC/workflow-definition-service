@@ -246,7 +246,7 @@ These are checked on every upload. Breaking them causes rejection.
 | Revert loops always have a forward exit (guarded) | `UNGUARDED_LOOP` |
 | Sub-processes have their own start and end events | compile error |
 | A start event, task, call or sub-process has one outgoing flow; a flow splits only at a gateway | `SPLIT_WITHOUT_GATEWAY` |
-| A gateway has at most one flow to each target (two identical flows are one branch drawn twice) | `SPLIT_WITHOUT_GATEWAY` |
+| A gateway has at most one flow to each target (two identical flows are one branch drawn twice) | `DUPLICATE_SEQUENCE_FLOW` |
 | A boundary event has one outgoing flow, sits on a user task, sub-process or call (an error boundary on a sub-process or call), and a task has at most one timer and one message boundary | `INVALID_BOUNDARY_ATTACHMENT`, `SPLIT_WITHOUT_GATEWAY` |
 | An end event has no outgoing flow | `END_EVENT_WITH_OUTGOING_FLOW` |
 | Element ids are unique within a process | `DUPLICATE_ELEMENT_ID` |

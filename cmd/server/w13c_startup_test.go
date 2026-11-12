@@ -31,7 +31,7 @@ func TestNewCacheStore_UnreachableValkeyWarnsOnceAndEveryCallFails(t *testing.T)
 	}
 	log := &recordingLogger{}
 
-	store, client := newCacheStore(context.Background(), cfg, log)
+	store, _, client := newCacheStore(context.Background(), cfg, log)
 	t.Cleanup(func() { _ = client.Close() })
 
 	require.NotNil(t, store)

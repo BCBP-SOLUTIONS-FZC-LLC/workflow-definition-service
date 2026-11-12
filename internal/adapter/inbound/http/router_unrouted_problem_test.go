@@ -26,12 +26,11 @@ type unroutedProblemBody struct {
 func newUnroutedEngine(appEnv string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	return NewRouter(RouterConfig{
-		GinConfig:        testGinConfig,
-		AppEnv:           appEnv,
-		InternalAPIToken: "unrouted-secret",
-		Handler:          handler.New(handler.Services{}),
-		DB:               fakeDBPinger{health: DBHealth{Healthy: true}},
-		Cache:            fakePinger{},
+		GinConfig: testGinConfig,
+		AppEnv:    appEnv,
+		Handler:   handler.New(handler.Services{}),
+		DB:        fakeDBPinger{health: DBHealth{Healthy: true}},
+		Cache:     fakePinger{},
 	}).engine
 }
 
@@ -58,7 +57,7 @@ func TestRouter_UnroutedRequest_ReturnsNotFoundProblem(t *testing.T) {
 			wantInstance: "/api/v1/no-such-path",
 		},
 		{
-			name:         "unknown internal path without the internal token",
+			name:         "unknown internal path without the system caller identity",
 			method:       http.MethodGet,
 			target:       "/api/v1/internal/no-such-path",
 			wantInstance: "/api/v1/internal/no-such-path",

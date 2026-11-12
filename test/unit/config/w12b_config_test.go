@@ -16,10 +16,9 @@ import (
 func w12bNonDevEnv(appEnv string, extra map[string]string) map[string]string {
 	env := map[string]string{
 		"APP_ENV": appEnv, "DATABASE_URL": "postgres://localhost/db", "VALKEY_ADDR": "valkey:6379",
-		"INTERNAL_API_TOKEN":      "t",
 		"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog",
-		"EXECUTION_SERVICE_URL": "http://execution", "EXECUTION_SERVICE_TOKEN": "t",
-		"OPENBAO_ADDR": "http://bao", "OPENBAO_TOKEN": "t",
+		"EXECUTION_SERVICE_URL": "http://execution",
+		"OPENBAO_ADDR":          "http://bao", "OPENBAO_TOKEN": "t",
 	}
 	for k, v := range extra {
 		env[k] = v
@@ -52,6 +51,9 @@ func TestLoad_DevWithOnlyDatabaseURL_UsesEveryDefault(t *testing.T) {
 		MembershipClientTimeout:    10 * time.Second,
 		CatalogClientTimeout:       5 * time.Second,
 		PlanTableTTL:               10 * time.Minute,
+		EntitlementsClientTimeout:  5 * time.Second,
+		EntitlementsCacheTTL:       time.Minute,
+		EntitlementsFreshnessBound: 10 * time.Minute,
 		TenantPurgeEnabled:         true,
 		TenantCredentialRetention:  30 * 24 * time.Hour,
 		TenantArtifactRetention:    7 * 365 * 24 * time.Hour,
@@ -87,19 +89,21 @@ func TestLoad_StagingWithEverySettingSupplied_FillsEveryField(t *testing.T) {
 		"SHUTDOWN_DRAIN_DELAY":          "6s",
 		"SHUTDOWN_GRACE":                "21s",
 		"SHUTDOWN_POOL_DRAIN_TIMEOUT":   "7s",
-		"INTERNAL_API_TOKEN":            "internal-token",
 		"ORG_MEMBERSHIP_BASE_URL":       "http://membership.zzq",
 		"MEMBERSHIP_CLIENT_TIMEOUT":     "11s",
 		"CATALOG_ADMIN_BASE_URL":        "http://catalog.zzq",
 		"CATALOG_CLIENT_TIMEOUT":        "12s",
 		"PLAN_TABLE_TTL":                "13m",
+		"ENTITLEMENTS_BASE_URL":         "http://entitlements.zzq",
+		"ENTITLEMENTS_CLIENT_TIMEOUT":   "17s",
+		"ENTITLEMENTS_CACHE_TTL":        "18s",
+		"ENTITLEMENTS_FRESHNESS_BOUND":  "19m",
 		"TENANT_PURGE_ENABLED":          "false",
 		"TENANT_CREDENTIAL_RETENTION":   "100h",
 		"TENANT_ARTIFACT_RETENTION":     "200h",
 		"TENANT_PURGE_INTERVAL":         "3h",
 		"TENANT_PURGE_BATCH":            "7",
 		"EXECUTION_SERVICE_URL":         "http://execution.zzq",
-		"EXECUTION_SERVICE_TOKEN":       "execution-token",
 		"EXECUTION_CLIENT_TIMEOUT":      "14s",
 		"OPENBAO_ADDR":                  "http://bao.zzq:8200",
 		"OPENBAO_TOKEN":                 "bao-token",
@@ -133,19 +137,21 @@ func TestLoad_StagingWithEverySettingSupplied_FillsEveryField(t *testing.T) {
 		ShutdownDrainDelay:         6 * time.Second,
 		ShutdownGrace:              21 * time.Second,
 		ShutdownPoolDrainTimeout:   7 * time.Second,
-		InternalAPIToken:           "internal-token",
 		OrgMembershipBaseURL:       "http://membership.zzq",
 		MembershipClientTimeout:    11 * time.Second,
 		CatalogAdminBaseURL:        "http://catalog.zzq",
 		CatalogClientTimeout:       12 * time.Second,
 		PlanTableTTL:               13 * time.Minute,
+		EntitlementsBaseURL:        "http://entitlements.zzq",
+		EntitlementsClientTimeout:  17 * time.Second,
+		EntitlementsCacheTTL:       18 * time.Second,
+		EntitlementsFreshnessBound: 19 * time.Minute,
 		TenantPurgeEnabled:         false,
 		TenantCredentialRetention:  100 * time.Hour,
 		TenantArtifactRetention:    200 * time.Hour,
 		TenantPurgeInterval:        3 * time.Hour,
 		TenantPurgeBatch:           7,
 		ExecutionServiceURL:        "http://execution.zzq",
-		ExecutionServiceToken:      "execution-token",
 		ExecutionClientTimeout:     14 * time.Second,
 		OpenBaoAddr:                "http://bao.zzq:8200",
 		OpenBaoToken:               "bao-token",
@@ -304,11 +310,12 @@ func TestLoad_PositiveOnlySettings_RefuseZeroAndNegative(t *testing.T) {
 		"VALKEY_DIAL_TIMEOUT", "VALKEY_READ_TIMEOUT", "VALKEY_WRITE_TIMEOUT",
 		"CACHE_COMPILED_PLAN_TTL", "IDEMPOTENCY_TTL",
 		"MEMBERSHIP_CLIENT_TIMEOUT", "CATALOG_CLIENT_TIMEOUT", "PLAN_TABLE_TTL",
+		"ENTITLEMENTS_CLIENT_TIMEOUT", "ENTITLEMENTS_CACHE_TTL",
 		"TENANT_CREDENTIAL_RETENTION", "TENANT_ARTIFACT_RETENTION", "TENANT_PURGE_INTERVAL",
 		"EXECUTION_CLIENT_TIMEOUT", "SHUTDOWN_GRACE", "SHUTDOWN_POOL_DRAIN_TIMEOUT",
 		"SECRETS_CLIENT_TIMEOUT", "RLS_VIOLATION_EXPORT_INTERVAL", "RLS_VIOLATION_RETENTION",
 	}
-	require.Len(t, durationKeys, 17)
+	require.Len(t, durationKeys, 19)
 
 	for _, key := range durationKeys {
 		for _, value := range []string{"0s", "-1s"} {
@@ -420,9 +427,9 @@ func TestLoad_WhitespaceOnlyValue_IsNotTreatedAsUnsetForNumbersBooleansAndDurati
 }
 
 func TestLoad_DotEnv_IsReadForLocalAndIgnoredForProd(t *testing.T) {
-	nonDevFile := "DATABASE_URL=postgres://file/db\nHTTP_PORT=1234\nVALKEY_ADDR=valkey:6379\nINTERNAL_API_TOKEN=t\n" +
+	nonDevFile := "DATABASE_URL=postgres://file/db\nHTTP_PORT=1234\nVALKEY_ADDR=valkey:6379\n" +
 		"ORG_MEMBERSHIP_BASE_URL=http://org\nCATALOG_ADMIN_BASE_URL=http://catalog\n" +
-		"EXECUTION_SERVICE_URL=http://execution\nEXECUTION_SERVICE_TOKEN=t\n" +
+		"EXECUTION_SERVICE_URL=http://execution\n" +
 		"OPENBAO_ADDR=http://bao\nOPENBAO_TOKEN=t\nSYSTEM_DATABASE_URL=postgres://file/system\n"
 
 	t.Run("local in the process loads the file", func(t *testing.T) {

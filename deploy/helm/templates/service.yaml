@@ -11,10 +11,12 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+      appProtocol: http
     - port: {{ .Values.service.ports.metrics }}
       targetPort: metrics
       protocol: TCP
       name: metrics
+      appProtocol: http
   selector:
     {{- include "workflow-definition-service.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: api

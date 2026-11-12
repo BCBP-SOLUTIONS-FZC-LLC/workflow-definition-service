@@ -56,7 +56,7 @@ func internalRouterWith(t *testing.T, services handler.Services) http.Handler {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	return httpadapter.NewRouter(httpadapter.RouterConfig{
-		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
+		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test",
 		Handler: handler.New(services),
 		DB:      upDB{}, Cache: upPinger{},
 	}).Handler()
@@ -82,23 +82,24 @@ func TestInternalContract_CompiledPlan(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name, path string
-		token      string
+		caller     string
 		want       int
 		validReq   bool
 	}{
-		{"published", path(published.ID.String(), tenantID.String()), "internal-secret", http.StatusOK, true},
-		{"draft", path(draft.ID.String(), tenantID.String()), "internal-secret", http.StatusOK, true},
-		{"unknown version", path(uuid.NewString(), tenantID.String()), "internal-secret", http.StatusNotFound, true},
-		{"bad version id", path("not-a-uuid", tenantID.String()), "internal-secret", http.StatusBadRequest, false},
-		{"no tenant", path(published.ID.String(), ""), "internal-secret", http.StatusBadRequest, false},
-		{"bad tenant", path(published.ID.String(), "nope"), "internal-secret", http.StatusBadRequest, false},
-		{"no token", path(published.ID.String(), tenantID.String()), "", http.StatusUnauthorized, true},
-		{"wrong token", path(published.ID.String(), tenantID.String()), "guess", http.StatusUnauthorized, true},
+		{"published", path(published.ID.String(), tenantID.String()), "iam-system", http.StatusOK, true},
+		{"draft", path(draft.ID.String(), tenantID.String()), "iam-system", http.StatusOK, true},
+		{"unknown version", path(uuid.NewString(), tenantID.String()), "iam-system", http.StatusNotFound, true},
+		{"bad version id", path("not-a-uuid", tenantID.String()), "iam-system", http.StatusBadRequest, false},
+		{"no tenant", path(published.ID.String(), ""), "iam-system", http.StatusBadRequest, false},
+		{"bad tenant", path(published.ID.String(), "nope"), "iam-system", http.StatusBadRequest, false},
+		{"no caller identity", path(published.ID.String(), tenantID.String()), "", http.StatusUnauthorized, true},
+		{"a user with another role", path(published.ID.String(), tenantID.String()), "tenant_admin", http.StatusUnauthorized, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
-			if tc.token != "" {
-				req.Header.Set("x-internal-token", tc.token)
+			if tc.caller != "" {
+				req.Header.Set("x-user-id", "someone")
+				req.Header.Set("x-tenant-roles", tc.caller)
 			}
 			if tc.validReq {
 				spec.Request(t, req)
@@ -123,7 +124,8 @@ func TestInternalContract_CompiledPlanBody(t *testing.T) {
 
 	read := func(v *domain.WorkflowVersion) map[string]any {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/internal/workflow-versions/"+v.ID.String()+"/compiled-plan?tenant_id="+uuid.NewString(), nil)
-		req.Header.Set("x-internal-token", "internal-secret")
+		req.Header.Set("x-user-id", "iam-system")
+		req.Header.Set("x-tenant-roles", "iam-system")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		var body map[string]any

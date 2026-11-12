@@ -17,8 +17,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 )
 
-const sgCInternalToken = "sgc-internal-secret"
-
 type sgCCountingPinger struct{ calls atomic.Int32 }
 
 func (p *sgCCountingPinger) Ping(context.Context) error {
@@ -49,12 +47,11 @@ func (r *sgCAliasRepo) DeleteRest(_ context.Context, alias string) (bool, error)
 func sgCNewRouter(db DBPinger, cache Pinger, h *handler.Handler) *Router {
 	gin.SetMode(gin.TestMode)
 	return NewRouter(RouterConfig{
-		GinConfig:        testGinConfig,
-		AppEnv:           "test",
-		InternalAPIToken: sgCInternalToken,
-		Handler:          h,
-		DB:               db,
-		Cache:            cache,
+		GinConfig: testGinConfig,
+		AppEnv:    "test",
+		Handler:   h,
+		DB:        db,
+		Cache:     cache,
 	})
 }
 
@@ -100,7 +97,7 @@ func TestRouter_Healthz_AnswersOkJSONWithoutCredentialsAndWithoutTouchingDepende
 		withAuth bool
 	}{
 		{name: "no headers at all"},
-		{name: "wrong internal token is ignored", withAuth: true},
+		{name: "a stray caller header is ignored", withAuth: true},
 		{name: "still ok while the pod drains", drain: true},
 	}
 	for _, tc := range cases {
@@ -113,7 +110,7 @@ func TestRouter_Healthz_AnswersOkJSONWithoutCredentialsAndWithoutTouchingDepende
 			}
 			httpReq := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 			if tc.withAuth {
-				httpReq.Header.Set("x-internal-token", "not-the-token")
+				httpReq.Header.Set("x-user-id", "someone")
 			}
 			w := httptest.NewRecorder()
 
@@ -146,7 +143,8 @@ func TestRouter_DeleteAliasWithEncodedSlash_IsNotFoundAndNeverReachesTheStore(t 
 			svc := service.NewConnectorService(service.ConnectorDeps{Aliases: repo})
 			r := sgCNewRouter(&sgCCountingDB{}, &sgCCountingPinger{}, handler.New(handler.Services{Connectors: svc}))
 			httpReq := httptest.NewRequest(http.MethodDelete, tc.target, nil)
-			httpReq.Header.Set("x-internal-token", sgCInternalToken)
+			httpReq.Header.Set("x-user-id", "iam-system")
+			httpReq.Header.Set("x-tenant-roles", "iam-system")
 			w := httptest.NewRecorder()
 
 			r.engine.ServeHTTP(w, httpReq)

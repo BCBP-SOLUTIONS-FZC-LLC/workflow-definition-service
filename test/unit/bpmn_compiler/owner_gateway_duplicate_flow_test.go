@@ -12,8 +12,9 @@ func TestValidate_GatewayWithTwoIdenticalFlows_IsRefused(t *testing.T) {
 			doc := fork(kind, "G1", "J1",
 				flowXML("F3", "G1", "B"), flowXML("F3_again", "G1", "B"), flowXML("F4", "G1", "C"))
 
-			assertErrorOn(t, validateDocument(t, doc), domain.BPMNErrSplitWithoutGateway, "G1")
-			assertErrorOn(t, validateForPublishDocument(t, doc), domain.BPMNErrSplitWithoutGateway, "G1")
+			assertErrorOn(t, validateDocument(t, doc), domain.BPMNErrDuplicateSequenceFlow, "G1")
+			assertErrorOn(t, validateForPublishDocument(t, doc), domain.BPMNErrDuplicateSequenceFlow, "G1")
+			assertNoError(t, validateDocument(t, doc), domain.BPMNErrSplitWithoutGateway)
 		})
 	}
 }
@@ -22,7 +23,7 @@ func TestValidate_ExclusiveGatewayWithTwoIdenticalConditionedFlows_IsRefused(t *
 	doc := fork("exclusiveGateway", "G1", "J1",
 		conditionalFlowXML("F3", "G1", "B", `x == "a"`), conditionalFlowXML("F3_again", "G1", "B", `x == "b"`), flowXML("F4", "G1", "C"))
 
-	assertErrorOn(t, validateDocument(t, doc), domain.BPMNErrSplitWithoutGateway, "G1")
+	assertErrorOn(t, validateDocument(t, doc), domain.BPMNErrDuplicateSequenceFlow, "G1")
 }
 
 func TestValidate_GatewayInsideASubProcessWithTwoIdenticalFlows_IsRefused(t *testing.T) {
@@ -36,13 +37,15 @@ func TestValidate_GatewayInsideASubProcessWithTwoIdenticalFlows_IsRefused(t *tes
 	body := "    <bpmn:startEvent id=\"S\"/>\n" + sub + "    <bpmn:endEvent id=\"E\"/>\n" + flowXML("F1", "S", "SP") + flowXML("F2", "SP", "E")
 	errs := validateDocument(t, flowDocument(oneLane("S", "SP", "E"), body))
 
-	assertErrorOn(t, errs, domain.BPMNErrSplitWithoutGateway, "SP_G")
+	assertErrorOn(t, errs, domain.BPMNErrDuplicateSequenceFlow, "SP_G")
 }
 
 func TestValidate_GatewayWithDistinctTargets_HasNoSplitError(t *testing.T) {
 	for _, kind := range []string{"parallelGateway", "exclusiveGateway", "inclusiveGateway"} {
 		t.Run(kind, func(t *testing.T) {
-			assertNoError(t, validateDocument(t, fork(kind, "G1", "J1")), domain.BPMNErrSplitWithoutGateway)
+			errs := validateDocument(t, fork(kind, "G1", "J1"))
+			assertNoError(t, errs, domain.BPMNErrSplitWithoutGateway)
+			assertNoError(t, errs, domain.BPMNErrDuplicateSequenceFlow)
 		})
 	}
 }

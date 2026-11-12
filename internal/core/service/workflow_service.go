@@ -102,7 +102,7 @@ func (s *WorkflowService) Create(
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
-	limit, err := resolveTemplateLimit(ctx, s.planLimits, planCode)
+	limit, err := resolveTemplateLimit(ctx, s.planLimits, tenantID, planCode)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -13,11 +13,11 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-func resolveTemplateLimit(ctx context.Context, limits port.PlanLimits, planCode string) (*int64, error) {
+func resolveTemplateLimit(ctx context.Context, limits port.PlanLimits, tenantID uuid.UUID, planCode string) (*int64, error) {
 	if limits == nil {
 		return nil, fmt.Errorf("%w: no plan limit source is configured", domain.ErrUpstreamUnavailable)
 	}
-	limit, err := limits.WorkflowTemplateLimit(ctx, planCode)
+	limit, err := limits.WorkflowTemplateLimit(ctx, tenantID, planCode)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workflow template limit: %w", err)
 	}

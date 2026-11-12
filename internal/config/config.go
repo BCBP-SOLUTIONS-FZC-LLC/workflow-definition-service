@@ -38,13 +38,16 @@ type Config struct {
 	ShutdownGrace            time.Duration
 	ShutdownPoolDrainTimeout time.Duration
 
-	InternalAPIToken string
-
 	OrgMembershipBaseURL    string
 	MembershipClientTimeout time.Duration
 	CatalogAdminBaseURL     string
 	CatalogClientTimeout    time.Duration
 	PlanTableTTL            time.Duration
+
+	EntitlementsBaseURL        string
+	EntitlementsClientTimeout  time.Duration
+	EntitlementsCacheTTL       time.Duration
+	EntitlementsFreshnessBound time.Duration
 
 	TenantPurgeEnabled        bool
 	TenantCredentialRetention time.Duration
@@ -52,7 +55,6 @@ type Config struct {
 	TenantPurgeInterval       time.Duration
 	TenantPurgeBatch          int
 	ExecutionServiceURL       string
-	ExecutionServiceToken     string
 	ExecutionClientTimeout    time.Duration
 
 	OpenBaoAddr          string
@@ -73,7 +75,7 @@ func (r *reader) fail(format string, args ...any) {
 }
 
 func (r *reader) str(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
 	}
 	return fallback
@@ -174,20 +176,23 @@ func Load() (*Config, error) {
 		ShutdownGrace:            r.duration("SHUTDOWN_GRACE", 30*time.Second),
 		ShutdownPoolDrainTimeout: r.duration("SHUTDOWN_POOL_DRAIN_TIMEOUT", 10*time.Second),
 
-		InternalAPIToken: r.str("INTERNAL_API_TOKEN", ""),
+		OrgMembershipBaseURL:    r.str("ORG_MEMBERSHIP_BASE_URL", ""),
+		MembershipClientTimeout: r.duration("MEMBERSHIP_CLIENT_TIMEOUT", 10*time.Second),
+		CatalogAdminBaseURL:     r.str("CATALOG_ADMIN_BASE_URL", ""),
+		CatalogClientTimeout:    r.duration("CATALOG_CLIENT_TIMEOUT", 5*time.Second),
+		PlanTableTTL:            r.duration("PLAN_TABLE_TTL", 10*time.Minute),
 
-		OrgMembershipBaseURL:      r.str("ORG_MEMBERSHIP_BASE_URL", ""),
-		MembershipClientTimeout:   r.duration("MEMBERSHIP_CLIENT_TIMEOUT", 10*time.Second),
-		CatalogAdminBaseURL:       r.str("CATALOG_ADMIN_BASE_URL", ""),
-		CatalogClientTimeout:      r.duration("CATALOG_CLIENT_TIMEOUT", 5*time.Second),
-		PlanTableTTL:              r.duration("PLAN_TABLE_TTL", 10*time.Minute),
+		EntitlementsBaseURL:        r.str("ENTITLEMENTS_BASE_URL", ""),
+		EntitlementsClientTimeout:  r.duration("ENTITLEMENTS_CLIENT_TIMEOUT", 5*time.Second),
+		EntitlementsCacheTTL:       r.duration("ENTITLEMENTS_CACHE_TTL", time.Minute),
+		EntitlementsFreshnessBound: r.duration("ENTITLEMENTS_FRESHNESS_BOUND", 10*time.Minute),
+
 		TenantPurgeEnabled:        r.boolean("TENANT_PURGE_ENABLED", true),
 		TenantCredentialRetention: r.duration("TENANT_CREDENTIAL_RETENTION", 30*24*time.Hour),
 		TenantArtifactRetention:   r.duration("TENANT_ARTIFACT_RETENTION", 7*365*24*time.Hour),
 		TenantPurgeInterval:       r.duration("TENANT_PURGE_INTERVAL", 24*time.Hour),
 		TenantPurgeBatch:          r.integer("TENANT_PURGE_BATCH", 100),
 		ExecutionServiceURL:       r.str("EXECUTION_SERVICE_URL", ""),
-		ExecutionServiceToken:     r.str("EXECUTION_SERVICE_TOKEN", ""),
 		ExecutionClientTimeout:    r.duration("EXECUTION_CLIENT_TIMEOUT", 5*time.Second),
 
 		OpenBaoAddr:          r.str("OPENBAO_ADDR", ""),
@@ -235,6 +240,11 @@ func (c *Config) validate() []error {
 	need(c.MembershipClientTimeout > 0, "MEMBERSHIP_CLIENT_TIMEOUT must be > 0")
 	need(c.CatalogClientTimeout > 0, "CATALOG_CLIENT_TIMEOUT must be > 0")
 	need(c.PlanTableTTL > 0, "PLAN_TABLE_TTL must be > 0")
+	need(c.EntitlementsClientTimeout > 0, "ENTITLEMENTS_CLIENT_TIMEOUT must be > 0")
+	need(c.EntitlementsCacheTTL > 0, "ENTITLEMENTS_CACHE_TTL must be > 0")
+	need(c.EntitlementsFreshnessBound > 0, "ENTITLEMENTS_FRESHNESS_BOUND must be > 0")
+	need(c.EntitlementsFreshnessBound <= 0 || c.EntitlementsCacheTTL <= 0 || c.EntitlementsFreshnessBound >= c.EntitlementsCacheTTL,
+		"ENTITLEMENTS_FRESHNESS_BOUND must be >= ENTITLEMENTS_CACHE_TTL")
 	need(c.TenantCredentialRetention > 0, "TENANT_CREDENTIAL_RETENTION must be > 0")
 	need(c.TenantArtifactRetention > 0, "TENANT_ARTIFACT_RETENTION must be > 0")
 	need(c.TenantPurgeInterval > 0, "TENANT_PURGE_INTERVAL must be > 0")
@@ -246,13 +256,12 @@ func (c *Config) validate() []error {
 	need(c.SecretsClientTimeout > 0, "SECRETS_CLIENT_TIMEOUT must be > 0")
 	need(c.RLSViolationExportInterval > 0, "RLS_VIOLATION_EXPORT_INTERVAL must be > 0")
 	need(c.RLSViolationRetention > 0, "RLS_VIOLATION_RETENTION must be > 0")
-	need(!nonDev || c.InternalAPIToken != "", "INTERNAL_API_TOKEN is required in non-dev environments")
 	need(c.AppEnv != "prod" || c.SystemDatabaseURL != "", "SYSTEM_DATABASE_URL is required in prod environment")
 	if nonDev {
 		need(c.OrgMembershipBaseURL != "", "ORG_MEMBERSHIP_BASE_URL is required in non-dev environments")
-		need(c.CatalogAdminBaseURL != "", "CATALOG_ADMIN_BASE_URL is required in non-dev environments")
+		need(c.CatalogAdminBaseURL != "" || c.EntitlementsBaseURL != "",
+			"at least one of CATALOG_ADMIN_BASE_URL and ENTITLEMENTS_BASE_URL is required in non-dev environments")
 		need(c.ExecutionServiceURL != "", "EXECUTION_SERVICE_URL is required in non-dev environments")
-		need(c.ExecutionServiceToken != "", "EXECUTION_SERVICE_TOKEN is required in non-dev environments")
 		need(c.OpenBaoAddr != "", "OPENBAO_ADDR is required in non-dev environments")
 		need(c.OpenBaoToken != "", "OPENBAO_TOKEN is required in non-dev environments")
 	}

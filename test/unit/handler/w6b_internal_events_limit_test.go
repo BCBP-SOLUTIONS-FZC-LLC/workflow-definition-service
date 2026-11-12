@@ -39,11 +39,10 @@ func TestInternalEvents_BodyOverTheLimit_Returns413PayloadTooLargeAndCountsBadPa
 			Logger: log, ServiceName: "workflow-definition-service", BuildVersion: "test",
 			Domain: observability.Domain, Environment: "test",
 		},
-		AppEnv:           "test",
-		InternalAPIToken: "secret",
-		Handler:          handler.New(handler.Services{}),
-		DB:               w6bHealthyDB{},
-		Cache:            w6bHealthyCache{},
+		AppEnv:  "test",
+		Handler: handler.New(handler.Services{}),
+		DB:      w6bHealthyDB{},
+		Cache:   w6bHealthyCache{},
 	})
 	observability.Register()
 	counter := observability.InternalEventsIngestTotal.WithLabelValues("unknown", "bad_payload")
@@ -52,7 +51,8 @@ func TestInternalEvents_BodyOverTheLimit_Returns413PayloadTooLargeAndCountsBadPa
 	body := `{"id":"x","type":"Unhandled","data":{"pad":"` + strings.Repeat("a", 11<<20) + `"}}`
 	r := httptest.NewRequest(http.MethodPost, w6bEventsPath, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("x-internal-token", "secret")
+	r.Header.Set("x-user-id", "iam-system")
+	r.Header.Set("x-tenant-roles", "iam-system")
 	w := httptest.NewRecorder()
 	router.Handler().ServeHTTP(w, r)
 

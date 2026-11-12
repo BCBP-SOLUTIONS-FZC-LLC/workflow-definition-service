@@ -16,8 +16,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-const w13bExecutionToken = "w13b-execution-token"
-
 type w13bSeen struct {
 	method, path, query string
 	header              http.Header
@@ -119,13 +117,12 @@ func TestExecutionClient_CheckActiveInstances_5xxOnEveryAttemptIsThreeIdenticalC
 			srv := w13bNewServer(t, w13bStatus(status, `{"code":"ZZQ"}`))
 			tenant, workflow := uuid.New(), uuid.New()
 
-			hasActive, count, err := NewExecutionClient(srv.URL, w13bExecutionToken, 5*time.Second).
+			hasActive, count, err := NewExecutionClient(srv.URL, 5*time.Second).
 				CheckActiveInstances(context.Background(), tenant, workflow)
 
 			require.ErrorIs(t, err, domain.ErrUpstreamUnavailable)
 			assert.Contains(t, err.Error(), "check active instances")
 			assert.Contains(t, err.Error(), "status "+strconv.Itoa(status))
-			assert.NotContains(t, err.Error(), w13bExecutionToken)
 			assert.False(t, hasActive)
 			assert.Zero(t, count)
 			reqs := srv.requests()
@@ -134,7 +131,7 @@ func TestExecutionClient_CheckActiveInstances_5xxOnEveryAttemptIsThreeIdenticalC
 				assert.Equal(t, http.MethodGet, r.method)
 				assert.Equal(t, "/api/v1/internal/workflows/"+workflow.String()+"/active-instances", r.path)
 				assert.Equal(t, "tenant_id="+tenant.String(), r.query)
-				assert.Equal(t, w13bExecutionToken, r.header.Get(internalTokenHeader))
+				assert.Equal(t, tenant.String(), r.header.Get("x-tenant-id"))
 			}
 		})
 	}
@@ -149,7 +146,7 @@ func TestExecutionClient_CheckActiveInstances_AnAnswerOtherThan200IsOneCallAndUn
 			t.Parallel()
 			srv := w13bNewServer(t, w13bStatus(status, `{"has_active":true,"count":4}`))
 
-			hasActive, count, err := NewExecutionClient(srv.URL, w13bExecutionToken, 5*time.Second).
+			hasActive, count, err := NewExecutionClient(srv.URL, 5*time.Second).
 				CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
 
 			require.ErrorIs(t, err, domain.ErrUpstreamUnavailable)
@@ -161,61 +158,51 @@ func TestExecutionClient_CheckActiveInstances_AnAnswerOtherThan200IsOneCallAndUn
 	}
 }
 
-func TestExecutionClient_InternalTokenHeaderIsSentOnlyWhenATokenIsConfigured(t *testing.T) {
+func TestExecutionClient_SendsTheSystemCallerIdentityAndNoInternalToken(t *testing.T) {
 	calls := []struct {
 		name string
-		run  func(c *ExecutionClient) error
+		run  func(c *ExecutionClient, tenant uuid.UUID) error
 		ok   func(w http.ResponseWriter)
 	}{
 		{
 			name: "check active instances",
-			run: func(c *ExecutionClient) error {
-				_, _, err := c.CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
+			run: func(c *ExecutionClient, tenant uuid.UUID) error {
+				_, _, err := c.CheckActiveInstances(context.Background(), tenant, uuid.New())
 				return err
 			},
 			ok: func(w http.ResponseWriter) { _, _ = w.Write([]byte(`{"has_active":false,"count":0}`)) },
 		},
 		{
 			name: "pause user tasks",
-			run: func(c *ExecutionClient) error {
-				return c.PauseUserTasks(context.Background(), uuid.New(), uuid.New(), nil)
+			run: func(c *ExecutionClient, tenant uuid.UUID) error {
+				return c.PauseUserTasks(context.Background(), tenant, uuid.New(), nil)
 			},
 			ok: func(w http.ResponseWriter) { w.WriteHeader(http.StatusNoContent) },
 		},
 	}
-	tokens := []struct {
-		name, token string
-		wantSent    bool
-	}{
-		{name: "configured token", token: w13bExecutionToken, wantSent: true},
-		{name: "empty token", token: "", wantSent: false},
-	}
 	for _, call := range calls {
-		for _, tk := range tokens {
-			t.Run(call.name+"/"+tk.name, func(t *testing.T) {
-				t.Parallel()
-				srv := w13bNewServer(t, func(_ int, w http.ResponseWriter) { call.ok(w) })
+		t.Run(call.name, func(t *testing.T) {
+			t.Parallel()
+			srv := w13bNewServer(t, func(_ int, w http.ResponseWriter) { call.ok(w) })
+			tenant := uuid.New()
 
-				err := call.run(NewExecutionClient(srv.URL, tk.token, 5*time.Second))
+			require.NoError(t, call.run(NewExecutionClient(srv.URL, 5*time.Second), tenant))
 
-				require.NoError(t, err)
-				reqs := srv.requests()
-				require.Len(t, reqs, 1)
-				values, present := reqs[0].header[http.CanonicalHeaderKey(internalTokenHeader)]
-				if tk.wantSent {
-					assert.Equal(t, []string{tk.token}, values)
-					return
-				}
-				assert.False(t, present, "no token is configured, so the header is not sent: %v", values)
-			})
-		}
+			reqs := srv.requests()
+			require.Len(t, reqs, 1)
+			assert.Equal(t, []string{"iam-system"}, reqs[0].header.Values("x-user-id"))
+			assert.Equal(t, []string{"iam-system"}, reqs[0].header.Values("x-tenant-roles"))
+			assert.Equal(t, []string{tenant.String()}, reqs[0].header.Values("x-tenant-id"))
+			_, token := reqs[0].header["X-Internal-Token"]
+			assert.False(t, token, "the shared internal token is gone")
+		})
 	}
 }
 
 func TestExecutionClient_CheckActiveInstances_WaitsAtLeastFiftyThenOneHundredMillisecondsBetweenAttempts(t *testing.T) {
 	srv := w13bNewServer(t, w13bStatus(http.StatusServiceUnavailable, ""))
 
-	_, _, err := NewExecutionClient(srv.URL, w13bExecutionToken, 5*time.Second).
+	_, _, err := NewExecutionClient(srv.URL, 5*time.Second).
 		CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
 
 	require.ErrorIs(t, err, domain.ErrUpstreamUnavailable)
@@ -253,7 +240,7 @@ func TestExecutionClient_CheckActiveInstances_RecordsOneObservationPerCallLabell
 			okBefore := dependencySeries(t, "execution", "check_active_instances", "success")
 			errBefore := dependencySeries(t, "execution", "check_active_instances", "error")
 
-			_, _, _ = NewExecutionClient(srv.URL, w13bExecutionToken, 5*time.Second).
+			_, _, _ = NewExecutionClient(srv.URL, 5*time.Second).
 				CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
 
 			assert.Len(t, srv.requests(), tc.wantAttempt)

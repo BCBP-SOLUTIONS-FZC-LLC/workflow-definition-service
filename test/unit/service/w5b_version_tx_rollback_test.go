@@ -6,11 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port/mocks"
@@ -23,7 +24,7 @@ type w5bLimits struct {
 	asked []string
 }
 
-func (l *w5bLimits) WorkflowTemplateLimit(_ context.Context, planCode string) (*int64, error) {
+func (l *w5bLimits) WorkflowTemplateLimit(_ context.Context, _ uuid.UUID, planCode string) (*int64, error) {
 	l.asked = append(l.asked, planCode)
 	return l.limit, l.err
 }

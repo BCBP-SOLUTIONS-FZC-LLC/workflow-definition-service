@@ -200,20 +200,6 @@ func TestIdempotentRoutes_SameKeyAndBody_ReplaysTheFirstResponseAndRunsTheServic
 				}}, cache)
 			},
 		},
-		{
-			name:       "write connector credential",
-			method:     http.MethodPost,
-			path:       "/api/v1/connectors/credentials",
-			body:       map[string]any{"connector_type": "send-email", "field_name": "apiKey", "value": "w11c-secret-value"},
-			wantStatus: http.StatusCreated,
-			wantBody:   "secret_path",
-			build: func(calls *w11cCounter, cache *memCache) *gin.Engine {
-				secrets := &w11cCountingSecrets{calls: calls}
-				return w11cEngine(handler.Services{
-					Connectors: service.NewConnectorService(service.ConnectorDeps{Secrets: secrets}),
-				}, cache)
-			},
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -240,18 +226,6 @@ func TestIdempotentRoutes_SameKeyAndBody_ReplaysTheFirstResponseAndRunsTheServic
 	}
 }
 
-type w11cCountingSecrets struct {
-	calls *w11cCounter
-}
-
-func (s *w11cCountingSecrets) Write(context.Context, string, map[string]string) error {
-	s.calls.hit()
-	return nil
-}
-
-func (s *w11cCountingSecrets) Delete(context.Context, string) error { return nil }
-
-var _ port.SecretsClient = (*w11cCountingSecrets)(nil)
 var _ port.SecretsClient = (*w11cSecrets)(nil)
 
 func TestCloneVersion_KeyReusedWithAnotherBody_Returns409AndRunsTheCloneOnce(t *testing.T) {
@@ -315,7 +289,7 @@ func TestArchiveWorkflow_FailedAttemptsAreNotStored_TheRetryWithTheSameKeyRunsAg
 	assert.Equal(t, 3, calls.count(), "the success is replayed, not archived again")
 }
 
-func TestWriteConnectorCredential_SecretsStoreOutageIsNotStored_TheRetryWithTheSameKeyWritesAndReturns201(t *testing.T) {
+func TestWriteConnectorCredential_SecretsStoreOutageWithKey_TheRetryWithTheSameKeyWritesAgainAndNothingIsCached(t *testing.T) {
 	t.Parallel()
 
 	cache := newMemCache()
@@ -328,14 +302,14 @@ func TestWriteConnectorCredential_SecretsStoreOutageIsNotStored_TheRetryWithTheS
 
 	down := w11cSend(r, http.MethodPost, path, body, "credential-key")
 	require.Equal(t, http.StatusServiceUnavailable, down.Code, down.Body.String())
-	assert.Equal(t, 0, w11cStoredResponses(cache), "the outage response is not stored")
+	assert.Empty(t, noIdemCacheKeys(cache), "the route is outside the idempotency middleware")
 	assert.NotContains(t, down.Body.String(), "w11c-secret-value")
 
 	retry := w11cSend(r, http.MethodPost, path, body, "credential-key")
 
 	require.Equal(t, http.StatusCreated, retry.Code, retry.Body.String())
 	assert.Equal(t, 2, secrets.writeCount(), "the retry reached the secrets store again")
-	assert.Equal(t, 1, w11cStoredResponses(cache))
+	assert.Empty(t, noIdemCacheKeys(cache))
 	assert.NotContains(t, retry.Body.String(), "w11c-secret-value")
 }
 

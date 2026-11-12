@@ -9,6 +9,7 @@ vendor/
 /.tools/
 .go/
 /.coverage/
+/.schemathesis/
 .gopath/
 *.out
 /server

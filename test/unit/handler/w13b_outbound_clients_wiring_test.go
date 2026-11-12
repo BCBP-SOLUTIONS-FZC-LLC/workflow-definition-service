@@ -23,8 +23,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
 )
 
-const w13bExecutionToken = "w13b-execution-token"
-
 type w13bExecutionCall struct {
 	method, path, query string
 	header              http.Header
@@ -61,7 +59,7 @@ func (s *w13bExecutionServer) seen() []w13bExecutionCall {
 
 func w13bArchivePath() string { return "/api/v1/workflows/" + testWFID.String() + "/archive" }
 
-func w13bArchive(t *testing.T, executionURL, token string, wantArchived bool) *httptest.ResponseRecorder {
+func w13bArchive(t *testing.T, executionURL string, wantArchived bool) *httptest.ResponseRecorder {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	workflows := mocks.NewMockWorkflowRepository(ctrl)
@@ -78,7 +76,7 @@ func w13bArchive(t *testing.T, executionURL, token string, wantArchived bool) *h
 	}
 	svc := service.NewWorkflowService(service.WorkflowDeps{
 		Transactor: tx, Workflows: workflows, Versions: versions,
-		Execution: outboundhttp.NewExecutionClient(executionURL, token, 5*time.Second),
+		Execution: outboundhttp.NewExecutionClient(executionURL, 5*time.Second),
 	})
 	router := newRouter(handler.New(handler.Services{Workflows: svc}))
 	return do(router, adminReq(http.MethodPost, w13bArchivePath(), nil))
@@ -105,16 +103,16 @@ func TestArchiveWorkflow_ExecutionServiceAnswering5xxOnEveryAttempt_Is503AfterTh
 			t.Parallel()
 			srv := w13bNewExecutionServer(t, status, `{"code":"ZZQ"}`)
 
-			w := w13bArchive(t, srv.URL, w13bExecutionToken, false)
+			w := w13bArchive(t, srv.URL, false)
 
-			w13bAssert503(t, w, w13bArchivePath(), srv.URL, w13bExecutionToken)
+			w13bAssert503(t, w, w13bArchivePath(), srv.URL)
 			calls := srv.seen()
 			require.Len(t, calls, 3)
 			for _, c := range calls {
 				assert.Equal(t, http.MethodGet, c.method)
 				assert.Equal(t, "/api/v1/internal/workflows/"+testWFID.String()+"/active-instances", c.path)
 				assert.Equal(t, "tenant_id="+testTenantID.String(), c.query)
-				assert.Equal(t, w13bExecutionToken, c.header.Get("x-internal-token"))
+				assert.Equal(t, testTenantID.String(), c.header.Get("x-tenant-id"))
 			}
 		})
 	}
@@ -126,43 +124,30 @@ func TestArchiveWorkflow_ExecutionServiceAnsweringOtherThan200_Is503AfterOneCall
 			t.Parallel()
 			srv := w13bNewExecutionServer(t, status, `{"has_active":false,"count":0}`)
 
-			w := w13bArchive(t, srv.URL, w13bExecutionToken, false)
+			w := w13bArchive(t, srv.URL, false)
 
-			w13bAssert503(t, w, w13bArchivePath(), srv.URL, w13bExecutionToken)
+			w13bAssert503(t, w, w13bArchivePath(), srv.URL)
 			assert.Len(t, srv.seen(), 1, "a status other than 200 or 5xx is not retried")
 		})
 	}
 }
 
-func TestArchiveWorkflow_InternalTokenHeaderFollowsTheConfiguredToken_Returns200(t *testing.T) {
-	cases := []struct {
-		name, token string
-		wantSent    bool
-	}{
-		{name: "token configured", token: w13bExecutionToken, wantSent: true},
-		{name: "no token configured", token: "", wantSent: false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			srv := w13bNewExecutionServer(t, http.StatusOK, `{"has_active":false,"count":0}`)
+func TestArchiveWorkflow_ExecutionCallCarriesTheSystemCallerIdentity_Returns200(t *testing.T) {
+	srv := w13bNewExecutionServer(t, http.StatusOK, `{"has_active":false,"count":0}`)
 
-			w := w13bArchive(t, srv.URL, tc.token, true)
+	w := w13bArchive(t, srv.URL, true)
 
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-			var body map[string]any
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-			assert.Equal(t, "ARCHIVED", body["status"])
-			calls := srv.seen()
-			require.Len(t, calls, 1)
-			values, present := calls[0].header["X-Internal-Token"]
-			if tc.wantSent {
-				assert.Equal(t, []string{tc.token}, values)
-				return
-			}
-			assert.False(t, present, "no token is configured, so the header is not sent: %v", values)
-		})
-	}
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "ARCHIVED", body["status"])
+	calls := srv.seen()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "iam-system", calls[0].header.Get("x-user-id"))
+	assert.Equal(t, "iam-system", calls[0].header.Get("x-tenant-roles"))
+	assert.Equal(t, testTenantID.String(), calls[0].header.Get("x-tenant-id"))
+	_, token := calls[0].header["X-Internal-Token"]
+	assert.False(t, token, "the shared internal token is gone")
 }
 
 func TestPublishVersion_MembershipAnswerThatIsNoVerdict_Is503AfterOneCall(t *testing.T) {

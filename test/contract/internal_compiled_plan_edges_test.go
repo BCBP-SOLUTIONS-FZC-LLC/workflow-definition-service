@@ -47,7 +47,8 @@ func (c *planEdgeCache) Set(_ context.Context, key, value string, _ time.Duratio
 func planEdgeGet(t *testing.T, router http.Handler, path string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
-	req.Header.Set("x-internal-token", "internal-secret")
+	req.Header.Set("x-user-id", "iam-system")
+	req.Header.Set("x-tenant-roles", "iam-system")
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}

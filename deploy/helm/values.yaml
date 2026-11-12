@@ -42,7 +42,7 @@ resources:
     memory: "1024Mi"
 
 env:
-  APP_ENV: "prod"                                 # enables INTERNAL_API_TOKEN + ORG_MEMBERSHIP_BASE_URL + EXECUTION_SERVICE_URL/TOKEN validation (internal/config/config.go validate())
+  APP_ENV: "prod"                                 # enables ORG_MEMBERSHIP_BASE_URL + EXECUTION_SERVICE_URL validation (internal/config/config.go validate())
   HTTP_PORT: "8080"
   METRICS_PORT: "9091"
   OTEL_SERVICE_NAME: "workflow-definition-service"     # exact value from internal/config/config.go default
@@ -66,9 +66,13 @@ env:
   VALKEY_WRITE_TIMEOUT: "1s"
   ORG_MEMBERSHIP_BASE_URL: ""                      # in-cluster org-membership service URL — required when APP_ENV != dev
   MEMBERSHIP_CLIENT_TIMEOUT: "10s"
-  CATALOG_ADMIN_BASE_URL: ""                       # in-cluster catalog-admin service URL (the plan table) — required when APP_ENV != dev
+  CATALOG_ADMIN_BASE_URL: ""                       # in-cluster catalog-admin service URL (the plan table). When APP_ENV != dev, set this or ENTITLEMENTS_BASE_URL
   CATALOG_CLIENT_TIMEOUT: "5s"
   PLAN_TABLE_TTL: "10m"                            # how long a plan table read stays fresh; the last table read is kept when a refresh fails
+  ENTITLEMENTS_BASE_URL: ""                        # in-cluster Entitlements service URL. When set it replaces the plan table as the template limit source (read per tenant; x-plan is then unused for the limit). Empty keeps the Catalog plan table. When APP_ENV != dev, set this or CATALOG_ADMIN_BASE_URL
+  ENTITLEMENTS_CLIENT_TIMEOUT: "5s"                # bound on one Entitlements read
+  ENTITLEMENTS_CACHE_TTL: "60s"                    # how long a tenant's limit stays fresh before the next read (placeholder until the Entitlements LLD fixes it)
+  ENTITLEMENTS_FRESHNESS_BOUND: "10m"              # a limit not read within this long answers 503 UPSTREAM_UNAVAILABLE; a held value is served until then. Must be >= ENTITLEMENTS_CACHE_TTL (placeholder)
   EXECUTION_SERVICE_URL: "http://workflow-execution-service-api:8080"  # the Execution Service API's in-cluster HTTP Service — required when APP_ENV != dev
   EXECUTION_CLIENT_TIMEOUT: "5s"
   OPENBAO_ADDR: ""                                 # in-cluster OpenBao address — required when APP_ENV != dev
@@ -88,8 +92,6 @@ envFromSecret:
   - MIGRATION_DATABASE_URL   # direct-Postgres DSN; required whenever DATABASE_URL points at PgBouncer
   - SYSTEM_DATABASE_URL      # BYPASSRLS DSN for scope=global module/template writes
   - VALKEY_PASSWORD
-  - INTERNAL_API_TOKEN       # required when APP_ENV != dev — pod crash-loops without it (config.validate())
-  - EXECUTION_SERVICE_TOKEN  # the Execution Service's INTERNAL_API_TOKEN, sent on its internal API
   - OPENBAO_TOKEN            # token for the tenant connector credential store — required when APP_ENV != dev
 
 # existingSecret — preferred for production.
@@ -113,8 +115,6 @@ secretValues:
   MIGRATION_DATABASE_URL: ""
   SYSTEM_DATABASE_URL: ""
   VALKEY_PASSWORD: ""
-  INTERNAL_API_TOKEN: ""
-  EXECUTION_SERVICE_TOKEN: ""
   OPENBAO_TOKEN: ""
 
 # migrationJob — runs `/server migrate` as a pre-install/pre-upgrade Helm hook before
@@ -185,14 +185,23 @@ networkPolicy:
   # Optional pod label selector — combined with namespaceSelector (logical AND).
   # Leave empty ({}) to allow all pods in the ingress controller namespace.
   ingressControllerPodSelector: {}
-  # Named same-namespace callers, replacing a blanket podSelector: {} allow.
+  # Named callers of the internal API, replacing a blanket podSelector: {} allow.
   # The Execution Service reads compiled plans, and the shared events consumer
-  # forwards membership events, over the internal API (definition LLD §3.4).
+  # forwards membership events, over the internal API (definition LLD §3.4). An entry
+  # with a namespaceSelector matches pods of that namespace only; one without matches
+  # the release namespace. Every caller of authorizationPolicy.internalRoutes needs an
+  # entry here, or the mesh admits it and this policy drops its packets (a chart test checks it).
   allowedCallers:
     - podSelector:
         app.kubernetes.io/name: workflow-execution-service
     - podSelector:
         app.kubernetes.io/name: workflow-events-consumer
+    # The alias writer (Tender), in its own namespace. PLACEHOLDER, confirm with Platform:
+    # the namespace and the pod label, as for the connector-alias-write group below.
+    - podSelector:
+        app.kubernetes.io/name: tender-service
+      namespaceSelector:
+        kubernetes.io/metadata.name: tender-app
   metricsIngress:
     enabled: true
     # Namespace where Prometheus runs.
@@ -218,6 +227,7 @@ networkPolicy:
     - podSelector:
         app.kubernetes.io/name: workflow-execution-service
         app.kubernetes.io/component: api
+      ports: [8080]
     # OpenBao holds the tenants' connector credentials. Placeholder address until the
     # platform's OpenBao namespace, labels and port are known; replace with the real ones.
     - podSelector:
@@ -225,10 +235,69 @@ networkPolicy:
       namespaceSelector:
         kubernetes.io/metadata.name: openbao
       ports: [8200]
+  # Egress to the Entitlements service in the commercial namespace. Rendered only when
+  # env.ENTITLEMENTS_BASE_URL is set and both ports and podSelector are non-empty. The pod labels and port are PLACEHOLDERS until
+  # Platform names the real ones; replace them before enabling the setting.
+  entitlementsEgress:
+    podSelector:
+      app.kubernetes.io/name: commercial-entitlements
+    namespaceSelector:
+      kubernetes.io/metadata.name: commercial
+    ports: [8080]
   # If the Execution Service lives in a different namespace than this release, add
   # an ingress rule here restricted to the http port.
   additionalIngressRules: []
   additionalEgressRules: []
+
+# authorizationPolicy: Istio AuthorizationPolicy (security.istio.io/v1, action ALLOW) that replaces the
+# retired shared internal token. The mesh names each caller by its service account (mutual TLS), so the
+# policy needs a sidecar on both ends; a caller without a mesh identity is refused on the internal paths.
+# The first rule admits every request outside /api/v1/internal/* (gateway routes, probes, metrics).
+# Each entry of internalRoutes then admits its own callers onto its own paths, one rule per entry.
+# An entry with no caller renders no rule, so its paths stay closed. The policy selects the API pods.
+# Turning it off leaves the NetworkPolicy alone in front of the internal routes: the render refuses that
+# when env.APP_ENV is staging or prod unless allowDisabled is true. PeerAuthentication (mesh-wide
+# mTLS) is Platform's. Requires Istio.
+authorizationPolicy:
+  enabled: true
+  allowDisabled: false
+  trustDomain: cluster.local
+  # PLACEHOLDERS, confirm with Platform: the namespaces and ServiceAccount names below.
+  # Every internal route (router.go) belongs to exactly one entry; a test fails when a new one does not.
+  internalRoutes:
+    # The event consumer forwards the membership and tenant events (POST only).
+    - name: events
+      paths:
+        - /api/v1/internal/events
+      callers:
+        - namespace: workflow-app
+          serviceAccount: workflow-events-consumer
+    # Compiled plans: the Execution API starts instances from them and the Execution worker reads them.
+    - name: compiled-plans
+      paths:
+        - /api/v1/internal/workflow-versions/*
+      callers:
+        - namespace: workflow-app
+          serviceAccount: workflow-execution-service-api
+        - namespace: workflow-app
+          serviceAccount: workflow-execution-service-worker
+    # The Execution connector worker lists the aliases at start (GET). Istio matches a path pattern
+    # "/x/*" below "/x/" only, never "/x" itself, so the list route is its own exact path here and the
+    # write group below takes the sub-paths. A method rule is not used: no other route has this path.
+    - name: connector-alias-read
+      paths:
+        - /api/v1/internal/connector-aliases
+      callers:
+        - namespace: workflow-app
+          serviceAccount: workflow-execution-service-connector-worker
+    # Alias writes and deletes (the rest routes today), under /connector-aliases/. PLACEHOLDER, confirm
+    # with Platform: the owning service (Tender) that publishes its aliases.
+    - name: connector-alias-write
+      paths:
+        - /api/v1/internal/connector-aliases/*
+      callers:
+        - namespace: tender-app
+          serviceAccount: tender-service
 
 # ServiceMonitor — requires kube-prometheus-stack (monitoring.coreos.com/v1 CRD).
 # NOTE: PrometheusRule (alerting rules) is also gated on this flag — no scrape means

@@ -36,6 +36,7 @@ func ValidateWithImplicitStart(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, im
 		return append(errs, depth...)
 	}
 	errs = append(errs, ValidateLaneNames(proc)...)
+	errs = append(errs, ValidateLaneDeptIDs(proc)...)
 	errs = append(errs, ValidateNoNestedSubProcess(proc)...)
 	errs = append(errs, ValidateDuplicateIDs(proc)...)
 	errs = append(errs, ValidateTaskSchedules(proc)...)

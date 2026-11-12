@@ -17,7 +17,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 )
 
-var testGinConfig = gincommon.Config{ServiceName: "definition-service-test", Domain: "workflow", Environment: "test"}
+var testGinConfig = gincommon.Config{ServiceName: "workflow-definition-service", Domain: "workflow", Environment: "test"}
 
 type fakePinger struct{ err error }
 
@@ -32,6 +32,7 @@ func testRouter(db DBPinger, cache Pinger) *gin.Engine {
 	r := NewRouter(RouterConfig{
 		GinConfig: testGinConfig,
 		AppEnv:    "test",
+		Log:       &readyzLog{},
 		Handler:   handler.New(handler.Services{}),
 		DB:        db, Cache: cache,
 	})
@@ -85,20 +86,19 @@ func TestNewRouter_Healthz(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestNewRouter_InternalRoutesRequireToken(t *testing.T) {
+func TestNewRouter_InternalRoutesRequireTheSystemCaller(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := NewRouter(RouterConfig{
-		GinConfig:        testGinConfig,
-		AppEnv:           "test",
-		InternalAPIToken: "secret",
-		Handler:          handler.New(handler.Services{}),
-		DB:               fakeDBPinger{}, Cache: fakePinger{},
+		GinConfig: testGinConfig,
+		AppEnv:    "test",
+		Handler:   handler.New(handler.Services{}),
+		DB:        fakeDBPinger{}, Cache: fakePinger{},
 	})
 
 	w := httptest.NewRecorder()
 	router.engine.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/internal/events", nil))
 
-	assert.Equal(t, http.StatusUnauthorized, w.Code, "a missing x-internal-token must be rejected before reaching the handler")
+	assert.Equal(t, http.StatusUnauthorized, w.Code, "a request without the system caller identity must be rejected before reaching the handler")
 }
 
 func TestNewRouter_DevMode_MountsAsyncAPIRoute(t *testing.T) {
@@ -146,19 +146,19 @@ func TestRouter_Handler_ReturnsUnderlyingEngine(t *testing.T) {
 func TestInternalRoutes_RejectBodiesOverTheLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := NewRouter(RouterConfig{
-		GinConfig:        testGinConfig,
-		AppEnv:           "test",
-		InternalAPIToken: "secret",
-		Handler:          handler.New(handler.Services{}),
-		DB:               fakeDBPinger{health: DBHealth{Healthy: true}},
-		Cache:            fakePinger{},
+		GinConfig: testGinConfig,
+		AppEnv:    "test",
+		Handler:   handler.New(handler.Services{}),
+		DB:        fakeDBPinger{health: DBHealth{Healthy: true}},
+		Cache:     fakePinger{},
 	}).engine
 
 	padding := strings.Repeat("a", 11<<20)
 	body := `{"id":"x","type":"Unhandled","data":{"pad":"` + padding + `"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/events", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-internal-token", "secret")
+	req.Header.Set("x-user-id", "iam-system")
+	req.Header.Set("x-tenant-roles", "iam-system")
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -64,21 +66,21 @@ func TestPlanLimitService_LooksUpTheLimitByPlanCode(t *testing.T) {
 	reader := &fakePlanTableReader{table: map[string]*int64{"starter": limitOf(5), "pro": limitOf(50), "enterprise": nil, "frozen": limitOf(0)}}
 	svc := newPlanLimits(reader, &planClock{now: time.Unix(0, 0)})
 
-	got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, int64(5), *got)
 
-	got, err = svc.WorkflowTemplateLimit(context.Background(), " PRO ")
+	got, err = svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, " PRO ")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, int64(50), *got, "the code is trimmed and lower-cased")
 
-	got, err = svc.WorkflowTemplateLimit(context.Background(), "enterprise")
+	got, err = svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "enterprise")
 	require.NoError(t, err)
 	assert.Nil(t, got, "a null limit is unlimited")
 
-	got, err = svc.WorkflowTemplateLimit(context.Background(), "frozen")
+	got, err = svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "frozen")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, int64(0), *got, "zero is a hard cap, not unlimited")
@@ -90,7 +92,7 @@ func TestPlanLimitService_AnUnknownOrMissingPlanCodeIsUnavailableNeverADefault(t
 	svc := newPlanLimits(reader, &planClock{now: time.Unix(0, 0)})
 
 	for _, code := range []string{"", "   ", "platinum"} {
-		_, err := svc.WorkflowTemplateLimit(context.Background(), code)
+		_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, code)
 		assert.ErrorIs(t, err, domain.ErrUpstreamUnavailable, "code %q", code)
 	}
 }
@@ -99,7 +101,7 @@ func TestPlanLimitService_NoTableEverReadIsUnavailable(t *testing.T) {
 	reader := &fakePlanTableReader{err: errors.New("catalog down")}
 	svc := newPlanLimits(reader, &planClock{now: time.Unix(0, 0)})
 
-	_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	assert.ErrorIs(t, err, domain.ErrUpstreamUnavailable)
 }
 
@@ -108,13 +110,13 @@ func TestPlanLimitService_RefreshesAfterTheFreshnessWindow(t *testing.T) {
 	clock := &planClock{now: time.Unix(0, 0)}
 	svc := newPlanLimits(reader, clock)
 
-	_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	reader.table = map[string]*int64{"starter": limitOf(8)}
 	clock.now = clock.now.Add(2 * time.Minute)
 
 	assert.Eventually(t, func() bool {
-		got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 		return err == nil && got != nil && *got == 8
 	}, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, 2, reader.callCount())
@@ -125,12 +127,12 @@ func TestPlanLimitService_KeepsTheLastTableWhenARefreshFails(t *testing.T) {
 	clock := &planClock{now: time.Unix(0, 0)}
 	svc := newPlanLimits(reader, clock)
 
-	_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	reader.err = errors.New("catalog down")
 	clock.now = clock.now.Add(time.Hour)
 
-	got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, int64(5), *got, "the last table read still answers")
@@ -142,7 +144,7 @@ func TestPlanLimitService_DoesNotRetryTheCatalogOnEveryRequestDuringAnOutage(t *
 	svc := newPlanLimits(reader, clock)
 
 	for range 5 {
-		_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 		assert.ErrorIs(t, err, domain.ErrUpstreamUnavailable)
 	}
 	assert.Equal(t, 1, reader.callCount(), "failures inside the retry backoff do not reach the catalog")
@@ -150,7 +152,7 @@ func TestPlanLimitService_DoesNotRetryTheCatalogOnEveryRequestDuringAnOutage(t *
 	clock.now = clock.now.Add(10 * time.Second)
 	reader.err = nil
 	reader.table = map[string]*int64{"starter": limitOf(5)}
-	got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, 2, reader.callCount())
@@ -160,13 +162,13 @@ func TestPlanLimitService_AFailedRefreshIsNotRetriedInsideTheBackoffEither(t *te
 	reader := &fakePlanTableReader{table: map[string]*int64{"starter": limitOf(5)}}
 	clock := &planClock{now: time.Unix(0, 0)}
 	svc := newPlanLimits(reader, clock)
-	_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 
 	reader.err = errors.New("catalog down")
 	clock.now = clock.now.Add(time.Hour)
 	for range 5 {
-		_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 		require.NoError(t, err)
 	}
 	assert.Eventually(t, func() bool { return reader.callCount() == 2 }, 2*time.Second, 5*time.Millisecond, "one failed refresh")
@@ -178,7 +180,7 @@ func TestPlanLimitService_AnExpiredTableIsServedWhileTheRefreshRuns(t *testing.T
 	reader := &fakePlanTableReader{table: map[string]*int64{"starter": limitOf(5)}}
 	clock := &planClock{now: time.Unix(0, 0)}
 	svc := newPlanLimits(reader, clock)
-	_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 
 	release := make(chan struct{})
@@ -190,7 +192,7 @@ func TestPlanLimitService_AnExpiredTableIsServedWhileTheRefreshRuns(t *testing.T
 
 	answered := make(chan *int64, 1)
 	go func() {
-		got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 		if err != nil {
 			answered <- nil
 			return
@@ -207,7 +209,7 @@ func TestPlanLimitService_AnExpiredTableIsServedWhileTheRefreshRuns(t *testing.T
 
 	close(release)
 	assert.Eventually(t, func() bool {
-		got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 		return err == nil && got != nil && *got == 8
 	}, 2*time.Second, 5*time.Millisecond, "the refresh lands for later requests")
 }
@@ -225,14 +227,14 @@ func TestPlanLimitService_APanickingReaderDoesNotWedgeTheRefresh(t *testing.T) {
 				t.Errorf("a reader panic escaped: %v", r)
 			}
 		}()
-		_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 		assert.ErrorIs(t, err, domain.ErrUpstreamUnavailable)
 	}()
 
 	clock.now = clock.now.Add(10 * time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	got, err := svc.WorkflowTemplateLimit(ctx, "starter")
+	got, err := svc.WorkflowTemplateLimit(ctx, uuid.Nil, "starter")
 	require.NoError(t, err, "the next read after the backoff must not wait on the panicked one")
 	require.NotNil(t, got)
 	assert.Equal(t, int64(5), *got)
@@ -240,7 +242,7 @@ func TestPlanLimitService_APanickingReaderDoesNotWedgeTheRefresh(t *testing.T) {
 
 type staticLimits map[string]*int64
 
-func (l staticLimits) WorkflowTemplateLimit(_ context.Context, planCode string) (*int64, error) {
+func (l staticLimits) WorkflowTemplateLimit(_ context.Context, _ uuid.UUID, planCode string) (*int64, error) {
 	limit, ok := l[planCode]
 	if !ok {
 		return nil, domain.ErrUpstreamUnavailable
@@ -260,7 +262,7 @@ func TestPlanLimitService_ConcurrentCallersShareOneRead(t *testing.T) {
 	results := make(chan error, callers)
 	for range callers {
 		go func() {
-			_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+			_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 			results <- err
 		}()
 	}
@@ -276,19 +278,19 @@ func TestPlanLimitService_ACallerIsNotKeptWaitingByARefreshWhenATableIsHeld(t *t
 	reader := &fakePlanTableReader{table: map[string]*int64{"starter": limitOf(5)}}
 	clock := &planClock{now: time.Unix(0, 0)}
 	svc := newPlanLimits(reader, clock)
-	_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 
 	reader.mu.Lock()
 	reader.release = make(chan struct{})
 	reader.mu.Unlock()
 	clock.now = clock.now.Add(time.Hour)
-	go func() { _, _ = svc.WorkflowTemplateLimit(context.Background(), "starter") }()
+	go func() { _, _ = svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter") }()
 	time.Sleep(50 * time.Millisecond)
 
 	done := make(chan struct{})
 	go func() {
-		got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+		got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 		assert.NoError(t, err)
 		assert.NotNil(t, got)
 		close(done)
@@ -307,9 +309,9 @@ func TestPlanLimitService_ACancelledCallerDoesNotFailTheReadForOthers(t *testing
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _ = svc.WorkflowTemplateLimit(cancelled, "starter")
+	_, _ = svc.WorkflowTemplateLimit(cancelled, uuid.Nil, "starter")
 
-	got, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err, "the shared read does not run under one caller's context")
 	require.NotNil(t, got)
 }
@@ -319,9 +321,9 @@ func TestPlanLimitService_TheBackoffRunsFromTheEndOfAFailedRead(t *testing.T) {
 	reader := &fakePlanTableReader{err: errors.New("catalog down"), onRead: func() { clock.now = clock.now.Add(5 * time.Second) }}
 	svc := newPlanLimits(reader, clock)
 
-	_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.Error(t, err)
-	_, err = svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err = svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.Error(t, err)
 	assert.Equal(t, 1, reader.callCount(), "a read that took as long as the backoff must not be retried at once")
 }
@@ -330,18 +332,18 @@ func TestPlanLimitService_APlanAddedAfterTheLastReadIsFoundByOneRereadNotAfterTh
 	reader := &fakePlanTableReader{table: map[string]*int64{"starter": limitOf(5)}}
 	clock := &planClock{now: time.Unix(0, 0)}
 	svc := newPlanLimits(reader, clock)
-	_, err := svc.WorkflowTemplateLimit(context.Background(), "starter")
+	_, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "starter")
 	require.NoError(t, err)
 
 	reader.mu.Lock()
 	reader.table = map[string]*int64{"starter": limitOf(5), "team": limitOf(20)}
 	reader.mu.Unlock()
-	_, err = svc.WorkflowTemplateLimit(context.Background(), "team")
+	_, err = svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "team")
 	assert.ErrorIs(t, err, domain.ErrUpstreamUnavailable, "a miss right after a read does not hit the catalog again")
 	assert.Equal(t, 1, reader.callCount())
 
 	clock.now = clock.now.Add(10 * time.Second)
-	got, err := svc.WorkflowTemplateLimit(context.Background(), "team")
+	got, err := svc.WorkflowTemplateLimit(context.Background(), uuid.Nil, "team")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, int64(20), *got)

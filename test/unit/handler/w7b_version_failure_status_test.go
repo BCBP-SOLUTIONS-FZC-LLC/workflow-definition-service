@@ -78,7 +78,7 @@ type w7bLimits struct {
 	asked []string
 }
 
-func (l *w7bLimits) WorkflowTemplateLimit(_ context.Context, planCode string) (*int64, error) {
+func (l *w7bLimits) WorkflowTemplateLimit(_ context.Context, _ uuid.UUID, planCode string) (*int64, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.asked = append(l.asked, planCode)

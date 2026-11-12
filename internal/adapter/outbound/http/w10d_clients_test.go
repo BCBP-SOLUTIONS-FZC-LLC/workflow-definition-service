@@ -155,7 +155,7 @@ func TestExecutionClient_AnUnusableOKBodyIsOneCallAndAnUnavailableError(t *testi
 			}))
 			defer srv.Close()
 
-			has, count, err := NewExecutionClient(srv.URL, "tok", time.Second).CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
+			has, count, err := NewExecutionClient(srv.URL, time.Second).CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
 
 			require.ErrorIs(t, err, domain.ErrUpstreamUnavailable)
 			assert.Contains(t, err.Error(), "decode response")
@@ -172,7 +172,7 @@ func TestExecutionClient_ABodyEndingExactlyAtOneMiBIsRead(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	has, count, err := NewExecutionClient(srv.URL, "tok", time.Second).CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
+	has, count, err := NewExecutionClient(srv.URL, time.Second).CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
 
 	require.NoError(t, err)
 	assert.True(t, has)
@@ -230,7 +230,7 @@ func TestErrorSnippet_KeepsTheFirstKiBOfTheBody(t *testing.T) {
 
 func TestExecutionClient_PauseUserTasks_AnUnreachableServiceIsAttemptedThreeTimes(t *testing.T) {
 	var attempts atomic.Int32
-	client := NewExecutionClient(w10dRefusedURL, "tok", time.Second)
+	client := NewExecutionClient(w10dRefusedURL, time.Second)
 	base := client.client.Transport
 	client.client.Transport = w10dTransport(func(r *http.Request) (*http.Response, error) {
 		attempts.Add(1)
@@ -248,7 +248,7 @@ func TestExecutionClient_PauseUserTasks_ACallerCancelledBeforeTheSendIsNotRetrie
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var attempts atomic.Int32
-	client := NewExecutionClient(w10dRefusedURL, "tok", time.Minute)
+	client := NewExecutionClient(w10dRefusedURL, time.Minute)
 	base := client.client.Transport
 	client.client.Transport = w10dTransport(func(r *http.Request) (*http.Response, error) {
 		attempts.Add(1)

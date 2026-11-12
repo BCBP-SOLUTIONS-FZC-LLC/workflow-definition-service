@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
@@ -70,6 +72,25 @@ func ValidateLaneNames(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError 
 			continue
 		}
 		seen[key] = lane.ID
+	}
+	return errs
+}
+
+func ValidateLaneDeptIDs(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	for i := range proc.LaneSet.Lanes {
+		lane := &proc.LaneSet.Lanes[i]
+		if len(lane.FlowNodeRefs) == 0 {
+			continue
+		}
+		deptID := bpmncore.LaneDeptID(lane)
+		if deptID == "" {
+			continue
+		}
+		if _, err := uuid.Parse(deptID); err != nil {
+			errs = AppendErr(errs, domain.BPMNErrInvalidDeptID, lane.ID,
+				fmt.Sprintf("lane %q dept_id %q is not a valid UUID", lane.ID, deptID))
+		}
 	}
 	return errs
 }

@@ -63,7 +63,7 @@ func TestRouter_AWrongMethodAnswers405BeforeAuthentication(t *testing.T) {
 
 	engine.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/api/v1/workflows", nil))
 
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, "no identity headers and no internal token, yet not a 401")
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, "no identity headers and no system caller identity, yet not a 401")
 }
 
 func TestRouter_ATrailingSlashIsNotRedirected_ItAnswers404(t *testing.T) {

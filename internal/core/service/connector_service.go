@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-connectors/v2/pkg/registry"
 	"github.com/google/uuid"
@@ -57,6 +58,9 @@ func (s *ConnectorService) WriteCredential(
 	}
 	if !validFieldName(fieldName) {
 		return "", fmt.Errorf("%w: field_name must match %s and be at most %d characters", domain.ErrInvalidConnectorCredentialInput, validConnectorSegment.String(), maxFieldNameLength)
+	}
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("%w: value must not be blank", domain.ErrInvalidConnectorCredentialInput)
 	}
 	if s.secrets == nil {
 		return "", fmt.Errorf("%w: OpenBao is not configured", domain.ErrUpstreamUnavailable)

@@ -22,7 +22,7 @@ type w7dFailingLimits struct {
 	plans []string
 }
 
-func (f *w7dFailingLimits) WorkflowTemplateLimit(_ context.Context, planCode string) (*int64, error) {
+func (f *w7dFailingLimits) WorkflowTemplateLimit(_ context.Context, _ uuid.UUID, planCode string) (*int64, error) {
 	f.plans = append(f.plans, planCode)
 	return nil, f.err
 }

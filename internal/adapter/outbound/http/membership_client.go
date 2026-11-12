@@ -77,7 +77,7 @@ func (c *MembershipClient) tryCheckEligibility(
 ) (result domain.Eligibility, retryable bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return domain.Eligibility{}, false, fmt.Errorf("build eligibility request: %w", err)
+		return domain.Eligibility{}, false, fmt.Errorf("%w: build eligibility request: %w", domain.ErrUpstreamUnavailable, err)
 	}
 	req.Header.Set("x-user-id", systemPrincipal)
 	req.Header.Set("x-tenant-roles", systemPrincipal)

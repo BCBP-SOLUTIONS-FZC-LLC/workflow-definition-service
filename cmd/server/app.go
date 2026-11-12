@@ -33,21 +33,27 @@ type app struct {
 	shutdown      func()
 	beginDrain    func()
 	cacheClose    io.Closer
+	// background ends when the exporter and the purger have returned
+	background []<-chan struct{}
 }
 
 func (a *app) run() error {
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	return a.runUntil(quit, time.Sleep)
+}
+
+func (a *app) runUntil(quit <-chan os.Signal, sleep func(time.Duration)) error {
 	fatal := make(chan error, 2)
 	a.startServers(fatal)
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	reason, failed := waitForStop(quit, fatal)
 
 	a.log.Info("shutting down", map[string]any{"reason": reason})
 
 	a.beginDrain()
 	if !failed {
-		time.Sleep(a.cfg.ShutdownDrainDelay)
+		sleep(a.cfg.ShutdownDrainDelay)
 	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), a.cfg.ShutdownGrace)
@@ -64,9 +70,11 @@ func (a *app) run() error {
 func (a *app) startServers(fatal chan<- error) {
 	exportCtx, cancel := context.WithCancel(context.Background())
 	a.cancelExport = cancel
-	goSafeRestart(exportCtx, "rls-exporter", a.log, time.Second, func() { a.rlsExporter.Run(exportCtx) })
+	a.background = append(a.background,
+		goSafeRestart(exportCtx, "rls-exporter", a.log, time.Second, func() { a.rlsExporter.Run(exportCtx) }))
 	if a.tenantPurger != nil {
-		goSafeRestart(exportCtx, "tenant-purger", a.log, time.Second, func() { a.tenantPurger.Run(exportCtx) })
+		a.background = append(a.background,
+			goSafeRestart(exportCtx, "tenant-purger", a.log, time.Second, func() { a.tenantPurger.Run(exportCtx) }))
 	}
 
 	serve("http", a.httpServer, a.log, fatal)
@@ -82,12 +90,27 @@ func (a *app) stopServers(ctx context.Context) {
 		a.log.Error("metrics server shutdown error", map[string]any{"error": err.Error()})
 	}
 
+	a.waitForBackground(ctx)
+
 	drainWithTimeout(ctx, a.log, "db pool", a.cfg.ShutdownPoolDrainTimeout, a.pool.DrainAndClose)
 	drainWithTimeout(ctx, a.log, "system db pool", a.cfg.ShutdownPoolDrainTimeout, a.systemPool.DrainAndClose)
 	if err := a.cacheClose.Close(); err != nil {
 		a.log.Error("valkey close error", map[string]any{"error": err.Error()})
 	}
 	a.shutdown()
+}
+
+// waitForBackground holds the pool drain back until the exporter and the purger
+// have returned, so neither is mid-query when the pools close.
+func (a *app) waitForBackground(ctx context.Context) {
+	for _, done := range a.background {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			a.log.Warn("a background worker did not stop before the shutdown grace ended", nil)
+			return
+		}
+	}
 }
 
 const httpWriteTimeoutMargin = 5 * time.Second
