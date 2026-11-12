@@ -1213,8 +1213,8 @@ components:
 
     BpmnErrorCode:
       type: string
-      description: Machine-readable BPMN validation issue code.
-      enum:
+      description: Machine-readable BPMN validation issue code. The list can grow, so a client treats a code it does not know as a generic issue.
+      x-extensible-enum:
         - REJECTED_ELEMENT              # Element on the Tier-3 parser denylist
         - UNSUPPORTED_ELEMENT           # Element type recognised but not supported by this service
         - MISSING_NAMESPACE             # Required bpmn or zeebe namespace missing
