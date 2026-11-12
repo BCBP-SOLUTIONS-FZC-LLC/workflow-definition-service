@@ -147,7 +147,7 @@ func TestClients_RecordTheDependencyHistogram(t *testing.T) {
 	}
 
 	_, _, _ = NewExecutionClient(ok.URL, "t", time.Second).CheckActiveInstances(ctx, uuid.New(), uuid.New())
-	_ = NewExecutionClient(failing.URL, "t", time.Second).PauseUserTasks(ctx, uuid.New(), uuid.New())
+	_ = NewExecutionClient(failing.URL, "t", time.Second).PauseUserTasks(ctx, uuid.New(), uuid.New(), nil)
 	_, _ = NewMembershipClient(ok.URL, time.Second).CheckEligibility(ctx, uuid.New(), uuid.New(), "d", "r")
 	_ = NewSecretsClient(ok.URL, "t", "secret", time.Second).Write(ctx, "p", map[string]string{"k": "v"})
 	_ = NewSecretsClient(failing.URL, "t", "secret", time.Second).Delete(ctx, "p")

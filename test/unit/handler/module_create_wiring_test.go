@@ -209,7 +209,7 @@ func TestCreateModule_GlobalCatalog_ProcessIDTaken_Returns409(t *testing.T) {
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	prob := decodeProblem(t, rec)
 	assert.Equal(t, "MODULE_PROCESS_ID_CONFLICT", prob["code"])
-	assert.Contains(t, prob["detail"], "Process_Review")
+	assert.Equal(t, "module process id is already in use", prob["detail"])
 }
 
 func TestCreateModule_ProcessIDTakenInTheOtherCatalog_IsNotAConflict(t *testing.T) {

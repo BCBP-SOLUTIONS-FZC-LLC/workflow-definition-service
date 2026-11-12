@@ -394,6 +394,7 @@ Validation errors include an `invalid_params` array:
 | `INVALID_BPMN_XML` | 400 | The BPMN document cannot be parsed — bad XML, forbidden `DOCTYPE`/entity, or the XML-bomb token cap. (Forbidden constructs also emit an internal security log; the client response is identical.) |
 | `NOT_FOUND` | 404 | Workflow or version not found, or RLS boundary breached |
 | `DRAFT_NOT_FOUND` | 404 | No active draft exists for the workflow |
+| `METHOD_NOT_ALLOWED` | 405 | The path exists but not for this method; the `Allow` header lists the methods it serves |
 | `NO_ACTIVE_VERSION` | 409 | Workflow has no published active version |
 | `UNAUTHORIZED` | 401 | Missing or invalid `x-user-id` / `x-tenant-id` headers |
 | `FORBIDDEN` | 403 | Caller lacks `tenant_admin` or `tenant_owner` role |

@@ -66,7 +66,7 @@ func WithIdempotency(cache port.CacheStore, log port.Logger, ttl time.Duration, 
 			return
 		}
 		if len(key) > maxIdempotencyKeyLength {
-			writeProblem(c, http.StatusBadRequest, CodeBadRequest, "Idempotency-Key must be at most 256 characters", nil)
+			writeProblem(c, http.StatusBadRequest, CodeBadRequest, "Idempotency-Key must be at most 256 bytes", nil)
 			return
 		}
 		id, exists := httpmiddleware.IdentityFrom(c)

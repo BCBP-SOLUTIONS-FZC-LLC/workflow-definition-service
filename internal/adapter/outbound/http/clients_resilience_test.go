@@ -76,7 +76,7 @@ func TestExecutionClient_CallerCancelsDuringBackoff_StopsBeforeNextAttempt(t *te
 		return resp, err
 	})
 
-	err := client.PauseUserTasks(ctx, uuid.New(), uuid.New())
+	err := client.PauseUserTasks(ctx, uuid.New(), uuid.New(), nil)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, domain.ErrUpstreamUnavailable)

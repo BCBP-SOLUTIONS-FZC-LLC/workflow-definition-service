@@ -440,7 +440,7 @@ func TestW8aCreateWorkflow_IdempotencyKeyLength_256IsAcceptedAndMoreIsRefused(t 
 				return
 			}
 			prob := w8aProblem(t, w, http.StatusBadRequest, "BAD_REQUEST", "bad-request")
-			assert.Equal(t, "Idempotency-Key must be at most 256 characters", prob["detail"])
+			assert.Equal(t, "Idempotency-Key must be at most 256 bytes", prob["detail"])
 			assert.Empty(t, rec.recorded())
 			assert.Empty(t, w8aStoredEntries(cache))
 		})

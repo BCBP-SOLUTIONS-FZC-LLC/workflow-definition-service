@@ -338,6 +338,7 @@ func (h *Handler) GetVersionDiff(c *gin.Context) {
 			"removed_departments": emptyIfNil(result.Changes.RemovedDepartments),
 			"step_changes":        toStepChangeResps(result.Changes.StepChanges),
 			"stage_changes":       toStageChangeResps(result.Changes.StageChanges),
+			"metadata_changes":    toStageChangeResps(result.Changes.MetadataChanges),
 			"metadata_only":       result.Changes.MetadataOnly,
 		},
 	})

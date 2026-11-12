@@ -295,6 +295,7 @@ func TestGetVersionDiff_VersionComparedWithItself_Returns200MetadataOnly(t *test
 		"removed_departments": []any{},
 		"step_changes":        []any{},
 		"stage_changes":       []any{},
+		"metadata_changes":    []any{},
 		"metadata_only":       true,
 	}, body["changes"])
 }

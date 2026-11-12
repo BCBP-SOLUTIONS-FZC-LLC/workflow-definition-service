@@ -89,17 +89,23 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 	if k := c.Query("key"); k != "" {
 		filter.TemplateKey = &k
 	}
-	if v := c.Query("is_valid"); v != "" {
-		b := v == "true"
-		filter.IsValid = &b
-	}
-	if v := c.Query("has_draft"); v != "" {
-		b := v == "true"
-		filter.HasDraft = &b
-	}
-	if s := c.Query("status"); s != "" {
-		archived := s == "archived"
+	var invalid []invalidParam
+	filter.IsValid = queryBoolFilter(c, "is_valid", &invalid)
+	filter.HasDraft = queryBoolFilter(c, "has_draft", &invalid)
+	switch c.Query("status") {
+	case "":
+	case "active":
+		archived := false
 		filter.Archived = &archived
+	case "archived":
+		archived := true
+		filter.Archived = &archived
+	default:
+		invalid = append(invalid, invalidParam{Name: "status", Reason: "must be active or archived"})
+	}
+	if len(invalid) > 0 {
+		writeProblem(c, http.StatusBadRequest, CodeInvalidInput, "query parameters are invalid", invalid)
+		return
 	}
 
 	workflows, total, err := h.workflows.List(c.Request.Context(), tenantID, filter)
@@ -120,6 +126,22 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 			"limit":       limit,
 		},
 	})
+}
+
+func queryBoolFilter(c *gin.Context, key string, invalid *[]invalidParam) *bool {
+	var b bool
+	switch c.Query(key) {
+	case "":
+		return nil
+	case "true":
+		b = true
+	case "false":
+		b = false
+	default:
+		*invalid = append(*invalid, invalidParam{Name: key, Reason: "must be true or false"})
+		return nil
+	}
+	return &b
 }
 
 func (h *Handler) CreateWorkflow(c *gin.Context) {

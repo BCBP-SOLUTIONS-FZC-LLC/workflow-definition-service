@@ -52,6 +52,7 @@ const (
 	CodeInternal             ErrCode = "INTERNAL_ERROR"
 	CodeInvalidInput         ErrCode = "INVALID_INPUT"
 	CodeEventDecodeFailed    ErrCode = "EVENT_DECODE_FAILED"
+	CodeMethodNotAllowed     ErrCode = "METHOD_NOT_ALLOWED"
 )
 
 type invalidParam struct {
@@ -94,6 +95,7 @@ var problemTypes = map[int]string{
 	http.StatusUnauthorized:          errBase + "unauthorized",
 	http.StatusForbidden:             errBase + "forbidden",
 	http.StatusNotFound:              errBase + "not-found",
+	http.StatusMethodNotAllowed:      errBase + "method-not-allowed",
 	http.StatusConflict:              errBase + "conflict",
 	http.StatusUnprocessableEntity:   errBase + "validation-failed",
 	http.StatusRequestEntityTooLarge: errBase + "payload-too-large",
@@ -131,6 +133,7 @@ var codeTitles = map[ErrCode]string{
 	CodeInternal:             "Internal Server Error",
 	CodeInvalidInput:         "Invalid Input",
 	CodeEventDecodeFailed:    "Event Decode Failed",
+	CodeMethodNotAllowed:     "Method Not Allowed",
 }
 
 func writeProblem(c *gin.Context, status int, code ErrCode, detail string, params []invalidParam) {
@@ -281,6 +284,10 @@ func NotFound(c *gin.Context) {
 	writeProblem(c, http.StatusNotFound, CodeNotFound, "no route matches this method and path", nil)
 }
 
+func MethodNotAllowed(c *gin.Context) {
+	writeProblem(c, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "the method is not allowed for this path", nil)
+}
+
 func SpecUnavailable(c *gin.Context) {
 	writeProblem(c, http.StatusInternalServerError, CodeInternal, "the AsyncAPI document is unavailable", nil)
 }
@@ -327,41 +334,41 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 	case errors.Is(err, domain.ErrUpstreamUnavailable):
 		return http.StatusServiceUnavailable, CodeUpstream, "an upstream dependency is temporarily unavailable", nil
 	case errors.Is(err, domain.ErrNotFound), errors.Is(err, pgcommon.ErrNoRows):
-		return http.StatusNotFound, CodeNotFound, err.Error(), nil
+		return http.StatusNotFound, CodeNotFound, "resource not found", nil
 	case errors.Is(err, domain.ErrNoDraftExists):
-		return http.StatusNotFound, CodeDraftNotFound, err.Error(), nil
+		return http.StatusNotFound, CodeDraftNotFound, domain.ErrNoDraftExists.Error(), nil
 	case errors.Is(err, domain.ErrNoActiveVersion):
-		return http.StatusConflict, CodeNoActiveVersion, err.Error(), nil
+		return http.StatusConflict, CodeNoActiveVersion, domain.ErrNoActiveVersion.Error(), nil
 	case errors.Is(err, domain.ErrUnauthorized):
 		return http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil
 	case errors.Is(err, domain.ErrForbidden):
 		return http.StatusForbidden, CodeForbidden, err.Error(), nil
 	case errors.Is(err, domain.ErrDraftAlreadyExists):
-		return http.StatusConflict, CodeDraftAlreadyExists, err.Error(), nil
+		return http.StatusConflict, CodeDraftAlreadyExists, domain.ErrDraftAlreadyExists.Error(), nil
 	case errors.Is(err, domain.ErrDuplicateTemplateKey):
-		return http.StatusConflict, CodeDuplicateKey, err.Error(), nil
+		return http.StatusConflict, CodeDuplicateKey, "a workflow with this key already exists", nil
 	case errors.Is(err, domain.ErrRecordVersionRequired):
 		return http.StatusBadRequest, CodeBadRequest, "request is missing its optimistic-lock token", []invalidParam{{Name: "record_version", Reason: "is required"}}
 	case errors.Is(err, domain.ErrDraftConcurrency):
-		return http.StatusConflict, CodeDraftConcurrency, err.Error(), nil
+		return http.StatusConflict, CodeDraftConcurrency, domain.ErrDraftConcurrency.Error(), nil
 	case errors.Is(err, domain.ErrInvalidVersionStatus),
 		errors.Is(err, domain.ErrVersionNotDraft),
 		errors.Is(err, domain.ErrVersionNotPublished),
 		errors.Is(err, domain.ErrVersionAlreadyPublished):
-		return http.StatusConflict, CodeInvalidStatus, err.Error(), nil
+		return http.StatusConflict, CodeInvalidStatus, matchedSentinel(err, domain.ErrVersionNotDraft, domain.ErrVersionNotPublished, domain.ErrVersionAlreadyPublished, domain.ErrInvalidVersionStatus), nil
 	case errors.Is(err, domain.ErrActiveInstancesExist):
-		return http.StatusConflict, CodeActiveInstances, err.Error(), nil
+		return http.StatusConflict, CodeActiveInstances, domain.ErrActiveInstancesExist.Error(), nil
 	case errors.Is(err, domain.ErrStructuralDivergence):
-		return http.StatusConflict, CodeStructuralDiv, err.Error(), nil
+		return http.StatusConflict, CodeStructuralDiv, domain.ErrStructuralDivergence.Error(), nil
 	case errors.Is(err, domain.ErrModuleProcessIDTaken), errors.Is(err, domain.ErrModuleProcessIDChanged):
-		return http.StatusConflict, CodeModuleProcessID, err.Error(), nil
+		return http.StatusConflict, CodeModuleProcessID, matchedSentinel(err, domain.ErrModuleProcessIDTaken, domain.ErrModuleProcessIDChanged), nil
 	case errors.Is(err, domain.ErrModuleInUse):
 		return http.StatusConflict, CodeModuleInUse,
 			"the module is used by published workflow versions or workflow drafts; remove those uses before archiving it", nil
 	case errors.Is(err, domain.ErrIdempotencyKeyReplay):
-		return http.StatusConflict, CodeIdempotencyReplay, err.Error(), nil
+		return http.StatusConflict, CodeIdempotencyReplay, domain.ErrIdempotencyKeyReplay.Error(), nil
 	case errors.Is(err, domain.ErrIdempotencyInProgress):
-		return http.StatusConflict, CodeIdempotencyRunning, err.Error(), nil
+		return http.StatusConflict, CodeIdempotencyRunning, domain.ErrIdempotencyInProgress.Error(), nil
 	case errors.Is(err, domain.ErrPlanQuotaExceeded):
 		return http.StatusForbidden, CodePlanQuota,
 			"the workflow template limit of the plan has been reached; archive a workflow that is no longer used or move to a larger plan", nil
@@ -385,6 +392,15 @@ func mapErr(err error) (status int, code ErrCode, detail string, params []invali
 	default:
 		return http.StatusInternalServerError, CodeInternal, "an unexpected error occurred", nil
 	}
+}
+
+func matchedSentinel(err error, sentinels ...error) string {
+	for _, s := range sentinels {
+		if errors.Is(err, s) {
+			return s.Error()
+		}
+	}
+	return sentinels[0].Error()
 }
 
 var errTrailingData = errors.New("request body has data after its JSON value")

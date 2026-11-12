@@ -82,6 +82,7 @@ type DiffChanges struct {
 	RemovedDepartments []string
 	StepChanges        []StepChange
 	StageChanges       []StageChange
+	MetadataChanges    []StageChange
 	MetadataOnly       bool
 }
 

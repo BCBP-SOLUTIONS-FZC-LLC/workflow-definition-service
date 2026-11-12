@@ -26,7 +26,7 @@ type PlanLimits interface {
 
 type ExecutionService interface {
 	CheckActiveInstances(ctx context.Context, tenantID, workflowID uuid.UUID) (hasActive bool, count int32, err error)
-	PauseUserTasks(ctx context.Context, tenantID, userID uuid.UUID) error
+	PauseUserTasks(ctx context.Context, tenantID, userID uuid.UUID, departmentID *uuid.UUID) error
 }
 
 type PlanCompiler interface {

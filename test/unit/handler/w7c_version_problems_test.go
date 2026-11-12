@@ -336,6 +336,7 @@ func TestGetVersionDiff_TwoVersionsWithTheSameCompiledPlan_Return200MetadataOnly
 				"removed_departments": []any{},
 				"step_changes":        []any{},
 				"stage_changes":       []any{},
+				"metadata_changes":    []any{},
 				"metadata_only":       true,
 			}, body["changes"])
 		})

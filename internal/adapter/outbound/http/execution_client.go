@@ -52,8 +52,12 @@ func (c *ExecutionClient) CheckActiveInstances(ctx context.Context, tenantID, wo
 	return *out.HasActive, out.Count, nil
 }
 
-func (c *ExecutionClient) PauseUserTasks(ctx context.Context, tenantID, userID uuid.UUID) error {
-	body, err := json.Marshal(map[string]string{"tenant_id": tenantID.String()})
+func (c *ExecutionClient) PauseUserTasks(ctx context.Context, tenantID, userID uuid.UUID, departmentID *uuid.UUID) error {
+	payload := map[string]string{"tenant_id": tenantID.String()}
+	if departmentID != nil {
+		payload["department_id"] = departmentID.String()
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("%w: pause user tasks: %w", domain.ErrUpstreamUnavailable, err)
 	}

@@ -65,6 +65,8 @@ func NewRouter(cfg RouterConfig) *Router {
 
 	r := gin.New()
 	r.MaxMultipartMemory = 10 << 20
+	r.HandleMethodNotAllowed = true
+	r.RedirectTrailingSlash = false
 
 	cfg.GinConfig.RequestTimeout = RequestTimeout
 	for _, mw := range gincommon.ObservabilityMiddlewares(cfg.GinConfig) {
@@ -72,6 +74,7 @@ func NewRouter(cfg RouterConfig) *Router {
 	}
 
 	r.NoRoute(handler.NotFound)
+	r.NoMethod(handler.MethodNotAllowed)
 	r.GET("/healthz", gincommon.HealthHandler())
 	draining := &atomic.Bool{}
 	r.GET("/readyz", readyzHandler(cfg.DB, cfg.Cache, draining))

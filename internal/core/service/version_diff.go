@@ -25,7 +25,7 @@ func computeDiff(base, target *dsl.CompiledPlan) DiffChanges {
 		}
 	}
 	changes.StepChanges = diffSteps(base.Execution.Steps, target.Execution.Steps)
-	changes.StageChanges = diffStages(base, target)
+	changes.StageChanges, changes.MetadataChanges = diffStages(base, target)
 	changes.MetadataOnly = len(changes.AddedDepartments) == 0 &&
 		len(changes.RemovedDepartments) == 0 &&
 		len(changes.StepChanges) == 0 &&
@@ -58,26 +58,30 @@ func diffSteps(baseSteps, targetSteps []dsl.ExecutionStep) []StepChange {
 	return changes
 }
 
-func diffStages(base, target *dsl.CompiledPlan) []StageChange {
+func diffStages(base, target *dsl.CompiledPlan) (structural, metadata []StageChange) {
 	baseStages := stagesByNodeKey(base)
 	targetStages := stagesByNodeKey(target)
-	var changes []StageChange
 	for _, dept := range target.Departments {
 		for i := range dept.Stages {
 			key := dsl.NodeKey(dept.ID, &dept.Stages[i])
 			before, ok := baseStages[key]
 			if !ok {
-				changes = append(changes, StageChange{NodeKey: key, Description: "stage added"})
+				structural = append(structural, StageChange{NodeKey: key, Description: "stage added"})
 				continue
 			}
 			after := dept.Stages[i]
 			switch {
 			case !reflect.DeepEqual(before.BoundaryTimer, after.BoundaryTimer):
-				changes = append(changes, StageChange{NodeKey: key, Description: "timer boundary changed"})
+				structural = append(structural, StageChange{NodeKey: key, Description: "timer boundary changed"})
 			case !reflect.DeepEqual(before.BoundaryMessage, after.BoundaryMessage):
-				changes = append(changes, StageChange{NodeKey: key, Description: "message boundary changed"})
+				structural = append(structural, StageChange{NodeKey: key, Description: "message boundary changed"})
 			case before.ConnectorType != after.ConnectorType:
-				changes = append(changes, StageChange{NodeKey: key, Description: "connector type changed"})
+				structural = append(structural, StageChange{NodeKey: key, Description: "connector type changed"})
+			case before.Role != after.Role:
+				structural = append(structural, StageChange{NodeKey: key, Description: "role changed"})
+			}
+			if before.DueDate != after.DueDate {
+				metadata = append(metadata, StageChange{NodeKey: key, Description: "due date changed"})
 			}
 		}
 	}
@@ -85,11 +89,11 @@ func diffStages(base, target *dsl.CompiledPlan) []StageChange {
 		for i := range dept.Stages {
 			key := dsl.NodeKey(dept.ID, &dept.Stages[i])
 			if _, ok := targetStages[key]; !ok {
-				changes = append(changes, StageChange{NodeKey: key, Description: "stage removed"})
+				structural = append(structural, StageChange{NodeKey: key, Description: "stage removed"})
 			}
 		}
 	}
-	return changes
+	return structural, metadata
 }
 
 func stagesByNodeKey(plan *dsl.CompiledPlan) map[string]dsl.StageDef {

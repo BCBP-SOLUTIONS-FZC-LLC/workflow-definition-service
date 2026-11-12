@@ -80,7 +80,7 @@ func TestMembershipRevocation_AZeroEventTime_KeepsEveryRowAndGroupsNodesPerVersi
 					got[id] = w5aNodeIDs(t, errorsJSON)
 					return nil
 				}).Times(len(tc.wantVersions))
-			exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
+			exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID, gomock.Any()).Return(nil)
 			svc := service.NewVersionService(service.VersionDeps{
 				Versions: vRepo, Assignees: aRepo, Execution: exec, Log: testkit.FakeLogger{},
 			})
@@ -111,7 +111,7 @@ func TestMembershipRevocation_ACacheDeleteFailure_IsReturnedWithTheCauseAndNames
 			deleted = append(deleted, keys...)
 			return cause
 		})
-	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
+	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID, gomock.Any()).Return(nil)
 	svc := service.NewVersionService(service.VersionDeps{
 		Versions: vRepo, Assignees: aRepo, Execution: exec, Cache: cache, Log: testkit.FakeLogger{},
 	})
@@ -135,7 +135,7 @@ func TestMembershipRevocation_WithoutACache_InvalidatesTheVersionAndReturnsNoErr
 	vRepo.EXPECT().GetByID(gomock.Any(), mTenantID, mVerID).
 		Return(&domain.WorkflowVersion{ID: mVerID, WorkflowID: uuid.New(), Status: domain.VersionStatusPublished}, nil)
 	vRepo.EXPECT().SetInvalid(gomock.Any(), mTenantID, mVerID, gomock.Any()).Return(nil)
-	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
+	exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID, gomock.Any()).Return(nil)
 	svc := service.NewVersionService(service.VersionDeps{
 		Versions: vRepo, Assignees: aRepo, Execution: exec, Log: testkit.FakeLogger{},
 	})

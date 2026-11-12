@@ -66,7 +66,7 @@ func TestExecutionClient_ActiveInstancesReadsTheSpecExample(t *testing.T) {
 
 func TestExecutionClient_PauseUserTasks(t *testing.T) {
 	srv, calls := executionServer(t, reply(http.StatusNoContent, ""))
-	if err := executionClient(srv.URL).PauseUserTasks(context.Background(), uuid.New(), uuid.New()); err != nil {
+	if err := executionClient(srv.URL).PauseUserTasks(context.Background(), uuid.New(), uuid.New(), nil); err != nil {
 		t.Errorf("PauseUserTasks: %v", err)
 	}
 	if calls.Load() != 1 {
@@ -88,7 +88,7 @@ func TestExecutionClient_Errors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, calls := executionServer(t, tc.replies...)
-			err := executionClient(srv.URL).PauseUserTasks(context.Background(), uuid.New(), uuid.New())
+			err := executionClient(srv.URL).PauseUserTasks(context.Background(), uuid.New(), uuid.New(), nil)
 			if tc.wantErr != (err != nil) || (err != nil && !errors.Is(err, domain.ErrUpstreamUnavailable)) {
 				t.Errorf("err = %v, want an ErrUpstreamUnavailable: %v", err, tc.wantErr)
 			}
