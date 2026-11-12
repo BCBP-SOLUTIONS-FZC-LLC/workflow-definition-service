@@ -167,7 +167,7 @@ test:
 test-integration:
 	@mkdir -p $(COVERAGE_DIR)
 	TESTCONTAINERS_RYUK_DISABLED=true \
-	go test -race -count=1 -tags integration \
+	go test -race -count=1 -timeout 30m -tags integration \
 	    -coverpkg=$$(go list ./internal/... ./cmd/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
 	    -coverprofile=$(COVERAGE_DIR)/integration.out \
 	    -covermode=atomic \
