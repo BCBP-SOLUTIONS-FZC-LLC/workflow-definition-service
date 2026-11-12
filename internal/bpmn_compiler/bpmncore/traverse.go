@@ -39,6 +39,13 @@ func (s *CompileState) AppendStage(deptID string, stage dsl.StageDef) {
 	s.sd.stages++
 }
 
+func (s *CompileState) CheckStageBudget() error {
+	if s.sd.stages > StageBudget {
+		return ErrStageBudget
+	}
+	return nil
+}
+
 func (s *CompileState) AddToSeqBuf(deptID string) {
 	if !slices.Contains(s.seqBuf, deptID) {
 		s.seqBuf = append(s.seqBuf, deptID)
@@ -342,6 +349,9 @@ func (s *CompileState) stageTypeOf(nodeID string) string {
 	switch s.G.NodeType[nodeID] {
 	case NodeTypeUserTask:
 		if task := FindTask(s.Proc, nodeID); task != nil && task.ExtensionElements.TaskDefinition != nil {
+			if _, isConnector := ConnectorType(task.ExtensionElements); isConnector {
+				return "connector"
+			}
 			return task.ExtensionElements.TaskDefinition.Type
 		}
 	case NodeTypeSendTask:

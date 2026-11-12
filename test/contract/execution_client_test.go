@@ -22,13 +22,23 @@ const executionSpec = "../../api/contracts/execution-internal-openapi.yaml"
 // the request to the copy of the Execution Service's spec.
 func executionServer(t *testing.T, replies ...func(w http.ResponseWriter)) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
+	return executionServerFor(t, uuid.Nil, replies...)
+}
+
+// executionServerFor is executionServer that also requires the x-tenant-id
+// header to equal wantTenant; uuid.Nil skips that check.
+func executionServerFor(t *testing.T, wantTenant uuid.UUID, replies ...func(w http.ResponseWriter)) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
 	spec := contract.Load(t, executionSpec)
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := int(calls.Add(1))
 		spec.Request(t, r)
-		if got := r.Header.Get("x-internal-token"); got != "execution-token" {
-			t.Errorf("x-internal-token = %q, want the Execution Service's token", got)
+		if r.Header.Get("x-user-id") != "iam-system" || r.Header.Get("x-tenant-roles") != "iam-system" || r.Header.Get("x-tenant-id") == "" {
+			t.Errorf("caller identity headers = %q, %q, %q", r.Header.Get("x-user-id"), r.Header.Get("x-tenant-roles"), r.Header.Get("x-tenant-id"))
+		}
+		if wantTenant != uuid.Nil && r.Header.Get("x-tenant-id") != wantTenant.String() {
+			t.Errorf("x-tenant-id = %q, want the request's tenant %q", r.Header.Get("x-tenant-id"), wantTenant)
 		}
 		reply := replies[len(replies)-1]
 		if n <= len(replies) {
@@ -51,22 +61,24 @@ func reply(status int, body string) func(http.ResponseWriter) {
 }
 
 func executionClient(url string) *outboundhttp.ExecutionClient {
-	return outboundhttp.NewExecutionClient(url, "execution-token", time.Second)
+	return outboundhttp.NewExecutionClient(url, time.Second)
 }
 
 func TestExecutionClient_ActiveInstancesReadsTheSpecExample(t *testing.T) {
 	example := contract.Load(t, executionSpec).Example(t, http.MethodGet, "/api/v1/internal/workflows/{workflow_id}/active-instances", http.StatusOK)
-	srv, _ := executionServer(t, reply(http.StatusOK, string(example)))
+	tenant := uuid.New()
+	srv, _ := executionServerFor(t, tenant, reply(http.StatusOK, string(example)))
 
-	hasActive, count, err := executionClient(srv.URL).CheckActiveInstances(context.Background(), uuid.New(), uuid.New())
+	hasActive, count, err := executionClient(srv.URL).CheckActiveInstances(context.Background(), tenant, uuid.New())
 	if err != nil || !hasActive || count != 2 {
 		t.Errorf("CheckActiveInstances = %v, %d, %v; want the example's true, 2", hasActive, count, err)
 	}
 }
 
 func TestExecutionClient_PauseUserTasks(t *testing.T) {
-	srv, calls := executionServer(t, reply(http.StatusNoContent, ""))
-	if err := executionClient(srv.URL).PauseUserTasks(context.Background(), uuid.New(), uuid.New()); err != nil {
+	tenant := uuid.New()
+	srv, calls := executionServerFor(t, tenant, reply(http.StatusNoContent, ""))
+	if err := executionClient(srv.URL).PauseUserTasks(context.Background(), tenant, uuid.New(), nil); err != nil {
 		t.Errorf("PauseUserTasks: %v", err)
 	}
 	if calls.Load() != 1 {
@@ -88,7 +100,7 @@ func TestExecutionClient_Errors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, calls := executionServer(t, tc.replies...)
-			err := executionClient(srv.URL).PauseUserTasks(context.Background(), uuid.New(), uuid.New())
+			err := executionClient(srv.URL).PauseUserTasks(context.Background(), uuid.New(), uuid.New(), nil)
 			if tc.wantErr != (err != nil) || (err != nil && !errors.Is(err, domain.ErrUpstreamUnavailable)) {
 				t.Errorf("err = %v, want an ErrUpstreamUnavailable: %v", err, tc.wantErr)
 			}

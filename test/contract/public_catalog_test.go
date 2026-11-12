@@ -70,7 +70,7 @@ func TestPublicContract_Catalogue(t *testing.T) {
 	module := &domain.Module{ID: uuid.New(), TenantID: &tenant, Scope: domain.ScopeTenant, Name: "Package", Description: "d", ProcessID: "Process_Package", CreatedByUserID: &user, RecordVersion: 1, CreatedAt: at, UpdatedAt: at}
 	moduleVersion := &domain.ModuleVersion{ID: uuid.New(), ModuleID: module.ID, TenantID: &tenant, Scope: domain.ScopeTenant, Status: domain.VersionStatusPublished, BPMNXML: "<bpmn/>", ProcessID: "Process_Package", VersionNumber: &n, IsValid: true, PublishedAt: &at, CreatedByUserID: &user, RecordVersion: 2, CreatedAt: at, UpdatedAt: at}
 	router := httpadapter.NewRouter(httpadapter.RouterConfig{
-		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
+		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test",
 		Handler: handler.New(handler.Services{
 			Workflows:  createFake{},
 			Drafts:     draftFake{draft: draft},

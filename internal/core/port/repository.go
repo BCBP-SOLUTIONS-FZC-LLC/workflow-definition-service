@@ -37,6 +37,7 @@ type WorkflowVersionRepository interface {
 		moduleRefs []domain.ModuleRef,
 	) error
 	ListModuleUsages(ctx context.Context, tenantID, moduleID uuid.UUID) ([]*domain.ModuleUsage, error)
+	ListDraftSources(ctx context.Context, tenantID uuid.UUID) ([]*domain.DraftSource, error)
 	Archive(ctx context.Context, tenantID, versionID uuid.UUID) error
 	DeleteDraft(ctx context.Context, tenantID, versionID uuid.UUID) error
 	SetInvalid(ctx context.Context, tenantID, versionID uuid.UUID, errorsJSON string) error

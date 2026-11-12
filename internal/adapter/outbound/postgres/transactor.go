@@ -35,12 +35,12 @@ func (t *Transactor) RunInTx(ctx context.Context, fn func(context.Context) error
 }
 
 func (t *Transactor) RunInTxWithRetry(ctx context.Context, fn func(context.Context) error) error {
-	return asUnavailable(pgcommon.RunInTxWithRetryOpts(
+	return asUnavailable(asRetryExhausted(pgcommon.RunInTxWithRetryOpts(
 		ctx, t.pool,
 		pgx.TxOptions{IsoLevel: pgx.Serializable},
 		serializableRetry,
 		func(ctx context.Context, tx pgx.Tx) error {
 			return fn(withTx(ctx, tx))
 		},
-	))
+	)))
 }

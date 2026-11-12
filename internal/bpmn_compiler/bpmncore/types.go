@@ -187,8 +187,10 @@ type BPMNReceiveTask struct {
 }
 
 type BPMNEvent struct {
-	ID   string `xml:"id,attr"`
-	Name string `xml:"name,attr"`
+	ID      string               `xml:"id,attr"`
+	Name    string               `xml:"name,attr"`
+	Message *BPMNMessageEventDef `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL messageEventDefinition" json:"-"`
+	Error   *BPMNErrorDef        `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL errorEventDefinition" json:"-"`
 }
 
 type BPMNGateway struct {

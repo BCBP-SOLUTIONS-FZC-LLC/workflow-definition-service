@@ -46,6 +46,9 @@ func CompileWithImplicitStart(proc *BPMNProcess, g *Graph, implicitStart string,
 	if err := state.CompileBoundaryPaths(); err != nil {
 		return nil, nil, fmt.Errorf("compile: %w", err)
 	}
+	if err := state.CheckStageBudget(); err != nil {
+		return nil, nil, fmt.Errorf("compile: %w", err)
+	}
 	state.ResolveTargets()
 
 	var visualElems []dsl.VisualElementDef
@@ -304,7 +307,9 @@ func ResolveMessageFlowTarget(nodeID string, defs *BPMNDefinitions) string {
 		if mf.TargetRef != nodeID {
 			continue
 		}
-		return ResolveMessageFlowName(mf, defs)
+		if name := ResolveMessageFlowName(mf, defs); name != "" {
+			return name
+		}
 	}
 	return ""
 }

@@ -68,7 +68,7 @@ func TestClients_RefuseAnOversizedResponseBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, _, err := NewExecutionClient(srv.URL, "t", time.Second).CheckActiveInstances(context.Background(), uuid.New(), uuid.New()); err == nil {
+	if _, _, err := NewExecutionClient(srv.URL, time.Second).CheckActiveInstances(context.Background(), uuid.New(), uuid.New()); err == nil {
 		t.Error("execution client decoded a 2 MiB body")
 	}
 
@@ -90,7 +90,7 @@ func TestClients_StartAClientSpanOfTheirOwn(t *testing.T) {
 
 	for name, call := range map[string]func(){
 		"execution": func() {
-			_, _ = NewExecutionClient(srv.URL, "t", time.Second).try(ctx, http.MethodGet, srv.URL+"/x", nil, http.StatusOK, nil)
+			_, _ = NewExecutionClient(srv.URL, time.Second).try(ctx, uuid.New(), http.MethodGet, srv.URL+"/x", nil, http.StatusOK, nil)
 		},
 		"membership": func() {
 			_, _, _ = NewMembershipClient(srv.URL, time.Second).tryCheckEligibility(ctx, srv.URL, uuid.New())
@@ -146,8 +146,8 @@ func TestClients_RecordTheDependencyHistogram(t *testing.T) {
 		before[k[0]+k[1]+k[2]] = dependencySeries(t, k[0], k[1], k[2])
 	}
 
-	_, _, _ = NewExecutionClient(ok.URL, "t", time.Second).CheckActiveInstances(ctx, uuid.New(), uuid.New())
-	_ = NewExecutionClient(failing.URL, "t", time.Second).PauseUserTasks(ctx, uuid.New(), uuid.New())
+	_, _, _ = NewExecutionClient(ok.URL, time.Second).CheckActiveInstances(ctx, uuid.New(), uuid.New())
+	_ = NewExecutionClient(failing.URL, time.Second).PauseUserTasks(ctx, uuid.New(), uuid.New(), nil)
 	_, _ = NewMembershipClient(ok.URL, time.Second).CheckEligibility(ctx, uuid.New(), uuid.New(), "d", "r")
 	_ = NewSecretsClient(ok.URL, "t", "secret", time.Second).Write(ctx, "p", map[string]string{"k": "v"})
 	_ = NewSecretsClient(failing.URL, "t", "secret", time.Second).Delete(ctx, "p")

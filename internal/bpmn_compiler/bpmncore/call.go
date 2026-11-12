@@ -22,6 +22,7 @@ type CallInputs struct {
 	Assignees    map[string]string
 	AssigneesErr error
 	HasDeptID    bool
+	Repeated     []string
 }
 
 func ParseCallInputs(ca BPMNCallActivity) CallInputs {
@@ -30,7 +31,14 @@ func ParseCallInputs(ca BPMNCallActivity) CallInputs {
 	if m == nil {
 		return in
 	}
+	seen := map[string]bool{}
 	for _, v := range m.Inputs {
+		if IsCallInput(v.Target) {
+			if seen[v.Target] && !slices.Contains(in.Repeated, v.Target) {
+				in.Repeated = append(in.Repeated, v.Target)
+			}
+			seen[v.Target] = true
+		}
 		switch v.Target {
 		case CallInputDepts:
 			in.Depts, in.DeptsErr = parseStringObject(v.Source)

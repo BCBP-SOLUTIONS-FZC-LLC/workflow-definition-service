@@ -18,6 +18,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/logger"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 
 	httpadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
@@ -35,14 +36,21 @@ type fakeMembershipRevoker struct {
 	gotUserID   uuid.UUID
 	gotDeptID   string
 	gotAt       time.Time
+	gotGUC      string
+}
+
+func gucTenantOf(ctx context.Context) string {
+	guc, _ := pgcommon.GUCSetFromContext(ctx)
+	return guc.TenantID
 }
 
 func (f *fakeMembershipRevoker) HandleTenantMembershipRevoked(
-	_ context.Context,
+	ctx context.Context,
 	eventID, tenantID, userID uuid.UUID,
 	occurredAt time.Time,
 ) error {
 	f.tenantCalled = true
+	f.gotGUC = gucTenantOf(ctx)
 	f.gotAt = occurredAt
 	f.gotEventID = eventID
 	f.gotTenantID = tenantID
@@ -51,12 +59,13 @@ func (f *fakeMembershipRevoker) HandleTenantMembershipRevoked(
 }
 
 func (f *fakeMembershipRevoker) HandleDepartmentMembershipRevoked(
-	_ context.Context,
+	ctx context.Context,
 	eventID, tenantID, userID uuid.UUID,
 	departmentID string,
 	occurredAt time.Time,
 ) error {
 	f.called = true
+	f.gotGUC = gucTenantOf(ctx)
 	f.gotAt = occurredAt
 	f.gotEventID = eventID
 	f.gotTenantID = tenantID
@@ -258,16 +267,19 @@ type fakeOffboarder struct {
 	recorded []uuid.UUID
 	gotAt    []time.Time
 	returned []uuid.UUID
+	gotGUC   []string
 	err      error
 }
 
-func (f *fakeOffboarder) RecordReturned(_ context.Context, tenantID uuid.UUID, _ time.Time) error {
+func (f *fakeOffboarder) RecordReturned(ctx context.Context, tenantID uuid.UUID, _ time.Time) error {
 	f.returned = append(f.returned, tenantID)
+	f.gotGUC = append(f.gotGUC, gucTenantOf(ctx))
 	return f.err
 }
 
-func (f *fakeOffboarder) RecordOffboarded(_ context.Context, tenantID uuid.UUID, at time.Time) error {
+func (f *fakeOffboarder) RecordOffboarded(ctx context.Context, tenantID uuid.UUID, at time.Time) error {
 	f.recorded = append(f.recorded, tenantID)
+	f.gotGUC = append(f.gotGUC, gucTenantOf(ctx))
 	f.gotAt = append(f.gotAt, at)
 	return f.err
 }

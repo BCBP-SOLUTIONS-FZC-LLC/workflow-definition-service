@@ -22,7 +22,7 @@ func TestOutboundClients_UnsetAddressIsANilInterface(t *testing.T) {
 
 func TestOutboundClients_SetAddressBuildsAClient(t *testing.T) {
 	cfg := &config.Config{
-		ExecutionServiceURL: "http://execution:8080", ExecutionServiceToken: "t", ExecutionClientTimeout: time.Second,
+		ExecutionServiceURL: "http://execution:8080", ExecutionClientTimeout: time.Second,
 		OrgMembershipBaseURL: "http://org:8080", MembershipClientTimeout: time.Second,
 	}
 	if newExecutionService(cfg) == nil || newMembershipService(cfg) == nil {

@@ -58,6 +58,13 @@ func NewCompiler(opts ...CompilerOption) *Compiler {
 
 func New() *Compiler { return NewCompiler() }
 
+func (c *Compiler) CheckWellFormed(ctx context.Context, bpmnXML string) error {
+	if err := checkWellFormed(ctx, bpmnXML); err != nil {
+		return classifyParseError("well-formedness check", err)
+	}
+	return nil
+}
+
 func (c *Compiler) Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error) {
 	defs, err := parse(ctx, bpmnXML)
 	if errors.Is(err, errMissingNamespace) {
@@ -376,8 +383,12 @@ func (c *Compiler) ProcessID(ctx context.Context, bpmnXML string) (string, error
 		return "", classifyParseError("process-id", err)
 	}
 	if len(defs.Processes) != 1 {
+		code := domain.BPMNErrMultipleProcesses
+		if len(defs.Processes) == 0 {
+			code = domain.BPMNErrNoRunnableProcess
+		}
 		return "", &domain.ValidationFailedError{Errors: []domain.BPMNValidationError{{
-			Code:     domain.BPMNErrMultipleProcesses,
+			Code:     code,
 			Message:  fmt.Sprintf("module BPMN must contain exactly one top-level process; got %d", len(defs.Processes)),
 			Severity: domain.SeverityError,
 		}}}

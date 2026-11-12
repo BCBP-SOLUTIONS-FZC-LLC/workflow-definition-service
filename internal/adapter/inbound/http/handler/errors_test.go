@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -319,6 +320,35 @@ func TestLogForbiddenXML(t *testing.T) {
 
 			if log.warns != tt.wantWarns {
 				t.Errorf("warns = %d, want %d", log.warns, tt.wantWarns)
+			}
+		})
+	}
+}
+
+func TestErrResponse_AClientHangUp_Answers503WithoutAnErrorLog(t *testing.T) {
+	cases := []struct {
+		name    string
+		err     error
+		wantLog int
+	}{
+		{"bare cancel", context.Canceled, 0},
+		{"wrapped cancel", fmt.Errorf("get workflow: %w", context.Canceled), 0},
+		{"cancel mapped as unavailable by the store", fmt.Errorf("%w: %w", domain.ErrUpstreamUnavailable, context.Canceled), 0},
+		{"deadline passed is still logged", fmt.Errorf("get workflow: %w", context.DeadlineExceeded), 1},
+		{"unavailable without a cancel is still logged", fmt.Errorf("calling execution: %w", domain.ErrUpstreamUnavailable), 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &spyLogger{}
+			c, w := newTestCtx("/api/v1/workflows")
+
+			errResponse(c, log, tc.err)
+
+			if w.Code != http.StatusServiceUnavailable {
+				t.Errorf("status = %d, want 503", w.Code)
+			}
+			if log.errors != tc.wantLog {
+				t.Errorf("error log lines = %d, want %d", log.errors, tc.wantLog)
 			}
 		})
 	}

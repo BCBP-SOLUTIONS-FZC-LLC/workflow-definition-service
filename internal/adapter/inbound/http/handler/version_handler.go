@@ -61,7 +61,7 @@ func toModuleRefResp(ref domain.ModuleRef) moduleRefResp {
 	return moduleRefResp{ModuleID: ref.ModuleID, VersionID: ref.VersionID, ProcessID: ref.ProcessID, VersionNumber: ref.VersionNumber}
 }
 
-func toVersionResp(v *domain.WorkflowVersion) versionResp {
+func (h *Handler) toVersionResp(v *domain.WorkflowVersion) versionResp {
 	refs := make([]moduleRefResp, 0, len(v.ModuleRefs))
 	for _, ref := range v.ModuleRefs {
 		refs = append(refs, toModuleRefResp(ref))
@@ -85,7 +85,14 @@ func toVersionResp(v *domain.WorkflowVersion) versionResp {
 		r.CompiledPlanJSON = json.RawMessage(*v.CompiledPlanJSON)
 	}
 	if v.ValidationErrorsJSON != nil && *v.ValidationErrorsJSON != "" {
-		_ = json.Unmarshal([]byte(*v.ValidationErrorsJSON), &r.ValidationErrors)
+		if err := json.Unmarshal([]byte(*v.ValidationErrorsJSON), &r.ValidationErrors); err != nil {
+			if h.log != nil {
+				h.log.Warn("stored validation errors could not be decoded; leaving them out of the response", map[string]any{
+					"version_id": v.ID.String(),
+					"error":      err.Error(),
+				})
+			}
+		}
 	}
 	return r
 }
@@ -148,7 +155,7 @@ func (h *Handler) GetVersion(c *gin.Context) {
 		return
 	}
 
-	vr := toVersionResp(v)
+	vr := h.toVersionResp(v)
 	c.JSON(http.StatusOK, vr)
 }
 
@@ -211,10 +218,10 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 		return
 	}
 
-	if rejectTooLong(c,
-		lengthLimit{"new_key", req.NewKey, 255},
-		lengthLimit{"new_name", req.NewName, 255},
-		lengthLimit{"new_description", req.NewDescription, 2000},
+	if rejectInvalidText(c,
+		lengthLimit{"new_key", req.NewKey, 255, true},
+		lengthLimit{"new_name", req.NewName, 255, true},
+		lengthLimit{"new_description", req.NewDescription, 2000, false},
 	) {
 		return
 	}
@@ -331,6 +338,7 @@ func (h *Handler) GetVersionDiff(c *gin.Context) {
 			"removed_departments": emptyIfNil(result.Changes.RemovedDepartments),
 			"step_changes":        toStepChangeResps(result.Changes.StepChanges),
 			"stage_changes":       toStageChangeResps(result.Changes.StageChanges),
+			"metadata_changes":    toStageChangeResps(result.Changes.MetadataChanges),
 			"metadata_only":       result.Changes.MetadataOnly,
 		},
 	})

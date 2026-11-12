@@ -35,6 +35,7 @@ All non-2xx HTTP responses use the RFC-9457 `problemDetails` envelope (`internal
 | `PLAN_QUOTA_EXCEEDED` | 403 | Tenant plan quota exceeded |
 | `NOT_FOUND` | 404 | Resource does not exist |
 | `DRAFT_NOT_FOUND` | 404 | No draft exists for this workflow |
+| `METHOD_NOT_ALLOWED` | 405 | Path exists but not for this method; `Allow` header lists the methods it serves |
 | `NO_ACTIVE_VERSION` | 409 | Workflow has no active/published version |
 | `DRAFT_ALREADY_EXISTS` | 409 | Draft already exists for this workflow |
 | `DUPLICATE_TEMPLATE_KEY` | 409 | Workflow key already in use |
@@ -45,6 +46,7 @@ All non-2xx HTTP responses use the RFC-9457 `problemDetails` envelope (`internal
 | `IDEMPOTENCY_KEY_REPLAY` | 409 | `Idempotency-Key` reused with a different request body or `If-Match` |
 | `IDEMPOTENCY_REQUEST_IN_PROGRESS` | 409 | A request with the same `Idempotency-Key` is still running |
 | `MODULE_PROCESS_ID_CONFLICT` | 409 | A new module's process id is already used by a module the caller can call, or a new module version changes its module's process id |
+| `MODULE_IN_USE` | 409 | Archiving a module while a published workflow version or a workflow draft of the caller's tenant uses it; the problem body lists them under `uses` |
 | `ASSIGNEE_INELIGIBLE` | 422 | Default assignee failed the Org & Membership eligibility check |
 | `BPMN_VALIDATION_FAILED` | 422 | Structural/semantic BPMN validation failed (see `invalid_params`) |
 | `INVALID_INPUT` | 422 (400 for connector credential and alias input) | Request field(s) exceed maximum length, or a connector credential or alias field is invalid |

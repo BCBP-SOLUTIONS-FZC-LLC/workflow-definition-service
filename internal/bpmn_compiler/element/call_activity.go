@@ -37,6 +37,10 @@ func (CallActivityHandler) Compile(nodeID string, cs *bpmncore.CompileState) err
 	if calledProc == nil {
 		return fmt.Errorf("callActivity %q: called process %q not found", nodeID, processID)
 	}
+	if calledProc.ID == cs.Proc.ID {
+		return &domain.ValidationFailedError{Errors: validator.AppendErr(nil, domain.BPMNErrCalledElementCycle, nodeID,
+			fmt.Sprintf("callActivity closes the call cycle %s → %s", calledProc.ID, calledProc.ID))}
+	}
 	if err := compileCalledPlan(calledProc, cs); err != nil {
 		return fmt.Errorf("callActivity %q: %w", nodeID, err)
 	}

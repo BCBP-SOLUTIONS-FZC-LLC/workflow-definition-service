@@ -1,6 +1,9 @@
 package validator
 
 import (
+	"maps"
+	"slices"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
@@ -23,7 +26,7 @@ func ValidateReachability(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, implici
 	}
 
 	var errs []domain.BPMNValidationError
-	for id := range g.NodeIDs {
+	for _, id := range slices.Sorted(maps.Keys(g.NodeIDs)) {
 		if bpmncore.IsBoundaryEventType(g.NodeType[id]) {
 			continue
 		}

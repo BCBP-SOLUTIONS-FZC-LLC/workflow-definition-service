@@ -89,7 +89,7 @@ func TestReadyz_AfterBeginDrain_ReportsDrainingWithNothingElse(t *testing.T) {
 	assert.Equal(t, map[string]any{"status": "draining"}, body)
 }
 
-func TestReadyz_OtherMethods_AreProblemDocumentsNotMethodNotAllowed(t *testing.T) {
+func TestReadyz_OtherMethods_AreMethodNotAllowedProblems(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -109,14 +109,15 @@ func TestReadyz_OtherMethods_AreProblemDocumentsNotMethodNotAllowed(t *testing.T
 			w := httptest.NewRecorder()
 			r.engine.ServeHTTP(w, httptest.NewRequest(tc.method, "/readyz", nil))
 
-			require.Equal(t, http.StatusNotFound, w.Code)
+			require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+			assert.Equal(t, "GET", w.Header().Get("Allow"))
 			assert.Equal(t, "application/problem+json", w.Header().Get("Content-Type"))
 			var prob map[string]any
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &prob), w.Body.String())
-			assert.Equal(t, "NOT_FOUND", prob["code"])
-			assert.Equal(t, float64(http.StatusNotFound), prob["status"])
+			assert.Equal(t, "METHOD_NOT_ALLOWED", prob["code"])
+			assert.Equal(t, float64(http.StatusMethodNotAllowed), prob["status"])
 			assert.Equal(t, "/readyz", prob["instance"])
-			assert.Equal(t, "https://api.workflow.platform/errors/not-found", prob["type"])
+			assert.Equal(t, "https://api.workflow.platform/errors/method-not-allowed", prob["type"])
 		})
 	}
 }

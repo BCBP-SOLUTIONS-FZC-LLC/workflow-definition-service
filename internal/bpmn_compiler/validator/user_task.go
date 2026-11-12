@@ -64,7 +64,7 @@ func ValidateAssignmentDef(taskID string, ext bpmncore.BPMNExtensionElements) []
 			"userTask is missing a <zeebe:assignmentDefinition> extension element")
 	}
 	ad := ext.AssignmentDefinition
-	if ad.CandidateGroups == "" || len(ad.CandidateGroups) > maxRoleLen {
+	if strings.TrimSpace(ad.CandidateGroups) == "" || len(ad.CandidateGroups) > maxRoleLen {
 		errs = AppendErr(errs, domain.BPMNErrCandidateGroupsEmpty, taskID,
 			fmt.Sprintf("candidateGroups must be non-empty and at most %d characters", maxRoleLen))
 	}
@@ -77,7 +77,7 @@ func ValidateRoleLevel(taskID string, ext bpmncore.BPMNExtensionElements) []doma
 		return nil
 	}
 	role := ext.AssignmentDefinition.CandidateGroups
-	if role == "" || len(role) > maxRoleLen || domain.ValidRoleLevel(role) {
+	if strings.TrimSpace(role) == "" || len(role) > maxRoleLen || domain.ValidRoleLevel(role) {
 		return nil
 	}
 	return AppendErr(nil, domain.BPMNErrCandidateGroupsInvalid, taskID,

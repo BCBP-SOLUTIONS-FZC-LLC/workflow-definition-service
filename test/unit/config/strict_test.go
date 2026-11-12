@@ -76,8 +76,8 @@ func TestLoad_AppEnvIsRequired(t *testing.T) {
 
 func TestLoad_ValkeyAddressIsRequiredOutsideDev(t *testing.T) {
 	staging := map[string]string{
-		"APP_ENV": "staging", "DATABASE_URL": "postgres://localhost/db", "INTERNAL_API_TOKEN": "t",
-		"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "http://execution", "EXECUTION_SERVICE_TOKEN": "t",
+		"APP_ENV": "staging", "DATABASE_URL": "postgres://localhost/db",
+		"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "http://execution",
 		"OPENBAO_ADDR": "http://bao", "OPENBAO_TOKEN": "t",
 	}
 	isolateEnv(t, staging)
@@ -108,8 +108,8 @@ func TestLoad_DotEnvIsReadInDevOnly(t *testing.T) {
 	}
 
 	isolateEnv(t, map[string]string{
-		"APP_ENV": "staging", "DATABASE_URL": "postgres://localhost/db", "INTERNAL_API_TOKEN": "t",
-		"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "http://execution", "EXECUTION_SERVICE_TOKEN": "t",
+		"APP_ENV": "staging", "DATABASE_URL": "postgres://localhost/db",
+		"ORG_MEMBERSHIP_BASE_URL": "http://org", "CATALOG_ADMIN_BASE_URL": "http://catalog", "EXECUTION_SERVICE_URL": "http://execution",
 		"OPENBAO_ADDR": "http://bao", "OPENBAO_TOKEN": "t", "VALKEY_ADDR": "valkey:6379",
 	})
 	cfg, err = config.Load()
@@ -121,10 +121,81 @@ func TestLoad_DotEnvIsReadInDevOnly(t *testing.T) {
 	}
 }
 
+func TestLoad_AtLeastOneLimitSourceIsRequiredOutsideDev(t *testing.T) {
+	base := func(extra map[string]string) map[string]string {
+		env := map[string]string{
+			"APP_ENV": "staging", "DATABASE_URL": "postgres://localhost/db",
+			"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution",
+			"OPENBAO_ADDR": "http://bao", "OPENBAO_TOKEN": "t", "VALKEY_ADDR": "valkey:6379",
+		}
+		for k, v := range extra {
+			env[k] = v
+		}
+		return env
+	}
+
+	isolateEnv(t, base(nil))
+	_, err := config.Load()
+	if err == nil || err.Error() != "at least one of CATALOG_ADMIN_BASE_URL and ENTITLEMENTS_BASE_URL is required in non-dev environments" {
+		t.Fatalf("Load() with neither source: error = %v", err)
+	}
+
+	isolateEnv(t, base(map[string]string{"CATALOG_ADMIN_BASE_URL": "http://catalog"}))
+	if _, err := config.Load(); err != nil {
+		t.Errorf("Load() with only the catalog: %v", err)
+	}
+
+	isolateEnv(t, base(map[string]string{"ENTITLEMENTS_BASE_URL": "http://entitlements"}))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() with only entitlements: %v", err)
+	}
+	if cfg.CatalogAdminBaseURL != "" || cfg.EntitlementsBaseURL != "http://entitlements" {
+		t.Errorf("sources = %q %q", cfg.CatalogAdminBaseURL, cfg.EntitlementsBaseURL)
+	}
+
+	isolateEnv(t, base(map[string]string{"CATALOG_ADMIN_BASE_URL": "http://catalog", "ENTITLEMENTS_BASE_URL": "http://entitlements"}))
+	if _, err := config.Load(); err != nil {
+		t.Errorf("Load() with both: %v", err)
+	}
+}
+
+func TestLoad_TheEntitlementsFreshnessBoundMustBeAtLeastTheCacheTTL(t *testing.T) {
+	for _, tc := range []struct {
+		name, ttl, bound, wantErr string
+	}{
+		{"defaults", "", "", ""},
+		{"bound equal to the ttl", "30s", "30s", ""},
+		{"bound above the ttl", "30s", "31s", ""},
+		{"bound below the ttl", "30s", "29s", "ENTITLEMENTS_FRESHNESS_BOUND must be >= ENTITLEMENTS_CACHE_TTL"},
+		{"a ttl above the default bound", "11m", "", "ENTITLEMENTS_FRESHNESS_BOUND must be >= ENTITLEMENTS_CACHE_TTL"},
+		{"a zero bound", "", "0s", "ENTITLEMENTS_FRESHNESS_BOUND must be > 0"},
+		{"a negative bound", "", "-1s", "ENTITLEMENTS_FRESHNESS_BOUND must be > 0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			extra := map[string]string{}
+			if tc.ttl != "" {
+				extra["ENTITLEMENTS_CACHE_TTL"] = tc.ttl
+			}
+			if tc.bound != "" {
+				extra["ENTITLEMENTS_FRESHNESS_BOUND"] = tc.bound
+			}
+			isolateEnv(t, devEnv(extra))
+			_, err := config.Load()
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Load() = %v, want no error", err)
+			case tc.wantErr != "" && (err == nil || err.Error() != tc.wantErr):
+				t.Fatalf("Load() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestLoad_CatalogAdminIsRequiredOutsideDevAndTunedByDefault(t *testing.T) {
 	staging := map[string]string{
-		"APP_ENV": "staging", "DATABASE_URL": "postgres://localhost/db", "INTERNAL_API_TOKEN": "t",
-		"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution", "EXECUTION_SERVICE_TOKEN": "t",
+		"APP_ENV": "staging", "DATABASE_URL": "postgres://localhost/db",
+		"ORG_MEMBERSHIP_BASE_URL": "http://org", "EXECUTION_SERVICE_URL": "http://execution",
 		"OPENBAO_ADDR": "http://bao", "OPENBAO_TOKEN": "t", "VALKEY_ADDR": "valkey:6379",
 	}
 	isolateEnv(t, staging)

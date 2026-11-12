@@ -5,7 +5,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7);
 -- name: GetWorkflowByIDWithVersionNumber :one
 SELECT w.id, w.tenant_id, w.created_by_user_id, w.template_key, w.name,
        w.description, w.active_version_id, w.created_at, w.updated_at, w.record_version,
-       wv.version_number AS active_version_number
+       wv.version_number AS active_version_number,
+       EXISTS (
+           SELECT 1 FROM workflow_version d
+           WHERE d.workflow_id = w.id AND d.tenant_id = w.tenant_id AND d.status = 'DRAFT'
+       ) AS has_draft
 FROM workflow w
 LEFT JOIN workflow_version wv ON wv.id = w.active_version_id
 WHERE w.tenant_id = $1 AND w.id = $2;
@@ -19,7 +23,7 @@ WHERE tenant_id = $1 AND template_key = $2;
 SELECT id, tenant_id, created_by_user_id, template_key, name, description, active_version_id, created_at, updated_at, record_version
 FROM workflow
 WHERE tenant_id = $1
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 LIMIT $2
 OFFSET $3;
 

@@ -954,8 +954,8 @@ func TestValidateBoundaryEvents_NoDefinition(t *testing.T) {
 	}
 	g := &bpmncore.Graph{NodeIDs: map[string]struct{}{"Task_1": {}}}
 	errs := validator.ValidateBoundaryEvents(proc, g, nil)
-	if !hasCodeIn(errs, domain.BPMNErrMissingTaskDefinition) {
-		t.Errorf("expected MISSING_TASK_DEFINITION for boundary event with no definition; got %v", errCodesOf(errs))
+	if !hasCodeIn(errs, domain.BPMNErrInvalidBoundaryAttachment) || hasCodeIn(errs, domain.BPMNErrMissingTaskDefinition) {
+		t.Errorf("expected INVALID_BOUNDARY_ATTACHMENT for boundary event with no definition; got %v", errCodesOf(errs))
 	}
 }
 

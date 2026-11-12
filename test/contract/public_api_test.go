@@ -86,7 +86,7 @@ func publicRouter(t *testing.T, wf workflowFake, cache port.CacheStore, db httpa
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	return httpadapter.NewRouter(httpadapter.RouterConfig{
-		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
+		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test",
 		Handler: handler.New(handler.Services{Workflows: wf, Cache: cache, IdempotencyTTL: time.Minute}),
 		DB:      db, Cache: pinger,
 	}).Handler()
@@ -335,7 +335,7 @@ func TestPublicContract_Versions(t *testing.T) {
 		Waits: []service.PlanWait{{Key: "eng/Wait", Kind: service.WaitReceiveTask, Message: "answer"}}}
 	router := func(f versionFake) http.Handler {
 		return httpadapter.NewRouter(httpadapter.RouterConfig{
-			GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
+			GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test",
 			Handler: handler.New(handler.Services{Versions: f, Cache: freeCache{}, IdempotencyTTL: time.Minute}),
 			DB:      upDB{}, Cache: upPinger{},
 		}).Handler()
@@ -426,7 +426,7 @@ func TestPublicContract_BodyRoutesDeclareTheirRefusals(t *testing.T) {
 	spec := contract.Load(t, publicSpec)
 	gin.SetMode(gin.TestMode)
 	router := httpadapter.NewRouter(httpadapter.RouterConfig{
-		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
+		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test",
 		Handler: handler.New(handler.Services{Workflows: createFake{}, Modules: moduleFake{module: &domain.Module{ID: uuid.New(), Scope: domain.ScopeTenant}}, Cache: freeCache{}, IdempotencyTTL: time.Minute}),
 		DB:      upDB{}, Cache: upPinger{},
 	}).Handler()
@@ -491,7 +491,7 @@ func TestPublicContract_Validation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			router := httpadapter.NewRouter(httpadapter.RouterConfig{
-				GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
+				GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test",
 				Handler: handler.New(handler.Services{Validation: validationFake{issues: tc.issues}, Versions: versionFake{version: version}, Cache: freeCache{}, IdempotencyTTL: time.Minute}),
 				DB:      upDB{}, Cache: upPinger{},
 			}).Handler()
@@ -519,7 +519,7 @@ func TestPublicContract_PublishAcceptsNoBody(t *testing.T) {
 	at := time.Now().UTC()
 	version := &domain.WorkflowVersion{ID: uuid.New(), WorkflowID: uuid.New(), Status: domain.VersionStatusPublished, VersionNumber: &n, PublishedAt: &at, CreatedAt: at, RecordVersion: 2}
 	router := httpadapter.NewRouter(httpadapter.RouterConfig{
-		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
+		GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test",
 		Handler: handler.New(handler.Services{Versions: versionFake{version: version}, Cache: freeCache{}, IdempotencyTTL: time.Minute}),
 		DB:      upDB{}, Cache: upPinger{},
 	}).Handler()
@@ -537,6 +537,10 @@ func TestPublicContract_PublishAcceptsNoBody(t *testing.T) {
 	spec.Undeclared(t, req, w.Code, w.Body.Bytes())
 }
 
+// notPublishableFixtures names the testdata diagrams that are validation
+// examples; any other fixture that stops compiling is a failure, not a skip.
+var notPublishableFixtures = map[string]bool{"v3-clarification-bip-prep.bpmn": true}
+
 func TestPublicContract_CompiledPlansMatchTheirSchema(t *testing.T) {
 	spec := contract.Load(t, publicSpec)
 	gin.SetMode(gin.TestMode)
@@ -552,8 +556,11 @@ func TestPublicContract_CompiledPlansMatchTheirSchema(t *testing.T) {
 				t.Fatal(err)
 			}
 			collab, err := bpmn_compiler.New().CompileForPublish(context.Background(), string(xml))
+			if err != nil && notPublishableFixtures[filepath.Base(file)] {
+				t.Skipf("fixture is a validation example and does not compile for publish: %v", err)
+			}
 			if err != nil {
-				t.Skipf("fixture does not compile for publish: %v", err)
+				t.Fatalf("fixture does not compile for publish: %v", err)
 			}
 			plan, err := json.Marshal(collab)
 			if err != nil {
@@ -566,7 +573,7 @@ func TestPublicContract_CompiledPlansMatchTheirSchema(t *testing.T) {
 			planText := string(plan)
 			version.CompiledPlanJSON = &planText
 			router := httpadapter.NewRouter(httpadapter.RouterConfig{
-				GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test", InternalAPIToken: "internal-secret",
+				GinConfig: gincommon.Config{ServiceName: "definition-contract-test", Domain: "workflow", Environment: "test"}, AppEnv: "test",
 				Handler: handler.New(handler.Services{Versions: versionFake{version: version}, Cache: freeCache{}, IdempotencyTTL: time.Minute}),
 				DB:      upDB{}, Cache: upPinger{},
 			}).Handler()

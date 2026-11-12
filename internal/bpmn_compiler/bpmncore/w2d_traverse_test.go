@@ -199,6 +199,7 @@ func TestStageTypeOf_ByNodeType(t *testing.T) {
 		want     string
 	}{
 		{"user task with a task definition", NodeTypeUserTask, true, &ZeebeTaskDefinition{Type: "approval"}, "approval"},
+		{"connector task", NodeTypeUserTask, true, &ZeebeTaskDefinition{Type: "connector:http"}, "connector"},
 		{"user task without a task definition", NodeTypeUserTask, true, nil, ""},
 		{"user task with an empty definition type", NodeTypeUserTask, true, &ZeebeTaskDefinition{}, ""},
 		{"user task missing from the process", NodeTypeUserTask, false, nil, ""},

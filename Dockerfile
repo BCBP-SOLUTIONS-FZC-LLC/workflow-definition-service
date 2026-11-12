@@ -16,7 +16,7 @@
 #     --build-arg BUILD_VERSION=$(git describe --tags --always --dirty) \
 #     -t workflow-definition-service:$TAG .
 
-FROM golang:1.26-alpine@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca AS builder
+FROM golang:1.26-alpine@sha256:30b1e546a9c7fa3b747c2bdba3a0c7bdf3a02ebb4c5b8405d2f948d7e8aac4ec AS builder
 
 ARG BUILD_VERSION=dev
 ARG TARGETARCH=amd64

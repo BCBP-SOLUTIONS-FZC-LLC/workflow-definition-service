@@ -108,10 +108,10 @@ func (h *Handler) CreateStarter(c *gin.Context) {
 		h.bindErrResponse(c, err)
 		return
 	}
-	if rejectTooLong(c,
-		lengthLimit{"name", req.Name, 255},
-		lengthLimit{"description", req.Description, 2000},
-		lengthLimit{"category", req.Category, 64},
+	if rejectInvalidText(c,
+		lengthLimit{"name", req.Name, 255, true},
+		lengthLimit{"description", req.Description, 2000, false},
+		lengthLimit{"category", req.Category, 64, false},
 	) {
 		return
 	}
@@ -154,10 +154,10 @@ func (h *Handler) CreateStarterFromWorkflowVersion(c *gin.Context) {
 		return
 	}
 
-	if rejectTooLong(c,
-		lengthLimit{"name", req.Name, 255},
-		lengthLimit{"description", req.Description, 2000},
-		lengthLimit{"category", req.Category, 64},
+	if rejectInvalidText(c,
+		lengthLimit{"name", req.Name, 255, true},
+		lengthLimit{"description", req.Description, 2000, false},
+		lengthLimit{"category", req.Category, 64, false},
 	) {
 		return
 	}

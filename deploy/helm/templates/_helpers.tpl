@@ -58,3 +58,12 @@ Image reference: repository:tag, pinned by digest when image.digest is set.
 {{- end -}}
 {{- printf "%dh" (add (trimSuffix "h" $interval | atoi) 2) -}}
 {{- end -}}
+
+{{/*
+With the policy off, the NetworkPolicy alone fronts the internal routes: refused in staging and prod unless accepted.
+*/}}
+{{- define "workflow-definition-service.validateAuthorizationPolicy" -}}
+{{- if and (not .Values.authorizationPolicy.enabled) (has .Values.env.APP_ENV (list "prod" "staging")) (not .Values.authorizationPolicy.allowDisabled) -}}
+{{- fail (printf "authorizationPolicy.enabled is false while env.APP_ENV is %s: only the NetworkPolicy would stand in front of the internal routes. Enable the policy, or set authorizationPolicy.allowDisabled=true to accept that" .Values.env.APP_ENV) -}}
+{{- end -}}
+{{- end }}

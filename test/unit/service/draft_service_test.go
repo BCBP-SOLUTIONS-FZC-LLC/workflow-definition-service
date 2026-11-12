@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 
+	bpmncompiler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port/mocks"
@@ -31,6 +32,7 @@ func newDraftSvc(ctrl *gomock.Controller,
 		Workflows: wfRepo,
 		Versions:  vRepo,
 		Assignees: mocks.NewMockAssigneeRepository(ctrl),
+		Compiler:  bpmncompiler.New(),
 	})
 }
 

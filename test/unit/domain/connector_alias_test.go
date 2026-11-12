@@ -66,8 +66,8 @@ func TestConnectorRestAlias_Validate(t *testing.T) {
 }
 
 // ValidateBaseURLHost is the control that stops a rest-call alias from
-// pointing at an attacker-controlled host: dispatch attaches the real
-// x-internal-token and x-departments headers to every call, and the alias
+// pointing at an attacker-controlled host: dispatch attaches the system
+// caller identity and x-departments headers to every call, and the alias
 // registry is org-wide and writable through an internal endpoint, so an
 // unchecked baseURL is a credential-exfiltration path.
 func TestValidateBaseURLHost(t *testing.T) {

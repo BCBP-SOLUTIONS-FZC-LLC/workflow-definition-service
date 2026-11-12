@@ -77,7 +77,7 @@ func (c *MembershipClient) tryCheckEligibility(
 ) (result domain.Eligibility, retryable bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return domain.Eligibility{}, false, fmt.Errorf("build eligibility request: %w", err)
+		return domain.Eligibility{}, false, fmt.Errorf("%w: build eligibility request: %w", domain.ErrUpstreamUnavailable, err)
 	}
 	req.Header.Set("x-user-id", systemPrincipal)
 	req.Header.Set("x-tenant-roles", systemPrincipal)
@@ -100,7 +100,7 @@ func (c *MembershipClient) tryCheckEligibility(
 		Reason   string `json:"reason"`
 	}
 	if err := json.NewDecoder(limitedBody(resp.Body)).Decode(&body); err != nil {
-		return domain.Eligibility{}, false, fmt.Errorf("decode eligibility response: %w", err)
+		return domain.Eligibility{}, false, fmt.Errorf("%w: decode eligibility response: %w", domain.ErrUpstreamUnavailable, err)
 	}
 	if body.Eligible == nil {
 		return domain.Eligibility{}, false, fmt.Errorf("%w: membership eligibility response has no eligible flag", domain.ErrUpstreamUnavailable)

@@ -159,6 +159,9 @@ func (c *Compiler) compileModule(
 		return nil, none, classifyParseError("compile-module", err)
 	}
 	root := bpmncore.FindProcessByID(defs, moduleProcessID)
+	if root == nil {
+		return nil, none, fmt.Errorf("bpmn compile-module: process %q not in the document", moduleProcessID)
+	}
 	defs.ModuleProcesses[root.ID] = true
 	plan, called, err := bpmncore.Compile(root, bpmncore.BuildGraph(root), c.stageTypes, c.elements, defs)
 	if err != nil {

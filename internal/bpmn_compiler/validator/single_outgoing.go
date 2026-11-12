@@ -2,6 +2,7 @@ package validator
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
@@ -15,6 +16,12 @@ var singleOutgoingKinds = map[bpmncore.FlowNodeType]string{
 	bpmncore.NodeTypeReceiveTask:  "receive task",
 	bpmncore.NodeTypeSubProcess:   "sub-process",
 	bpmncore.NodeTypeCallActivity: "call activity",
+}
+
+var gatewayKinds = map[bpmncore.FlowNodeType]string{
+	bpmncore.NodeTypeParallelGateway:  "parallel gateway",
+	bpmncore.NodeTypeExclusiveGateway: "exclusive gateway",
+	bpmncore.NodeTypeInclusiveGateway: "inclusive gateway",
 }
 
 func ValidateSingleOutgoing(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
@@ -34,7 +41,9 @@ func ValidateSingleOutgoing(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backE
 func singleOutgoingErrors(g *bpmncore.Graph, backEdges map[[2]string]bool) []domain.BPMNValidationError {
 	ids := make([]string, 0, len(g.NodeType))
 	for id, kind := range g.NodeType {
-		if _, ok := singleOutgoingKinds[kind]; ok || kind == bpmncore.NodeTypeEndEvent {
+		_, single := singleOutgoingKinds[kind]
+		_, gateway := gatewayKinds[kind]
+		if single || gateway || kind == bpmncore.NodeTypeEndEvent {
 			ids = append(ids, id)
 		}
 	}
@@ -42,6 +51,10 @@ func singleOutgoingErrors(g *bpmncore.Graph, backEdges map[[2]string]bool) []dom
 
 	var errs []domain.BPMNValidationError
 	for _, id := range ids {
+		if kind, ok := gatewayKinds[g.NodeType[id]]; ok {
+			errs = append(errs, repeatedFlowErrors(id, kind, g.Outgoing[id])...)
+			continue
+		}
 		if g.NodeType[id] == bpmncore.NodeTypeEndEvent {
 			if forwardOutCount(id, g, backEdges) > 0 {
 				errs = AppendErr(errs, domain.BPMNErrEndEventWithOutgoingFlow, id,
@@ -52,6 +65,21 @@ func singleOutgoingErrors(g *bpmncore.Graph, backEdges map[[2]string]bool) []dom
 		if n := forwardOutCount(id, g, backEdges); n > 1 {
 			errs = AppendErr(errs, domain.BPMNErrSplitWithoutGateway, id,
 				fmt.Sprintf("%s has %d outgoing flows; a flow splits only at a gateway, so give it one outgoing flow and branch with a parallel, exclusive or inclusive gateway", singleOutgoingKinds[g.NodeType[id]], n))
+		}
+	}
+	return errs
+}
+
+func repeatedFlowErrors(id, kind string, targets []string) []domain.BPMNValidationError {
+	count := map[string]int{}
+	for _, to := range targets {
+		count[to]++
+	}
+	var errs []domain.BPMNValidationError
+	for _, to := range slices.Sorted(maps.Keys(count)) {
+		if n := count[to]; n > 1 {
+			errs = AppendErr(errs, domain.BPMNErrDuplicateSequenceFlow, id,
+				fmt.Sprintf("%s has %d flows to %q; two identical flows count as two branches, so keep one flow to each target", kind, n, to))
 		}
 	}
 	return errs

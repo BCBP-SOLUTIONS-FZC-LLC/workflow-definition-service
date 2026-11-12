@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 
@@ -69,6 +71,9 @@ func (s *VersionService) List(
 	tenantID, workflowID uuid.UUID,
 	page, limit int,
 ) ([]*domain.WorkflowVersion, int64, error) {
+	if _, err := s.workflows.GetByID(ctx, tenantID, workflowID); err != nil {
+		return nil, 0, fmt.Errorf(errGetWorkflow, err)
+	}
 	versions, count, err := s.versions.ListByWorkflow(ctx, tenantID, workflowID, page, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list versions: %w", err)
@@ -187,12 +192,12 @@ func (s *VersionService) Clone(
 		CreatedByUserID: userID,
 		IsValid:         true,
 	}
-	limit, err := resolveTemplateLimit(ctx, s.planLimits, planCode)
+	limit, err := resolveTemplateLimit(ctx, s.planLimits, tenantID, planCode)
 	if err != nil {
 		return nil, nil, err
 	}
 	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
-		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, limit); err != nil {
+		if err := enforceWorkflowQuota(ctx, s.workflows, tenantID, planCode, limit); err != nil {
 			return err
 		}
 		if err := s.workflows.Create(ctx, newWF); err != nil {
@@ -244,33 +249,23 @@ func (s *VersionService) Promote(
 	var limit *int64
 	limitResolved := false
 	if wf.ActiveVersionID == nil {
-		limit, err = resolveTemplateLimit(ctx, s.planLimits, planCode)
+		limit, err = resolveTemplateLimit(ctx, s.planLimits, tenantID, planCode)
 		if err != nil {
 			return nil, err
 		}
 		limitResolved = true
 	}
-	if err := s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
-		current, err := s.workflows.GetByID(ctx, tenantID, workflowID)
-		if err != nil {
-			return fmt.Errorf(errGetWorkflow, err)
+	err = s.promoteInTx(ctx, tenantID, workflowID, versionID, planCode, limit, limitResolved)
+	if errors.Is(err, errPromoteNeedsLimit) {
+		// A concurrent archive cleared the active version after the first read.
+		// The limit is never looked up inside the transaction (it can be a network
+		// call), so look it up here and run the transaction again.
+		if limit, err = resolveTemplateLimit(ctx, s.planLimits, tenantID, planCode); err != nil {
+			return nil, err
 		}
-		if current.ActiveVersionID != nil && *current.ActiveVersionID == versionID {
-			return nil
-		}
-		if current.ActiveVersionID == nil {
-			if !limitResolved {
-				if limit, err = resolveTemplateLimit(ctx, s.planLimits, planCode); err != nil {
-					return err
-				}
-				limitResolved = true
-			}
-			if err := s.enforceQuotaUnlessCounted(ctx, tenantID, workflowID, limit); err != nil {
-				return err
-			}
-		}
-		return s.workflows.UpdateActiveVersion(ctx, tenantID, workflowID, &versionID)
-	}); err != nil {
+		err = s.promoteInTx(ctx, tenantID, workflowID, versionID, planCode, limit, true)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("promote version: %w", err)
 	}
 
@@ -283,7 +278,36 @@ func (s *VersionService) Promote(
 	return v, nil
 }
 
-func (s *VersionService) enforceQuotaUnlessCounted(ctx context.Context, tenantID, workflowID uuid.UUID, limit *int64) error {
+var errPromoteNeedsLimit = errors.New("promote needs the workflow template limit")
+
+func (s *VersionService) promoteInTx(
+	ctx context.Context,
+	tenantID, workflowID, versionID uuid.UUID,
+	planCode string,
+	limit *int64,
+	limitResolved bool,
+) error {
+	return s.transactor.RunInTxWithRetry(ctx, func(ctx context.Context) error {
+		current, err := s.workflows.GetByID(ctx, tenantID, workflowID)
+		if err != nil {
+			return fmt.Errorf(errGetWorkflow, err)
+		}
+		if current.ActiveVersionID != nil && *current.ActiveVersionID == versionID {
+			return nil
+		}
+		if current.ActiveVersionID == nil {
+			if !limitResolved {
+				return errPromoteNeedsLimit
+			}
+			if err := s.enforceQuotaUnlessCounted(ctx, tenantID, workflowID, planCode, limit); err != nil {
+				return err
+			}
+		}
+		return s.workflows.UpdateActiveVersion(ctx, tenantID, workflowID, &versionID)
+	})
+}
+
+func (s *VersionService) enforceQuotaUnlessCounted(ctx context.Context, tenantID, workflowID uuid.UUID, planCode string, limit *int64) error {
 	_, err := s.versions.GetDraft(ctx, tenantID, workflowID)
 	if err == nil {
 		return nil
@@ -291,7 +315,7 @@ func (s *VersionService) enforceQuotaUnlessCounted(ctx context.Context, tenantID
 	if !errors.Is(err, domain.ErrNotFound) {
 		return fmt.Errorf(errGetDraft, err)
 	}
-	return enforceWorkflowQuota(ctx, s.workflows, tenantID, limit)
+	return enforceWorkflowQuota(ctx, s.workflows, tenantID, planCode, limit)
 }
 
 func (s *VersionService) Export(
@@ -309,7 +333,16 @@ func (s *VersionService) Export(
 	if err != nil {
 		return "", "", fmt.Errorf(errGetWorkflow, err)
 	}
-	return v.BPMNXML, fmt.Sprintf("%s-v%s.bpmn", wf.TemplateKey, versionLabel(v)), nil
+	return v.BPMNXML, fmt.Sprintf("%s-v%s.bpmn", exportNameSafe(wf.TemplateKey), versionLabel(v)), nil
+}
+
+func exportNameSafe(key string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || unicode.IsControl(r) {
+			return '_'
+		}
+		return r
+	}, key)
 }
 
 func (s *VersionService) Diff(

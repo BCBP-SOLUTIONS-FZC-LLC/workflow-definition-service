@@ -292,7 +292,7 @@ Full OpenAPI schema: [`docs/swagger/openapi.yaml`](docs/swagger/openapi.yaml).
 | `x-user-id` | Yes | Executing user UUID |
 | `x-tenant-roles` | Yes | Comma-separated roles, e.g. `tenant_admin,member` |
 | `x-departments` | No | User department memberships |
-| `x-plan` | For workflow create, clone, and promote of a version on a workflow with no active version | The tenant's plan code (`starter`, `pro`, `enterprise`), set by the authorization layer. The template limit is looked up by it in the plan table read from the catalog; a missing or unknown code answers `503` |
+| `x-plan` | For workflow create, clone, and promote of a version on a workflow with no active version | The tenant's plan code (`starter`, `pro`, `enterprise`), set by the authorization layer. The template limit is looked up by it in the plan table read from the catalog; a missing or unknown code answers `503`. When `ENTITLEMENTS_BASE_URL` is set the limit is read per tenant from Entitlements instead and `x-plan` is not used for it |
 | `x-request-id` | No | Client correlation ID — echoed as `X-Request-ID` |
 | `traceparent` | No | W3C trace context — echoed as `X-Trace-ID` |
 
@@ -347,7 +347,7 @@ rctx := gincommon.RequestContext(c)
 | `GET` | `/api/v1/internal/connector-aliases` | Internal | List the REST-call connector aliases, read by the connector worker |
 | `POST`, `DELETE` | `/api/v1/internal/connector-aliases/rest`, `/api/v1/internal/connector-aliases/rest/:alias` | Internal | Create, update or delete a REST-call connector alias |
 
-**Admin** = requires `tenant_admin` or `tenant_owner` in `x-tenant-roles`. **Internal** = service-to-service only; not exposed on the public gateway. Authenticated with `x-internal-token` (`INTERNAL_API_TOKEN`, required outside dev); the handler sets the RLS tenant from the envelope `tenant_id`. Returns 2xx (incl. idempotent no-op), 400 (malformed — non-retryable), or 500 (transient — retried).
+**Admin** = requires `tenant_admin` or `tenant_owner` in `x-tenant-roles`. **Internal** = service-to-service only; not exposed on the public gateway. Admitted only with the system caller identity (`x-tenant-roles: iam-system` and a non-empty `x-user-id`); the handler sets the RLS tenant from the envelope `tenant_id`. Returns 2xx (incl. idempotent no-op), 400 (malformed — non-retryable), or 500 (transient — retried).
 
 **Optimistic concurrency on draft update.** `PUT /api/v1/workflows/:id/draft` accepts a `record_version` (the token returned on `GET /draft` and version responses). The token is required, in the `record_version` body field or an `If-Match` header (the header wins); a request with neither is `400 BAD_REQUEST`. A stale value yields `409 DRAFT_CONCURRENCY` carrying `current_record_version`. `record_version` is bumped by the DB on every real change. The `PUT /draft`, `POST /workflows`, and clone responses include a `message` field; create/clone also echo the new identifiers.
 
@@ -394,6 +394,7 @@ Validation errors include an `invalid_params` array:
 | `INVALID_BPMN_XML` | 400 | The BPMN document cannot be parsed — bad XML, forbidden `DOCTYPE`/entity, or the XML-bomb token cap. (Forbidden constructs also emit an internal security log; the client response is identical.) |
 | `NOT_FOUND` | 404 | Workflow or version not found, or RLS boundary breached |
 | `DRAFT_NOT_FOUND` | 404 | No active draft exists for the workflow |
+| `METHOD_NOT_ALLOWED` | 405 | The path exists but not for this method; the `Allow` header lists the methods it serves |
 | `NO_ACTIVE_VERSION` | 409 | Workflow has no published active version |
 | `UNAUTHORIZED` | 401 | Missing or invalid `x-user-id` / `x-tenant-id` headers |
 | `FORBIDDEN` | 403 | Caller lacks `tenant_admin` or `tenant_owner` role |
@@ -419,7 +420,7 @@ Validation errors include an `invalid_params` array:
 
 ### Internal API
 
-Service-to-service routes under `/api/v1/internal`, specified in [`api/internal-openapi.yaml`](api/internal-openapi.yaml) (Swagger UI offers it beside the public spec in dev). The gateway never routes them; callers present the service's `INTERNAL_API_TOKEN` in `x-internal-token`, and the tenant comes from the request, not from gateway headers.
+Service-to-service routes under `/api/v1/internal`, specified in [`api/internal-openapi.yaml`](api/internal-openapi.yaml) (Swagger UI offers it beside the public spec in dev). The gateway never routes them; callers send `x-user-id: iam-system` and `x-tenant-roles: iam-system` (a request without both answers `401 UNAUTHORIZED`), and the tenant comes from the request, not from gateway headers. The headers are not a credential: the mesh authenticates the calling workload (see Networking).
 
 | Method | Path | Caller | Purpose |
 | --- | --- | --- | --- |
@@ -428,13 +429,13 @@ Service-to-service routes under `/api/v1/internal`, specified in [`api/internal-
 | `GET` / `POST` / `DELETE` | `/api/v1/internal/connector-aliases…` | Execution's connector-worker, operators | The connector alias registry |
 
 ```bash
-curl -s -H "x-internal-token: $INTERNAL_API_TOKEN" \
+curl -s -H "x-user-id: iam-system" -H "x-tenant-roles: iam-system" \
   "localhost:8080/api/v1/internal/workflow-versions/$VERSION_ID/compiled-plan?tenant_id=$TENANT_ID"
 ```
 
-This service calls the Execution Service's internal API the same way, sending that service's token as `EXECUTION_SERVICE_TOKEN`: its active-instances read guards archive, and its pause-tasks call follows a membership revocation. A byte-identical copy of the Execution Service's spec lives in `api/contracts/`, and the client's tests hold every request to it.
+This service calls the Execution Service's internal API the same way, sending the same identity headers plus `x-tenant-id`: its active-instances read guards archive, and its pause-tasks call follows a membership revocation. A byte-identical copy of the Execution Service's spec lives in `api/contracts/`, and the client's tests hold every request to it.
 
-**Contract gates.** `make contract-breaking` refuses a breaking change to `api/internal-openapi.yaml` against `origin/main` (oasdiff; part of `make check`). `make contract-check` refuses a copy in `api/contracts/` that differs from its source branch (`CONTRACT_SRC_DIR=../execution_service` reads a local checkout). Both run in CI.
+**Contract gates.** `make contract-breaking` refuses a breaking change to `api/internal-openapi.yaml` against `origin/main` (oasdiff; part of `make check`). `make contract-check` refuses a copy in `api/contracts/` that differs from its source: the Execution Service's branch named like the branch under test if it has one, otherwise its `main` (`CONTRACT_SRC_REF` picks another ref, `CONTRACT_SRC_DIR=../execution_service` reads a local checkout). Both run in CI.
 
 ---
 
@@ -482,7 +483,7 @@ helm template my-release ./deploy/helm --set secretValues.DATABASE_URL=... # ...
 helm upgrade workflow-definition-service ./deploy/helm --install --namespace workflow-app
 ```
 
-**Namespace, mesh and admission.** The release runs in `workflow-app`, inside the Istio mesh with mTLS and under its chart name (no `nameOverride`), because Org & Membership and Catalog admit it by namespace, pod label and ServiceAccount `workflow-definition-service`. The NetworkPolicy allows egress to Org & Membership (`iam`, port 8080) and Catalog (`iam`, port 8081). The route-level `SecurityPolicy` sets `mergeType: StrategicMerge` (Envoy Gateway 1.8 or later), so enabling it keeps the gateway's JWT validation and authorisation filter on these routes; on an older gateway, keep it disabled.
+**Namespace, mesh and admission.** The release runs in `workflow-app`, inside the Istio mesh with mTLS and under its chart name (no `nameOverride`), because Org & Membership and Catalog admit it by namespace, pod label and ServiceAccount `workflow-definition-service`. The NetworkPolicy allows egress to Org & Membership (`iam`, port 8080) and Catalog (`iam`, port 8081), and, only when `env.ENTITLEMENTS_BASE_URL` is set, to Entitlements (`commercial`; the pod labels and port in `networkPolicy.entitlementsEgress` are placeholders until Platform names the real ones). The route-level `SecurityPolicy` sets `mergeType: StrategicMerge` (Envoy Gateway 1.8 or later), so enabling it keeps the gateway's JWT validation and authorisation filter on these routes; on an older gateway, keep it disabled.
 
 **Ports and probes.** The Service and Deployment both expose named `http` (8080) and `metrics` (9091) ports. `startupProbe`/`livenessProbe`/`readinessProbe` all target `http` — `/healthz` is a trivial liveness check, `/readyz` verifies the Postgres pool and reports Valkey as `cache: degraded` when it is unreachable without failing readiness, so a pod only receives traffic once its database is up.
 
@@ -503,9 +504,9 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 **Secrets.** Two mutually exclusive modes, selected by whether `existingSecret` is set:
 
 - **`existingSecret: "<name>"`** (recommended beyond local testing) — points at a Secret already provisioned by External Secrets Operator, the AWS Secrets Manager CSI driver, or Sealed Secrets. The chart creates no Secret resource of its own. The render-time key checks do not run in this mode, so a key missing from that Secret shows as `CreateContainerConfigError` at pod start. Bump `rotationEpoch` (`--set rotationEpoch=$(date +%s)`) to force a rollout after the external secret rotates.
-- **`secretValues.*`** (dev/CI only) — pass real values via `--set` or a Helm secrets plugin. `secret.yaml` hard-fails the render if any key listed in `envFromSecret` (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `SYSTEM_DATABASE_URL`, `VALKEY_PASSWORD`, `INTERNAL_API_TOKEN`, `EXECUTION_SERVICE_TOKEN`, `OPENBAO_TOKEN`) is empty. These land in the Helm release history unencrypted (base64) — never use this mode against a shared cluster.
+- **`secretValues.*`** (dev/CI only) — pass real values via `--set` or a Helm secrets plugin. `secret.yaml` hard-fails the render if any key listed in `envFromSecret` (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `SYSTEM_DATABASE_URL`, `VALKEY_PASSWORD`, `OPENBAO_TOKEN`) is empty. These land in the Helm release history unencrypted (base64) — never use this mode against a shared cluster.
 
-**Networking.** `networkPolicy.enabled: true` by default. The gateway/ingress-controller rule and the named callers (the Execution Service) both reach `8080`; the gateway routes only the public path prefixes (`ingress.hosts[].paths`), so `/api/v1/internal` is reachable only in-cluster, and every internal route also requires `x-internal-token`. A separate rule scopes `/metrics` scraping to the `observability` namespace only, and the gateway rule selects the `gateway` namespace. Egress allows DNS, HTTPS, Postgres/PgBouncer, Valkey and OTel OTLP explicitly, plus named targets: Org & Membership and Catalog in the `iam` namespace, the Execution Service in this release's namespace, and OpenBao on 8200. The OpenBao selector (`openbao` namespace, pod label `app.kubernetes.io/name: openbao`) is a placeholder to be replaced when the platform's OpenBao address is known.
+**Networking.** `networkPolicy.enabled: true` by default. The gateway/ingress-controller rule and the named callers (the Execution Service) both reach `8080`; the gateway routes only the public path prefixes (`ingress.hosts[].paths`), so `/api/v1/internal` is reachable only in-cluster, and every internal route also requires the system caller identity. With `authorizationPolicy.enabled: true` (default; needs Istio) an `AuthorizationPolicy` admits every caller outside `/api/v1/internal/*` and, on the internal routes, one rule per route group in `authorizationPolicy.internalRoutes` (events: the event consumer; compiled plans: the Execution API and worker; alias list: the Execution connector worker; alias write and delete: the owning service, Tender), each admitting only that group's service accounts on that group's paths (the namespaces and accounts are placeholders to confirm with Platform; a test fails when a route in `router.go` belongs to no group). The mesh needs a sidecar and mutual TLS on both ends, and `PeerAuthentication` is Platform's. The Service and ServiceAccount are named `workflow-definition-service` whatever the release is called, the `http` and `metrics` Service ports carry `appProtocol: http`, and the render refuses `authorizationPolicy.enabled: false` when `env.APP_ENV` is `staging` or `prod`, unless `authorizationPolicy.allowDisabled: true`. A separate rule scopes `/metrics` scraping to the `observability` namespace only, and the gateway rule selects the `gateway` namespace. Egress allows DNS, HTTPS, Postgres/PgBouncer, Valkey and OTel OTLP explicitly, plus named targets: Org & Membership and Catalog in the `iam` namespace, the Execution Service API in this release's namespace on 8080, and OpenBao on 8200. The Entitlements egress rule renders only when `env.ENTITLEMENTS_BASE_URL` is set and `networkPolicy.entitlementsEgress` has both `ports` and `podSelector`. The OpenBao selector (`openbao` namespace, pod label `app.kubernetes.io/name: openbao`) is a placeholder to be replaced when the platform's OpenBao address is known.
 
 `ingress.type` supports either `HTTPRoute` (Gateway API — default) or classic `Ingress`. CORS and gateway-level rate limiting attach via an Envoy Gateway `SecurityPolicy` (`ingress.securityPolicy`) when enabled.
 
@@ -527,7 +528,7 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 
 `release.yml`'s `deploy-gate` job runs after the image is built, signed, and pushed, and before the GitHub Release is published:
 
-1. `helm upgrade workflow-definition-service ./deploy/helm --install --wait --timeout=5m --atomic`, passing `env.ORG_MEMBERSHIP_BASE_URL`, `env.CATALOG_ADMIN_BASE_URL`, `env.OPENBAO_ADDR` and `env.VALKEY_ADDR` from the repository variables of the same names — `--atomic` rolls back automatically if the release fails to become healthy within the timeout. The chart refuses to render for a non-dev `APP_ENV` while any of `ORG_MEMBERSHIP_BASE_URL`, `CATALOG_ADMIN_BASE_URL`, `EXECUTION_SERVICE_URL`, `OPENBAO_ADDR` or `VALKEY_ADDR` is empty, and CI runs `make helm-check` to prove it.
+1. `helm upgrade workflow-definition-service ./deploy/helm --install --wait --timeout=5m --atomic`, passing `env.ORG_MEMBERSHIP_BASE_URL`, `env.CATALOG_ADMIN_BASE_URL` (or `env.ENTITLEMENTS_BASE_URL`), `env.OPENBAO_ADDR` and `env.VALKEY_ADDR` from the repository variables of the same names — `--atomic` rolls back automatically if the release fails to become healthy within the timeout. The chart refuses to render for a non-dev `APP_ENV` while any of `ORG_MEMBERSHIP_BASE_URL`, `EXECUTION_SERVICE_URL`, `OPENBAO_ADDR` or `VALKEY_ADDR` is empty, or while both `CATALOG_ADMIN_BASE_URL` and `ENTITLEMENTS_BASE_URL` are empty, and CI runs `make helm-check` to prove it.
 2. Verifies the running Deployment's image digest matches the digest that was actually signed and pushed.
 3. Waits for `kubectl rollout status` to confirm the new pods are ready.
 4. Runs a 2-minute Prometheus check on the 5xx ratio; if it exceeds 1%, `helm rollback` runs automatically and the job — and therefore the release — fails.
@@ -555,9 +556,9 @@ Sampled row-level-security violations written to `rls_violation_log` are exporte
 ## Security
 
 - **Tenant isolation:** every tenant table has row-level security forced on, with a policy that checks the tenant GUC through a function that logs sampled violations. The system pool connects as a `BYPASSRLS` role and serves only the global catalog and the violation exporter.
-- **Internal API:** `/api/v1/internal` requires `x-internal-token`, compared in constant time; request bodies are capped at 10 MiB on the internal and public API groups.
+- **Internal API:** `/api/v1/internal` requires the system caller identity (`x-tenant-roles` holds `iam-system`, `x-user-id` set), and the mesh `AuthorizationPolicy` limits each route group to its named callers; request bodies are capped at 10 MiB on the internal and public API groups.
 - **Connector credentials:** written to OpenBao under `connectors/<tenant>/<type>/<field>`, with `connector_type` checked against the registry and `field_name` against an allowlist; `OPENBAO_ADDR` and `OPENBAO_TOKEN` are required outside dev.
-- **Configuration:** `APP_ENV` is required and is one of `local`, `dev`, `test`, `staging`, `prod`; `.env` is read in `local` and `dev` only. A value that does not parse (`HTTP_PORT=8080abc`, a malformed duration) or a duration of zero for a TTL or timeout fails startup, and every problem is listed in one error. Outside `dev` the service refuses to start without `VALKEY_ADDR`, the internal token, the Org & Membership and Execution URLs and token, and OpenBao; `prod` also requires `SYSTEM_DATABASE_URL`.
+- **Configuration:** `APP_ENV` is required and is one of `local`, `dev`, `test`, `staging`, `prod`; `.env` is read in `local` and `dev` only. A value that does not parse (`HTTP_PORT=8080abc`, a malformed duration) or a duration of zero for a TTL or timeout fails startup, and every problem is listed in one error. Outside `dev` the service refuses to start without `VALKEY_ADDR`, the Org & Membership and Execution URLs, and OpenBao; `prod` also requires `SYSTEM_DATABASE_URL`.
 - **Container:** distroless, non-root, read-only root filesystem, all capabilities dropped.
 
 ---
@@ -597,6 +598,15 @@ See [ARCHITECTURE.md § BPMN Compiler](ARCHITECTURE.md#bpmn-compiler) for the fu
 | `test/contract/` | The public and internal APIs against their specs, the Execution client against the copied Execution contract | `make test` |
 | `test/integration/`, `test/e2e/` | DB integration and service lifecycle tests against a real PostgreSQL container | `make test-integration` |
 | Execution's `test/compat/` | This service's binary against the Execution Service's real API, worker and connector worker, with IAM events delivered through the Workflow-Events Consumer | `make -C <execution checkout> test-compat DEFINITION_SERVICE_DIR=$PWD EVENT_CONSUMER_DIR=<consumer checkout>` |
+
+Two black-box checks run against a local stack (the one `scripts/smoke-test.sh` describes: `make docker-up`, `make migrate`, the three stubs under `cmd/stub/`, then `go run ./cmd/server`). They are not part of CI.
+
+| Directory | What | Command |
+| --------- | ---- | ------- |
+| `test/hurl/` | Scenario files in plain text: the workflow, module, starter and internal-event flows, the shared error answers and the identity and role checks | `make hurl` (needs [Hurl](https://hurl.dev): `brew install hurl`) |
+| `docs/swagger/openapi.yaml` | Property-based fuzzing of every public route against the spec, with stateful call chains; reports documented-status and response-shape mismatches and server errors | `make fuzz-api` (needs `uv`; Schemathesis is fetched at the pinned version) |
+
+`make fuzz-api` creates and archives data, so point it at a throwaway database. Its findings are reviewed by hand; a real one becomes a tracker row and a test-first fix.
 
 Integration tests require Docker. Pre-pull the image once:
 

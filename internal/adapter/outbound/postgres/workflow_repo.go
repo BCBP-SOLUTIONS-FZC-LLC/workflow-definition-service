@@ -65,6 +65,7 @@ func (r *WorkflowRepo) GetByID(
 			RecordVersion:   row.RecordVersion,
 		})
 		result.ActiveVersionNumber = fromPgtypeInt4(row.ActiveVersionNumber)
+		result.HasDraft = row.HasDraft
 		return nil
 	})
 	return result, err
@@ -205,7 +206,7 @@ func listWorkflows(
 	joins.WriteString(draftVersionJoin)
 
 	if f.Search != nil {
-		p := nextArg("%" + *f.Search + "%")
+		p := nextArg(containsPattern(*f.Search))
 		fmt.Fprintf(&where, "  AND w.name ILIKE %s\n", p)
 	}
 	if f.TemplateKey != nil {
@@ -254,7 +255,7 @@ func listWorkflows(
 		        w.name, w.description, w.active_version_id, w.created_at, w.updated_at,
 		        wv_active.version_number, (wv_draft.id IS NOT NULL) AS has_draft
 		 FROM workflow w
-		 %s%sORDER BY w.created_at DESC
+		 %s%sORDER BY w.created_at DESC, w.id DESC
 		 LIMIT %s OFFSET %s`,
 		joins.String(), where.String(),
 		nextArg(clampInt32(limit)), nextArg(clampInt32(offset)),

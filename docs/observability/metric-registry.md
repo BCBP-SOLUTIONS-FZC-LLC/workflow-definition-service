@@ -49,12 +49,18 @@ The registry defines no `workflow_*` metrics yet, so none are emitted.
 | `workflow_definition_service_cache_misses_total` | counter | - | Total compiled-plan cache misses on the internal compiled-plan read. |
 | `workflow_definition_service_clone_total` | counter | `status` | Total version clone attempts, labelled by outcome. |
 | `workflow_definition_service_compile_duration_seconds` | histogram | - | Duration of BPMN compiler.Compile calls (DSL generation from validated BPMN XML). |
+| `workflow_definition_service_entitlements_call_errors_total` | counter | `reason` | Failed Entitlements limit reads, by reason (transport, status or response). |
+| `workflow_definition_service_entitlements_oldest_served_age_seconds` | gauge | - | Age in seconds of the oldest held limit served past its TTL, over the last TTL window; 0 when none was. |
+| `workflow_definition_service_entitlements_read_panics_total` | counter | - | Entitlements reads that panicked and were recovered; each counts as a failed read. |
+| `workflow_definition_service_entitlements_stale_served_total` | counter | - | Workflow template limit answers served from a held value older than its TTL while a refresh runs or backs off. |
 | `workflow_definition_service_internal_events_ingest_total` | counter | `event_type`, `result` | Total internal event ingest calls, labelled by event_type and result. |
 | `workflow_definition_service_promote_total` | counter | `status` | Total version promote attempts, labelled by outcome. |
 | `workflow_definition_service_publish_latency_seconds` | histogram | - | End-to-end latency of PublishVersion (compile + DB tx). |
 | `workflow_definition_service_publish_total` | counter | `status` | Total version publish attempts, labelled by outcome. |
+| `workflow_definition_service_readiness_cache_ping_failures_total` | counter | - | Readiness checks where the cache ping failed. The pod stays ready and reports cache degraded. |
 | `workflow_definition_service_rls_violations_total` | counter | `violation_type` | Sampled row-level-security violations recorded in rls_violation_log, by violation_type. Each replica counts the rows it sees, so alert on increase() above zero, not on a sum across replicas. |
 | `workflow_definition_service_submissions_total` | counter | `status` | Total workflow creation attempts, labelled by outcome. |
-| `workflow_definition_service_tenant_purge_failures_total` | counter | - | Tenant purges that failed part-way and will be retried on the next sweep. |
+| `workflow_definition_service_system_caller_rejected_total` | counter | `reason` | Internal API requests refused for a missing system caller identity, by reason (missing_user or missing_role). |
+| `workflow_definition_service_tenant_purge_failures_total` | counter | - | Tenant purge failures, a part of a purge or the listing of the tenants due, that are retried on the next sweep. |
 | `workflow_definition_service_validation_failures_total` | counter | - | Total BPMN validation calls that returned at least one validation error. |
 

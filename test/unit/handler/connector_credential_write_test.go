@@ -386,7 +386,7 @@ func TestWriteConnectorCredential_OpenBaoUnreachable_Returns503(t *testing.T) {
 	}
 }
 
-func TestWriteConnectorCredential_OpenBaoRequestCannotBeBuilt_Returns500(t *testing.T) {
+func TestWriteConnectorCredential_OpenBaoRequestCannotBeBuilt_Returns503(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -403,11 +403,68 @@ func TestWriteConnectorCredential_OpenBaoRequestCannotBeBuilt_Returns500(t *test
 
 			w := do(credentialWriteRealHandler(client), adminReq(http.MethodPost, credentialWritePath, body))
 
-			require.Equal(t, http.StatusInternalServerError, w.Code)
-			assert.Equal(t, "INTERNAL_ERROR", decodeProblem(t, w)["code"])
+			require.Equal(t, http.StatusServiceUnavailable, w.Code)
+			assert.Equal(t, "UPSTREAM_UNAVAILABLE", decodeProblem(t, w)["code"])
 			assert.NotContains(t, w.Body.String(), "bao.invalid")
 			assert.NotContains(t, w.Body.String(), "invalid control character")
 			assert.NotContains(t, w.Body.String(), "unwritten-secret")
+		})
+	}
+}
+
+func TestWriteConnectorCredential_BlankValue_Returns400InvalidInputAndWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{name: "one space", value: " "},
+		{name: "several spaces", value: "     "},
+		{name: "tab", value: "\t"},
+		{name: "newline", value: "\n"},
+		{name: "mixed whitespace", value: " \t\r\n "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := &credentialWriteStore{}
+			body := map[string]any{"connector_type": "send-email", "field_name": "apiKey", "value": tc.value}
+
+			w := do(credentialWriteRealHandler(store), adminReq(http.MethodPost, credentialWritePath, body))
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			prob := decodeProblem(t, w)
+			assert.Equal(t, "INVALID_INPUT", prob["code"])
+			assert.Contains(t, prob["detail"], "value must not be blank")
+			assert.Empty(t, store.calls(), "a blank credential must never reach the secrets store")
+		})
+	}
+}
+
+func TestWriteConnectorCredential_NonBlankValueWithSurroundingWhitespace_IsStoredUnchanged(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{name: "leading and trailing spaces", value: "  secret  "},
+		{name: "trailing newline", value: "secret\n"},
+		{name: "leading tab", value: "\tsecret"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := &credentialWriteStore{}
+			body := map[string]any{"connector_type": "send-email", "field_name": "apiKey", "value": tc.value}
+
+			w := do(credentialWriteRealHandler(store), adminReq(http.MethodPost, credentialWritePath, body))
+
+			require.Equal(t, http.StatusCreated, w.Code)
+			calls := store.calls()
+			require.Len(t, calls, 1)
+			assert.Equal(t, map[string]string{"apiKey": tc.value}, calls[0].data)
 		})
 	}
 }

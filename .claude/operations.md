@@ -75,6 +75,8 @@ Key metrics emitted by the service:
 | `workflow_definition_service_cache_hits_total` | Counter | — | Compiled-plan cache hits (internal compiled-plan read) |
 | `workflow_definition_service_cache_misses_total` | Counter | — | Compiled-plan cache misses (internal compiled-plan read) |
 | `workflow_definition_service_rls_violations_total` | CounterVec | `violation_type` | Sampled RLS violations read from `rls_violation_log` by the exporter loop |
+| `workflow_definition_service_readiness_cache_ping_failures_total` | Counter | — | Readiness checks where the cache ping failed (the pod stays ready, `cache: degraded`) |
+| `workflow_definition_service_system_caller_rejected_total` | CounterVec | `reason` | Internal API requests refused for a missing system caller identity (`missing_user`, `missing_role`) |
 
 Outcome labels use `observability.OutcomeLabel(err)`: `"ok"` when err is nil, `"err"` otherwise.
 

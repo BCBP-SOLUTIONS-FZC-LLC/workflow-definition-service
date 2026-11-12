@@ -161,7 +161,7 @@ func validateBoundaryEventDef(be bpmncore.BPMNBoundaryEvent) (errs []domain.BPMN
 			"boundary event must have exactly one event definition (timer, error, or message), not multiple"), true
 	}
 	if count == 0 {
-		return AppendErr(nil, domain.BPMNErrMissingTaskDefinition, be.ID,
+		return AppendErr(nil, domain.BPMNErrInvalidBoundaryAttachment, be.ID,
 			"boundary event has no event definition; must be a timer, error, or message boundary event"), true
 	}
 	return nil, false

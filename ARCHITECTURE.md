@@ -285,7 +285,7 @@ Incoming request
 
 ## Internal API
 
-`/api/v1/internal` is the service-to-service route group, specified in `api/internal-openapi.yaml`. It runs the observability middleware and `RequireInternalToken` (constant-time `x-internal-token` against `INTERNAL_API_TOKEN`, a problem body on `401`), not `ProtectedMiddlewares`: no gateway identity reaches it, and the gateway never routes it. The Execution Service's own internal document is copied byte for byte into `api/contracts/`; `make contract-breaking` and `make contract-check` keep both honest in CI (definition LLD §3.4).
+`/api/v1/internal` is the service-to-service route group, specified in `api/internal-openapi.yaml`. It runs the observability middleware and `RequireSystemCaller` (`x-tenant-roles` holds `iam-system` and `x-user-id` is set, a problem body on `401`), not `ProtectedMiddlewares`: no gateway identity reaches it, and the gateway never routes it. The headers are not a credential: mutual TLS in the mesh names the caller, and the chart's Istio `AuthorizationPolicy` admits only the named caller service accounts on `/api/v1/internal/*`. The Execution Service's own internal document is copied byte for byte into `api/contracts/`; `make contract-breaking` and `make contract-check` keep both honest in CI (definition LLD §3.4).
 
 ---
 
@@ -332,7 +332,7 @@ sequenceDiagram
     participant Cache as Valkey
     participant Repo as WorkflowVersionRepo
 
-    ExecSvc ->>+ H: GET /api/v1/internal/workflow-versions/{id}/compiled-plan?tenant_id= (x-internal-token)
+    ExecSvc ->>+ H: GET /api/v1/internal/workflow-versions/{id}/compiled-plan?tenant_id= (x-user-id, x-tenant-roles: iam-system)
     H ->> H: pgcommon.WithGUCSet(ctx, GUCSet{TenantID: tenant_id})
     Note right of H: RLS GUC from the query — no gateway identity on internal routes
     H ->>+ Svc: Get(tenantID, versionID)
@@ -565,23 +565,25 @@ All configuration is read from environment variables via `internal/config.Config
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `INTERNAL_API_TOKEN` | When `APP_ENV` is not `dev` | *(empty)* | Required as the `x-internal-token` header on `/api/v1/internal`. Empty disables the check in dev; NetworkPolicy / mesh remains the primary control either way. |
 
 ### Outbound services
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `ORG_MEMBERSHIP_BASE_URL` | When `APP_ENV != dev` | *(empty)* | Base URL of the Org & Membership Service for assignee eligibility checks |
-| `CATALOG_ADMIN_BASE_URL` | When `APP_ENV != dev` | *(empty)* | Base URL of the Catalog / Admin Config Service, whose internal plans read supplies each plan's workflow template limit |
+| `CATALOG_ADMIN_BASE_URL` | When `APP_ENV != dev`, unless `ENTITLEMENTS_BASE_URL` is set | *(empty)* | Base URL of the Catalog / Admin Config Service, whose internal plans read supplies each plan's workflow template limit. Used when `ENTITLEMENTS_BASE_URL` is empty |
 | `CATALOG_CLIENT_TIMEOUT` | No | `5s` | Timeout of one plan table read |
 | `PLAN_TABLE_TTL` | No | `10m` | How long a plan table read stays fresh. The last table read is kept when a refresh fails; with none read, workflow create and clone answer `503` |
+| `ENTITLEMENTS_BASE_URL` | When `APP_ENV != dev`, unless `CATALOG_ADMIN_BASE_URL` is set | *(empty)* | Base URL of the Entitlements service. When set it replaces the Catalog plan table as the workflow template limit source: the limit is read per tenant (`GET /api/v1/internal/tenants/{tenant_id}/entitlements`) and `x-plan` is not used for it. When empty nothing changes |
+| `ENTITLEMENTS_CLIENT_TIMEOUT` | No | `5s` | Timeout of one Entitlements read (must be > 0) |
+| `ENTITLEMENTS_CACHE_TTL` | No | `60s` | How long a tenant's limit is served as fresh before a background refresh starts (must be > 0; each entry's TTL varies by up to 20% either way). A failed read is not retried for the same tenant for about 5 seconds (also varied by 20%) |
+| `ENTITLEMENTS_FRESHNESS_BOUND` | No | `10m` | How long a held limit may still be served: a limit past its TTL but inside the bound is served at once while one background refresh runs, and stays served when that refresh fails (must be >= `ENTITLEMENTS_CACHE_TTL`; a smaller value stops startup). A limit not read within it makes the caller wait for a read, and a failed read answers `503 UPSTREAM_UNAVAILABLE`; Starter is never assumed |
 | `TENANT_PURGE_ENABLED` | No | `true` | Whether the sweep that deletes a departed tenant's workflows, modules, starters and connector credentials runs |
 | `TENANT_CREDENTIAL_RETENTION` | No | `720h` | How long after the offboarding event a tenant's connector credentials are kept before they are destroyed (must be > 0) |
 | `TENANT_ARTIFACT_RETENTION` | No | `61320h` | How long after the offboarding event its workflows, modules and starters are kept before they are deleted (7 years, the audit period; must be > 0) |
 | `TENANT_PURGE_INTERVAL` / `TENANT_PURGE_BATCH` | No | `24h` / `100` | Cadence of the purge sweep and workflows deleted per batch |
 | `MEMBERSHIP_CLIENT_TIMEOUT` | No | `10s` | HTTP client timeout for the Org & Membership Service |
 | `EXECUTION_SERVICE_URL` | When `APP_ENV != dev` | *(empty)* | The Execution Service's internal HTTP base URL (archive guard, pause-tasks); empty builds no client |
-| `EXECUTION_SERVICE_TOKEN` | When `APP_ENV != dev` | *(empty)* | The Execution Service's `INTERNAL_API_TOKEN`, sent as `x-internal-token` |
 | `EXECUTION_CLIENT_TIMEOUT` | No | `5s` | Per-attempt timeout for the Execution Service client |
 | `OPENBAO_ADDR` | When `APP_ENV != dev` | *(empty)* | OpenBao address for tenant connector credentials; empty disables the credential endpoints in dev |
 | `OPENBAO_TOKEN` | When `APP_ENV != dev` | *(empty)* | OpenBao token |
@@ -753,6 +755,7 @@ A `<bpmn:callActivity>` calls either a process in the same file, private to that
 - Diagrams in module BPMNs are discarded — only process elements are merged.
 - Nested `<bpmn:subProcess>` inside another subProcess is not supported (`NESTED_SUBPROCESS_NOT_SUPPORTED`).
 - A published workflow keeps its module snapshot: a new module version, or archiving the module, changes nothing until the workflow is republished. A clone copies only the main BPMN; its calls resolve again at publish.
+- Archiving a module is refused (`409 MODULE_IN_USE`, with the uses listed) while a PUBLISHED workflow version of the caller's tenant holds it in `module_refs` or a workflow draft of the caller's tenant calls it. The check runs in the archive's serializable transaction. Archived workflow versions do not count, and publishing a new draft of an archived module makes it active again. A global module is checked against the caller's tenant only.
 
 **Example — calling a module with two generic lanes:**
 
@@ -1107,6 +1110,7 @@ All rules run over the *forward graph* (all edges minus DFS-classified back-edge
 | No chain of calls returns to a process already on it | `CALLED_ELEMENT_CYCLE` (anchored on the callActivity that closes the cycle) |
 | No two processes in the bundled document share an `id` | `DUPLICATE_PROCESS_ID` |
 | A start event, task, send or receive task, subProcess, callActivity or boundary event has one outgoing flow; a flow splits only at a gateway | `SPLIT_WITHOUT_GATEWAY` |
+| A gateway has at most one flow to each target (two identical flows are one branch drawn twice) | `DUPLICATE_SEQUENCE_FLOW` |
 | A timer or message boundary sits on a userTask, subProcess or callActivity; a node has one timer and one message boundary; an error boundary's `errorRef` names a `bpmn:error` | `INVALID_BOUNDARY_ATTACHMENT` |
 | An end event has no outgoing flow | `END_EVENT_WITH_OUTGOING_FLOW` |
 | Element ids are unique within a process | `DUPLICATE_ELEMENT_ID` |
@@ -1215,6 +1219,7 @@ All codes the compiler emits, mapped from `internal/core/domain/errors.go` (`BPM
 | `CALLED_ELEMENT_CYCLE` | A chain of `callActivity` calls returns to a process already on it |
 | `DUPLICATE_PROCESS_ID` | Two processes in the bundled document share an `id` |
 | `SPLIT_WITHOUT_GATEWAY` | A start event, task, send or receive task, subProcess, callActivity or boundary event has more than one outgoing flow |
+| `DUPLICATE_SEQUENCE_FLOW` | A gateway has two or more flows to the same target |
 | `END_EVENT_WITH_OUTGOING_FLOW` | An end event has an outgoing flow |
 | `DUPLICATE_ELEMENT_ID` | Two elements of one process share an `id` |
 | `INVALID_TASK_SCHEDULE` | A task's `dueDate` or `followUpDate` is not an RFC 3339 date-time |

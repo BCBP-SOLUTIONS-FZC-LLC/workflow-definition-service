@@ -7,12 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port/mocks"
@@ -22,7 +23,7 @@ import (
 
 type w3cLimitsSpy struct{ calls int }
 
-func (l *w3cLimitsSpy) WorkflowTemplateLimit(context.Context, string) (*int64, error) {
+func (l *w3cLimitsSpy) WorkflowTemplateLimit(context.Context, uuid.UUID, string) (*int64, error) {
 	l.calls++
 	return nil, nil
 }

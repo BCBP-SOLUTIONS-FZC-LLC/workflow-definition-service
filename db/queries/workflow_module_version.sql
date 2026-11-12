@@ -17,7 +17,7 @@ SELECT id, module_id, tenant_id, scope, status, bpmn_xml, process_id,
        created_by_user_id, created_at, updated_at, record_version
 FROM workflow_module_version
 WHERE module_id = $1 AND (scope = 'global' OR tenant_id = $2)
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 LIMIT $3
 OFFSET $4;
 

@@ -16,6 +16,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/handler"
 	httpmiddleware "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/inbound/http/middleware"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/observability"
 )
 
 type Pinger interface {
@@ -34,10 +35,9 @@ type DBPinger interface {
 }
 
 type RouterConfig struct {
-	GinConfig        gincommon.Config
-	AppEnv           string
-	InternalAPIToken string
-	Log              port.Logger
+	GinConfig gincommon.Config
+	AppEnv    string
+	Log       port.Logger
 
 	Handler *handler.Handler
 
@@ -65,16 +65,24 @@ func NewRouter(cfg RouterConfig) *Router {
 
 	r := gin.New()
 	r.MaxMultipartMemory = 10 << 20
+	r.HandleMethodNotAllowed = true
+	r.RedirectTrailingSlash = false
+	// Route on the raw path, as the mesh policy matches it: an encoded slash in
+	// /api/v1/internal%2Fevents must not be read as the internal prefix.
+	r.UseRawPath = true
+	r.UnescapePathValues = true
 
 	cfg.GinConfig.RequestTimeout = RequestTimeout
 	for _, mw := range gincommon.ObservabilityMiddlewares(cfg.GinConfig) {
 		r.Use(mw)
 	}
 
+	r.Use(refuseEncodedSlash)
 	r.NoRoute(handler.NotFound)
+	r.NoMethod(handler.MethodNotAllowed)
 	r.GET("/healthz", gincommon.HealthHandler())
 	draining := &atomic.Bool{}
-	r.GET("/readyz", readyzHandler(cfg.DB, cfg.Cache, draining))
+	r.GET("/readyz", readyzHandler(cfg.DB, cfg.Cache, draining, cfg.Log))
 
 	if cfg.AppEnv == "dev" {
 		r.StaticFile("/api/openapi.yaml", "docs/swagger/openapi.yaml")
@@ -90,11 +98,11 @@ func NewRouter(cfg RouterConfig) *Router {
 				stdSwagger(c)
 			}
 		})
-		r.GET("/asyncapi", AsyncAPIHandler)
+		r.GET("/asyncapi", NewAsyncAPIHandler(cfg.AppEnv))
 	}
 
 	internal := r.Group("/api/v1/internal")
-	internal.Use(httpmiddleware.RequireInternalToken(cfg.InternalAPIToken))
+	internal.Use(httpmiddleware.RequireSystemCaller())
 	internal.Use(httpmiddleware.LimitRequestBody())
 	RegisterInternalRoutes(internal, h)
 
@@ -110,6 +118,18 @@ func NewRouter(cfg RouterConfig) *Router {
 	RegisterAPIRoutes(api, h)
 
 	return &Router{engine: r, draining: draining}
+}
+
+// refuseEncodedSlash answers 404 for a path with an encoded slash. Raw-path
+// routing would otherwise hand a parameter such as "../x" to a handler; no
+// route of this service takes a slash inside a segment.
+func refuseEncodedSlash(c *gin.Context) {
+	if strings.Contains(strings.ToLower(c.Request.URL.RawPath), "%2f") {
+		handler.NotFound(c)
+		c.Abort()
+		return
+	}
+	c.Next()
 }
 
 func RegisterInternalRoutes(internal gin.IRoutes, h *handler.Handler) {
@@ -149,7 +169,7 @@ func RegisterAPIRoutes(api *gin.RouterGroup, h *handler.Handler) {
 
 	conn := api.Group("/connectors")
 	conn.GET("/registry", h.ListConnectorRegistry)
-	conn.POST("/credentials", idem(h.WriteConnectorCredential))
+	conn.POST("/credentials", h.WriteConnectorCredential)
 	conn.DELETE("/credentials/:connector_type/:field_name", h.RevokeConnectorCredential)
 
 	api.GET("/bpmn/allowed-elements", h.AllowedBPMNElements)
@@ -174,7 +194,7 @@ func RegisterAPIRoutes(api *gin.RouterGroup, h *handler.Handler) {
 	starters.DELETE("/:id", idem(h.DeleteStarter))
 }
 
-func readyzHandler(db DBPinger, cache Pinger, draining *atomic.Bool) gin.HandlerFunc {
+func readyzHandler(db DBPinger, cache Pinger, draining *atomic.Bool, log port.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if draining.Load() {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "draining"})
@@ -188,6 +208,10 @@ func readyzHandler(db DBPinger, cache Pinger, draining *atomic.Bool) gin.Handler
 		cacheState := "ok"
 		if err := cache.Ping(c.Request.Context()); err != nil {
 			cacheState = "degraded"
+			observability.IncCounter(observability.ReadinessCachePingFailuresTotal)
+			if log != nil {
+				log.Warn("readiness cache ping failed, reporting the cache as degraded", map[string]any{"error": err.Error()})
+			}
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"status":         "OK",

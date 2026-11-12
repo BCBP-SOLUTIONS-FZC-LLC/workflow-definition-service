@@ -171,9 +171,9 @@ func (h *Handler) CreateModule(c *gin.Context) {
 		h.bindErrResponse(c, err)
 		return
 	}
-	if rejectTooLong(c,
-		lengthLimit{"name", req.Name, 255},
-		lengthLimit{"description", req.Description, 2000},
+	if rejectInvalidText(c,
+		lengthLimit{"name", req.Name, 255, true},
+		lengthLimit{"description", req.Description, 2000, false},
 	) {
 		return
 	}
@@ -347,6 +347,11 @@ func (h *Handler) AddModuleVersion(c *gin.Context) {
 	var req addModuleVersionReq
 	if err := bindStrictJSON(c, &req); err != nil && !errors.Is(err, io.EOF) {
 		h.bindErrResponse(c, err)
+		return
+	}
+	if req.BPMNXML != nil && *req.BPMNXML == "" {
+		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "request body has missing or invalid fields",
+			[]invalidParam{{Name: "bpmn_xml", Reason: "must not be empty"}})
 		return
 	}
 

@@ -42,7 +42,6 @@ METRICS="${METRICS_BASE:-http://localhost:9091}"
 MEMBERSHIP_CTRL="${MEMBERSHIP_CTRL:-http://localhost:8081}"
 EXECUTION_CTRL="${EXECUTION_CTRL:-http://localhost:8083}"
 DB_URL="${DB_URL:-postgres://workflow_definition_migrator:devpassword@localhost:5432/workflow_definition?sslmode=disable}"
-INTERNAL_TOKEN="${INTERNAL_TOKEN:-}"
 
 # Stable fixture UUIDs matching initial-diagram.bpmn
 ALICE="019ef700-0000-7001-8001-000000000001"  # design preparator (UUID v7 required by eligibility check)
@@ -474,7 +473,7 @@ section "10 · Internal compiled-plan read"
 
 internal_plan() {
   curl -s -o /dev/stderr -w '%{http_code}' \
-    ${INTERNAL_TOKEN:+-H "x-internal-token: ${INTERNAL_TOKEN}"} \
+    -H "x-user-id: iam-system" -H "x-tenant-roles: iam-system" -H "x-tenant-id: $2" \
     "${API}/internal/workflow-versions/$1/compiled-plan?tenant_id=$2" 2>"$3"
 }
 PLAN_BODY=$(mktemp)
@@ -509,8 +508,7 @@ section "11 · Internal Events — DepartmentMembershipRevoked"
 
 # The shared workflow-events consumer forwards DepartmentMembershipRevoked to
 # POST /api/v1/internal/events. This section simulates that by calling the endpoint
-# directly (no SQS dependency). Set INTERNAL_TOKEN to match INTERNAL_API_TOKEN
-# in the server config if the token check is enabled.
+# directly (no SQS dependency), sending the system caller identity headers.
 
 # Create a workflow in DRAFT state (never published — assignees not yet stored,
 # so revocation does not invalidate it; tests the event-recording path only).
@@ -539,7 +537,7 @@ JSON
 IE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
   "${HTTP}/api/v1/internal/events" \
   -H "Content-Type: application/json" \
-  ${INTERNAL_TOKEN:+-H "x-internal-token: ${INTERNAL_TOKEN}"} \
+  -H "x-user-id: iam-system" -H "x-tenant-roles: iam-system" \
   -d "$REVOKE_MSG")
 [ "$IE_STATUS" = "200" ] || [ "$IE_STATUS" = "204" ] \
   && pass "POST /api/v1/internal/events DepartmentMembershipRevoked → ${IE_STATUS}" \
@@ -550,7 +548,7 @@ IE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
 IE_STATUS2=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
   "${HTTP}/api/v1/internal/events" \
   -H "Content-Type: application/json" \
-  ${INTERNAL_TOKEN:+-H "x-internal-token: ${INTERNAL_TOKEN}"} \
+  -H "x-user-id: iam-system" -H "x-tenant-roles: iam-system" \
   -d "$REVOKE_MSG")
 [ "$IE_STATUS2" = "200" ] || [ "$IE_STATUS2" = "204" ] \
   && pass "POST /api/v1/internal/events re-send → ${IE_STATUS2}" \
@@ -594,7 +592,7 @@ JSON
 IE_STATUS3=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
   "${HTTP}/api/v1/internal/events" \
   -H "Content-Type: application/json" \
-  ${INTERNAL_TOKEN:+-H "x-internal-token: ${INTERNAL_TOKEN}"} \
+  -H "x-user-id: iam-system" -H "x-tenant-roles: iam-system" \
   -d "$REVOKE_MSG2")
 [ "$IE_STATUS3" = "200" ] || [ "$IE_STATUS3" = "204" ] \
   && pass "POST /api/v1/internal/events (PUBLISHED version revoke) → ${IE_STATUS3}" \
@@ -615,7 +613,7 @@ if [ "$HAS_PSQL" = true ]; then
     "SELECT validation_errors_json FROM workflow_version WHERE id='${V3_DRAFT_ID}'" 2>/dev/null || echo "?")
   curl -s -o /dev/null -X POST "${HTTP}/api/v1/internal/events" \
     -H "Content-Type: application/json" \
-    ${INTERNAL_TOKEN:+-H "x-internal-token: ${INTERNAL_TOKEN}"} \
+    -H "x-user-id: iam-system" -H "x-tenant-roles: iam-system" \
     -d "$REVOKE_MSG2"
   PUB_ERRS2=$(psql "$DB_URL" -tAc \
     "SELECT validation_errors_json FROM workflow_version WHERE id='${V3_DRAFT_ID}'" 2>/dev/null || echo "?")

@@ -13,6 +13,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/adapter/outbound/postgres"
+	bpmncompiler "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/service"
@@ -216,6 +217,7 @@ func TestDraftService_Update_LosingTheDraftWriteRollsBackTheNameChange(t *testin
 		Transactor: postgres.NewTransactor(pool),
 		Workflows:  workflows,
 		Versions:   racing,
+		Compiler:   bpmncompiler.New(),
 	})
 
 	newName, newXML := "after", "<definitions><!-- mine --></definitions>"

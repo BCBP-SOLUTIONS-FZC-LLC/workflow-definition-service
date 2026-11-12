@@ -47,11 +47,13 @@ func marshalledPlan(t *testing.T, plan *dsl.CompiledPlan) *string {
 
 func TestVersionService_List_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{Versions: vRepo})
+	svc := service.NewVersionService(service.VersionDeps{Workflows: wfRepo, Versions: vRepo})
 
 	tenantID, wfID := uuid.New(), uuid.New()
 	versions := []*domain.WorkflowVersion{{ID: uuid.New()}}
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ID: wfID, TenantID: tenantID}, nil)
 	vRepo.EXPECT().ListByWorkflow(gomock.Any(), tenantID, wfID, 1, 20).Return(versions, int64(1), nil)
 
 	got, count, err := svc.List(context.Background(), tenantID, wfID, 1, 20)
@@ -62,13 +64,16 @@ func TestVersionService_List_OK(t *testing.T) {
 
 func TestVersionService_List_Error(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{Versions: vRepo})
+	svc := service.NewVersionService(service.VersionDeps{Workflows: wfRepo, Versions: vRepo})
 
-	vRepo.EXPECT().ListByWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	tenantID, wfID := uuid.New(), uuid.New()
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ID: wfID, TenantID: tenantID}, nil)
+	vRepo.EXPECT().ListByWorkflow(gomock.Any(), tenantID, wfID, 1, 10).
 		Return(nil, int64(0), errors.New("db error"))
 
-	_, _, err := svc.List(context.Background(), uuid.New(), uuid.New(), 1, 10)
+	_, _, err := svc.List(context.Background(), tenantID, wfID, 1, 10)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1769,7 +1774,7 @@ func TestVersionService_Publish_EligibleAssignees_OK(t *testing.T) {
 	}
 }
 
-func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.T) {
+func TestVersionService_Publish_ExtractAssignees_InvalidDepartmentID_Skipped(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	tx := mocks.NewMockTransactor(ctrl)
 	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
@@ -1785,11 +1790,11 @@ func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.
 	plan := &dsl.CompiledPlan{
 		Departments: []dsl.DepartmentDef{{
 			ID:              "ops",
-			IAMDepartmentID: uuid.New().String(),
+			IAMDepartmentID: "not-a-uuid", // department id that is not a UUID: its assignee rows are skipped in extractAssignees
 			Stages: []dsl.StageDef{{
 				Type:             "review",
 				Role:             "reviewer",
-				DefaultAssignees: []string{"not-a-uuid"}, // invalid UUID skipped in extractAssignees
+				DefaultAssignees: []string{uuid.Must(uuid.NewV7()).String()},
 			}},
 		}},
 	}
@@ -1809,7 +1814,7 @@ func TestVersionService_Publish_ExtractAssignees_InvalidUUID_Skipped(t *testing.
 		func(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) })
 	vRepo.EXPECT().Publish(gomock.Any(), tenantID, vID, gomock.Any(), int32(1), gomock.Any(), "h", gomock.Any()).Return(nil)
 	assignees.EXPECT().DeleteByVersion(gomock.Any(), tenantID, vID).Return(nil)
-	// BulkInsert NOT called — invalid UUID skipped by extractAssignees → empty slice
+	// BulkInsert NOT called — the invalid department id is skipped by extractAssignees → empty slice
 	wfRepo.EXPECT().UpdateActiveVersion(gomock.Any(), tenantID, wfID, &vID).Return(nil)
 
 	// forcePublishStructural=true; no membership dep → eligibility skipped

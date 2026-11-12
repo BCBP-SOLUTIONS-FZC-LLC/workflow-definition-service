@@ -17,7 +17,7 @@ metadata:
 
 The service does **not** consume SQS in-process. The shared workflow-events consumer (separate service) forwards each `events.Envelope[json.RawMessage]` to this endpoint, which dispatches by `env.Type` to `versionSvc.HandleDepartmentMembershipRevoked` or `versionSvc.HandleTenantMembershipRevoked`, and `TenantMembershipsPurged` and `TenantStateChanged` (status `offboarded` only) to `TenantOffboardingService.RecordOffboarded`, which records the tenant for the purge sweep (`TenantPurger`, LLD §7.4.6). Any other type is acknowledged with 200.
 
-Route is on the `/internal` group guarded by `RequireInternalToken` (`x-internal-token` vs `INTERNAL_API_TOKEN`; required outside dev, skipped when unset in dev). Consumer retry contract:
+Route is on the `/internal` group guarded by `RequireSystemCaller` (`x-tenant-roles` lists `iam-system` and `x-user-id` is set, else `401 UNAUTHORIZED`; no token, no setting, no off mode: the mesh `AuthorizationPolicy` names the caller). Consumer retry contract:
 - `2xx` — handled (a redelivery reprocesses and converges; there is no dedup table)
 - `400` — malformed (non-retryable)
 - `502 EVENT_DECODE_FAILED` — the envelope names a `dataschema` and its payload is not a registry-framed JSON string `events.GlueDecodeCodec` can decode (the producer published through a schema registry; an envelope without `dataschema` is plain JSON and unaffected)
@@ -33,11 +33,11 @@ When `HandleDepartmentMembershipRevoked` finishes marking template versions `is_
 
 - If the call fails the HTTP handler returns 5xx so the shared consumer retries the whole event.
 - `invalidateVersion` silently skips versions that are absent or ARCHIVED — one missing version does not block others.
-- Calls between the two services are internal HTTP, each endpoint specified in the server's `api/internal-openapi.yaml`; the caller keeps a copy in `api/contracts/`. `make contract-breaking` (oasdiff vs `origin/main`, in `make check`) and `make contract-check` (copy vs source branch) gate both in CI (LLD §3.4).
+- Calls between the two services are internal HTTP, each endpoint specified in the server's `api/internal-openapi.yaml`; the caller keeps a copy in `api/contracts/`. `make contract-breaking` (oasdiff vs `origin/main`, in `make check`) and `make contract-check` (copy vs the neighbour's same-named branch, else `main`) gate both in CI (LLD §3.4).
 
 ## HTTP Idempotency Middleware
 
-`handler.WithIdempotency` in `handler/idempotency.go`. Applied to all mutation endpoints via `idem(fn)` in `router.go`.
+`handler.WithIdempotency` in `handler/idempotency.go`. Applied to the mutation endpoints via `idem(fn)` in `router.go`. Three routes are not wrapped: `POST /workflows/validate` (stores nothing), `POST /connectors/credentials` (a secret must leave no fingerprint in the cache, and a rewrite only adds a version) and `DELETE /connectors/credentials/...` (safe to repeat); they ignore the header.
 
 Cache key: `"idem:" + tenantID + ":" + userID + ":" + method + ":" + path + ":" + Idempotency-Key` (tenant-, user-, method- and path-scoped).
 

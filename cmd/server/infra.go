@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 
 	"github.com/redis/go-redis/v9"
 
@@ -68,16 +70,36 @@ func newSystemDBPool(ctx context.Context, pools poolConfigs) (*pgcommon.Pool, er
 	return pool, nil
 }
 
-func newCacheStore(ctx context.Context, cfg *config.Config, log port.Logger) (port.CacheStore, *redis.Client) {
-	client := redis.NewClient(&redis.Options{
+func newValkeyOptions(cfg *config.Config) *redis.Options {
+	return &redis.Options{
 		Addr:         cfg.ValkeyAddr,
 		Password:     cfg.ValkeyPassword,
 		DialTimeout:  cfg.ValkeyDialTimeout,
 		ReadTimeout:  cfg.ValkeyReadTimeout,
 		WriteTimeout: cfg.ValkeyWriteTimeout,
-	})
-	if err := client.Ping(ctx).Err(); err != nil {
+	}
+}
+
+// newReadinessOptions is the main client without retries: the client default of
+// three would multiply the dial timeout past the readiness probe's timeout.
+func newReadinessOptions(cfg *config.Config) *redis.Options {
+	opts := newValkeyOptions(cfg)
+	opts.MaxRetries = -1
+	return opts
+}
+
+type bothClients struct{ main, ready io.Closer }
+
+func (c bothClients) Close() error { return errors.Join(c.main.Close(), c.ready.Close()) }
+
+// newCacheStore builds the cache the services use (default retries) and a
+// separate one-attempt cache for the startup and readiness pings.
+func newCacheStore(ctx context.Context, cfg *config.Config, log port.Logger) (store port.CacheStore, ready *valkey.Cache, closer io.Closer) {
+	client := redis.NewClient(newValkeyOptions(cfg))
+	readyClient := redis.NewClient(newReadinessOptions(cfg))
+	ready = valkey.NewCache(readyClient)
+	if err := ready.Ping(ctx); err != nil {
 		log.Warn("valkey unreachable at startup, serving without the cache until it returns", map[string]any{"error": err.Error()})
 	}
-	return valkey.NewCache(client), client
+	return valkey.NewCache(client), ready, bothClients{main: client, ready: readyClient}
 }

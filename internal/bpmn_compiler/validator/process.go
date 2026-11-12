@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/bpmn_compiler/bpmncore"
@@ -74,6 +76,25 @@ func ValidateLaneNames(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError 
 	return errs
 }
 
+func ValidateLaneDeptIDs(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	for i := range proc.LaneSet.Lanes {
+		lane := &proc.LaneSet.Lanes[i]
+		if len(lane.FlowNodeRefs) == 0 {
+			continue
+		}
+		deptID := bpmncore.LaneDeptID(lane)
+		if deptID == "" {
+			continue
+		}
+		if _, err := uuid.Parse(deptID); err != nil {
+			errs = AppendErr(errs, domain.BPMNErrInvalidDeptID, lane.ID,
+				fmt.Sprintf("lane %q dept_id %q is not a valid UUID", lane.ID, deptID))
+		}
+	}
+	return errs
+}
+
 func ValidateNoNestedSubProcess(proc *bpmncore.BPMNProcess) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, sp := range proc.SubProcesses {
@@ -92,13 +113,27 @@ func ValidateNoNestedSubProcess(proc *bpmncore.BPMNProcess) []domain.BPMNValidat
 func ValidateSeqFlowRefs(proc *bpmncore.BPMNProcess, g *bpmncore.Graph) []domain.BPMNValidationError {
 	var errs []domain.BPMNValidationError
 	for _, sf := range proc.SequenceFlows {
-		if _, ok := g.NodeIDs[sf.SourceRef]; !ok {
-			errs = AppendErr(errs, domain.BPMNErrInvalidSequenceFlowRef, sf.ID,
-				fmt.Sprintf("sourceRef %q does not reference a known node", sf.SourceRef))
+		errs = append(errs, flowRefErrors(sf, g.NodeIDs, true)...)
+	}
+	for _, sp := range proc.SubProcesses {
+		for _, sf := range sp.SequenceFlows {
+			errs = append(errs, flowRefErrors(sf, nil, false)...)
 		}
-		if _, ok := g.NodeIDs[sf.TargetRef]; !ok {
+	}
+	return errs
+}
+
+func flowRefErrors(sf bpmncore.BPMNSequenceFlow, known map[string]struct{}, checkKnown bool) []domain.BPMNValidationError {
+	var errs []domain.BPMNValidationError
+	for _, end := range []struct{ name, ref string }{{"sourceRef", sf.SourceRef}, {"targetRef", sf.TargetRef}} {
+		if end.ref == "" {
 			errs = AppendErr(errs, domain.BPMNErrInvalidSequenceFlowRef, sf.ID,
-				fmt.Sprintf("targetRef %q does not reference a known node", sf.TargetRef))
+				fmt.Sprintf("%s is empty; the flow is only half drawn, so connect it to a node or delete it", end.name))
+			continue
+		}
+		if _, ok := known[end.ref]; checkKnown && !ok {
+			errs = AppendErr(errs, domain.BPMNErrInvalidSequenceFlowRef, sf.ID,
+				fmt.Sprintf("%s %q does not reference a known node", end.name, end.ref))
 		}
 	}
 	return errs
@@ -117,13 +152,13 @@ func ValidateDanglingNodes(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, implic
 		errs = append(errs, checkDanglingWithImplicit(t.ID, g, implicitStart)...)
 	}
 	for _, gw := range proc.ParallelGateways {
-		errs = append(errs, CheckDangling(gw.ID, g)...)
+		errs = append(errs, checkDanglingWithImplicit(gw.ID, g, implicitStart)...)
 	}
 	for _, gw := range proc.ExclusiveGateways {
-		errs = append(errs, CheckDangling(gw.ID, g)...)
+		errs = append(errs, checkDanglingWithImplicit(gw.ID, g, implicitStart)...)
 	}
 	for _, gw := range proc.InclusiveGateways {
-		errs = append(errs, CheckDangling(gw.ID, g)...)
+		errs = append(errs, checkDanglingWithImplicit(gw.ID, g, implicitStart)...)
 	}
 	for _, sp := range proc.SubProcesses {
 		errs = append(errs, checkDanglingWithImplicit(sp.ID, g, implicitStart)...)

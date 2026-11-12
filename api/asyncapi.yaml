@@ -1,7 +1,7 @@
 asyncapi: 3.0.0
 info:
   title: workflow-definition-service events
-  version: 1.3.0
+  version: 1.3.1
   description: >
     Inbound only. The shared Workflow-Events Consumer forwards four events
     to POST /api/v1/internal/events: DepartmentMembershipRevoked and
@@ -9,7 +9,7 @@ info:
     TenantStateChanged (IAM), the last two only to keep the record of a
     departed tenant for the template purge. Their payload schemas are owned and registered
     by the producing service and are not re-registered here. Any other event type is acknowledged with 200 and
-    ignored. This service publishes no events.
+    ignored, without its payload or any other field being read. This service publishes no events.
 
 channels:
   iam/membership/events:
@@ -44,10 +44,17 @@ operations:
       the tenant is back: it marks the purge record returned unless the
       recorded offboarding is newer, and an older offboarding delivered after
       it is ignored.
-      2xx means handled, 400 means malformed (not retried), 500 and 502
-      mean transient (retried). A message that carries a dataschema holds a
-      schema-registry framed payload, which the service decodes first; 502
-      means that frame could not be decoded.
+      The HTTP answer tells the consumer what to do: 200 means handled or
+      ignored; 400 BAD_REQUEST means malformed (not retried): an envelope that
+      is not JSON of the envelope's field types, an id, tenant_id, user_id or
+      department_id that is not a UUID where the type reads it, or a payload
+      the type reads that is missing or of the wrong shape; 500 INTERNAL_ERROR
+      means applying the event failed for any reason (database, Execution's
+      pause call, cache eviction, request deadline) and is retried; 502
+      EVENT_DECODE_FAILED means a schema-registry framed payload (a message
+      that carries a dataschema) could not be decoded, and is retried. The
+      payload of a handled type is decoded from its registry frame before
+      anything else in it is read.
 
 components:
   messages:
@@ -58,8 +65,18 @@ components:
       description: >
         Invalidates versions whose default-assignee node targets this
         user and department, and pauses the user's active Execution tasks.
+        The envelope id, tenant_id, data.user_id and data.department_id must
+        be UUIDs, or the event is answered 400 and not retried.
       x-schema-owner: iam-org-membership
       payload: { $ref: '#/components/schemas/DepartmentMembershipRevokedInbound' }
+      examples:
+        - name: departmentLeft
+          summary: A user left one department
+          payload:
+            user_id: "3fa18cde-7244-47ac-986c-665cd42caaaa"
+            tenant_id: "7ca648b2-b432-4744-884c-35fd556a310c"
+            department_id: "0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a10"
+            actor_id: "0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a11"
 
     MembershipRevokedInbound:
       name: MembershipRevoked
@@ -68,9 +85,16 @@ components:
       description: >
         The user left the tenant outright, so it carries no department.
         Invalidates every version whose default-assignee nodes target this
-        user, and pauses the user's active Execution tasks.
+        user, and pauses the user's active Execution tasks. The envelope id,
+        tenant_id and data.user_id must be UUIDs, or the event is answered 400
+        and not retried.
       x-schema-owner: iam-org-membership
       payload: { $ref: '#/components/schemas/MembershipRevokedInbound' }
+      examples:
+        - name: tenantLeft
+          summary: A user left the tenant
+          payload:
+            user_id: "3fa18cde-7244-47ac-986c-665cd42caaaa"
 
     TenantMembershipsPurgedInbound:
       name: TenantMembershipsPurged
@@ -79,10 +103,18 @@ components:
       description: >
         IAM's tenant offboarding cascade signal. The tenant is recorded for
         the purge of its workflows, modules, starters and connector
-        credentials once their retention periods have passed. The payload is
-        not read; the tenant is the envelope's tenant_id.
+        credentials once their retention periods have passed, counted from the
+        envelope time (the time of receipt when absent). The payload is
+        not read; the tenant is the envelope's tenant_id, which must be a UUID
+        (400 otherwise). The envelope id is not checked.
       x-schema-owner: iam-org-membership
       payload: { $ref: '#/components/schemas/TenantMembershipsPurgedInbound' }
+      examples:
+        - name: purged
+          summary: IAM finished wiping the tenant's memberships
+          payload:
+            tenant_id: "7ca648b2-b432-4744-884c-35fd556a310c"
+            actor_id: "0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a11"
 
     TenantStateChangedInbound:
       name: TenantStateChanged
@@ -92,45 +124,82 @@ components:
         A status of offboarded records the tenant as TenantMembershipsPurged
         does. Any other status marks the purge record returned unless the
         recorded offboarding is newer, since the tenant is back; the Execution
-        Service also acts on them.
+        Service also acts on them. The tenant is the envelope's tenant_id,
+        which must be a UUID (400 otherwise); the envelope id is not checked.
       x-schema-owner: iam-org-membership
       payload: { $ref: '#/components/schemas/TenantStateChangedInbound' }
+      examples:
+        - name: offboarded
+          summary: The tenant was offboarded
+          payload:
+            status: offboarded
+            previous_status: active
+            plan: pro
+            previous_plan: pro
+            changed_at: "2026-10-01T12:00:00Z"
 
   schemas:
     EventEnvelope:
       type: object
       description: >
-        The platform-events envelope as the producer sends it. Only the fields
-        below are read here; `data` carries the payload.
+        The platform-events envelope as the producer sends it and the consumer
+        forwards it unmodified. Only id, type, tenant_id, time, dataschema and
+        data are read here, and only for one of the four handled types; `data`
+        carries the payload.
       required: [id, type, tenant_id, data]
       properties:
         id:
           type: string
           format: uuid
-          description: UUID message identifier
+          description: UUID message identifier; checked as a UUID for the two revocation events only.
         type:
           type: string
-          description: Event type, matched against the four messages above
+          description: Event type, matched against the four messages above; any other value is acknowledged and ignored.
         tenant_id:
           type: string
           format: uuid
+          description: The tenant the event applies to; sets the row-level security scope. Must be a UUID for every handled type.
         source:
           type: string
+          description: The producing service. Not read.
         time:
           type: string
           format: date-time
+          description: >-
+            When the event happened (RFC 3339). A revocation leaves alone default
+            assignees added after it; an offboarding starts the retention periods
+            from it; a return is recorded at it. Absent means no filter for a
+            revocation and the time of receipt otherwise.
         specversion:
           type: string
+          description: The payload schema version. Not read.
         trace_id:
           type: string
+          description: The producer's trace id. Not read.
         correlation_id:
           type: string
+          description: The producer's correlation id. Not read.
         subject:
           type: string
+          description: The resource the event is about. Not read.
         actor:
           type: string
+          description: The identity that caused the event. Not read.
+        ip_address:
+          type: string
+          description: The client address that caused the event. Not read.
+        user_agent:
+          type: string
+          description: The client User-Agent that caused the event. Not read.
+        dataschema:
+          type: string
+          description: >-
+            The schema registry version id when the producer encoded the payload
+            through a registry; data is then a base64 string of the framed JSON
+            payload. Absent or empty for a plain JSON payload.
         data:
-          type: object
+          type: [object, string]
+          description: The payload object, or its base64 registry frame when dataschema is set.
 
     DepartmentMembershipRevokedInbound:
       type: object
@@ -140,10 +209,19 @@ components:
         user_id:
           type: string
           format: uuid
+          description: The user who left the department. A value that is not a UUID is answered 400 and is not retried.
+        tenant_id:
+          type: string
+          format: uuid
+          description: The tenant, as Org & Membership also sends it in the payload. Not read; the envelope's tenant_id is used.
         department_id:
           type: string
           format: uuid
           description: The department the user left. A value that is not a UUID is answered 400 and is not retried.
+        actor_id:
+          type: string
+          format: uuid
+          description: The identity that removed the user. Not read.
 
     MembershipRevokedInbound:
       type: object
@@ -153,11 +231,20 @@ components:
         user_id:
           type: string
           format: uuid
+          description: The user who left the tenant. A value that is not a UUID is answered 400 and is not retried.
 
     TenantMembershipsPurgedInbound:
       type: object
       additionalProperties: true
       description: Not read. The tenant comes from the envelope; IAM also sends tenant_id and actor_id in the payload.
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+          description: The tenant whose memberships were purged. Not read; the envelope's tenant_id is used.
+        actor_id:
+          type: string
+          description: The identity that ran the purge. Not read.
 
     TenantStateChangedInbound:
       type: object
@@ -166,15 +253,25 @@ components:
       properties:
         status:
           type: string
-          description: The tenant's new status; offboarded records the tenant for the purge, any other status marks the purge record returned.
+          description: >-
+            The tenant's new status; offboarded records the tenant for the purge,
+            any other status marks the purge record returned. A missing status
+            reads as an empty status, so it marks the record returned. A payload
+            that is not an object, or a status that is not a string, is answered
+            400 and is not retried.
         previous_status:
           type: string
+          description: The tenant's status before the change. Not read.
         plan:
           type: string
+          description: The tenant's plan code after the change. Not read.
         previous_plan:
           type: string
+          description: The tenant's plan code before the change. Not read.
         changed_at:
           type: string
           format: date-time
+          description: When IAM made the change. Not read; the envelope time is used.
         cause:
           type: string
+          description: Why the state changed. Not read.

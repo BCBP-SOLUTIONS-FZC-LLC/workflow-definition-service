@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -104,6 +105,25 @@ func TestConnectorService_Credentials_ChecksInputBeforeTheSecretsStoreAndWrapsSt
 					assert.Empty(t, log.infos, "a refused or failed call leaves no audit line")
 				})
 			}
+		})
+	}
+}
+
+func TestConnectorService_WriteCredential_ABlankValueIsRefusedBeforeTheMissingSecretsStoreIsReported(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"", "   ", "\t\n"} {
+		t.Run(fmt.Sprintf("%q", value), func(t *testing.T) {
+			t.Parallel()
+			svc := service.NewConnectorService(service.ConnectorDeps{Log: &coreSvcALog{}})
+
+			path, err := svc.WriteCredential(context.Background(), uuid.New(), uuid.New(), "send-email", "apiKey", value)
+
+			require.Error(t, err)
+			assert.Empty(t, path)
+			assert.ErrorIs(t, err, domain.ErrInvalidConnectorCredentialInput, "a bad request is a 400, whether or not the store is configured")
+			assert.NotErrorIs(t, err, domain.ErrUpstreamUnavailable)
+			assert.ErrorContains(t, err, "value must not be blank")
 		})
 	}
 }

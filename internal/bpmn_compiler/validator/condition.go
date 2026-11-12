@@ -27,7 +27,7 @@ func ValidateConditionExprs(proc *bpmncore.BPMNProcess, g *bpmncore.Graph, backE
 		}
 		if len(cond) > maxCondExpr {
 			errs = AppendErr(errs, domain.BPMNErrInvalidConditionExpression, sf.ID,
-				fmt.Sprintf("conditionExpression exceeds %d character limit", maxCondExpr))
+				fmt.Sprintf("conditionExpression exceeds the %d byte limit", maxCondExpr))
 			continue
 		}
 		if _, err := dsl.ParseCondition(cond); err != nil {

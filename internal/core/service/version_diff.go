@@ -2,7 +2,9 @@ package service
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 )
@@ -12,18 +14,18 @@ func computeDiff(base, target *dsl.CompiledPlan) DiffChanges {
 	baseDepts := deptSet(base)
 	targetDepts := deptSet(target)
 
-	for id := range targetDepts {
+	for _, id := range slices.Sorted(maps.Keys(targetDepts)) {
 		if _, ok := baseDepts[id]; !ok {
 			changes.AddedDepartments = append(changes.AddedDepartments, id)
 		}
 	}
-	for id := range baseDepts {
+	for _, id := range slices.Sorted(maps.Keys(baseDepts)) {
 		if _, ok := targetDepts[id]; !ok {
 			changes.RemovedDepartments = append(changes.RemovedDepartments, id)
 		}
 	}
 	changes.StepChanges = diffSteps(base.Execution.Steps, target.Execution.Steps)
-	changes.StageChanges = diffStages(base, target)
+	changes.StageChanges, changes.MetadataChanges = diffStages(base, target)
 	changes.MetadataOnly = len(changes.AddedDepartments) == 0 &&
 		len(changes.RemovedDepartments) == 0 &&
 		len(changes.StepChanges) == 0 &&
@@ -56,28 +58,42 @@ func diffSteps(baseSteps, targetSteps []dsl.ExecutionStep) []StepChange {
 	return changes
 }
 
-func diffStages(base, target *dsl.CompiledPlan) []StageChange {
+func diffStages(base, target *dsl.CompiledPlan) (structural, metadata []StageChange) {
 	baseStages := stagesByNodeKey(base)
-	var changes []StageChange
+	targetStages := stagesByNodeKey(target)
 	for _, dept := range target.Departments {
 		for i := range dept.Stages {
 			key := dsl.NodeKey(dept.ID, &dept.Stages[i])
 			before, ok := baseStages[key]
 			if !ok {
+				structural = append(structural, StageChange{NodeKey: key, Description: "stage added"})
 				continue
 			}
 			after := dept.Stages[i]
 			switch {
 			case !reflect.DeepEqual(before.BoundaryTimer, after.BoundaryTimer):
-				changes = append(changes, StageChange{NodeKey: key, Description: "timer boundary changed"})
+				structural = append(structural, StageChange{NodeKey: key, Description: "timer boundary changed"})
 			case !reflect.DeepEqual(before.BoundaryMessage, after.BoundaryMessage):
-				changes = append(changes, StageChange{NodeKey: key, Description: "message boundary changed"})
+				structural = append(structural, StageChange{NodeKey: key, Description: "message boundary changed"})
 			case before.ConnectorType != after.ConnectorType:
-				changes = append(changes, StageChange{NodeKey: key, Description: "connector type changed"})
+				structural = append(structural, StageChange{NodeKey: key, Description: "connector type changed"})
+			case before.Role != after.Role:
+				structural = append(structural, StageChange{NodeKey: key, Description: "role changed"})
+			}
+			if before.DueDate != after.DueDate {
+				metadata = append(metadata, StageChange{NodeKey: key, Description: "due date changed"})
 			}
 		}
 	}
-	return changes
+	for _, dept := range base.Departments {
+		for i := range dept.Stages {
+			key := dsl.NodeKey(dept.ID, &dept.Stages[i])
+			if _, ok := targetStages[key]; !ok {
+				structural = append(structural, StageChange{NodeKey: key, Description: "stage removed"})
+			}
+		}
+	}
+	return structural, metadata
 }
 
 func stagesByNodeKey(plan *dsl.CompiledPlan) map[string]dsl.StageDef {

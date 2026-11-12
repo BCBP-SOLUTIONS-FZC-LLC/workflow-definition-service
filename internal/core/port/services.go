@@ -20,19 +20,23 @@ type PlanTableReader interface {
 	ReadPlanTable(ctx context.Context) (map[string]*int64, error)
 }
 
+// PlanLimits answers a tenant's workflow template limit; nil means unlimited.
+// The Entitlements source keys on tenantID and ignores planCode; the plan table
+// keys on planCode and ignores tenantID.
 type PlanLimits interface {
-	WorkflowTemplateLimit(ctx context.Context, planCode string) (*int64, error)
+	WorkflowTemplateLimit(ctx context.Context, tenantID uuid.UUID, planCode string) (*int64, error)
 }
 
 type ExecutionService interface {
 	CheckActiveInstances(ctx context.Context, tenantID, workflowID uuid.UUID) (hasActive bool, count int32, err error)
-	PauseUserTasks(ctx context.Context, tenantID, userID uuid.UUID) error
+	PauseUserTasks(ctx context.Context, tenantID, userID uuid.UUID, departmentID *uuid.UUID) error
 }
 
 type PlanCompiler interface {
 	Compile(ctx context.Context, bpmnXML string) (*dsl.CompiledPlan, error)
 	CompileForPublish(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error)
 	CompileDraft(ctx context.Context, bpmnXML string) (*dsl.CompiledCollaboration, error)
+	CheckWellFormed(ctx context.Context, bpmnXML string) error
 	Validate(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error)
 	ValidateForPublish(ctx context.Context, bpmnXML string) ([]domain.BPMNValidationError, error)
 	ValidateModule(ctx context.Context, bpmnXML, moduleProcessID string, global bool) ([]domain.BPMNValidationError, error)
@@ -46,4 +50,8 @@ type PlanCompiler interface {
 type SecretsClient interface {
 	Write(ctx context.Context, path string, data map[string]string) error
 	Delete(ctx context.Context, path string) error
+}
+
+type EntitlementsReader interface {
+	ReadWorkflowTemplateLimit(ctx context.Context, tenantID uuid.UUID) (*int64, error)
 }

@@ -45,19 +45,14 @@ func fieldText(fields map[string]any) string {
 
 func TestGoSafe_ARecoveredPanicIsLoggedAndDoesNotCrashTheProcess(t *testing.T) {
 	log := &recordingLogger{}
-	done := make(chan struct{})
 
-	goSafe("exporter", log, func() {
-		defer close(done)
-		panic("boom")
-	})
+	done := goSafe("exporter", log, func() { panic("boom") })
 
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("the goroutine never ran")
+		t.Fatal("the goroutine never ended")
 	}
-	time.Sleep(50 * time.Millisecond)
 	log.mu.Lock()
 	defer log.mu.Unlock()
 	if len(log.errors) != 1 || !strings.Contains(log.errors[0], "exporter") || !strings.Contains(log.errors[0], "boom") {
@@ -89,14 +84,18 @@ func TestServe_AListenerFailureIsReportedNotAnOSExit(t *testing.T) {
 func TestServe_ACleanShutdownIsNotAFailure(t *testing.T) {
 	srv := &http.Server{Addr: "127.0.0.1:0", Handler: http.NotFoundHandler()}
 	fatal := make(chan error, 1)
-	serve("http", srv, &recordingLogger{}, fatal)
-	time.Sleep(100 * time.Millisecond)
+	done := serve("http", srv, &recordingLogger{}, fatal)
 	_ = srv.Shutdown(context.Background())
 
 	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the server goroutine did not end after the shutdown")
+	}
+	select {
 	case err := <-fatal:
 		t.Errorf("a clean shutdown reported %v", err)
-	case <-time.After(200 * time.Millisecond):
+	default:
 	}
 }
 
@@ -164,9 +163,8 @@ func TestGoSafeRestart_ARecoveredPanicRestartsTheWorkUntilItEnds(t *testing.T) {
 	log := &recordingLogger{}
 	var mu sync.Mutex
 	runs := 0
-	finished := make(chan struct{})
 
-	goSafeRestart(context.Background(), "rls-exporter", log, time.Millisecond, func() {
+	finished := goSafeRestart(context.Background(), "rls-exporter", log, time.Millisecond, func() {
 		mu.Lock()
 		runs++
 		n := runs
@@ -174,7 +172,6 @@ func TestGoSafeRestart_ARecoveredPanicRestartsTheWorkUntilItEnds(t *testing.T) {
 		if n < 3 {
 			panic("boom")
 		}
-		close(finished)
 	})
 
 	select {
@@ -182,7 +179,6 @@ func TestGoSafeRestart_ARecoveredPanicRestartsTheWorkUntilItEnds(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the work was not restarted after a panic: the exporter would stay dead while the pod reports healthy")
 	}
-	time.Sleep(20 * time.Millisecond)
 	mu.Lock()
 	defer mu.Unlock()
 	if runs != 3 {
@@ -201,7 +197,7 @@ func TestGoSafeRestart_StopsRestartingWhenTheContextEnds(t *testing.T) {
 	var mu sync.Mutex
 	runs := 0
 
-	goSafeRestart(ctx, "rls-exporter", log, 5*time.Millisecond, func() {
+	done := goSafeRestart(ctx, "rls-exporter", log, 5*time.Millisecond, func() {
 		mu.Lock()
 		runs++
 		mu.Unlock()
@@ -209,7 +205,11 @@ func TestGoSafeRestart_StopsRestartingWhenTheContextEnds(t *testing.T) {
 		panic("boom")
 	})
 
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the restart loop did not end after its context ended")
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if runs != 1 {

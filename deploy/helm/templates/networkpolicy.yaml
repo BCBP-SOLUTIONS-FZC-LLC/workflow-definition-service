@@ -28,13 +28,18 @@ spec:
         - port: {{ .Values.service.ports.http }}
           protocol: TCP
 
-    # Named same-namespace callers (the Execution Service, on the internal API)
-    # — not a blanket podSelector: {} allow.
+    # Named callers of the internal API — not a blanket podSelector: {} allow. An entry with a
+    # namespaceSelector matches pods of that namespace only; one without, the release namespace.
     {{- range .Values.networkPolicy.allowedCallers }}
     - from:
         - podSelector:
             matchLabels:
               {{- toYaml .podSelector | nindent 14 }}
+          {{- with .namespaceSelector }}
+          namespaceSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
       ports:
         - port: {{ $.Values.service.ports.http }}
           protocol: TCP
@@ -108,6 +113,23 @@ spec:
           protocol: TCP
         {{- end }}
       {{- end }}
+    {{- end }}
+
+    {{- $ent := .Values.networkPolicy.entitlementsEgress }}
+    {{- if and .Values.env.ENTITLEMENTS_BASE_URL $ent $ent.ports $ent.podSelector }}
+    # Entitlements service (commercial namespace), only when it is the limit source and its ports and pods are named.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.entitlementsEgress.podSelector | nindent 14 }}
+          namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.entitlementsEgress.namespaceSelector | nindent 14 }}
+      ports:
+        {{- range .Values.networkPolicy.entitlementsEgress.ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
     {{- end }}
 
     {{- with .Values.networkPolicy.additionalEgressRules }}

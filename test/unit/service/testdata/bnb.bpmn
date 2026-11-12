@@ -47,8 +47,6 @@
         <bpmn:flowNodeRef>Activity_0qhdz4p</bpmn:flowNodeRef>
       </bpmn:lane>
     </bpmn:laneSet>
-    <bpmn:sequenceFlow id="Flow_xcgo5n_to_ivyzsd" />
-    <bpmn:sequenceFlow id="Flow_112glt2_to_ivyzsd" />
     <bpmn:subProcess id="Activity_1ljjpet" name="BNB Process">
       <bpmn:incoming>Flow_1hi64gm</bpmn:incoming>
       <bpmn:outgoing>Flow_0ljwql8</bpmn:outgoing>

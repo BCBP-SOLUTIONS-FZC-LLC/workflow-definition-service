@@ -27,7 +27,7 @@ func NewWorkflowVersionRepo(pool *pgcommon.Pool) *WorkflowVersionRepo {
 
 func (r *WorkflowVersionRepo) Create(ctx context.Context, v *domain.WorkflowVersion) error {
 	return exec(ctx, r.pool, func(dbtx db.DBTX) error {
-		return mapErr(db.New(dbtx).CreateWorkflowVersion(ctx, db.CreateWorkflowVersionParams{
+		return mapMissingParent(db.New(dbtx).CreateWorkflowVersion(ctx, db.CreateWorkflowVersionParams{
 			ID:                   v.ID,
 			WorkflowID:           v.WorkflowID,
 			TenantID:             v.TenantID,
@@ -40,7 +40,7 @@ func (r *WorkflowVersionRepo) Create(ctx context.Context, v *domain.WorkflowVers
 			CreatedByUserID:      v.CreatedByUserID,
 			IsValid:              v.IsValid,
 			ValidationErrorsJson: toNullableJSONB(v.ValidationErrorsJSON),
-		}))
+		}), constraintWorkflowVersionWorkflow)
 	})
 }
 
@@ -54,7 +54,11 @@ func (r *WorkflowVersionRepo) GetByID(ctx context.Context, tenantID, id uuid.UUI
 		if err != nil {
 			return mapErr(err)
 		}
-		result = workflowVersionFromDB(row)
+		v, err := workflowVersionFromDB(row)
+		if err != nil {
+			return err
+		}
+		result = v
 		return nil
 	})
 	return result, err
@@ -73,7 +77,11 @@ func (r *WorkflowVersionRepo) GetDraft(
 		if err != nil {
 			return mapErr(err)
 		}
-		result = workflowVersionFromDB(row)
+		v, err := workflowVersionFromDB(row)
+		if err != nil {
+			return err
+		}
+		result = v
 		return nil
 	})
 	return result, err
@@ -264,6 +272,25 @@ func (r *WorkflowVersionRepo) ListModuleUsages(ctx context.Context, tenantID, mo
 				VersionNumber:       fromPgtypeInt4(row.VersionNumber),
 				Status:              fromVersionStatus(row.Status),
 				ModuleVersionNumber: row.ModuleVersionNumber,
+			})
+		}
+		return nil
+	})
+	return result, err
+}
+
+func (r *WorkflowVersionRepo) ListDraftSources(ctx context.Context, tenantID uuid.UUID) ([]*domain.DraftSource, error) {
+	var result []*domain.DraftSource
+	err := exec(ctx, r.pool, func(dbtx db.DBTX) error {
+		rows, err := db.New(dbtx).ListDraftSources(ctx, tenantID)
+		if err != nil {
+			return mapErr(err)
+		}
+		for _, row := range rows {
+			result = append(result, &domain.DraftSource{
+				WorkflowID:  row.WorkflowID,
+				WorkflowKey: row.TemplateKey,
+				BPMNXML:     row.BpmnXml,
 			})
 		}
 		return nil

@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
@@ -136,7 +137,11 @@ func flattenTypeNode(n *yaml.Node) string {
 	}
 }
 
-func AsyncAPIHandler(c *gin.Context) {
+func NewAsyncAPIHandler(env string) gin.HandlerFunc {
+	return func(c *gin.Context) { serveAsyncAPI(c, env) }
+}
+
+func serveAsyncAPI(c *gin.Context, env string) {
 	raw, err := os.ReadFile(asyncAPISpecPath)
 	if err != nil {
 		handler.SpecUnavailable(c)
@@ -150,7 +155,7 @@ func AsyncAPIHandler(c *gin.Context) {
 	}
 
 	var buf bytes.Buffer
-	renderPage(&buf, &spec, os.Getenv("ENV"))
+	renderPage(&buf, &spec, env)
 
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(http.StatusOK, buf.String())
@@ -281,12 +286,12 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 	w.WriteString(`<a href="#info">Info</a><a href="#servers">Servers</a></div>`)
 	w.WriteString(`<div class="sidebar-group"><div class="sidebar-label">Messages</div>`)
 	for _, name := range sortedKeys(s.Comps.Messages) {
-		fmt.Fprintf(w, `<a href="#msg-%s">%s</a>`, name, html.EscapeString(name))
+		fmt.Fprintf(w, `<a href="#msg-%s">%s</a>`, html.EscapeString(name), html.EscapeString(name))
 	}
 	w.WriteString(`</div>`)
 	w.WriteString(`<div class="sidebar-group"><div class="sidebar-label">Schemas</div>`)
 	for _, name := range sortedKeys(s.Comps.Schemas) {
-		fmt.Fprintf(w, `<a href="#schema-%s">%s</a>`, name, html.EscapeString(name))
+		fmt.Fprintf(w, `<a href="#schema-%s">%s</a>`, html.EscapeString(name), html.EscapeString(name))
 	}
 	w.WriteString(`</div></nav>`)
 
@@ -296,8 +301,8 @@ html[data-theme="light"] mark.search-mark{background:rgba(132,38,176,.2)}
 	w.WriteString(`<div class="section-title">Info</div>`)
 	if s.Info.Desc != "" {
 		short := s.Info.Desc
-		if len(short) > 800 {
-			short = short[:800] + "\n\n[truncated — see api/asyncapi.yaml for full description]"
+		if utf8.RuneCountInString(short) > 800 {
+			short = cutRunes(short, 800) + "\n\n[truncated — see api/asyncapi.yaml for full description]"
 		}
 		fmt.Fprintf(w, `<div class="info-desc">%s</div>`, html.EscapeString(short))
 	}
@@ -501,8 +506,8 @@ func renderServers(w *bytes.Buffer, node *yaml.Node) {
 					proto = val.Content[j+1].Value
 				case "description":
 					desc = val.Content[j+1].Value
-					if len(desc) > 200 {
-						desc = desc[:200] + "…"
+					if utf8.RuneCountInString(desc) > 200 {
+						desc = cutRunes(desc, 200) + "…"
 					}
 				}
 			}
@@ -546,7 +551,7 @@ func renderMessage(w *bytes.Buffer, name string, msg *asyncMessage, comps *async
   <button class="toggle-btn" type="button" tabindex="-1" aria-hidden="true">▸</button>
 </div>
 <div class="card-body" style="display:none">
-`, name, badgeClass, badgeLabel, html.EscapeString(title),
+`, html.EscapeString(name), badgeClass, badgeLabel, html.EscapeString(title),
 		func() string {
 			if eventType != "" {
 				return fmt.Sprintf(`<span class="sns-attr">event_type: %s</span>`, html.EscapeString(eventType))
@@ -572,7 +577,7 @@ func renderMessage(w *bytes.Buffer, name string, msg *asyncMessage, comps *async
 func renderSchema(w *bytes.Buffer, name string, sc *asyncSchema, comps *asyncComponents) {
 	fmt.Fprintf(w, `<div class="card" id="schema-%s">
 <div class="card-header"><span class="card-title" style="font-family:monospace">%s</span><button class="toggle-btn" type="button" tabindex="-1" aria-hidden="true">▸</button></div>
-<div class="card-body" style="display:none">`, name, html.EscapeString(name))
+<div class="card-body" style="display:none">`, html.EscapeString(name), html.EscapeString(name))
 	renderPropsTable(w, resolveSchema(sc, comps), name)
 	w.WriteString(`</div></div>`)
 }
@@ -615,8 +620,8 @@ func renderPropsTable(w *bytes.Buffer, sc *asyncSchema, schemaID string) {
 			req = `<span class="prop-req">required</span>`
 		}
 		desc := strings.TrimSpace(v.Desc)
-		if len(desc) > 200 {
-			desc = desc[:200] + "…"
+		if utf8.RuneCountInString(desc) > 200 {
+			desc = cutRunes(desc, 200) + "…"
 		}
 		descHTML := html.EscapeString(desc)
 
@@ -658,7 +663,7 @@ func renderPropsTable(w *bytes.Buffer, sc *asyncSchema, schemaID string) {
 			rowID = fmt.Sprintf(` id="field--%s--%s"`, html.EscapeString(schemaID), html.EscapeString(k))
 		}
 		fmt.Fprintf(w, `<tr%s>
-<td onclick="copyText('%s')" title="Click to copy" style="cursor:pointer"><span class="prop-name">%s</span></td>
+<td data-copy="%s" onclick="copyText(this.dataset.copy)" title="Click to copy" style="cursor:pointer"><span class="prop-name">%s</span></td>
 <td>%s</td>
 <td>%s</td>
 <td><span class="prop-desc">%s</span>%s%s%s</td>
@@ -691,11 +696,17 @@ func sortedKeys[T any](m map[string]T) []string {
 }
 
 func resolveSchema(sc *asyncSchema, comps *asyncComponents) *asyncSchema {
+	return resolveSchemaFollowing(sc, comps, map[string]bool{})
+}
+
+func resolveSchemaFollowing(sc *asyncSchema, comps *asyncComponents, following map[string]bool) *asyncSchema {
 	if len(sc.AllOf) == 0 {
 		if sc.Ref != "" {
 			name := strings.TrimPrefix(sc.Ref, "#/components/schemas/")
-			if sub, ok := comps.Schemas[name]; ok {
-				return resolveSchema(&sub, comps)
+			if sub, ok := comps.Schemas[name]; ok && !following[name] {
+				following[name] = true
+				defer delete(following, name)
+				return resolveSchemaFollowing(&sub, comps, following)
 			}
 		}
 		return sc
@@ -703,7 +714,7 @@ func resolveSchema(sc *asyncSchema, comps *asyncComponents) *asyncSchema {
 	merged := &asyncSchema{Properties: make(map[string]asyncProp)}
 	seen := make(map[string]bool)
 	for _, sub := range sc.AllOf {
-		resolved := resolveSchema(&sub, comps)
+		resolved := resolveSchemaFollowing(&sub, comps, following)
 		if resolved == nil {
 			continue
 		}
@@ -719,6 +730,17 @@ func resolveSchema(sc *asyncSchema, comps *asyncComponents) *asyncSchema {
 		}
 	}
 	return merged
+}
+
+func cutRunes(s string, n int) string {
+	i := 0
+	for pos := range s {
+		if i == n {
+			return s[:pos]
+		}
+		i++
+	}
+	return s
 }
 
 func propType(p *asyncProp) string {

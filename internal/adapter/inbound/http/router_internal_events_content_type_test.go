@@ -49,12 +49,11 @@ func TestInternalEvents_ContentTypeIsNotEnforced_ProcessedNormally(t *testing.T)
 			gin.SetMode(gin.TestMode)
 			recorder := &contentTypeEventRecorder{}
 			engine := NewRouter(RouterConfig{
-				GinConfig:        testGinConfig,
-				AppEnv:           "test",
-				InternalAPIToken: "secret",
-				Handler:          handler.New(handler.Services{Membership: recorder}),
-				DB:               fakeDBPinger{health: DBHealth{Healthy: true}},
-				Cache:            fakePinger{},
+				GinConfig: testGinConfig,
+				AppEnv:    "test",
+				Handler:   handler.New(handler.Services{Membership: recorder}),
+				DB:        fakeDBPinger{health: DBHealth{Healthy: true}},
+				Cache:     fakePinger{},
 			}).engine
 
 			userID, eventID, tenantID := uuid.New(), uuid.New(), uuid.New()
@@ -64,7 +63,8 @@ func TestInternalEvents_ContentTypeIsNotEnforced_ProcessedNormally(t *testing.T)
 			if tc.contentType != "" {
 				req.Header.Set("Content-Type", tc.contentType)
 			}
-			req.Header.Set("x-internal-token", "secret")
+			req.Header.Set("x-user-id", "iam-system")
+			req.Header.Set("x-tenant-roles", "iam-system")
 			w := httptest.NewRecorder()
 			engine.ServeHTTP(w, req)
 

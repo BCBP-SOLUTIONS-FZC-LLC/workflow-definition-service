@@ -21,8 +21,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 )
 
-const wiringInternalToken = "wiring-secret"
-
 type wiringConnectorFake struct {
 	mu        sync.Mutex
 	aliases   []domain.ConnectorRestAlias
@@ -71,12 +69,11 @@ func newWiringEngine(t *testing.T, appEnv string, cfgTimeout time.Duration, conn
 	cfg := testGinConfig
 	cfg.RequestTimeout = cfgTimeout
 	return NewRouter(RouterConfig{
-		GinConfig:        cfg,
-		AppEnv:           appEnv,
-		InternalAPIToken: wiringInternalToken,
-		Handler:          handler.New(handler.Services{Connectors: conn}),
-		DB:               fakeDBPinger{health: DBHealth{Healthy: true}},
-		Cache:            fakePinger{},
+		GinConfig: cfg,
+		AppEnv:    appEnv,
+		Handler:   handler.New(handler.Services{Connectors: conn}),
+		DB:        fakeDBPinger{health: DBHealth{Healthy: true}},
+		Cache:     fakePinger{},
 	}).engine
 }
 
@@ -97,7 +94,8 @@ func TestInternalRoutes_NoIdentityHeadersAndPlainText_ReachTheHandler(t *testing
 			engine := newWiringEngine(t, "test", RequestTimeout, conn)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/internal/connector-aliases", nil)
-			req.Header.Set("x-internal-token", wiringInternalToken)
+			req.Header.Set("x-user-id", "iam-system")
+			req.Header.Set("x-tenant-roles", "iam-system")
 			if tc.contentType != "" {
 				req.Header.Set("Content-Type", tc.contentType)
 			}
@@ -136,7 +134,8 @@ func TestInternalRoutes_PlainTextBodyOnAliasWrite_IsDecidedByTheHandlerBind(t *t
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/connector-aliases/rest", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "text/plain")
-			req.Header.Set("x-internal-token", wiringInternalToken)
+			req.Header.Set("x-user-id", "iam-system")
+			req.Header.Set("x-tenant-roles", "iam-system")
 			w := httptest.NewRecorder()
 			engine.ServeHTTP(w, req)
 
@@ -169,7 +168,8 @@ func TestNewRouter_ConfiguredRequestTimeout_IsOverwrittenWithThePackageTimeout(t
 			engine := newWiringEngine(t, "test", tc.cfgTimeout, conn)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/internal/connector-aliases", nil)
-			req.Header.Set("x-internal-token", wiringInternalToken)
+			req.Header.Set("x-user-id", "iam-system")
+			req.Header.Set("x-tenant-roles", "iam-system")
 			w := httptest.NewRecorder()
 			engine.ServeHTTP(w, req)
 

@@ -1,7 +1,8 @@
--- name: CreateStarter :exec
+-- name: CreateStarter :one
 INSERT INTO workflow_template
     (id, tenant_id, scope, name, description, category, bpmn_xml, source_workflow_version_id, created_by_user_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING created_at, updated_at;
 
 -- name: GetStarterByID :one
 SELECT id, tenant_id, scope, name, description, category, bpmn_xml,

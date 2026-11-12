@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-models/v2/pkg/dsl"
 
@@ -12,18 +13,18 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-func resolveTemplateLimit(ctx context.Context, limits port.PlanLimits, planCode string) (*int64, error) {
+func resolveTemplateLimit(ctx context.Context, limits port.PlanLimits, tenantID uuid.UUID, planCode string) (*int64, error) {
 	if limits == nil {
 		return nil, fmt.Errorf("%w: no plan limit source is configured", domain.ErrUpstreamUnavailable)
 	}
-	limit, err := limits.WorkflowTemplateLimit(ctx, planCode)
+	limit, err := limits.WorkflowTemplateLimit(ctx, tenantID, planCode)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workflow template limit: %w", err)
 	}
 	return limit, nil
 }
 
-func enforceWorkflowQuota(ctx context.Context, workflows port.WorkflowRepository, tenantID uuid.UUID, limit *int64) error {
+func enforceWorkflowQuota(ctx context.Context, workflows port.WorkflowRepository, tenantID uuid.UUID, planCode string, limit *int64) error {
 	if limit == nil {
 		return nil
 	}
@@ -32,7 +33,7 @@ func enforceWorkflowQuota(ctx context.Context, workflows port.WorkflowRepository
 		return fmt.Errorf("count workflows: %w", err)
 	}
 	if count >= *limit {
-		return domain.ErrPlanQuotaExceeded
+		return &domain.PlanQuotaError{Plan: strings.ToLower(strings.TrimSpace(planCode)), Limit: *limit, Count: count}
 	}
 	return nil
 }
@@ -81,6 +82,7 @@ type DiffChanges struct {
 	RemovedDepartments []string
 	StepChanges        []StepChange
 	StageChanges       []StageChange
+	MetadataChanges    []StageChange
 	MetadataOnly       bool
 }
 

@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
@@ -50,7 +52,7 @@ func NewPlanLimitService(d PlanLimitDeps) *PlanLimitService {
 	return &PlanLimitService{reader: d.Reader, ttl: d.TTL, now: now, log: logOrNoop(d.Log)}
 }
 
-func (s *PlanLimitService) WorkflowTemplateLimit(ctx context.Context, planCode string) (*int64, error) {
+func (s *PlanLimitService) WorkflowTemplateLimit(ctx context.Context, _ uuid.UUID, planCode string) (*int64, error) {
 	code := strings.ToLower(strings.TrimSpace(planCode))
 	if code == "" {
 		return nil, fmt.Errorf("%w: no plan code on the request", domain.ErrUpstreamUnavailable)

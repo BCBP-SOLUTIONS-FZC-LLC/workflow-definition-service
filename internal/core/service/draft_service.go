@@ -55,10 +55,16 @@ const errGetDraft = "get draft: %w"
 
 func (s *DraftService) Get(ctx context.Context, tenantID, workflowID uuid.UUID) (*domain.WorkflowVersion, error) {
 	v, err := s.versions.GetDraft(ctx, tenantID, workflowID)
-	if err != nil {
+	if err == nil {
+		return v, nil
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
 		return nil, fmt.Errorf(errGetDraft, err)
 	}
-	return v, nil
+	if _, wfErr := s.workflows.GetByID(ctx, tenantID, workflowID); wfErr != nil {
+		return nil, fmt.Errorf(errGetWorkflow, wfErr)
+	}
+	return nil, fmt.Errorf(errGetDraft, domain.ErrNoDraftExists)
 }
 
 func (s *DraftService) Init(
@@ -108,15 +114,21 @@ func (s *DraftService) Update(
 	tenantID, userID, workflowID uuid.UUID,
 	req UpdateDraftReq,
 ) (*domain.WorkflowVersion, error) {
+	if req.BPMNXML != nil {
+		if err := s.compiler.CheckWellFormed(ctx, *req.BPMNXML); err != nil {
+			return nil, err
+		}
+	}
+
 	releaseLock, err := s.acquireDraftLock(ctx, tenantID, workflowID)
 	if err != nil {
 		return nil, err
 	}
 	defer releaseLock()
 
-	draft, err := s.versions.GetDraft(ctx, tenantID, workflowID)
+	draft, err := s.Get(ctx, tenantID, workflowID)
 	if err != nil {
-		return nil, fmt.Errorf(errGetDraft, err)
+		return nil, err
 	}
 
 	if err := failFastOnStaleRecordVersion(draft, req.RecordVersion); err != nil {
@@ -127,13 +139,21 @@ func (s *DraftService) Update(
 		draft.BPMNXML = *req.BPMNXML
 		clearCompiledArtifacts(draft)
 		draft.IsValid = true
+		draft.ValidationErrorsJSON = nil
 	}
 
 	if err := s.runUpdateTx(ctx, tenantID, workflowID, draft, req); err != nil {
 		if errors.Is(err, domain.ErrDraftConcurrency) {
-			if current, readErr := s.versions.GetDraft(ctx, tenantID, workflowID); readErr == nil {
-				return nil, &domain.DraftConcurrencyError{Current: current.RecordVersion}
+			current, readErr := s.Get(ctx, tenantID, workflowID)
+			if readErr != nil {
+				s.log.Warn("draft re-read after a lost save failed", map[string]any{
+					"tenant_id":   tenantID.String(),
+					"workflow_id": workflowID.String(),
+					"error":       readErr.Error(),
+				})
+				return nil, readErr
 			}
+			return nil, &domain.DraftConcurrencyError{Current: current.RecordVersion}
 		}
 		return nil, fmt.Errorf("update draft: %w", err)
 	}
@@ -185,7 +205,11 @@ func (s *DraftService) acquireDraftLock(ctx context.Context, tenantID, workflowI
 	if !acquired {
 		return nil, domain.ErrDraftConcurrency
 	}
-	return func() { _ = s.cache.DelIfEqual(context.WithoutCancel(ctx), lockKey, token) }, nil
+	return func() {
+		if err := s.cache.DelIfEqual(context.WithoutCancel(ctx), lockKey, token); err != nil {
+			s.log.Warn("draft lock release failed", map[string]any{"lock_key": lockKey, "error": err.Error()})
+		}
+	}, nil
 }
 
 func failFastOnStaleRecordVersion(draft *domain.WorkflowVersion, recordVersion int64) error {
@@ -228,9 +252,9 @@ func (s *DraftService) updateWorkflowMeta(
 }
 
 func (s *DraftService) Discard(ctx context.Context, tenantID, workflowID uuid.UUID) error {
-	draft, err := s.versions.GetDraft(ctx, tenantID, workflowID)
+	draft, err := s.Get(ctx, tenantID, workflowID)
 	if err != nil {
-		return fmt.Errorf(errGetDraft, err)
+		return err
 	}
 	if err := s.versions.DeleteDraft(ctx, tenantID, draft.ID); err != nil {
 		return fmt.Errorf("delete draft: %w", err)

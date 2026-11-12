@@ -106,8 +106,8 @@ func TestRevokeConnectorCredential_SecretsStoreFailure_MapsToProblem(t *testing.
 					Secrets: outbound.NewSecretsClient("http://[::1", "token", "secret", time.Second),
 				}
 			},
-			wantStatus: http.StatusInternalServerError,
-			wantCode:   "INTERNAL_ERROR",
+			wantStatus: http.StatusServiceUnavailable,
+			wantCode:   "UPSTREAM_UNAVAILABLE",
 		},
 	}
 	for _, tc := range cases {

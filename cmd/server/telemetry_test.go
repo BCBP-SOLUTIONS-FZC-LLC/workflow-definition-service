@@ -95,4 +95,10 @@ func exerciseEveryCollector() {
 	observability.IncCounter(observability.WFCacheMissesTotal)
 	observability.IncCounterVec(observability.InternalEventsIngestTotal, "DepartmentMembershipRevoked", "ok")
 	observability.AddRLSViolations("cross_tenant_access", 1)
+	observability.IncCounter(observability.ReadinessCachePingFailuresTotal)
+	observability.IncCounterVec(observability.SystemCallerRejectedTotal, "missing_role")
+	observability.IncCounterVec(observability.EntitlementsCallErrorsTotal, "transport")
+	observability.IncCounter(observability.EntitlementsStaleServedTotal)
+	observability.SetGauge(observability.EntitlementsOldestServedAgeSeconds, 1)
+	observability.IncCounter(observability.EntitlementsReadPanicsTotal)
 }

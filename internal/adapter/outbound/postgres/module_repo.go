@@ -133,7 +133,7 @@ func listModules(
 		fmt.Fprintf(&where, "  AND scope = %s\n", nextArg(string(*f.Scope)))
 	}
 	if f.Search != nil {
-		fmt.Fprintf(&where, "  AND name ILIKE %s\n", nextArg("%"+*f.Search+"%"))
+		fmt.Fprintf(&where, "  AND name ILIKE %s\n", nextArg(containsPattern(*f.Search)))
 	}
 
 	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM workflow_module\n%s", where.String())
@@ -156,7 +156,7 @@ func listModules(
 		`SELECT id, tenant_id, scope, name, description, process_id, active_version_id,
 		        created_by_user_id, created_at, updated_at, record_version
 		 FROM workflow_module
-		 %sORDER BY created_at DESC
+		 %sORDER BY created_at DESC, id DESC
 		 LIMIT %s OFFSET %s`,
 		where.String(), nextArg(clampInt32(limit)), nextArg(clampInt32(offset)),
 	)

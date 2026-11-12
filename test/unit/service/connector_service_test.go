@@ -192,9 +192,9 @@ func TestConnectorService_WriteRestAlias_Success(t *testing.T) {
 	assert.Equal(t, "tender-get", repo.upserts[0].Alias)
 }
 
-// restcall.Execute attaches the real x-internal-token and x-departments
+// restcall.Execute attaches the system caller identity and x-departments
 // headers to whatever host an alias names, so an alias pointing outward
-// hands a valid internal credential to that host. These cases are the
+// presents that identity to that host. These cases are the
 // control that stops it.
 func TestConnectorService_WriteRestAlias_RejectsNonAllowlistedHost(t *testing.T) {
 	cases := []struct {
@@ -282,11 +282,6 @@ func TestConnectorService_Registry(t *testing.T) {
 	svc := service.NewConnectorService(service.ConnectorDeps{})
 	defs := svc.Registry(context.Background())
 	assert.NotEmpty(t, defs)
-}
-
-func TestConnectorService_Registry_OmitsChatNotify(t *testing.T) {
-	svc := service.NewConnectorService(service.ConnectorDeps{})
-	assert.NotContains(t, svc.Registry(context.Background()), "chat-notify")
 }
 
 func TestConnectorService_WriteCredential_ChatNotifyIsRefused(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -56,6 +57,11 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 		return
 	}
 
+	if !slices.Contains(HandledEventTypes(), env.Type) {
+		h.acknowledgeUnknownEventType(c, env.Type)
+		return
+	}
+
 	if env.SchemaID != "" {
 		decoded, ok := h.decodeSchemaRegistryPayload(c, env)
 		if !ok {
@@ -64,6 +70,10 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 		env.Payload = decoded
 	}
 
+	h.dispatchEvent(c, env)
+}
+
+func (h *Handler) dispatchEvent(c *gin.Context, env events.Envelope[json.RawMessage]) {
 	switch env.Type {
 	case eventDepartmentMembershipRevoked:
 		h.handleDepartmentMembershipRevoked(c, env)
@@ -74,7 +84,11 @@ func (h *Handler) HandleInternalEvent(c *gin.Context) {
 	case eventTenantStateChanged:
 		h.handleTenantOffboarding(c, env, eventTenantStateChanged, false)
 	default:
-		h.acknowledgeUnknownEventType(c, env.Type)
+		observability.IncCounterVec(observability.InternalEventsIngestTotal, "unknown", "error")
+		if h.log != nil {
+			h.log.Error("internal events: a handled type has no case", map[string]any{"event_type": env.Type})
+		}
+		writeProblem(c, http.StatusInternalServerError, CodeInternal, "failed to process event", nil)
 	}
 }
 
@@ -145,7 +159,7 @@ func (h *Handler) parseRevocation(c *gin.Context, env events.Envelope[json.RawMe
 
 	return revocationIdentity{
 		eventID: eventID, tenantID: tenantID, userID: userID, departmentID: p.DepartmentID, occurredAt: env.Timestamp,
-		ctx: pgcommon.WithGUCSet(c.Request.Context(), pgdomain.GUCSet{TenantID: env.TenantID}),
+		ctx: pgcommon.WithGUCSet(c.Request.Context(), pgdomain.GUCSet{TenantID: tenantID.String()}),
 	}, true
 }
 
@@ -203,7 +217,7 @@ func (h *Handler) handleTenantOffboarding(c *gin.Context, env events.Envelope[js
 		writeProblem(c, http.StatusBadRequest, CodeBadRequest, "invalid tenant_id", nil)
 		return
 	}
-	ctx := pgcommon.WithGUCSet(c.Request.Context(), pgdomain.GUCSet{TenantID: env.TenantID})
+	ctx := pgcommon.WithGUCSet(c.Request.Context(), pgdomain.GUCSet{TenantID: tenantID.String()})
 	if !offboarded {
 		h.finishRevocation(c, evtType, "internal events: clearing the returned tenant failed", h.offboarding.RecordReturned(ctx, tenantID, env.Timestamp))
 		return

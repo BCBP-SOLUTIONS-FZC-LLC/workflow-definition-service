@@ -21,7 +21,7 @@ func asyncPageServe(t *testing.T, specYAML string) (int, string) {
 	t.Chdir(dir)
 
 	c, w := newTestContext()
-	AsyncAPIHandler(c)
+	NewAsyncAPIHandler("")(c)
 	return w.Code, w.Body.String()
 }
 

@@ -81,7 +81,7 @@ func (s *VersionService) invalidateAssigneeVersions(
 	}
 
 	if s.execution != nil {
-		if err := s.execution.PauseUserTasks(ctx, tenantID, userID); err != nil {
+		if err := s.execution.PauseUserTasks(ctx, tenantID, userID, departmentID); err != nil {
 			return fmt.Errorf("pause user tasks: %w", err)
 		}
 	}

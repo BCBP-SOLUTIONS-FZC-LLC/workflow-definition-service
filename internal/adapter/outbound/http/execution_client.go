@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,21 +17,17 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-definition-service/internal/core/port"
 )
 
-const (
-	maxExecutionAttempts = 3
-	internalTokenHeader  = "x-internal-token"
-)
+const maxExecutionAttempts = 3
 
 var _ port.ExecutionService = (*ExecutionClient)(nil)
 
 type ExecutionClient struct {
 	baseURL string
-	token   string
 	client  *http.Client
 }
 
-func NewExecutionClient(baseURL, token string, timeout time.Duration) *ExecutionClient {
-	return &ExecutionClient{baseURL: baseURL, token: token, client: newClient(timeout)}
+func NewExecutionClient(baseURL string, timeout time.Duration) *ExecutionClient {
+	return &ExecutionClient{baseURL: strings.TrimRight(baseURL, "/"), client: newClient(timeout)}
 }
 
 func (c *ExecutionClient) CheckActiveInstances(ctx context.Context, tenantID, workflowID uuid.UUID) (bool, int32, error) {
@@ -41,32 +38,39 @@ func (c *ExecutionClient) CheckActiveInstances(ctx context.Context, tenantID, wo
 		Count     int32 `json:"count"`
 	}
 	err := observed("execution", "check_active_instances", func() error {
-		return c.call(ctx, "check active instances", http.MethodGet, rawURL, nil, http.StatusOK, &out)
+		if err := c.call(ctx, tenantID, "check active instances", http.MethodGet, rawURL, nil, http.StatusOK, &out); err != nil {
+			return err
+		}
+		if out.HasActive == nil {
+			return fmt.Errorf("%w: check active instances: response has no has_active", domain.ErrUpstreamUnavailable)
+		}
+		return nil
 	})
 	if err != nil {
 		return false, 0, err
 	}
-	if out.HasActive == nil {
-		return false, 0, fmt.Errorf("%w: check active instances: response has no has_active", domain.ErrUpstreamUnavailable)
-	}
 	return *out.HasActive, out.Count, nil
 }
 
-func (c *ExecutionClient) PauseUserTasks(ctx context.Context, tenantID, userID uuid.UUID) error {
-	body, err := json.Marshal(map[string]string{"tenant_id": tenantID.String()})
+func (c *ExecutionClient) PauseUserTasks(ctx context.Context, tenantID, userID uuid.UUID, departmentID *uuid.UUID) error {
+	payload := map[string]string{"tenant_id": tenantID.String()}
+	if departmentID != nil {
+		payload["department_id"] = departmentID.String()
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("%w: pause user tasks: %w", domain.ErrUpstreamUnavailable, err)
 	}
 	rawURL := c.baseURL + "/api/v1/internal/users/" + userID.String() + "/pause-tasks"
 	return observed("execution", "pause_user_tasks", func() error {
-		return c.call(ctx, "pause user tasks", http.MethodPost, rawURL, body, http.StatusNoContent, nil)
+		return c.call(ctx, tenantID, "pause user tasks", http.MethodPost, rawURL, body, http.StatusNoContent, nil)
 	})
 }
 
-func (c *ExecutionClient) call(ctx context.Context, op, method, rawURL string, body []byte, want int, out any) error {
+func (c *ExecutionClient) call(ctx context.Context, tenantID uuid.UUID, op, method, rawURL string, body []byte, want int, out any) error {
 	var lastErr error
 	for attempt := 1; attempt <= maxExecutionAttempts; attempt++ {
-		retryable, err := c.try(ctx, method, rawURL, body, want, out)
+		retryable, err := c.try(ctx, tenantID, method, rawURL, body, want, out)
 		if err == nil {
 			return nil
 		}
@@ -83,7 +87,7 @@ func (c *ExecutionClient) call(ctx context.Context, op, method, rawURL string, b
 	return fmt.Errorf("%w: %s: %w", domain.ErrUpstreamUnavailable, op, lastErr)
 }
 
-func (c *ExecutionClient) try(ctx context.Context, method, rawURL string, body []byte, want int, out any) (retryable bool, err error) {
+func (c *ExecutionClient) try(ctx context.Context, tenantID uuid.UUID, method, rawURL string, body []byte, want int, out any) (retryable bool, err error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -95,9 +99,9 @@ func (c *ExecutionClient) try(ctx context.Context, method, rawURL string, body [
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.token != "" {
-		req.Header.Set(internalTokenHeader, c.token)
-	}
+	req.Header.Set("x-user-id", systemPrincipal)
+	req.Header.Set("x-tenant-roles", systemPrincipal)
+	req.Header.Set("x-tenant-id", tenantID.String())
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return ctx.Err() == nil, fmt.Errorf("send request: %w", err)

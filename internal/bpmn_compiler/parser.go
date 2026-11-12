@@ -70,13 +70,40 @@ func parse(ctx context.Context, xmlData string) (*bpmncore.BPMNDefinitions, erro
 }
 
 func requireNamespaces(xmlData string) error {
-	if !strings.Contains(xmlData, nsBPMN) {
+	rootSpace, zeebeDeclared := declaredNamespaces(xmlData)
+	if rootSpace != nsBPMN {
 		return fmt.Errorf("%w: the BPMN namespace (%s) is not declared", errMissingNamespace, nsBPMN)
 	}
-	if !strings.Contains(xmlData, nsZeebe) {
+	if !zeebeDeclared {
 		return fmt.Errorf("%w: the Zeebe namespace (%s) is not declared", errMissingNamespace, nsZeebe)
 	}
 	return nil
+}
+
+func declaredNamespaces(xmlData string) (rootSpace string, zeebeDeclared bool) {
+	dec := xml.NewDecoder(strings.NewReader(xmlData))
+	dec.Strict = true
+	seenRoot := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return rootSpace, zeebeDeclared
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if !seenRoot {
+			seenRoot = true
+			rootSpace = se.Name.Space
+		}
+		for _, a := range se.Attr {
+			isDefault := a.Name.Space == "" && a.Name.Local == "xmlns"
+			if (isDefault || a.Name.Space == "xmlns") && a.Value == nsZeebe {
+				return rootSpace, true
+			}
+		}
+	}
 }
 
 func scanRejected(xmlData string) []domain.BPMNValidationError {
@@ -205,23 +232,54 @@ func containsFold(s, marker string) bool {
 }
 
 func countTokens(ctx context.Context, xmlData string) error {
+	_, err := scanTokens(ctx, xmlData)
+	return err
+}
+
+func scanTokens(ctx context.Context, xmlData string) (int, error) {
 	dec := xml.NewDecoder(strings.NewReader(xmlData))
 	dec.Strict = true
+	roots, depth := 0, 0
 	for n := 0; ; n++ {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("XML token scan: %w", err)
+			return roots, fmt.Errorf("XML token scan: %w", err)
 		}
 		if n > maxTokens {
-			return fmt.Errorf("%w: XML token limit exceeded (max %d)", errForbiddenXML, maxTokens)
+			return roots, fmt.Errorf("%w: XML token limit exceeded (max %d)", errForbiddenXML, maxTokens)
 		}
-		_, err := dec.Token()
+		tok, err := dec.Token()
 		if err == io.EOF {
-			return nil
+			return roots, nil
 		}
 		if err != nil {
-			return fmt.Errorf("XML scan: %w", err)
+			return roots, fmt.Errorf("XML scan: %w", err)
+		}
+		switch tok.(type) {
+		case xml.StartElement:
+			if depth == 0 {
+				roots++
+			}
+			depth++
+		case xml.EndElement:
+			depth--
 		}
 	}
+}
+
+var errNotOneRoot = errors.New("a well-formed XML document has exactly one root element")
+
+func checkWellFormed(ctx context.Context, xmlData string) error {
+	if err := securityScan(xmlData); err != nil {
+		return err
+	}
+	roots, err := scanTokens(ctx, xmlData)
+	if err != nil {
+		return err
+	}
+	if roots != 1 {
+		return fmt.Errorf("%w: found %d", errNotOneRoot, roots)
+	}
+	return nil
 }
 
 func unmarshal(xmlData string) (*bpmncore.BPMNDefinitions, error) {
@@ -234,11 +292,9 @@ func unmarshal(xmlData string) (*bpmncore.BPMNDefinitions, error) {
 	for i := range defs.Processes {
 		p := &defs.Processes[i]
 		promoteTasks(&p.UserTasks, &p.GenericTasks, &p.ServiceTasks)
-		p.SequenceFlows = stripEmptyRefFlows(p.SequenceFlows)
 		for j := range p.SubProcesses {
 			sp := &p.SubProcesses[j]
 			promoteTasks(&sp.UserTasks, &sp.GenericTasks, &sp.ServiceTasks)
-			sp.SequenceFlows = stripEmptyRefFlows(sp.SequenceFlows)
 		}
 	}
 	markCalledProcesses(&defs)
@@ -270,16 +326,6 @@ func connectorServiceTasks(tasks []bpmncore.BPMNUserTask) []bpmncore.BPMNUserTas
 	for _, t := range tasks {
 		if _, ok := bpmncore.ConnectorType(t.ExtensionElements); ok {
 			out = append(out, t)
-		}
-	}
-	return out
-}
-
-func stripEmptyRefFlows(flows []bpmncore.BPMNSequenceFlow) []bpmncore.BPMNSequenceFlow {
-	out := flows[:0:len(flows)]
-	for _, f := range flows {
-		if f.SourceRef != "" && f.TargetRef != "" {
-			out = append(out, f)
 		}
 	}
 	return out

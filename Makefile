@@ -60,7 +60,7 @@ COVER_PKG_FLOORS   := cmd/stub/catalog:90 \
                       internal/bpmn_compiler/element:75 \
                       internal/config:90
 
-.PHONY: alerts-test helm-check metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-breaking design-sync-check design-sync-check-test \
+.PHONY: alerts-test helm-check metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-check-test contract-breaking design-sync-check design-sync-check-test \
         build migrate test test-integration test-ci merge-coverage \
         cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
@@ -167,7 +167,7 @@ test:
 test-integration:
 	@mkdir -p $(COVERAGE_DIR)
 	TESTCONTAINERS_RYUK_DISABLED=true \
-	go test -race -count=1 -tags integration \
+	go test -race -count=1 -timeout 30m -tags integration \
 	    -coverpkg=$$(go list ./internal/... ./cmd/... | grep -v '$(COVER_EXCLUDE_PKG)' | tr '\n' ',' | sed 's/,$$//') \
 	    -coverprofile=$(COVERAGE_DIR)/integration.out \
 	    -covermode=atomic \
@@ -179,6 +179,32 @@ test-integration:
 merge-coverage:
 	@python3 scripts/merge_coverage.py $(COVERAGE_DIR)/unit.out $(COVERAGE_DIR)/integration.out > $(COVER_PROFILE)
 	@echo "✓ $(COVER_PROFILE) merged from unit + integration suites"
+
+# Local black-box checks against a running stack (the one scripts/smoke-test.sh describes). Not part of CI.
+API_BASE        ?= http://localhost:8080
+METRICS_BASE    ?= http://localhost:9091
+SCENARIO_TENANT ?= 11111111-1111-4111-8111-111111111111
+SCENARIO_USER   ?= 018f2d3c-0000-7000-8000-0000000000a1
+SCHEMATHESIS_VERSION := 4.33.2
+
+## hurl: Run the Hurl scenarios in test/hurl against a running local stack (needs hurl: brew install hurl)
+hurl:
+	@command -v hurl >/dev/null || { echo "hurl is not installed: brew install hurl"; exit 1; }
+	hurl --test --jobs 1 --variable host=$(API_BASE) --variable metrics=$(METRICS_BASE) \
+	    --variable tenant=$(SCENARIO_TENANT) --variable run=$$(date +%s) \
+	    -H 'x-tenant-id: $(SCENARIO_TENANT)' -H 'x-user-id: $(SCENARIO_USER)' \
+	    -H 'x-tenant-roles: tenant_admin' -H 'x-plan: enterprise' test/hurl/*.hurl
+	hurl --test --jobs 1 --variable host=$(API_BASE) --variable tenant=$(SCENARIO_TENANT) \
+	    --variable run=$$(date +%s) test/hurl/auth/*.hurl
+
+## fuzz-api: Fuzz every route of the public spec with Schemathesis against a running local stack; it writes data, so use a throwaway database (needs uv)
+fuzz-api:
+	@command -v uvx >/dev/null || { echo "uv is not installed: brew install uv"; exit 1; }
+	@mkdir -p $(COVERAGE_DIR)/schemathesis
+	uvx --from schemathesis==$(SCHEMATHESIS_VERSION) schemathesis run docs/swagger/openapi.yaml --url $(API_BASE) \
+	    -H 'x-tenant-id: $(SCENARIO_TENANT)' -H 'x-user-id: $(SCENARIO_USER)' \
+	    -H 'x-tenant-roles: tenant_admin' -H 'x-plan: enterprise' \
+	    --max-examples 20 --workers 2 --report junit --report-dir $(COVERAGE_DIR)/schemathesis
 
 ## test-ci: Run unit + integration suites and merge coverage
 test-ci: test test-integration merge-coverage
@@ -286,6 +312,8 @@ check:
 	$(MAKE) contract-breaking
 	@echo "==> design-sync-check-test"
 	$(MAKE) design-sync-check-test
+	@echo "==> contract-check-test"
+	$(MAKE) contract-check-test
 	@echo "==> test-ci (unit + integration, merged coverage gate)"
 	$(MAKE) cover-check
 	@echo "✓ all checks passed"
@@ -310,9 +338,13 @@ design-sync-check:
 design-sync-check-test:
 	@scripts/design-sync-check_test.sh
 
-## contract-check: Fail if a copied contract in api/contracts differs from its source (CONTRACT_SRC_DIR=<checkout> reads it locally)
+## contract-check: Fail if a copied contract in api/contracts differs from its source; the source ref is the same-named branch of the source repo if it exists, else main (CONTRACT_SRC_REF overrides, CONTRACT_SRC_DIR=<checkout> reads it locally)
 contract-check:
 	@scripts/contract-check.sh
+
+## contract-check-test: Test the contract-check script against throwaway repositories
+contract-check-test:
+	@scripts/contract-check_test.sh
 
 ## contract-breaking: Fail on a breaking change to api/internal-openapi.yaml or docs/swagger/openapi.yaml against CONTRACT_BASE_REF (default origin/main)
 contract-breaking:
@@ -432,6 +464,16 @@ helm-check:
 		|| { echo "helm-check: the release deploy does not pass the published digest, so its digest check can never fail"; exit 1; }
 	@if helm template workflow-definition-service deploy/helm --set existingSecret=workflow-definition-service-secrets > /dev/null 2>&1; then \
 		echo "helm-check: the chart renders for prod without ORG_MEMBERSHIP_BASE_URL, CATALOG_ADMIN_BASE_URL, OPENBAO_ADDR and VALKEY_ADDR"; exit 1; fi
+	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/authorizationpolicy.yaml \
+		| grep -q 'sa/workflow-execution-service-api' \
+		|| { echo "helm-check: the AuthorizationPolicy does not name the Execution Service on the internal routes"; exit 1; }
+	@helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) -s templates/authorizationpolicy.yaml \
+		| grep -q 'sa/workflow-execution-service-worker' \
+		|| { echo "helm-check: the AuthorizationPolicy does not name the Execution worker on the compiled-plan route"; exit 1; }
+	@if helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) --set env.APP_ENV=dev --set authorizationPolicy.enabled=false -s templates/authorizationpolicy.yaml > /dev/null 2>&1; then \
+		echo "helm-check: authorizationPolicy.enabled=false still renders the AuthorizationPolicy"; exit 1; fi
+	@if helm template workflow-definition-service deploy/helm $(HELM_PROD_SETTINGS) --set authorizationPolicy.enabled=false > /dev/null 2>&1; then \
+		echo "helm-check: a prod render with authorizationPolicy.enabled=false is not refused"; exit 1; fi
 
 ## pin-base-images: Resolve current digests for Dockerfile base images and pin them (writes .docker-digests)
 pin-base-images:

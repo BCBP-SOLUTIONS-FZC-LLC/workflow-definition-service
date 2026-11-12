@@ -246,13 +246,17 @@ These are checked on every upload. Breaking them causes rejection.
 | Revert loops always have a forward exit (guarded) | `UNGUARDED_LOOP` |
 | Sub-processes have their own start and end events | compile error |
 | A start event, task, call or sub-process has one outgoing flow; a flow splits only at a gateway | `SPLIT_WITHOUT_GATEWAY` |
+| A gateway has at most one flow to each target (two identical flows are one branch drawn twice) | `DUPLICATE_SEQUENCE_FLOW` |
 | A boundary event has one outgoing flow, sits on a user task, sub-process or call (an error boundary on a sub-process or call), and a task has at most one timer and one message boundary | `INVALID_BOUNDARY_ATTACHMENT`, `SPLIT_WITHOUT_GATEWAY` |
 | An end event has no outgoing flow | `END_EVENT_WITH_OUTGOING_FLOW` |
 | Element ids are unique within a process | `DUPLICATE_ELEMENT_ID` |
 | A task's `dueDate` and `followUpDate` are RFC 3339 date-times, such as `2026-10-12T09:00:00Z` | `INVALID_TASK_SCHEDULE` |
 | An exclusive split has a condition on every flow but one | `GATEWAY_BRANCH_WITHOUT_CONDITION` (warning) |
 | A revert flow starts at an exclusive gateway, never at a receive task (a receive task may be the place a revert returns to) | `UNGUARDED_LOOP` |
-| A revert flow leads back to a task; to repeat a sub-process or call, loop back to a user task before it | `UNSUPPORTED_REVERT_TARGET` |
+| A revert flow leads back to a task; to repeat a sub-process or call, loop back to a user task before it. When it leads back to a gateway, no branch may lead to a sub-process or call, and the first branch must reach a task | `UNSUPPORTED_REVERT_TARGET` |
+| Every sequence flow has both a source and a target (a half-drawn connection is refused, not dropped) | `INVALID_SEQUENCE_FLOW_REF` |
+| A call gives each of the inputs `Depts` and `Assignees` once | `INVALID_ZEEBE_PROPERTY` |
+| A zeebe property (such as `dept_id` or `ignore`) is written once on an element | `INVALID_ZEEBE_PROPERTY` |
 | Diagram block present (Camunda Modeler adds this) | `MISSING_DIAGRAM` |
 
 ### Limits

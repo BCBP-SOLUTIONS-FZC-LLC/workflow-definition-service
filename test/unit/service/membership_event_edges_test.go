@@ -52,7 +52,7 @@ func TestHandleMembershipRevoked_ZeroEventTime_InvalidatesEveryAssignee(t *testi
 					written = errorsJSON
 					return nil
 				})
-			exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
+			exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID, gomock.Any()).Return(nil)
 
 			svc := newMembershipSvc(ctrl, mocks.NewMockTransactor(ctrl), vRepo, aRepo, exec)
 			if err := tc.run(svc); err != nil {
@@ -120,7 +120,7 @@ func TestHandleMembershipRevoked_WithoutACacheStore_InvalidatesAndPauses(t *test
 			vRepo.EXPECT().GetByID(gomock.Any(), mTenantID, mVerID).
 				Return(&domain.WorkflowVersion{ID: mVerID, WorkflowID: uuid.New(), Status: domain.VersionStatusPublished}, nil)
 			vRepo.EXPECT().SetInvalid(gomock.Any(), mTenantID, mVerID, gomock.Any()).Return(nil)
-			exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID).Return(nil)
+			exec.EXPECT().PauseUserTasks(gomock.Any(), mTenantID, mUserID, gomock.Any()).Return(nil)
 
 			svc := service.NewVersionService(service.VersionDeps{
 				Versions:  vRepo,

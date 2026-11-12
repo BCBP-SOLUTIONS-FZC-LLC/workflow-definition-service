@@ -17,7 +17,7 @@ func RequireJSONContentType() gin.HandlerFunc {
 		if i := strings.IndexByte(ct, ';'); i >= 0 {
 			ct = ct[:i]
 		}
-		if strings.TrimSpace(ct) != "application/json" {
+		if !strings.EqualFold(strings.TrimSpace(ct), "application/json") {
 			abortProblem(c, http.StatusUnsupportedMediaType, "https://api.workflow.platform/errors/unsupported-media-type",
 				"Unsupported Media Type", "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json")
 			return
