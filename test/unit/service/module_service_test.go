@@ -271,6 +271,7 @@ func TestModuleService_ListVersions_OK(t *testing.T) {
 	svc, m := newModuleService(ctrl)
 
 	tenantID, moduleID := uuid.New(), uuid.New()
+	m.modules.EXPECT().GetByID(gomock.Any(), tenantID, moduleID).Return(&domain.Module{ID: moduleID}, nil)
 	m.versions.EXPECT().ListByModule(gomock.Any(), tenantID, moduleID, 1, 20).
 		Return([]*domain.ModuleVersion{{ID: uuid.New()}}, int64(1), nil)
 
@@ -284,10 +285,12 @@ func TestModuleService_ListVersions_Error(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, m := newModuleService(ctrl)
 
-	m.versions.EXPECT().ListByModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	tenantID, moduleID := uuid.New(), uuid.New()
+	m.modules.EXPECT().GetByID(gomock.Any(), tenantID, moduleID).Return(&domain.Module{ID: moduleID}, nil)
+	m.versions.EXPECT().ListByModule(gomock.Any(), tenantID, moduleID, 1, 20).
 		Return(nil, int64(0), errors.New("db error"))
 
-	_, _, err := svc.ListVersions(context.Background(), uuid.New(), uuid.New(), 1, 20)
+	_, _, err := svc.ListVersions(context.Background(), tenantID, moduleID, 1, 20)
 	if err == nil {
 		t.Fatal("expected error")
 	}

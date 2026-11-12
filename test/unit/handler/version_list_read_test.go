@@ -158,7 +158,9 @@ func TestListVersions_RealService_PageBeyondTheLast_ReturnsEmptyArrayWithTotalCo
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			vRepo, router := newWiredVersionRouter(t)
+			wfRepo, vRepo, router := newWiredVersionListRouter(t)
+			wfRepo.EXPECT().GetByID(gomock.Any(), testTenantID, testWFID).
+				Return(&domain.Workflow{ID: testWFID, TenantID: testTenantID}, nil)
 			vRepo.EXPECT().ListByWorkflow(gomock.Any(), testTenantID, testWFID, 99, 20).
 				Return(tc.versions, int64(5), nil)
 
@@ -210,7 +212,9 @@ func TestListVersions_RealService_RepositoryFailure_ReturnsProblem(t *testing.T)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			vRepo, router := newWiredVersionRouter(t)
+			wfRepo, vRepo, router := newWiredVersionListRouter(t)
+			wfRepo.EXPECT().GetByID(gomock.Any(), testTenantID, testWFID).
+				Return(&domain.Workflow{ID: testWFID, TenantID: testTenantID}, nil)
 			vRepo.EXPECT().ListByWorkflow(gomock.Any(), testTenantID, testWFID, 1, 20).
 				Return(nil, int64(0), tc.listErr)
 

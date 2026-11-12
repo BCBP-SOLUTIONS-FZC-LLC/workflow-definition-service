@@ -420,10 +420,12 @@ func TestVersionService_Diff_VersionOfAnotherWorkflowIsNotFoundBeforeAnythingIsC
 
 func TestVersionService_List_RepositoryFailureIsWrappedAndReturnsNothing(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{Versions: vRepo})
+	svc := service.NewVersionService(service.VersionDeps{Workflows: wfRepo, Versions: vRepo})
 	tenantID, wfID := uuid.New(), uuid.New()
 	cause := errors.New("list query failed")
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ID: wfID, TenantID: tenantID}, nil)
 	vRepo.EXPECT().ListByWorkflow(gomock.Any(), tenantID, wfID, 2, 15).
 		Return([]*domain.WorkflowVersion{{ID: uuid.New()}}, int64(9), cause)
 

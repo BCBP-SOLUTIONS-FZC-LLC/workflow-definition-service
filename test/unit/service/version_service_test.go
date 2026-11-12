@@ -47,11 +47,13 @@ func marshalledPlan(t *testing.T, plan *dsl.CompiledPlan) *string {
 
 func TestVersionService_List_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{Versions: vRepo})
+	svc := service.NewVersionService(service.VersionDeps{Workflows: wfRepo, Versions: vRepo})
 
 	tenantID, wfID := uuid.New(), uuid.New()
 	versions := []*domain.WorkflowVersion{{ID: uuid.New()}}
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ID: wfID, TenantID: tenantID}, nil)
 	vRepo.EXPECT().ListByWorkflow(gomock.Any(), tenantID, wfID, 1, 20).Return(versions, int64(1), nil)
 
 	got, count, err := svc.List(context.Background(), tenantID, wfID, 1, 20)
@@ -62,13 +64,16 @@ func TestVersionService_List_OK(t *testing.T) {
 
 func TestVersionService_List_Error(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	wfRepo := mocks.NewMockWorkflowRepository(ctrl)
 	vRepo := mocks.NewMockWorkflowVersionRepository(ctrl)
-	svc := service.NewVersionService(service.VersionDeps{Versions: vRepo})
+	svc := service.NewVersionService(service.VersionDeps{Workflows: wfRepo, Versions: vRepo})
 
-	vRepo.EXPECT().ListByWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	tenantID, wfID := uuid.New(), uuid.New()
+	wfRepo.EXPECT().GetByID(gomock.Any(), tenantID, wfID).Return(&domain.Workflow{ID: wfID, TenantID: tenantID}, nil)
+	vRepo.EXPECT().ListByWorkflow(gomock.Any(), tenantID, wfID, 1, 10).
 		Return(nil, int64(0), errors.New("db error"))
 
-	_, _, err := svc.List(context.Background(), uuid.New(), uuid.New(), 1, 10)
+	_, _, err := svc.List(context.Background(), tenantID, wfID, 1, 10)
 	if err == nil {
 		t.Fatal("expected error")
 	}

@@ -184,8 +184,8 @@ func TestAddModuleVersion_EmptyBpmnXml_IsRejectedAndNotReplacedByTheActiveVersio
 
 	rec := do(w.router, addModuleVersionWiringPost(map[string]any{"bpmn_xml": ""}))
 
-	require.GreaterOrEqual(t, rec.Code, http.StatusBadRequest, rec.Body.String())
-	require.Less(t, rec.Code, http.StatusInternalServerError, rec.Body.String())
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Equal(t, "BAD_REQUEST", decodeProblem(t, rec)["code"])
 }
 
 func TestAddModuleVersion_CallToAnUnresolvableModule_Returns422AndAddsNothing(t *testing.T) {
