@@ -57,10 +57,11 @@ jobs:
           GOBIN="$PWD/.tools" go install github.com/oasdiff/oasdiff@v1.32.1
           make contract-breaking
 
-      # The copy of the Execution Service's spec must match its source.
+      # The copy of the Execution Service's spec must match its source: the same-named branch if it has one, otherwise main.
       - name: Contract copy check
         env:
           GH_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
         run: make contract-check
 
   quality:

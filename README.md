@@ -435,7 +435,7 @@ curl -s -H "x-user-id: iam-system" -H "x-tenant-roles: iam-system" \
 
 This service calls the Execution Service's internal API the same way, sending the same identity headers plus `x-tenant-id`: its active-instances read guards archive, and its pause-tasks call follows a membership revocation. A byte-identical copy of the Execution Service's spec lives in `api/contracts/`, and the client's tests hold every request to it.
 
-**Contract gates.** `make contract-breaking` refuses a breaking change to `api/internal-openapi.yaml` against `origin/main` (oasdiff; part of `make check`). `make contract-check` refuses a copy in `api/contracts/` that differs from its source branch (`CONTRACT_SRC_DIR=../execution_service` reads a local checkout). Both run in CI.
+**Contract gates.** `make contract-breaking` refuses a breaking change to `api/internal-openapi.yaml` against `origin/main` (oasdiff; part of `make check`). `make contract-check` refuses a copy in `api/contracts/` that differs from its source: the Execution Service's branch named like the branch under test if it has one, otherwise its `main` (`CONTRACT_SRC_REF` picks another ref, `CONTRACT_SRC_DIR=../execution_service` reads a local checkout). Both run in CI.
 
 ---
 
