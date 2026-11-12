@@ -211,7 +211,7 @@ func (h *Handler) CloneVersion(c *gin.Context) {
 		return
 	}
 
-	if rejectTooLong(c,
+	if rejectInvalidText(c,
 		lengthLimit{"new_key", req.NewKey, 255},
 		lengthLimit{"new_name", req.NewName, 255},
 		lengthLimit{"new_description", req.NewDescription, 2000},

@@ -1874,6 +1874,7 @@ paths:
                     detail: "Only PUBLISHED or ARCHIVED versions can be cloned."
                     instance: "/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/versions/11abcc22-3844-42bc-938b-665cd42c1111/clone"
                     code: "INVALID_VERSION_STATUS"
+        "422": { $ref: '#/components/responses/UnprocessableEntity' }
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
         "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }
@@ -2559,6 +2560,7 @@ paths:
                   pagination: { $ref: '#/components/schemas/Pagination' }
         "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
         "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
     post:

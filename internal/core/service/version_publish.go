@@ -44,11 +44,11 @@ func (s *VersionService) publishPreFlight(
 	if err != nil {
 		return nil, nil, fmt.Errorf("get draft version: %w", err)
 	}
-	if draft.Status != domain.VersionStatusDraft {
-		return nil, nil, domain.ErrVersionNotDraft
-	}
 	if draft.WorkflowID != workflowID {
 		return nil, nil, domain.ErrNotFound
+	}
+	if draft.Status != domain.VersionStatusDraft {
+		return nil, nil, domain.ErrVersionNotDraft
 	}
 
 	res, err := s.modules.resolve(ctx, s.modules.live(tenantID), draft.BPMNXML, "")

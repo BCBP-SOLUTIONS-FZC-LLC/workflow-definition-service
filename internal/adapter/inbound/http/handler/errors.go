@@ -148,17 +148,30 @@ type lengthLimit struct {
 	max   int
 }
 
-func rejectTooLong(c *gin.Context, limits ...lengthLimit) bool {
+func rejectInvalidText(c *gin.Context, limits ...lengthLimit) bool {
 	var invalids []invalidParam
+	var tooLong, hasNul bool
 	for _, l := range limits {
-		if utf8.RuneCountInString(l.value) > l.max {
+		switch {
+		case strings.ContainsRune(l.value, 0):
+			hasNul = true
+			invalids = append(invalids, invalidParam{Name: l.field, Reason: "must not contain NUL characters"})
+		case utf8.RuneCountInString(l.value) > l.max:
+			tooLong = true
 			invalids = append(invalids, invalidParam{Name: l.field, Reason: fmt.Sprintf("must not exceed %d characters", l.max)})
 		}
 	}
 	if len(invalids) == 0 {
 		return false
 	}
-	writeProblem(c, http.StatusUnprocessableEntity, CodeInvalidInput, "request fields exceed maximum length", invalids)
+	detail := "request fields exceed maximum length"
+	switch {
+	case hasNul && tooLong:
+		detail = "request fields exceed maximum length or contain NUL characters"
+	case hasNul:
+		detail = "request fields must not contain NUL characters"
+	}
+	writeProblem(c, http.StatusUnprocessableEntity, CodeInvalidInput, detail, invalids)
 	return true
 }
 

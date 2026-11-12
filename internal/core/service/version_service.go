@@ -69,6 +69,9 @@ func (s *VersionService) List(
 	tenantID, workflowID uuid.UUID,
 	page, limit int,
 ) ([]*domain.WorkflowVersion, int64, error) {
+	if _, err := s.workflows.GetByID(ctx, tenantID, workflowID); err != nil {
+		return nil, 0, fmt.Errorf(errGetWorkflow, err)
+	}
 	versions, count, err := s.versions.ListByWorkflow(ctx, tenantID, workflowID, page, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list versions: %w", err)

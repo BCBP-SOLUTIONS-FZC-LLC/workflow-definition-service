@@ -78,7 +78,7 @@ func (h *Handler) UpdateDraft(c *gin.Context) {
 		return
 	}
 
-	if rejectTooLong(c,
+	if rejectInvalidText(c,
 		lengthLimit{"name", deref(req.Name), 255},
 		lengthLimit{"description", deref(req.Description), 2000},
 	) {

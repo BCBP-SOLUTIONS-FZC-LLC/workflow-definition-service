@@ -188,6 +188,9 @@ func (s *ModuleService) ListVersions(
 	callerTenantID, moduleID uuid.UUID,
 	page, limit int,
 ) ([]*domain.ModuleVersion, int64, error) {
+	if _, err := s.modules.GetByID(ctx, callerTenantID, moduleID); err != nil {
+		return nil, 0, fmt.Errorf("get module: %w", err)
+	}
 	versions, total, err := s.versions.ListByModule(ctx, callerTenantID, moduleID, page, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list module versions: %w", err)
