@@ -14,6 +14,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Contract copies: `make contract-check` no longer reads a branch name from `api/contracts/SOURCES` (its branch column is gone). It compares the copy with the Execution Service's branch named like the branch under test when that branch exists, and with `main` otherwise, the rule the compat job already uses; `CONTRACT_SRC_REF` overrides it. `make contract-check-test` tests the script and runs in `make check`.
 - Tests only: stronger checks for the workflow create, connector credential, module list, create, version add, publish, archive and usages, starter create and BPMN validate routes, including foreign-tenant access under row-level security. No production code changes.
 - Tests only: stronger checks for publish, clone, promote, version read, diff and validation failures through the real services, workflow create failures and plan limits, connector alias and credential writes, foreign-tenant access under row-level security, and create rollback. No production code changes.
 - Tests only: stronger checks for the internal events, compiled-plan and connector alias routes, request problem bodies and strict JSON binding, workflow list, version read, publish (including idempotency failures), clone, promote and validation handlers, and tenant isolation of membership revocation. No production code changes.
