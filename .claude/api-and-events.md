@@ -15,7 +15,13 @@ metadata:
 
 ## Inbound Events: `POST /api/v1/internal/events`
 
-The service does **not** consume SQS in-process. The shared workflow-events consumer (separate service) forwards each `events.Envelope[json.RawMessage]` to this endpoint, which dispatches by `env.Type` to `versionSvc.HandleDepartmentMembershipRevoked` or `versionSvc.HandleTenantMembershipRevoked`, and `TenantMembershipsPurged` and `TenantStateChanged` (status `offboarded` only) to `TenantOffboardingService.RecordOffboarded`, which records the tenant for the purge sweep (`TenantPurger`, LLD §7.4.6). Any other type is acknowledged with 200.
+The service does **not** consume SQS in-process. The shared workflow-events consumer (separate service) forwards each `events.Envelope[json.RawMessage]` to this endpoint, which dispatches by `env.Type`:
+
+- `DepartmentMembershipRevoked` goes to `versionSvc.HandleDepartmentMembershipRevoked`.
+- `MembershipRevoked` goes to `versionSvc.HandleTenantMembershipRevoked`.
+- `TenantMembershipsPurged`, and `TenantStateChanged` with status `offboarded`, go to `TenantOffboardingService.RecordOffboarded`, which records the tenant for the purge sweep (`TenantPurger`, LLD §7.4.6).
+- A `TenantStateChanged` with any other status, no status or null data goes to `RecordReturned`, which marks the purge record returned unless the recorded offboarding is newer.
+- Any other type is acknowledged with 200.
 
 Route is on the `/internal` group guarded by `RequireSystemCaller` (`x-tenant-roles` lists `iam-system` and `x-user-id` is set, else `401 UNAUTHORIZED`; no token, no setting, no off mode: the mesh `AuthorizationPolicy` names the caller). Consumer retry contract:
 - `2xx` — handled (a redelivery reprocesses and converges; there is no dedup table)

@@ -387,7 +387,7 @@ sequenceDiagram
     Handler ->> Off: RecordOffboarded(tenant, event time)
     Off ->> Ledger: one row, credential and artifact due dates
     Handler -->>- Consumer: 200 OK
-    Note over Handler: a TenantStateChanged with any other status is acknowledged and ignored
+    Note over Handler: a TenantStateChanged with any other status, no status or null data marks the purge record returned
     Purger ->> Ledger: tenants whose retention has lapsed
     Purger ->> Bao: destroy the tenant's connector credentials (registry paths)
     Purger ->> Purger: delete workflows, modules and starters in batches under the tenant's RLS scope
@@ -621,10 +621,10 @@ Domain sentinels defined in `internal/core/domain/errors.go`, mapped to HTTP res
 | `ErrIdempotencyKeyReplay` | 409 | `IDEMPOTENCY_KEY_REPLAY` | Duplicate Idempotency-Key with different payload |
 | `ErrAssigneeIneligible` | 422 | `ASSIGNEE_INELIGIBLE` | Assignee left required department role |
 | `*ValidationFailedError` | 422 | `BPMN_VALIDATION_FAILED` | Structural/semantic BPMN errors; `invalid_params` carries per-node details |
-| `ErrUpstreamUnavailable` | 503 | `UPSTREAM_UNAVAILABLE` | Downstream dependency (Execution Service, IAM) unreachable |
+| `ErrUpstreamUnavailable` | 503 | `UPSTREAM_UNAVAILABLE` | A dependency is unavailable (database, Valkey, OpenBao, Execution Service, Org & Membership, plan catalog, Entitlements), or a call was cut short by the 30-second request deadline |
 | any other | 500 | `INTERNAL_ERROR` | |
 
-All error responses follow RFC 9457 (`application/problem+json`):
+All error responses follow RFC 9457 (`application/problem+json`). The service writes the shape below. The shared HTTP library writes a recovered panic (500), its own identity refusals (401) and the event ingest's deadline answer (503 `REQUEST_TIMEOUT`) with `errorCode`, `traceId`, `tenantId` and `timestamp` in place of `code`, `trace_id` and `request_id`. A planned release moves the service's own problems to the library's member names, together with the Execution Service (LLD Appendix E).
 
 ```json
 {

@@ -24,7 +24,7 @@ metadata:
 
 ## Appendix — Error Codes
 
-All non-2xx HTTP responses use the RFC-9457 `problemDetails` envelope (`internal/adapter/inbound/http/handler/errors.go`); `code` is one of:
+Every error the service writes uses the RFC-9457 `problemDetails` envelope (`internal/adapter/inbound/http/handler/errors.go`). `code` is one of:
 
 | Code | HTTP Status | Meaning |
 | --- | --- | --- |
@@ -49,11 +49,13 @@ All non-2xx HTTP responses use the RFC-9457 `problemDetails` envelope (`internal
 | `MODULE_IN_USE` | 409 | Archiving a module while a published workflow version or a workflow draft of the caller's tenant uses it; the problem body lists them under `uses` |
 | `ASSIGNEE_INELIGIBLE` | 422 | Default assignee failed the Org & Membership eligibility check |
 | `BPMN_VALIDATION_FAILED` | 422 | Structural/semantic BPMN validation failed (see `invalid_params`) |
-| `INVALID_INPUT` | 422 (400 for connector credential and alias input) | Request field(s) exceed maximum length, or a connector credential or alias field is invalid |
-| `PAYLOAD_TOO_LARGE` | 413 | Request body exceeds the 10 MB limit |
+| `INVALID_INPUT` | 422 (400 for page and limit ranges and for connector credential and alias input) | Request field(s) exceed maximum length, a page or limit is out of range, or a connector credential or alias field is invalid |
+| `PAYLOAD_TOO_LARGE` | 413 | Request body exceeds the 10 MiB limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Non-JSON body on `/api/v1` |
-| `UPSTREAM_UNAVAILABLE` | 503 | Execution/Membership HTTP call failed after retries |
+| `UPSTREAM_UNAVAILABLE` | 503 | A dependency is unavailable (database, Valkey, OpenBao, Execution, Org & Membership, plan catalog, Entitlements), or a call was cut short by the 30-second request deadline |
 | `EVENT_DECODE_FAILED` | 502 | An internal event could not be decoded (internal event route only) |
 | `INTERNAL_ERROR` | 500 | Unhandled error |
+
+The shared library writes a recovered panic (500), its own identity refusals (401) and the event ingest's deadline answer (503 `REQUEST_TIMEOUT`) in its own problem format, with `errorCode` and `traceId` in place of `code` and `trace_id`. A planned release moves the service's envelope to those member names (LLD Appendix E).
 
 BPMN-specific validation error codes (`REJECTED_ELEMENT`, `CYCLE_DETECTED`, `UNGUARDED_LOOP`, etc., set inside `invalid_params` on a `BPMN_VALIDATION_FAILED` response) are listed in `.claude/bpmn-compiler.md`, not duplicated here.

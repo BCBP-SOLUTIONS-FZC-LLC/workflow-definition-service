@@ -58,12 +58,13 @@ info:
     - The shared HTTP library writes two kinds of response in its own problem
       format (`PlatformProblem`, also `application/problem+json`): a recovered
       panic (`500`, `errorCode` `INTERNAL_ERROR`, no detail) and the identity
-      refusals in step 1. The 401 and 500 responses therefore declare both schemas
+      refusals of step 1 written by the library. The 401 and 500 responses therefore declare both schemas
       (`oneOf`); a client tells them apart by `code` or `errorCode`.
-    - Each request runs under a 30-second deadline. Every handler answers a
-      database or client call cut short by the deadline itself, with
-      `503 UPSTREAM_UNAVAILABLE` (detail `the request was cancelled or its deadline
-      passed`). The library's own deadline answer (`503` `REQUEST_TIMEOUT`) is
+    - Each request runs under a 30-second deadline. A database or client call cut
+      short by the deadline is answered `503 UPSTREAM_UNAVAILABLE`. The detail is usually `an upstream dependency is
+      temporarily unavailable`, and `the request was cancelled or its deadline
+      passed` when the deadline is noticed outside a dependency call. The
+      library's own deadline answer (`503` `REQUEST_TIMEOUT`) is
       written only when a handler has written nothing, which no operation here
       does.
     - A path no route serves answers `404 NOT_FOUND` (detail `no route matches this
@@ -76,7 +77,7 @@ info:
     A `5xx` from this service means nothing was changed unless the operation
     says otherwise, and the request is safe to retry.
 
-    ### Planned change: one problem format (WF-2)
+    ### Planned change: one problem format
 
     A later release moves the bodies this service writes to the shared
     library's member names, so that every error has the `PlatformProblem`
@@ -99,7 +100,7 @@ info:
     `validationErrors` items are `{field, message}`, where `invalid_params` items
     are `{name, reason, code}`. How that release carries the BPMN issue `code` of
     each item, and the `current_record_version` and `uses` members, is decided
-    with the release. This document describes the format as built today.
+    with the release.
 
     ## Headers on every response
 
@@ -1129,12 +1130,12 @@ components:
     PlatformProblem:
       type: object
       description: >-
-        The problem format of the shared HTTP library (platform-gincommon), used today
+        The problem format of the shared HTTP library (platform-gincommon), used
         only for the responses the library writes itself: a recovered panic (500
-        INTERNAL_ERROR, no detail) and the identity refusals of step 1 (401
-        UNAUTHORIZED). Media type application/problem+json.
+        INTERNAL_ERROR, no detail) and the library's identity refusals of step 1
+        (401 UNAUTHORIZED). Media type application/problem+json.
         It has errorCode and traceId where ProblemDetails has code and trace_id.
-        After the planned format change (WF-2, see the description at the top)
+        After the planned format change (see the description at the top)
         every error of this service has this shape.
       required: [type, title, status, instance, traceId, errorCode, timestamp]
       properties:
@@ -1163,7 +1164,7 @@ components:
         The RFC 9457 problem document (media type application/problem+json) every error
         this service writes carries. Optional members are omitted, never null, when
         they do not apply. A planned release renames its members to those of
-        PlatformProblem (WF-2, see the description at the top).
+        PlatformProblem (see the description at the top).
       required: [type, title, status, detail, instance, code]
       properties:
         type:
@@ -1213,7 +1214,7 @@ components:
         current_count:
           type: integer
           format: int64
-          description: Present on PLAN_QUOTA_EXCEEDED. The number of workflows the tenant has now that count against the limit, those with an active version or a draft; archived workflows do not count.
+          description: Present on PLAN_QUOTA_EXCEEDED. The number of workflows the tenant has now that count against the limit, those with an active version or a draft.
         uses:
           type: array
           description: Present on MODULE_IN_USE. The published workflow versions and workflow drafts that use the module and must be cleared before it can be archived.
@@ -1548,7 +1549,8 @@ components:
         missing or unknown x-plan when the limit comes from the plan table), or Entitlements (including a limit not read within
         the freshness bound) — detail `an upstream dependency is temporarily
         unavailable` — or the request was cancelled or passed its 30-second deadline
-        (detail `the request was cancelled or its deadline passed`). The request
+        (the same detail when a dependency call was cut short, else `the request was
+        cancelled or its deadline passed`). The request
         changed nothing and is safe to retry.
       headers:
         X-Request-ID: { $ref: '#/components/headers/XRequestId' }
@@ -1557,12 +1559,12 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
           example:
-              type: "https://api.workflow.platform/errors/service-unavailable"
-              title: "Upstream Service Unavailable"
-              status: 503
-              detail: "an upstream dependency is temporarily unavailable"
-              instance: "/api/v1/workflows"
-              code: "UPSTREAM_UNAVAILABLE"
+            type: "https://api.workflow.platform/errors/service-unavailable"
+            title: "Upstream Service Unavailable"
+            status: 503
+            detail: "an upstream dependency is temporarily unavailable"
+            instance: "/api/v1/workflows"
+            code: "UPSTREAM_UNAVAILABLE"
     Conflict:
       description: >-
         State conflict; `code` gives the case. On the routes that take an Idempotency-Key:
@@ -1776,8 +1778,8 @@ paths:
         as it is now); the publish-only checks run at publish. Then the tenant's workflow
         template limit is read (by `x-plan` from the plan table, or per tenant from
         Entitlements), and the workflow is counted and inserted in
-        one transaction. Workflows with a DRAFT or PUBLISHED version count against the
-        limit; archived ones do not.
+        one transaction. Workflows with an active version or a draft count against the
+        limit.
 
         Responses, in the order the checks run:
         - `201` — created.

@@ -55,6 +55,8 @@ Dependencies are scanned by `govulncheck` on every CI run and by Dependabot week
 
 This service sits behind the Envoy API Gateway. It trusts the following gateway-injected headers as pre-authenticated:
 
-- `x-tenant-id`, `x-user-id`, `x-tenant-roles`, `x-plan`, `x-feature-flags`
+- `x-tenant-id`, `x-user-id`, `x-tenant-roles`, `x-plan`
+
+The gateway also sends `x-departments` and `x-feature-flags`; this service does not read them.
 
 **Any bypass of Envoy that allows direct service access is a critical security vulnerability.**

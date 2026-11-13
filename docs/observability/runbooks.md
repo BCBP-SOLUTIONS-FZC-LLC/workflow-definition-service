@@ -5,7 +5,7 @@ Runbooks for every alert in [`deploy/monitoring/app-alerts.yml`](../../deploy/mo
 Common starting points:
 
 - Pods: `kubectl get pods -l app.kubernetes.io/name=workflow-definition-service`, then `kubectl logs` for the failing pod; log lines carry `trace_id` and `request_id`.
-- Error bodies are RFC 9457 problem documents with a stable `code`, `trace_id` and `request_id`.
+- Error bodies are RFC 9457 problem documents with a stable `code`, `trace_id` and `request_id`. A recovered panic (500), the shared library's identity refusals (401) and the event ingest's deadline answer (503 `REQUEST_TIMEOUT`) carry `errorCode` and `traceId` instead, and no `request_id`; use the `X-Request-ID` response header for those.
 - Readiness: `GET /readyz` answers 503 when Postgres is unreachable or the pod is draining, and 200 with `cache: degraded` when Valkey does not answer; the cache and idempotency then run without it.
 - Metric names are in [`metric-registry.md`](metric-registry.md).
 
