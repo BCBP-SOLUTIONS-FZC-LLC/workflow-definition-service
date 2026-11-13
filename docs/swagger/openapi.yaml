@@ -14,10 +14,18 @@ info:
 
     1. **Identity.** `x-tenant-id` and `x-user-id` are required. Absent or blank is
        `401 UNAUTHORIZED` (detail `x-tenant-id must be a UUID` or `x-user-id must be a
-       UUID`). A repeated identity header, or an `x-tenant-roles` value longer than the
-       shared library accepts or naming too many roles, is `401` written by the shared
-       HTTP library in its own problem format (`PlatformProblem`, `errorCode`
-       `UNAUTHORIZED`). A value that is not a UUID is `401 UNAUTHORIZED` (same details).
+       UUID`). The shared HTTP library then refuses, with `401` in its own problem
+       format (`PlatformProblem`, `errorCode` `UNAUTHORIZED`):
+       - a repeated `x-tenant-id` or `x-user-id` (detail `Ambiguous x-tenant-id
+         header.` or `Ambiguous x-user-id header.`);
+       - an `x-tenant-id` or `x-user-id` longer than 256 bytes after trimming, or
+         holding a control character, DEL, U+2028 or U+2029 (detail `Missing or
+         invalid authentication headers.`);
+       - an `x-tenant-roles` longer than 4,096 bytes or naming more than 64 distinct roles
+         (detail `Invalid tenant roles.`).
+
+       A value that passes those checks but is not a UUID is `401 UNAUTHORIZED`
+       (same details as absent).
     2. **Roles header.** `x-tenant-roles` is optional; see step 4 for where it matters.
     3. **Content type.** A request with a body (any non-zero or unknown
        `Content-Length`, on any method) must carry `Content-Type: application/json`;
@@ -47,13 +55,18 @@ info:
     Every error this service writes is an `application/problem+json`
     `ProblemDetails` document whose `code` gives the case. Other bodies:
 
-    - The shared HTTP library writes three responses in its own problem format
-      (`PlatformProblem`, also `application/problem+json`): a recovered panic
-      (`500 INTERNAL_ERROR`), a request still unanswered at the 30-second deadline
-      (`503`, `errorCode` `REQUEST_TIMEOUT`) and the identity refusals in step 1.
-      Every handler answers a database or client call cut short by the deadline
-      itself, with `503 UPSTREAM_UNAVAILABLE` (detail `the request was cancelled or
-      its deadline passed`), so `REQUEST_TIMEOUT` is rare.
+    - The shared HTTP library writes two kinds of response in its own problem
+      format (`PlatformProblem`, also `application/problem+json`): a recovered
+      panic (`500`, `errorCode` `INTERNAL_ERROR`, no detail) and the identity
+      refusals of step 1 written by the library. The 401 and 500 responses therefore declare both schemas
+      (`oneOf`); a client tells them apart by `code` or `errorCode`.
+    - Each request runs under a 30-second deadline. A database or client call cut
+      short by the deadline is answered `503 UPSTREAM_UNAVAILABLE`. The detail is usually `an upstream dependency is
+      temporarily unavailable`, and `the request was cancelled or its deadline
+      passed` when the deadline is noticed outside a dependency call. The
+      library's own deadline answer (`503` `REQUEST_TIMEOUT`) is
+      written only when a handler has written nothing, which no operation here
+      does.
     - A path no route serves answers `404 NOT_FOUND` (detail `no route matches this
       method and path`); a trailing slash is not redirected and counts as an unknown
       path. A known path called with a method it does not serve answers
@@ -63,6 +76,39 @@ info:
 
     A `5xx` from this service means nothing was changed unless the operation
     says otherwise, and the request is safe to retry.
+
+    ### Planned change: one problem format
+
+    A later release moves the bodies this service writes to the shared
+    library's member names, so that every error has the `PlatformProblem`
+    shape. The Execution Service moves in the same release, and Commercial and
+    the frontend are told which release it is before it merges. The format stays
+    RFC 9457 `application/problem+json`, and status codes and code values stay
+    the same. The members change as follows:
+
+    | Today (`ProblemDetails`) | After the move |
+    | --- | --- |
+    | `code` | `errorCode`, same values |
+    | `invalid_params` | `validationErrors` |
+    | `trace_id` | `traceId` |
+    | `request_id` | dropped from the body; it stays in the `X-Request-ID` header |
+    | none | `tenantId` and `timestamp` added |
+    | `type` under `https://api.workflow.platform/errors/` | `type` from the platform type registry |
+
+    `PLAN_QUOTA_EXCEEDED` keeps status `403` and its `plan_code`, `limit` and
+    `current_count` members as extension members. The library's
+    `validationErrors` items are `{field, message}`, where `invalid_params` items
+    are `{name, reason, code}`. How that release carries the BPMN issue `code` of
+    each item, and the `current_record_version` and `uses` members, is decided
+    with the release.
+
+    ## Headers on every response
+
+    Every response, success or error, carries `X-Request-ID` and `X-Trace-ID`
+    (the library always starts a trace, exported or not). A caller may send `x-request-id` (1 to 128
+    characters of `[a-zA-Z0-9._-]`, trimmed); it is echoed back, and any other
+    value is replaced by a new UUID. The shared responses and the success
+    responses declare both headers.
 servers:
   - url: http://localhost:8080
     description: Local dev server (matches cmd/server's actual route mounts)
@@ -131,15 +177,7 @@ components:
       required: false
       schema:
         type: string
-      description: Comma-separated tenant roles injected by Envoy. Reads need only the tenant and user; a mutating call without `tenant_admin` or `tenant_owner` here is `403`.
-
-    Departments:
-      name: x-departments
-      in: header
-      required: false
-      schema:
-        type: string
-      description: Comma-separated list of department memberships and role levels injected by Envoy. Not read by this service.
+      description: Comma-separated tenant roles injected by Envoy. Reads need only the tenant and user; a mutating call without `tenant_admin` or `tenant_owner` here is `403`. On every operation, a value over 4,096 bytes or naming more than 64 distinct roles is `401` from the shared library (PlatformProblem, detail `Invalid tenant roles.`).
 
     Plan:
       name: x-plan
@@ -157,13 +195,17 @@ components:
         Entitlements instead, the header is not used for the limit and only fills
         plan_code of a quota refusal. Other operations do not read it.
 
-    FeatureFlags:
-      name: x-feature-flags
+    RequestId:
+      name: x-request-id
       in: header
       required: false
       schema:
         type: string
-      description: Encoded set of effective feature flags injected by Envoy. Not read by this service.
+      description: >-
+        Optional caller request id, trimmed. A value of 1 to 128 characters of
+        `[a-zA-Z0-9._-]` is used and echoed in X-Request-ID; any other value is
+        replaced by a new UUID, never refused.
+      example: 0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a99
 
     WorkflowId:
       name: id
@@ -184,6 +226,46 @@ components:
         type: string
         format: uuid
       example: 11abcc22-3844-42bc-938b-665cd42c1111
+
+    ModuleId:
+      name: id
+      in: path
+      required: true
+      description: "The module id. Not a UUID is 400 BAD_REQUEST (detail `invalid id: not a valid UUID`); a module of another tenant reads as absent (404)."
+      schema:
+        type: string
+        format: uuid
+      example: 018f1a2b-0000-7000-8000-000000000001
+
+    ModuleVersionId:
+      name: version_id
+      in: path
+      required: true
+      description: "The module version id. Not a UUID is 400 BAD_REQUEST (detail `invalid version_id: not a valid UUID`); a version of another module reads as absent (404)."
+      schema:
+        type: string
+        format: uuid
+      example: 018f1a2b-0000-7000-8000-000000000002
+
+    StarterId:
+      name: id
+      in: path
+      required: true
+      description: "The starter id. Not a UUID is 400 BAD_REQUEST (detail `invalid id: not a valid UUID`); a starter of another tenant reads as absent (404)."
+      schema:
+        type: string
+        format: uuid
+      example: 018f1a2b-0000-7000-8000-000000000003
+
+    TargetVersionId:
+      name: target_version_id
+      in: path
+      required: true
+      description: "The version compared against. Not a UUID is 400 BAD_REQUEST (detail `invalid target_version_id: not a valid UUID`); a version of another workflow or tenant reads as absent (404)."
+      schema:
+        type: string
+        format: uuid
+      example: 11abcc22-3844-42bc-938b-665cd42c2222
 
     IdempotencyKey:
       name: Idempotency-Key
@@ -251,8 +333,8 @@ components:
         key:                   { type: string, description: "The template key, unique in the tenant, as sent at creation." }
         name:                  { type: string, description: "The workflow name, as last saved." }
         description:           { type: string, description: "The workflow description; an empty string when none was given." }
-        active_version_id:     { type: string, format: uuid, nullable: true, description: "The PUBLISHED version new instances start from. Omitted (never null) when the workflow has none: never published, or archived." }
-        active_version_number: { type: integer, nullable: true, description: "The number of the active version. Omitted (never null) when there is no active version." }
+        active_version_id:     { type: string, format: uuid, description: "The PUBLISHED version new instances start from. Omitted (never null) when the workflow has none: never published, or archived." }
+        active_version_number: { type: integer, description: "The number of the active version. Omitted (never null) when there is no active version." }
         has_draft:             { type: boolean, description: "Whether the workflow has a DRAFT version." }
         created_at:            { type: string, format: date-time, description: "When the workflow was created." }
         updated_at:            { type: string, format: date-time, description: "When the workflow's own record last changed (name, description, active version)." }
@@ -272,7 +354,7 @@ components:
       description: A workflow version without its BPMN or plan, as lists carry it.
       properties:
         id:                  { type: string, format: uuid, description: "The version id." }
-        version_number:      { type: integer, nullable: true, description: "The version's number, assigned at publish (1, 2, ...). Omitted (never null) for a DRAFT." }
+        version_number:      { type: integer, description: "The version's number, assigned at publish (1, 2, ...). Omitted (never null) for a DRAFT." }
         status:              { $ref: '#/components/schemas/VersionStatus' }
         is_valid:
           type: boolean
@@ -281,7 +363,7 @@ components:
             of their required departments. Set to false by a DepartmentMembershipRevoked
             or MembershipRevoked event; does not reflect BPMN structural validity.
         created_by_user_id:  { type: string, format: uuid, description: "The user who created the version." }
-        published_at:        { type: string, format: date-time, nullable: true, description: "When the version was published. Omitted (never null) for a DRAFT." }
+        published_at:        { type: string, format: date-time, description: "When the version was published. Omitted (never null) for a DRAFT." }
         created_at:          { type: string, format: date-time, description: "When the version was created." }
       example:
         id: 8fa88cde-824c-47bc-836b-665cd42c2222
@@ -298,22 +380,21 @@ components:
       properties:
         id:                 { type: string, format: uuid, description: "The version id." }
         workflow_id:        { type: string, format: uuid, description: "The workflow the version belongs to." }
-        version_number:     { type: integer, nullable: true, description: "The version's number. Omitted (never null) for a DRAFT." }
+        version_number:     { type: integer, description: "The version's number. Omitted (never null) for a DRAFT." }
         status:             { $ref: '#/components/schemas/VersionStatus' }
         is_valid:           { type: boolean, description: "False once a membership revocation invalidated a default assignee of the version; true for a draft until then." }
         validation_errors:
           type: array
           items: { $ref: '#/components/schemas/ValidationError' }
-          nullable: true
           description: The stored validation errors written by membership revocations. Omitted (never null) when there are none; a stored list that cannot be read is left out and logged.
         bpmn_xml:           { type: string, description: "The version's BPMN 2.0 XML, as stored." }
         module_refs:        { type: array, items: { $ref: '#/components/schemas/ModuleRef' }, description: "Library module versions this version resolved at publish, whose snapshot it holds. Always present; an empty array on drafts." }
-        artifact_hash:      { type: string, nullable: true, description: "SHA-256 of the BPMN XML at publish time. Omitted (never null) on DRAFT versions." }
+        artifact_hash:      { type: string, description: "SHA-256 of the BPMN XML at publish time. Omitted (never null) on DRAFT versions." }
         compiled_plan_json: { $ref: '#/components/schemas/CompiledCollaboration' }
         created_by_user_id: { type: string, format: uuid, description: "The user who created the version." }
         created_at:         { type: string, format: date-time, description: "When the version was created." }
         updated_at:         { type: string, format: date-time, description: "When the version last changed." }
-        published_at:       { type: string, format: date-time, nullable: true, description: "When the version was published. Omitted (never null) for a DRAFT." }
+        published_at:       { type: string, format: date-time, description: "When the version was published. Omitted (never null) for a DRAFT." }
         record_version:     { type: integer, format: int64, description: "Monotonic optimistic-lock counter. Echo on PUT /draft requests (body or If-Match)." }
       example:
         id: 11abcc22-3844-42bc-938b-665cd42c1111
@@ -350,19 +431,18 @@ components:
       description: A library module's root record.
       properties:
         id:                { type: string, format: uuid, description: "The module id." }
-        tenant_id:         { type: string, format: uuid, nullable: true, description: "The owning tenant. Omitted (never null) for a global module." }
+        tenant_id:         { type: string, format: uuid, description: "The owning tenant. Omitted (never null) for a global module." }
         scope:             { $ref: '#/components/schemas/CatalogScope' }
         name:              { type: string, description: "The module name, as sent." }
         description:       { type: string, description: "The module description; an empty string when none was given." }
         process_id:
           type: string
           description: The module's `<bpmn:process>` id, fixed for every version; what a calling `callActivity`'s `calledElement processId` names.
-        active_version_id: { type: string, format: uuid, nullable: true, description: "The PUBLISHED version calls resolve to. Omitted (never null) when the module has none: never published, or archived." }
+        active_version_id: { type: string, format: uuid, description: "The PUBLISHED version calls resolve to. Omitted (never null) when the module has none: never published, or archived." }
         created_at:        { type: string, format: date-time, description: "When the module was created." }
         updated_at:        { type: string, format: date-time, description: "When the module record last changed." }
       example:
         id: 018f1a2b-0000-7000-8000-000000000001
-        tenant_id: null
         scope: global
         name: Standard Approval Chain
         description: Reusable three-step approval sequence
@@ -383,9 +463,9 @@ components:
         process_id:
           type: string
           description: The `<bpmn:process id="...">` value inside `bpmn_xml`; always its module's `process_id`.
-        version_number:  { type: integer, nullable: true, description: "The version's number, assigned at publish. Omitted (never null) for a DRAFT." }
+        version_number:  { type: integer, description: "The version's number, assigned at publish. Omitted (never null) for a DRAFT." }
         is_valid:        { type: boolean, description: "Whether the version is usable; true when created." }
-        published_at:    { type: string, format: date-time, nullable: true, description: "When the version was published. Omitted (never null) for a DRAFT." }
+        published_at:    { type: string, format: date-time, description: "When the version was published. Omitted (never null) for a DRAFT." }
         created_at:      { type: string, format: date-time, description: "When the version was created." }
       example:
         id: 018f1a2b-0000-7000-8000-000000000002
@@ -513,7 +593,7 @@ components:
           format: uuid
           description: Set for a task in a called module's fixed lane, which no call can rebind.
         stage_type: { type: string, example: review, description: "The stage type from the task definition." }
-        role_level: { type: string, example: checker, description: "The task's candidateGroups role level." }
+        role_level: { type: string, example: reviewer, description: "The task's candidateGroups role level: preparator, reviewer or approver." }
         default_user_ids:
           type: array
           description: The task's own default users. An empty array when there are none.
@@ -606,7 +686,6 @@ components:
           properties:
             active_version:
               allOf: [{ $ref: '#/components/schemas/ModuleVersion' }]
-              nullable: true
               description: The active version with its BPMN. Omitted (never null) when the module has no active version.
 
     StarterTemplate:
@@ -614,7 +693,7 @@ components:
       description: A starter template, a BPMN document a workflow can be created from.
       properties:
         id:                          { type: string, format: uuid, description: "The starter id." }
-        tenant_id:                   { type: string, format: uuid, nullable: true, description: "The owning tenant. Omitted (never null) for a global starter." }
+        tenant_id:                   { type: string, format: uuid, description: "The owning tenant. Omitted (never null) for a global starter." }
         scope:                       { $ref: '#/components/schemas/CatalogScope' }
         name:                        { type: string, description: "The starter name, as sent." }
         description:                 { type: string, description: "The starter description; an empty string when none was given." }
@@ -623,13 +702,11 @@ components:
         source_workflow_version_id:
           type: string
           format: uuid
-          nullable: true
           description: Informational only — the content is copied at creation time, not linked. Omitted (never null) for a starter created from raw BPMN.
         created_at:                  { type: string, format: date-time, description: "When the starter was created, as stored." }
         updated_at:                  { type: string, format: date-time, description: "When the starter last changed, as stored." }
       example:
         id: 018f1a2b-0000-7000-8000-000000000003
-        tenant_id: null
         scope: global
         name: Standard Onboarding
         description: Starting point for a new-hire onboarding workflow
@@ -654,7 +731,6 @@ components:
           description: "One of the department role levels preparator, reviewer or approver, passed as 'required_level' to the Org & Membership eligibility read at publish time. Sourced from zeebe:assignmentDefinition candidateGroups."
         default_assignees:
           type: array
-          nullable: true
           items: { type: string, format: uuid }
           minItems: 1
           description: "Default assignee UUID(s). Sourced from zeebe:assignmentDefinition candidateUsers. Omitted when assignment is not set — optional for send_task/receive_task stage types."
@@ -669,43 +745,36 @@ components:
           description: "The BPMN task's name, for display. Omitted when the task has none."
         due_date:
           type: string
-          nullable: true
           description: "RFC 3339 datetime for the task due date, the only form the validator accepts. Sourced from zeebe:taskSchedule dueDate. Absent when not set in BPMN."
         follow_up_date:
           type: string
-          nullable: true
           description: "RFC 3339 datetime for the task follow-up date, the only form the validator accepts. Sourced from zeebe:taskSchedule followUpDate. Absent when not set in BPMN."
         extras:
           type: object
-          nullable: true
           additionalProperties: { type: string }
           description: "Forward of every zeebe:property from the BPMN task, unmodified — the compiler does not special-case any property name. Also carries 'message' for send_task/receive_task stage types."
         engine_note:
           type: string
-          nullable: true
           description: "Advisory note set when stage type is not a registered engine class (IAM-owned passthrough). Absent for known types."
         connector_type:
           type: string
           description: "The connector a connector stage runs, from zeebe:taskDefinition type connector:<name>. Set only on a connector stage."
         io_mapping:
           allOf: [{ $ref: '#/components/schemas/IOMapping' }]
-          nullable: true
           description: "Variable input/output declarations of a connector stage."
         boundary_timer:
           type: object
-          nullable: true
-          description: "SLA deadline from a timer boundary event on the task. Null when no boundary timer is attached."
+          description: "SLA deadline from a timer boundary event on the task. Omitted when no boundary timer is attached."
           properties:
             boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
             steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
             duration:     { type: string, description: "ISO 8601 duration (e.g. 'PT48H', 'P3D')." }
             interrupting: { type: boolean, description: "true = task cancelled on fire; false = escalation runs concurrently." }
-            target_dept:  { type: string, nullable: true, description: "Department key to route the escalation path to." }
+            target_dept:  { type: string, description: "Department key to route the escalation path to." }
             terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
         boundary_message:
           allOf: [{ $ref: '#/components/schemas/MessagePath' }]
-          nullable: true
-          description: "Correlation info from a message boundary event on the task. Null when no message boundary is attached."
+          description: "Correlation info from a message boundary event on the task. Omitted when no message boundary is attached."
       example:
         type: prep
         activity: PrepActivity
@@ -713,7 +782,7 @@ components:
         role: preparator
         default_assignees: [018f2d3c-0000-7000-8000-0000000000a1]
         extras: { requires_comment: "false" }
-        boundary_timer: { duration: "PT24H", interrupting: false }
+        boundary_timer: { duration: "PT24H", interrupting: false, target_dept: Tender }
 
     DepartmentDef:
       type: object
@@ -739,17 +808,17 @@ components:
         stages:
           - type: prep
             activity: PrepActivity
-            role: bd-agent
+            role: preparator
             default_assignees: [018e1f2a-0000-7000-8000-000000000001]
             extras: { requires_comment: "false" }
           - type: review
             activity: ReviewActivity
-            role: tender-manager
+            role: reviewer
             default_assignees: [018e1f2a-0000-7000-8000-000000000002]
             extras: { requires_comment: "true" }
           - type: approve
             activity: ApproveActivity
-            role: tender-director
+            role: approver
             default_assignees: [018e1f2a-0000-7000-8000-000000000003]
             extras: { requires_comment: "true" }
 
@@ -939,7 +1008,7 @@ components:
         boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
         error_code:   { type: string, nullable: true, description: "BPMN error code that triggers this path. Empty means catch-all." }
         short_circuit: { type: boolean, description: "true = bypass remaining stages and route directly to target_dept." }
-        target_dept:  { type: string, nullable: true, description: "Department to route to on this error path." }
+        target_dept:  { type: string, description: "Department to route to on this error path. Omitted when the path terminates." }
         terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
         steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
 
@@ -950,7 +1019,7 @@ components:
         boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
         duration:     { type: string, description: "ISO 8601 duration string." }
         interrupting: { type: boolean, description: "true = task cancelled on fire; false = escalation runs concurrently." }
-        target_dept:  { type: string, nullable: true, description: "Department to route to on this timer path." }
+        target_dept:  { type: string, description: "Department to route to on this timer path. Omitted when the path terminates." }
         terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
         steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
 
@@ -961,7 +1030,7 @@ components:
         boundary_id:  { type: string, description: "Stable BPMN element ID of the boundary event." }
         message_name: { type: string, description: "Resolved message name used for runtime correlation. May be empty if the source BPMN's message flow/messageRef could not be resolved (see MISSING_MESSAGE_DEFINITION warning)." }
         interrupting: { type: boolean, description: "true = host activity cancelled on fire; false = escalation runs concurrently." }
-        target_dept:  { type: string, nullable: true, description: "Department to route to on this message path." }
+        target_dept:  { type: string, description: "Department to route to on this message path. Omitted when the path terminates." }
         terminates:   { type: boolean, description: "true = the path reaches an end event before any task, so firing ends the path. Exactly one of target_dept and terminates is set." }
         steps:        { type: array, items: { $ref: '#/components/schemas/ExecutionStep' }, description: "The steps the path runs after it fires." }
 
@@ -983,7 +1052,7 @@ components:
       required: [name, departments, execution]
       properties:
         name:        { type: string, description: "The plan's name, by which main_plan and a call's plan refer to it." }
-        task_queue:  { type: string, description: "Temporal task queue." }
+        task_queue:  { type: string, description: "Temporal task queue. Always `wf-queue-default` in the stored plan; the Execution Service chooses the queue an instance runs on when it starts (a tenant with the dedicated queue grant runs on its own queue)." }
         departments:
           type: array
           description: The plan's departments (lane segments) and their stages.
@@ -1008,13 +1077,13 @@ components:
           - id: Tender
             label: Tender
             stages:
-              - { type: prep,    activity: PrepActivity,    role: bd-agent,       default_assignees: [018e1f2a-0000-7000-8000-000000000001], extras: { requires_comment: "false" } }
-              - { type: review,  activity: ReviewActivity,  role: tender-manager, default_assignees: [018e1f2a-0000-7000-8000-000000000002], extras: { requires_comment: "true" } }
-              - { type: approve, activity: ApproveActivity, role: tender-director, default_assignees: [018e1f2a-0000-7000-8000-000000000003], extras: { requires_comment: "true" } }
+              - { type: prep,    activity: PrepActivity,    role: preparator,     default_assignees: [018e1f2a-0000-7000-8000-000000000001], extras: { requires_comment: "false" } }
+              - { type: review,  activity: ReviewActivity,  role: reviewer,       default_assignees: [018e1f2a-0000-7000-8000-000000000002], extras: { requires_comment: "true" } }
+              - { type: approve, activity: ApproveActivity, role: approver,       default_assignees: [018e1f2a-0000-7000-8000-000000000003], extras: { requires_comment: "true" } }
           - id: Engineering
             label: Engineering
             stages:
-              - { type: prep,    activity: PrepActivity,    role: lead-engineer,  default_assignees: [018e1f2a-0000-7000-8000-000000000010], extras: { requires_comment: "false" }, boundary_timer: { duration: "PT48H", interrupting: false, target_dept: tender } }
+              - { type: prep,    activity: PrepActivity,    role: preparator,     default_assignees: [018e1f2a-0000-7000-8000-000000000010], extras: { requires_comment: "false" }, boundary_timer: { duration: "PT48H", interrupting: false, target_dept: Tender } }
         execution:
           steps:
             - sequential: [Tender, Engineering]
@@ -1058,61 +1127,50 @@ components:
         condition:   { type: string, description: "When the field applies, in the registry's own terms. Omitted when always." }
         description: { type: string, description: "Help text for the modeler form. Omitted when empty." }
 
-    GatewayAuthError:
-      type: object
-      description: >-
-        The flat identity-refusal body of earlier versions of the shared HTTP library.
-        The current code does not write it: identity refusals are problem documents
-        (ProblemDetails, or PlatformProblem for those the library writes). Kept for
-        clients that still parse it.
-      required: [error, status]
-      properties:
-        error:      { type: string, example: "missing or invalid authentication headers", description: "The refusal reason." }
-        status:     { type: integer, example: 401, description: "The HTTP status." }
-        trace_id:   { type: string, description: "The request's trace id." }
-        request_id: { type: string, description: "The request id." }
-
     PlatformProblem:
       type: object
       description: >-
-        The problem format of the shared HTTP library (platform-gincommon), used only
-        for the responses the library writes itself: a recovered panic (500
-        INTERNAL_ERROR, no detail), a request unanswered at the 30-second deadline
-        (503, errorCode REQUEST_TIMEOUT), and a repeated identity header or an
-        unacceptable x-tenant-roles (401 UNAUTHORIZED). Media type
-        application/problem+json. It has errorCode and traceId where ProblemDetails
-        has code and trace_id.
-      required: [type, title, status]
+        The problem format of the shared HTTP library (platform-gincommon), used
+        only for the responses the library writes itself: a recovered panic (500
+        INTERNAL_ERROR, no detail) and the library's identity refusals of step 1
+        (401 UNAUTHORIZED). Media type application/problem+json.
+        It has errorCode and traceId where ProblemDetails has code and trace_id.
+        After the planned format change (see the description at the top)
+        every error of this service has this shape.
+      required: [type, title, status, instance, traceId, errorCode, timestamp]
       properties:
-        type:      { type: string, description: "The library's type URI, {base}/platform/{error}, e.g. .../platform/service-unavailable." }
-        title:     { type: string, description: "The fixed title of the type." }
+        type:      { type: string, description: "The library's type URI, https://errors.company.com/platform/{error}, e.g. .../platform/unauthorized." }
+        title:     { type: string, description: "The fixed title of the type: Unauthorized or Internal Server Error." }
         status:    { type: integer, description: "The HTTP status." }
         detail:    { type: string, description: "The explanation, e.g. `Ambiguous x-tenant-id header.`; omitted for an internal error." }
         instance:  { type: string, description: "The request path." }
-        traceId:   { type: string, description: "The request's trace id." }
-        errorCode: { type: string, description: "UNAUTHORIZED, INTERNAL_ERROR or REQUEST_TIMEOUT." }
-        tenantId:  { type: string, description: "The verified tenant, when there is one." }
-        timestamp: { type: string, description: "When the problem was written." }
+        traceId:   { type: string, description: "Always present: the trace id of a valid traceparent header, else the caller's x-request-id when it is usable, else the server span's trace id, else a new random id. It can therefore differ from X-Trace-ID." }
+        errorCode: { type: string, description: "UNAUTHORIZED or INTERNAL_ERROR." }
+        tenantId:  { type: string, description: "The verified tenant. Omitted when the request has none yet, as in every identity refusal." }
+        timestamp: { type: string, format: date-time, description: "When the problem was written, in UTC to the second." }
       example:
-        type: "https://errors.company.com/platform/service-unavailable"
-        title: "Service Unavailable"
-        status: 503
+        type: "https://errors.company.com/platform/unauthorized"
+        title: "Unauthorized"
+        status: 401
+        detail: "Ambiguous x-tenant-id header."
         instance: "/api/v1/workflows"
         traceId: "4bf92f3577b34da6a3ce929d0e0e4736"
-        errorCode: "REQUEST_TIMEOUT"
+        errorCode: "UNAUTHORIZED"
+        timestamp: "2026-11-13T09:30:00Z"
 
     ProblemDetails:
       type: object
       description: >-
         The RFC 9457 problem document (media type application/problem+json) every error
         this service writes carries. Optional members are omitted, never null, when
-        they do not apply.
+        they do not apply. A planned release renames its members to those of
+        PlatformProblem (see the description at the top).
       required: [type, title, status, detail, instance, code]
       properties:
         type:
           type: string
           format: uri
-          description: "A URI reference that identifies the problem type: https://api.workflow.platform/errors/ followed by bad-request, unauthorized, forbidden, not-found, conflict, validation-failed (422), payload-too-large, unsupported-media-type, internal-error or service-unavailable, by status."
+          description: "A URI reference that identifies the problem type: https://api.workflow.platform/errors/ followed by bad-request, unauthorized, forbidden, not-found, method-not-allowed, conflict, validation-failed (422), payload-too-large, unsupported-media-type, internal-error or service-unavailable, by status."
         title:
           type: string
           description: A short, human-readable summary of the problem type, fixed per code (e.g. "Draft Not Found" for DRAFT_NOT_FOUND).
@@ -1130,7 +1188,7 @@ components:
           description: >-
             Service-specific error code for programmatic handling: BAD_REQUEST,
             INVALID_INPUT, INVALID_BPMN_XML, UNAUTHORIZED, FORBIDDEN, PLAN_QUOTA_EXCEEDED,
-            NOT_FOUND, DRAFT_NOT_FOUND, DRAFT_ALREADY_EXISTS, NO_ACTIVE_VERSION,
+            NOT_FOUND, METHOD_NOT_ALLOWED, DRAFT_NOT_FOUND, DRAFT_ALREADY_EXISTS, NO_ACTIVE_VERSION,
             DUPLICATE_TEMPLATE_KEY, DRAFT_CONCURRENCY, INVALID_VERSION_STATUS,
             ACTIVE_INSTANCES_EXIST, STRUCTURAL_DIVERGENCE, MODULE_PROCESS_ID_CONFLICT,
             MODULE_IN_USE, IDEMPOTENCY_KEY_REPLAY, IDEMPOTENCY_REQUEST_IN_PROGRESS,
@@ -1156,7 +1214,7 @@ components:
         current_count:
           type: integer
           format: int64
-          description: Present on PLAN_QUOTA_EXCEEDED. The number of workflows the tenant has now.
+          description: Present on PLAN_QUOTA_EXCEEDED. The number of workflows the tenant has now that count against the limit, those with an active version or a draft.
         uses:
           type: array
           description: Present on MODULE_IN_USE. The published workflow versions and workflow drafts that use the module and must be cleared before it can be archived.
@@ -1293,7 +1351,6 @@ components:
               severity: { $ref: '#/components/schemas/BpmnValidationSeverity' }
               node_id:
                 type: string
-                nullable: true
                 description: BPMN element ID that caused the issue. Always sent; an empty string (never null) for a document-level issue.
                 example: Task_design_prep
               message:
@@ -1312,33 +1369,66 @@ components:
             node_id: Task_audit_check
             message: "taskDefinition type \"audit\" is not a defined stage class in the workflow engine"
 
+  headers:
+    XRequestId:
+      description: >-
+        The request id: the caller's `x-request-id` when it is 1 to 128 characters of
+        `[a-zA-Z0-9._-]`, else a new UUID. Sent on every response.
+      schema: { type: string }
+      example: 0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a99
+    XTraceId:
+      description: The OpenTelemetry trace id of the request. Sent on every response.
+      schema: { type: string }
+      example: 4bf92f3577b34da6a3ce929d0e0e4736
+
   responses:
     Unauthorized:
       description: >
         UNAUTHORIZED — missing or invalid gateway identity headers. Absent, blank or not a
         UUID: detail `x-tenant-id must be a UUID` or `x-user-id must be a UUID`; an identity
         the database scope refuses: `identity headers are not acceptable`. A repeated
-        identity header or an unacceptable `x-tenant-roles` is refused by the shared HTTP
-        library in its own problem format (`PlatformProblem`, `errorCode` UNAUTHORIZED). The
-        `application/json` `GatewayAuthError` body is not written by the current code.
+        identity header, an identity header over 256 bytes or holding a control character,
+        or an unacceptable `x-tenant-roles` is refused by the shared HTTP library in its
+        own problem format (`PlatformProblem`, `errorCode` UNAUTHORIZED).
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/ProblemDetails' }
-          example:
-            type: "https://api.workflow.platform/errors/unauthorized"
-            title: "Unauthorized Access"
-            status: 401
-            detail: "x-tenant-id must be a UUID"
-            instance: "/api/v1/workflows"
-            code: "UNAUTHORIZED"
-        application/json:
-          schema: { $ref: '#/components/schemas/GatewayAuthError' }
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/ProblemDetails'
+              - $ref: '#/components/schemas/PlatformProblem'
+          examples:
+            service:
+              summary: Written by this service (ProblemDetails)
+              value:
+                type: "https://api.workflow.platform/errors/unauthorized"
+                title: "Unauthorized Access"
+                status: 401
+                detail: "x-tenant-id must be a UUID"
+                instance: "/api/v1/workflows"
+                code: "UNAUTHORIZED"
+            library:
+              summary: Written by the shared HTTP library (PlatformProblem)
+              value:
+                type: "https://errors.company.com/platform/unauthorized"
+                title: "Unauthorized"
+                status: 401
+                detail: "Ambiguous x-tenant-id header."
+                instance: "/api/v1/workflows"
+                traceId: "4bf92f3577b34da6a3ce929d0e0e4736"
+                errorCode: "UNAUTHORIZED"
+                timestamp: "2026-11-13T09:30:00Z"
 
     Forbidden:
       description: >-
         FORBIDDEN — the caller lacks the required role: detail `caller lacks
         tenant_admin/tenant_owner role`, or for a global-scope module or starter `caller
         lacks platform_operator role`.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1357,6 +1447,8 @@ components:
         unknown path, so no identity headers are needed to see it. A path with a trailing
         slash is not redirected; it is an unknown path and answers `404 NOT_FOUND`.
       headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
         Allow:
           description: The methods the path serves, for example `GET, POST`.
           schema: { type: string }
@@ -1376,6 +1468,9 @@ components:
         NOT_FOUND — the resource does not exist in the caller's tenant, or belongs to
         another tenant or another parent (security through obscurity). The detail is the
         fixed text `resource not found`.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1389,6 +1484,9 @@ components:
 
     PayloadTooLarge:
       description: PAYLOAD_TOO_LARGE — the request body exceeds the 10 MiB (10,485,760-byte) limit. Not retryable.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1405,6 +1503,9 @@ components:
         UNSUPPORTED_MEDIA_TYPE — a request with a body (any method, a non-zero or unknown
         Content-Length) must carry `Content-Type` application/json, compared without letter
         case and ignoring parameters. A request without a body passes.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1425,6 +1526,9 @@ components:
         (detail `query parameters are invalid`). INVALID_BPMN_XML: BPMN that cannot be
         parsed (not well-formed, a document type or entity declaration, over the token
         limit). Fields and parameters are named in `invalid_params`; values are never echoed.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1442,12 +1546,15 @@ components:
         (unreachable, out of connections, shut down, a statement cancelled), a transaction
         that lost every serialization retry, the Valkey lock store, the OpenBao secret store,
         the Execution Service, Org & Membership, the catalog's plan table (including a
-        missing or unknown x-plan), or Entitlements (including a limit not read within
+        missing or unknown x-plan when the limit comes from the plan table), or Entitlements (including a limit not read within
         the freshness bound) — detail `an upstream dependency is temporarily
         unavailable` — or the request was cancelled or passed its 30-second deadline
-        (detail `the request was cancelled or its deadline passed`). A request still
-        unanswered at the deadline gets the shared library's 503 (`PlatformProblem`,
-        errorCode REQUEST_TIMEOUT). The request changed nothing and is safe to retry.
+        (the same detail when a dependency call was cut short, else `the request was
+        cancelled or its deadline passed`). The request
+        changed nothing and is safe to retry.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1458,13 +1565,15 @@ components:
             detail: "an upstream dependency is temporarily unavailable"
             instance: "/api/v1/workflows"
             code: "UPSTREAM_UNAVAILABLE"
-
     Conflict:
       description: >-
         State conflict; `code` gives the case. On the routes that take an Idempotency-Key:
         IDEMPOTENCY_KEY_REPLAY (detail `idempotency key replay with different payload`) or
         IDEMPOTENCY_REQUEST_IN_PROGRESS (detail `a request with this idempotency key is
         still running`). Each operation lists its other codes.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1484,6 +1593,9 @@ components:
         field over its limit, containing a NUL character or (where required) only
         whitespace, or a scope other than tenant or global. ASSIGNEE_INELIGIBLE (publish
         only): a default assignee is not an eligible member.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1507,16 +1619,55 @@ components:
         INTERNAL_ERROR — unexpected server error (detail `an unexpected error occurred`, or
         `missing request context` for a misconfigured route). A recovered panic is answered
         by the shared library in its own format (`PlatformProblem`, no detail).
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/ProblemDetails' }
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/ProblemDetails'
+              - $ref: '#/components/schemas/PlatformProblem'
+          examples:
+            service:
+              summary: Written by this service (ProblemDetails)
+              value:
+                type: "https://api.workflow.platform/errors/internal-error"
+                title: "Internal Server Error"
+                status: 500
+                detail: "an unexpected error occurred"
+                instance: "/api/v1/workflows"
+                code: "INTERNAL_ERROR"
+            library:
+              summary: A recovered panic (PlatformProblem)
+              value:
+                type: "https://errors.company.com/platform/internal-error"
+                title: "Internal Server Error"
+                status: 500
+                instance: "/api/v1/workflows"
+                traceId: "4bf92f3577b34da6a3ce929d0e0e4736"
+                errorCode: "INTERNAL_ERROR"
+                timestamp: "2026-11-13T09:30:00Z"
+
+    PlatformInternalError:
+      description: >-
+        A recovered panic, written by the shared HTTP library (`PlatformProblem`,
+        errorCode INTERNAL_ERROR, no detail). Used by the probes, which have no
+        handler error of their own.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/PlatformProblem' }
           example:
-            type: "https://api.workflow.platform/errors/internal-error"
+            type: "https://errors.company.com/platform/internal-error"
             title: "Internal Server Error"
             status: 500
-            detail: "an unexpected error occurred"
-            instance: "/api/v1/workflows"
-            code: "INTERNAL_ERROR"
+            instance: "/healthz"
+            traceId: "4bf92f3577b34da6a3ce929d0e0e4736"
+            errorCode: "INTERNAL_ERROR"
+            timestamp: "2026-11-13T09:30:00Z"
 
 paths:
 
@@ -1542,9 +1693,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - in: query
           name: page
           description: 1-based page number. Not an integer from 1 to 100000 is 400 INVALID_INPUT.
@@ -1588,6 +1737,9 @@ paths:
       responses:
         "200":
           description: Paginated workflow list.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -1626,8 +1778,8 @@ paths:
         as it is now); the publish-only checks run at publish. Then the tenant's workflow
         template limit is read (by `x-plan` from the plan table, or per tenant from
         Entitlements), and the workflow is counted and inserted in
-        one transaction. Workflows with a DRAFT or PUBLISHED version count against the
-        limit; archived ones do not.
+        one transaction. Workflows with an active version or a draft count against the
+        limit.
 
         Responses, in the order the checks run:
         - `201` — created.
@@ -1638,7 +1790,7 @@ paths:
         - `422 INVALID_INPUT` — key or name only whitespace, a field over its limit, or a NUL character.
         - `400 INVALID_BPMN_XML` — the BPMN cannot be parsed.
         - `422 BPMN_VALIDATION_FAILED` — the BPMN has an error-severity issue; `invalid_params` lists every issue found, warnings included.
-        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan, catalog, Entitlements, module lookups or database.
+        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan (plan-table source only), catalog, Entitlements, module lookups or database.
         - `403 PLAN_QUOTA_EXCEEDED` — the tenant is at its template limit; carries plan_code, limit and current_count.
         - `409 DUPLICATE_TEMPLATE_KEY` — the key is taken in this tenant.
         - `401 UNAUTHORIZED`, `415 UNSUPPORTED_MEDIA_TYPE`, `500 INTERNAL_ERROR` — as for every operation.
@@ -1650,9 +1802,8 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
         - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
@@ -1665,11 +1816,13 @@ paths:
               properties:
                 key:
                   type: string
+                  minLength: 1
                   maxLength: 255
                   description: Unique template key for this workflow within the tenant, free-form, letter case significant. Immutable after creation. Empty is 400 BAD_REQUEST; only whitespace, over 255 characters or a NUL character is 422 INVALID_INPUT; stored as sent.
                   example: tender-review
                 name:
                   type: string
+                  minLength: 1
                   maxLength: 255
                   description: The workflow name. Empty is 400 BAD_REQUEST; only whitespace, over 255 characters or a NUL character is 422 INVALID_INPUT; stored as sent.
                   example: Tender Document Review Process
@@ -1680,6 +1833,7 @@ paths:
                   example: Standard review process for tender proposal documents
                 bpmn_xml:
                   type: string
+                  minLength: 1
                   description: Raw BPMN 2.0 XML string. The request body is limited to 10 MB (413 above it). Empty is 400 BAD_REQUEST; XML that cannot be parsed is 400 INVALID_BPMN_XML; a document with error-severity issues (a missing bpmn or zeebe namespace among them) is 422 BPMN_VALIDATION_FAILED.
                   example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
             example:
@@ -1690,6 +1844,9 @@ paths:
       responses:
         "201":
           description: Workflow and initial draft created. version_number is always null (a DRAFT); message is `Workflow created`.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowWriteResult' }
@@ -1705,6 +1862,9 @@ paths:
             bpmn_xml (named in invalid_params), or an Idempotency-Key over 256 bytes.
             INVALID_BPMN_XML — the BPMN could not be parsed (detail `the BPMN document could
             not be parsed`).
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1720,6 +1880,9 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403":
           description: Caller lacks the required role, or the tenant has reached the workflow template limit of its plan (PLAN_QUOTA_EXCEEDED, which also carries plan_code, limit and current_count).
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1736,6 +1899,9 @@ paths:
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "409":
           description: DUPLICATE_TEMPLATE_KEY — the template key already exists for this tenant. IDEMPOTENCY_KEY_REPLAY or IDEMPOTENCY_REQUEST_IN_PROGRESS — see Idempotency-Key.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1774,9 +1940,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
       requestBody:
         required: true
         content:
@@ -1788,6 +1952,7 @@ paths:
               properties:
                 bpmn_xml:
                   type: string
+                  minLength: 1
                   description: Raw BPMN 2.0 XML. The request body is limited to 10 MB (413 above it). Empty is 400 BAD_REQUEST; XML that cannot be parsed is 400 INVALID_BPMN_XML; a missing bpmn or zeebe namespace is a MISSING_NAMESPACE issue in the 200 body.
                   example: "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">...</bpmn:definitions>"
             example:
@@ -1795,6 +1960,9 @@ paths:
       responses:
         "200":
           description: BPMN validation results (valid status and potential errors list).
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/BpmnValidationFailure' }
@@ -1802,6 +1970,9 @@ paths:
           description: >-
             BAD_REQUEST — malformed body, unknown field, bpmn_xml missing or empty.
             INVALID_BPMN_XML — the XML cannot be parsed (detail `the BPMN document could not be parsed`).
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -1839,9 +2010,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - in: query
           name: versions_limit
@@ -1850,6 +2019,9 @@ paths:
       responses:
         "200":
           description: Workflow detail with version list.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -1859,8 +2031,8 @@ paths:
                   key:              { type: string, description: "The template key." }
                   name:             { type: string, description: "The workflow name." }
                   description:      { type: string, description: "The workflow description; an empty string when none." }
-                  active_version_id: { type: string, format: uuid, nullable: true, description: "The active PUBLISHED version. Omitted (never null) when there is none." }
-                  active_version_number: { type: integer, nullable: true, description: "The active version's number. Omitted (never null) when there is no active version." }
+                  active_version_id: { type: string, format: uuid, description: "The active PUBLISHED version. Omitted (never null) when there is none." }
+                  active_version_number: { type: integer, description: "The active version's number. Omitted (never null) when there is no active version." }
                   created_at:       { type: string, format: date-time, description: "When the workflow was created." }
                   updated_at:       { type: string, format: date-time, description: "When the workflow record last changed." }
                   has_draft:        { type: boolean, description: "Whether the workflow has a DRAFT version." }
@@ -1918,9 +2090,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - in: query
           name: page
@@ -1933,6 +2103,9 @@ paths:
       responses:
         "200":
           description: Paginated version list.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -1981,13 +2154,14 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
       responses:
         "200":
           description: Draft version detail. A draft carries no version_number, artifact_hash, compiled_plan_json or published_at, and module_refs is empty.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VersionDetail' }
@@ -1995,6 +2169,9 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404":
           description: "DRAFT_NOT_FOUND — the workflow has no draft (detail `no active draft exists`). NOT_FOUND — no such workflow in the tenant."
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2035,14 +2212,15 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         "201":
           description: Draft created.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowWriteResult' }
@@ -2058,6 +2236,9 @@ paths:
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "409":
           description: "DRAFT_ALREADY_EXISTS (detail `draft already exists`), NO_ACTIVE_VERSION (detail `no active version`), IDEMPOTENCY_KEY_REPLAY or IDEMPOTENCY_REQUEST_IN_PROGRESS."
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2106,9 +2287,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/IdempotencyKey'
         - name: If-Match
@@ -2149,6 +2328,9 @@ paths:
       responses:
         "200":
           description: Draft updated.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -2173,6 +2355,9 @@ paths:
             Idempotency-Key over 256 bytes, or no lock token (detail `request is missing its
             optimistic-lock token`, invalid_params record_version). INVALID_BPMN_XML —
             bpmn_xml is not well-formed (detail `the BPMN document could not be parsed`).
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2190,14 +2375,17 @@ paths:
         "403": { $ref: '#/components/responses/Forbidden' }
         "404":
           description: Workflow or draft version not found.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example:
                 type: https://api.workflow.platform/errors/not-found
-                title: Not Found
+                title: Draft Not Found
                 status: 404
-                detail: "no draft found for this workflow"
+                detail: "no active draft exists"
                 instance: /api/v1/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/draft
                 code: DRAFT_NOT_FOUND
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
@@ -2207,6 +2395,9 @@ paths:
             another save won the race (current_record_version carries the draft's token), or
             another save holds the edit lock (no current_record_version; retry).
             IDEMPOTENCY_KEY_REPLAY or IDEMPOTENCY_REQUEST_IN_PROGRESS.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2220,6 +2411,9 @@ paths:
                 current_record_version: 5
         "422":
           description: INVALID_INPUT — name over 255 or description over 2000 characters, or a NUL character in either; invalid_params names each field.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2260,31 +2454,38 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         "204":
           description: Draft discarded. No response body.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "404":
           description: Workflow or draft version not found.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example:
                 type: https://api.workflow.platform/errors/not-found
-                title: Not Found
+                title: Draft Not Found
                 status: 404
-                detail: "no draft found for this workflow"
+                detail: "no active draft exists"
                 instance: /api/v1/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/draft
                 code: DRAFT_NOT_FOUND
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "409":
           description: IDEMPOTENCY_KEY_REPLAY or IDEMPOTENCY_REQUEST_IN_PROGRESS.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2330,14 +2531,15 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         "200":
           description: Workflow archived.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -2356,6 +2558,9 @@ paths:
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "409":
           description: NO_ACTIVE_VERSION (detail `no active version`) — never published or already archived. ACTIVE_INSTANCES_EXIST (detail `active workflow instances exist`). IDEMPOTENCY_KEY_REPLAY or IDEMPOTENCY_REQUEST_IN_PROGRESS.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2371,6 +2576,9 @@ paths:
         "400": { $ref: '#/components/responses/BadRequest' }
         "503":
           description: UPSTREAM_UNAVAILABLE — the Execution Service could not be asked about running instances, or the database is unavailable. Nothing was archived.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2402,14 +2610,15 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/VersionId'
       responses:
         "200":
           description: Version detail.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VersionDetail' }
@@ -2488,9 +2697,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/VersionId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -2516,6 +2723,9 @@ paths:
       responses:
         "200":
           description: Version published.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -2536,6 +2746,9 @@ paths:
           description: >-
             BAD_REQUEST — malformed body or unknown field, an id that is not a UUID, or an
             Idempotency-Key over 256 bytes. INVALID_BPMN_XML — the draft's BPMN cannot be parsed.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2554,6 +2767,9 @@ paths:
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "409":
           description: Structural divergence detected (`STRUCTURAL_DIVERGENCE`; `force_publish_structural` accepts it), the version is not a DRAFT (`INVALID_VERSION_STATUS`), the draft was saved after the publish read it or another publish took the number (`DRAFT_CONCURRENCY`; publish again), or IDEMPOTENCY_KEY_REPLAY or IDEMPOTENCY_REQUEST_IN_PROGRESS.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2570,6 +2786,9 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
         "503":
           description: UPSTREAM_UNAVAILABLE — Org & Membership could not answer an eligibility check (a 400, 403 or 5xx from it, a transport error, or an answer without the eligible flag), module lookups or the database failed, or the deadline passed. Nothing was published.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2601,7 +2820,7 @@ paths:
         - `422 INVALID_INPUT` — new_key or new_name only whitespace, a field over its limit, or a NUL character.
         - `404 NOT_FOUND` — no such source version, or it belongs to another workflow.
         - `409 INVALID_VERSION_STATUS` — the source is a DRAFT.
-        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan, catalog, Entitlements or database.
+        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan (plan-table source only), catalog, Entitlements or database.
         - `403 PLAN_QUOTA_EXCEEDED` — the tenant is at its template limit; carries plan_code, limit and current_count.
         - `409 DUPLICATE_TEMPLATE_KEY` — new_key is taken in this tenant.
         - `401 UNAUTHORIZED`; `415 UNSUPPORTED_MEDIA_TYPE`; `500 INTERNAL_ERROR`.
@@ -2613,9 +2832,8 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
         - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/VersionId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -2630,11 +2848,13 @@ paths:
               properties:
                 new_key:
                   type: string
+                  minLength: 1
                   maxLength: 255
                   description: New unique template key for the cloned workflow. Must not already exist for this tenant (409 DUPLICATE_TEMPLATE_KEY). Empty is 400 BAD_REQUEST; only whitespace, over 255 characters or a NUL character is 422 INVALID_INPUT; stored as sent.
                   example: tender-review-copy
                 new_name:
                   type: string
+                  minLength: 1
                   maxLength: 255
                   description: The name of the cloned workflow. Empty is 400 BAD_REQUEST; only whitespace, over 255 characters or a NUL character is 422 INVALID_INPUT; stored as sent.
                   example: "Tender Document Review Process (Cloned)"
@@ -2650,6 +2870,9 @@ paths:
       responses:
         "201":
           description: New workflow created from clone; the version is its DRAFT.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowWriteResult' }
@@ -2663,6 +2886,9 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403":
           description: Caller lacks the required role, or the tenant has reached the workflow template limit of its plan (PLAN_QUOTA_EXCEEDED, which also carries plan_code, limit and current_count).
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2680,6 +2906,9 @@ paths:
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "409":
           description: Template key conflict (cloned key already exists), source version is not PUBLISHED or ARCHIVED, or idempotency key reused with a different payload.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2704,6 +2933,9 @@ paths:
                     code: "INVALID_VERSION_STATUS"
         "422":
           description: INVALID_INPUT — new_key or new_name only whitespace, a field over its limit, or a NUL character; invalid_params names each field.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2741,7 +2973,7 @@ paths:
         - `409 IDEMPOTENCY_KEY_REPLAY`, `IDEMPOTENCY_REQUEST_IN_PROGRESS`.
         - `404 NOT_FOUND` — no such version or workflow, or the version belongs to another workflow.
         - `409 INVALID_VERSION_STATUS` — the version is not PUBLISHED, or a membership revocation marked it invalid.
-        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan (when the limit applies), catalog, Entitlements or database.
+        - `503 UPSTREAM_UNAVAILABLE` — missing or unknown x-plan (when the limit applies, plan-table source only), catalog, Entitlements or database.
         - `403 PLAN_QUOTA_EXCEEDED` — carries plan_code, limit and current_count.
         - `401 UNAUTHORIZED`; `415 UNSUPPORTED_MEDIA_TYPE` (a non-JSON body); `500 INTERNAL_ERROR`.
       tags: [Versions]
@@ -2752,15 +2984,17 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
         - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/VersionId'
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         "200":
           description: Version promoted to active.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -2779,6 +3013,9 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403":
           description: Caller lacks the required role, or the tenant has reached the workflow template limit of its plan (PLAN_QUOTA_EXCEEDED, which also carries plan_code, limit and current_count).
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2796,6 +3033,9 @@ paths:
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "409":
           description: INVALID_VERSION_STATUS — the version is not PUBLISHED (detail `workflow version is not in PUBLISHED status`) or is marked invalid (detail `invalid version status for this operation`). IDEMPOTENCY_KEY_REPLAY or IDEMPOTENCY_REQUEST_IN_PROGRESS.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2834,14 +3074,15 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/VersionId'
       responses:
         "200":
           description: Validation result for the stored version.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -2897,24 +3138,42 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/VersionId'
       responses:
         "200":
           description: The version's nodes.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VersionNodes' }
         "400":
           description: An id in the path is not a UUID.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example:
+                type: "https://api.workflow.platform/errors/bad-request"
+                title: "Bad Request"
+                status: 400
+                detail: "invalid version_id: not a valid UUID"
+                instance: "/api/v1/workflows/8fa88cde-824c-47bc-836b-665cd42c2222/versions/not-a-uuid/nodes"
+                code: "BAD_REQUEST"
         "401": { $ref: '#/components/responses/Unauthorized' }
         "404": { $ref: '#/components/responses/NotFound' }
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "409":
           description: The version is a DRAFT, which has no stored plan (INVALID_VERSION_STATUS, detail `workflow version is not in PUBLISHED status`).
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2949,15 +3208,15 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
         - $ref: '#/components/parameters/VersionId'
       responses:
         "200":
           description: Raw BPMN XML file, sent with Content-Type `application/xml; charset=utf-8`.
           headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
             Content-Disposition:
               description: The download file name, `<template key>-v<number or draft>.bpmn`.
               schema: { type: string, example: 'attachment; filename=tender-review-v2.bpmn' }
@@ -2994,23 +3253,16 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
-        - $ref: '#/components/parameters/Departments'
-        - $ref: '#/components/parameters/Plan'
-        - $ref: '#/components/parameters/FeatureFlags'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/WorkflowId'
-        - name: version_id
-          in: path
-          required: true
-          description: Base version ID.
-          schema: { type: string, format: uuid }
-        - name: target_version_id
-          in: path
-          required: true
-          description: Target version ID.
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/TargetVersionId'
       responses:
         "200":
           description: Diff result.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3071,12 +3323,18 @@ paths:
       summary: Liveness Probe
       description: >-
         Answers 200 while the process serves HTTP; checks no dependency and needs no
-        identity headers. The 500 and 503 are only the shared library's panic and
-        deadline answers (PlatformProblem).
+        identity headers. The 500 is only the shared library's panic answer
+        (PlatformProblem).
       tags: [Health]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
       responses:
         "200":
           description: Service is healthy.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3086,8 +3344,7 @@ paths:
               example:
                 status: ok
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
-        "500": { $ref: '#/components/responses/InternalError' }
-        "503": { $ref: '#/components/responses/ServiceUnavailable' }
+        "500": { $ref: '#/components/responses/PlatformInternalError' }
 
   /readyz:
     get:
@@ -3097,11 +3354,18 @@ paths:
         Ready means the database answers. A Valkey outage does not make the service unready,
         since plans are served from the database; it is reported as `cache: degraded`.
         After SIGTERM the probe answers 503 `draining` for SHUTDOWN_DRAIN_DELAY (5 s by
-        default) before the listener stops. Needs no identity headers.
+        default) before the listener stops. Needs no identity headers. A recovered
+        panic is the shared library's 500 (PlatformProblem).
       tags: [Health]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
       responses:
         "200":
           description: Service is ready to accept traffic.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3120,8 +3384,12 @@ paths:
                 db_conns: 3
                 db_max_conns: 10
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
+        "500": { $ref: '#/components/responses/PlatformInternalError' }
         "503":
           description: Not ready — the database is unreachable (`unavailable`, with `db`), or the pod is draining for shutdown (`draining`, alone).
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3145,14 +3413,19 @@ paths:
         The list comes from workflow-models and is the same for every tenant.
 
         Responses: `200`; `401 UNAUTHORIZED`; `415 UNSUPPORTED_MEDIA_TYPE`;
-        `500 INTERNAL_ERROR`; `503` only as the shared library's deadline answer.
+        `500 INTERNAL_ERROR`.
       tags: [BPMN]
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
       responses:
         "200":
           description: The recognized element list.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3168,7 +3441,6 @@ paths:
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }
-        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/connectors/registry:
     get:
@@ -3176,21 +3448,26 @@ paths:
       summary: List the connector type registry
       description: >
         Static metadata for every registered connector type (currently storage,
-        send-email, rest-call) — field definitions for the modeler
+        send-email, rest-call; the example shows rest-call only) — field definitions for the modeler
         UI's connector-task configuration form. The registry is compiled into
         workflow-connectors and is the same for every tenant.
 
         Responses: `200`; `401 UNAUTHORIZED`; `415 UNSUPPORTED_MEDIA_TYPE`;
-        `500 INTERNAL_ERROR`; `503` only as the shared library's deadline answer.
+        `500 INTERNAL_ERROR`.
       tags: [Connectors]
       security:
         - GatewayTenantContext: []
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
       responses:
         "200":
           description: The connector registry.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3221,21 +3498,48 @@ paths:
                 connectors:
                   rest-call:
                     type: rest-call
-                    display_name: REST Call
-                    description: Invoke an external HTTP endpoint via a pre-registered alias.
+                    display_name: "REST Call (internal platform APIs only)"
+                    description: "Alias-based, never a raw URL — the target is always another service on this platform, never an external domain."
                     inputs:
-                      - name: provider
-                        kind: enum
+                      - name: endpointAlias
+                        kind: string
+                        required: true
+                        description: "Resolved against cmd/connector-worker's own static internal-service registry — never a raw URL."
+                      - name: pathParams
+                        kind: map
                         required: false
-                        enum_values: [aws-s3, azure-blob, gcp-gcs, google-drive]
-                        description: Backend provider for this call. Required — no default.
-                    outputs: []
+                        description: "Fills the alias's {name} placeholders. A path segment value is path-escaped and must not be empty, \".\" or \"..\"."
+                      - name: queryParams
+                        kind: map
+                        required: false
+                        description: "Added to the query string; a key the alias's path template already sets is rejected, never overridden."
+                      - name: body
+                        kind: any
+                        required: false
+                    outputs:
+                      - name: status
+                        kind: int
+                        required: false
+                      - name: method
+                        kind: string
+                        required: false
+                        description: "The HTTP method sent (the alias's method, upper-case). Returned with every result once the request was sent, failures included, so a retry decision (connectors.DecideRetry) needs no second alias lookup."
+                      - name: headers
+                        kind: map
+                        required: false
+                      - name: body
+                        kind: any
+                        required: false
+                        description: "JSON-decoded when the response Content-Type contains \"json\", with numbers kept as exact decimal text (json.Number, so integers beyond 2^53 lose no digits); otherwise a string."
+                      - name: bodyTruncated
+                        kind: bool
+                        required: false
+                        description: "Set (true) only when the body was over the 10 MiB response cap, or (status >= 300) cut off: body is then its first 10 MiB, or what arrived, as a string. A 2xx over the cap fails permanently with reason \"response too large\" (not invalid input: the service processed the call), with status and headers still returned."
                     retry: conditional
         "401": { $ref: '#/components/responses/Unauthorized' }
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "415": { $ref: '#/components/responses/UnsupportedMediaType' }
         "500": { $ref: '#/components/responses/InternalError' }
-        "503": { $ref: '#/components/responses/ServiceUnavailable' }
 
   /api/v1/connectors/credentials:
     post:
@@ -3263,6 +3567,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
       requestBody:
         required: true
         content:
@@ -3272,9 +3577,9 @@ paths:
               additionalProperties: false
               required: [connector_type, field_name, value]
               properties:
-                connector_type: { type: string, description: "Must match a registered connector type exactly (see GET /connectors/registry); otherwise 400 INVALID_INPUT." }
-                field_name:     { type: string, pattern: '^[a-zA-Z0-9_-]+$', description: "The credential field; at most 128 characters, refused with 400 INVALID_INPUT above that or when it does not match the pattern." }
-                value:          { type: string, description: "The secret value, stored as sent, surrounding whitespace included. Empty is 400 BAD_REQUEST; a value of only whitespace is 400 INVALID_INPUT." }
+                connector_type: { type: string, enum: [storage, send-email, rest-call], description: "A registered connector type, matched exactly (see GET /connectors/registry). Empty is 400 BAD_REQUEST; any other value is 400 INVALID_INPUT. The list grows with the connector registry." }
+                field_name:     { type: string, minLength: 1, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$', description: "The credential field; at most 128 characters, refused with 400 INVALID_INPUT above that or when it does not match the pattern." }
+                value:          { type: string, minLength: 1, description: "The secret value, stored as sent, surrounding whitespace included. Empty is 400 BAD_REQUEST; a value of only whitespace is 400 INVALID_INPUT." }
             example:
               connector_type: rest-call
               field_name: api_key
@@ -3282,6 +3587,9 @@ paths:
       responses:
         "201":
           description: Credential field written.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3295,6 +3603,9 @@ paths:
             BAD_REQUEST — malformed body, unknown field, or a missing or empty connector_type,
             field_name or value. INVALID_INPUT — unrecognized connector_type, a field_name that
             does not match the pattern or is over 128 characters, or a value of only whitespace.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -3313,6 +3624,9 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
         "503":
           description: UPSTREAM_UNAVAILABLE — the secret store (OpenBao) is not configured, unreachable, or answers an error (a 403 from it included). Nothing was written.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -3344,20 +3658,28 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
         - in: path
           name: connector_type
           required: true
-          schema: { type: string }
-          description: Must match a registered connector type exactly; otherwise 400 INVALID_INPUT.
+          schema: { type: string, enum: [storage, send-email, rest-call] }
+          description: A registered connector type, matched exactly; any other value is 400 INVALID_INPUT. The list grows with the connector registry.
         - in: path
           name: field_name
           required: true
-          schema: { type: string, pattern: '^[a-zA-Z0-9_-]+$' }
+          schema: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' }
           description: The credential field; at most 128 characters, refused with 400 INVALID_INPUT above that or when it does not match the pattern.
       responses:
-        "204": { description: Credential field revoked. No response body. }
+        "204":
+          description: Credential field revoked. No response body.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
         "400":
           description: INVALID_INPUT — unrecognized connector_type, or an invalid field_name (detail names the rule).
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -3375,6 +3697,9 @@ paths:
         "500": { $ref: '#/components/responses/InternalError' }
         "503":
           description: UPSTREAM_UNAVAILABLE — the secret store (OpenBao) is not configured, unreachable, or answers an error. Nothing was deleted.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -3396,6 +3721,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
         - in: query
           name: page
           description: 1-based page number. Not an integer from 1 to 100000 is 400 INVALID_INPUT.
@@ -3415,6 +3742,9 @@ paths:
       responses:
         "200":
           description: Paginated module list.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3478,6 +3808,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
@@ -3488,10 +3819,11 @@ paths:
               additionalProperties: false
               required: [name, bpmn_xml]
               properties:
-                name:        { type: string, maxLength: 255, description: "The module name. Empty is 400 BAD_REQUEST; only whitespace, over 255 characters or a NUL character is 422 INVALID_INPUT; stored as sent." }
+                name:        { type: string, minLength: 1, maxLength: 255, description: "The module name. Empty is 400 BAD_REQUEST; only whitespace, over 255 characters or a NUL character is 422 INVALID_INPUT; stored as sent." }
                 description: { type: string, maxLength: 2000, description: "Optional description; over 2000 characters or a NUL character is 422 INVALID_INPUT." }
                 bpmn_xml:
                   type: string
+                  minLength: 1
                   description: Must contain exactly one top-level `<bpmn:process>`. Empty is 400 BAD_REQUEST; unparseable XML is 400 INVALID_BPMN_XML.
                 scope:
                   allOf: [{ $ref: '#/components/schemas/CatalogScope' }]
@@ -3505,6 +3837,9 @@ paths:
       responses:
         "201":
           description: Module and initial draft version created.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3524,6 +3859,9 @@ paths:
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "409":
           description: MODULE_PROCESS_ID_CONFLICT — the process id is used by a module the caller can call. IDEMPOTENCY_KEY_REPLAY or IDEMPOTENCY_REQUEST_IN_PROGRESS.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -3557,14 +3895,15 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
-        - in: path
-          name: id
-          required: true
-          description: The module id. Not a UUID is 400 BAD_REQUEST.
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ModuleId'
       responses:
         "200":
           description: Module detail.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ModuleDetail' }
@@ -3627,14 +3966,15 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
-        - in: path
-          name: id
-          required: true
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/ModuleId'
       responses:
         "200":
           description: Module archived.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3658,6 +3998,9 @@ paths:
             before archiving it`): a published workflow version or a workflow draft still uses the
             module; `uses` lists them, published versions first. IDEMPOTENCY_KEY_REPLAY or
             IDEMPOTENCY_REQUEST_IN_PROGRESS.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -3701,14 +4044,15 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
-        - in: path
-          name: id
-          required: true
-          description: The module id. Not a UUID is 400 BAD_REQUEST.
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ModuleId'
       responses:
         "200":
           description: The module's usages.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3752,11 +4096,9 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
-        - in: path
-          name: id
-          required: true
-          description: The module id. Not a UUID is 400 BAD_REQUEST.
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ModuleId'
         - in: query
           name: page
           description: 1-based page number. Not an integer from 1 to 100000 is 400 INVALID_INPUT.
@@ -3768,6 +4110,9 @@ paths:
       responses:
         "200":
           description: Paginated version list.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3833,12 +4178,9 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
-        - in: path
-          name: id
-          required: true
-          description: The module id. Not a UUID is 400 BAD_REQUEST.
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/ModuleId'
       requestBody:
         required: false
         content:
@@ -3853,6 +4195,9 @@ paths:
       responses:
         "201":
           description: Draft version created.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -3877,6 +4222,9 @@ paths:
             MODULE_PROCESS_ID_CONFLICT (the new version's process id differs from its
             module's), NO_ACTIVE_VERSION (no bpmn_xml and nothing to copy), or
             IDEMPOTENCY_KEY_REPLAY or IDEMPOTENCY_REQUEST_IN_PROGRESS.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -3907,19 +4255,16 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
-        - in: path
-          name: id
-          required: true
-          description: The module id. Not a UUID is 400 BAD_REQUEST.
-          schema: { type: string, format: uuid }
-        - in: path
-          name: version_id
-          required: true
-          description: The module version id. Not a UUID is 400 BAD_REQUEST.
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ModuleId'
+        - $ref: '#/components/parameters/ModuleVersionId'
       responses:
         "200":
           description: Module version detail.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ModuleVersion' }
@@ -3952,22 +4297,24 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
-        - in: path
-          name: id
-          required: true
-          schema: { type: string, format: uuid }
-        - in: path
-          name: version_id
-          required: true
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ModuleId'
+        - $ref: '#/components/parameters/ModuleVersionId'
       responses:
         "200":
           description: The module version's contract.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ModuleContract' }
         "400":
           description: BAD_REQUEST — an id in the path is not a UUID. INVALID_BPMN_XML — the stored BPMN cannot be parsed.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -3993,8 +4340,9 @@ paths:
         - `403 FORBIDDEN` — no tenant_admin or tenant_owner role.
         - `400 BAD_REQUEST` — Idempotency-Key over 256 bytes, or an id not a UUID.
         - `409 IDEMPOTENCY_KEY_REPLAY`, `IDEMPOTENCY_REQUEST_IN_PROGRESS`.
-        - `404 NOT_FOUND` — no such module or version visible to the caller, or the version belongs to another module.
+        - `404 NOT_FOUND` — no such module visible to the caller.
         - `403 FORBIDDEN` — a global module without platform_operator.
+        - `404 NOT_FOUND` — no such version, or the version belongs to another module.
         - `409 INVALID_VERSION_STATUS` — the version is not a DRAFT.
         - `400 INVALID_BPMN_XML`; `422 BPMN_VALIDATION_FAILED` — the draft no longer validates.
         - `409 DRAFT_CONCURRENCY` — another publish of the module took the number; publish again.
@@ -4008,18 +4356,16 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
-        - in: path
-          name: id
-          required: true
-          schema: { type: string, format: uuid }
-        - in: path
-          name: version_id
-          required: true
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/ModuleId'
+        - $ref: '#/components/parameters/ModuleVersionId'
       responses:
         "200":
           description: Version published and set as the module's active version.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -4042,6 +4388,9 @@ paths:
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "409":
           description: INVALID_VERSION_STATUS (detail `invalid version status for this operation`) — the version is not in DRAFT status. DRAFT_CONCURRENCY — another publish took the number. IDEMPOTENCY_KEY_REPLAY or IDEMPOTENCY_REQUEST_IN_PROGRESS.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -4074,6 +4423,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
         - in: query
           name: page
           description: 1-based page number. Not an integer from 1 to 100000 is 400 INVALID_INPUT.
@@ -4097,6 +4448,9 @@ paths:
       responses:
         "200":
           description: Paginated starter list.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:
@@ -4155,6 +4509,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
@@ -4165,10 +4520,10 @@ paths:
               additionalProperties: false
               required: [name, bpmn_xml]
               properties:
-                name:        { type: string, maxLength: 255, description: "The starter name. Empty is 400 BAD_REQUEST; only whitespace, over 255 characters or a NUL character is 422 INVALID_INPUT; stored as sent." }
+                name:        { type: string, minLength: 1, maxLength: 255, description: "The starter name. Empty is 400 BAD_REQUEST; only whitespace, over 255 characters or a NUL character is 422 INVALID_INPUT; stored as sent." }
                 description: { type: string, maxLength: 2000, description: "Optional description; over 2000 characters or a NUL character is 422 INVALID_INPUT." }
                 category:    { type: string, maxLength: 64, description: "Optional free-form category; over 64 characters or a NUL character is 422 INVALID_INPUT." }
-                bpmn_xml:    { type: string, description: "The starter's BPMN 2.0 XML. Empty is 400 BAD_REQUEST; unparseable XML is 400 INVALID_BPMN_XML; error-severity issues are 422 BPMN_VALIDATION_FAILED." }
+                bpmn_xml:    { type: string, minLength: 1, description: "The starter's BPMN 2.0 XML. Empty is 400 BAD_REQUEST; unparseable XML is 400 INVALID_BPMN_XML; error-severity issues are 422 BPMN_VALIDATION_FAILED." }
                 scope:
                   allOf: [{ $ref: '#/components/schemas/CatalogScope' }]
                   default: tenant
@@ -4182,6 +4537,9 @@ paths:
       responses:
         "201":
           description: Starter created; created_at and updated_at are the stored times.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/StarterTemplate' }
@@ -4226,6 +4584,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
         - in: path
           name: version_id
@@ -4241,7 +4600,7 @@ paths:
               additionalProperties: false
               required: [name]
               properties:
-                name:        { type: string, maxLength: 255, description: "The starter name. Empty is 400 BAD_REQUEST; only whitespace, over 255 characters or a NUL character is 422 INVALID_INPUT; stored as sent." }
+                name:        { type: string, minLength: 1, maxLength: 255, description: "The starter name. Empty is 400 BAD_REQUEST; only whitespace, over 255 characters or a NUL character is 422 INVALID_INPUT; stored as sent." }
                 description: { type: string, maxLength: 2000, description: "Optional description; over 2000 characters or a NUL character is 422 INVALID_INPUT." }
                 category:    { type: string, maxLength: 64, description: "Optional free-form category; over 64 characters or a NUL character is 422 INVALID_INPUT." }
             example:
@@ -4251,6 +4610,9 @@ paths:
       responses:
         "201":
           description: Starter created from the source version's current content.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/StarterTemplate' }
@@ -4271,6 +4633,9 @@ paths:
         "405": { $ref: '#/components/responses/MethodNotAllowed' }
         "409":
           description: INVALID_VERSION_STATUS (detail `workflow version is not in PUBLISHED status`) — the source version is still in DRAFT status. IDEMPOTENCY_KEY_REPLAY or IDEMPOTENCY_REQUEST_IN_PROGRESS.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -4284,6 +4649,9 @@ paths:
         "400": { $ref: '#/components/responses/BadRequest' }
         "422":
           description: INVALID_INPUT — name only whitespace, a field over its limit, or a NUL character; invalid_params names each field.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -4314,14 +4682,15 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
-        - in: path
-          name: id
-          required: true
-          description: The starter id. Not a UUID is 400 BAD_REQUEST.
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/StarterId'
       responses:
         "200":
           description: Starter detail.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/StarterTemplate' }
@@ -4357,14 +4726,15 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/TenantRoles'
+        - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
-        - in: path
-          name: id
-          required: true
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/StarterId'
       responses:
         "200":
           description: Starter deleted.
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Trace-ID:   { $ref: '#/components/headers/XTraceId' }
           content:
             application/json:
               schema:

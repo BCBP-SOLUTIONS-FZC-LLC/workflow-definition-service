@@ -10,7 +10,7 @@ sequenceDiagram
     Handler ->> Off: RecordOffboarded(tenant, event time)
     Off ->> Ledger: one row, credential and artifact due dates
     Handler -->>- Consumer: 200 OK
-    Note over Handler: a TenantStateChanged with any other status is acknowledged and ignored
+    Note over Handler: a TenantStateChanged with any other status, no status or null data marks the purge record returned
     Purger ->> Ledger: tenants whose retention has lapsed
     Purger ->> Bao: destroy the tenant's connector credentials (registry paths)
     Purger ->> Purger: delete workflows, modules and starters in batches under the tenant's RLS scope

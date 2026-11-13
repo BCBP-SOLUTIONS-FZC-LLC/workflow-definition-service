@@ -115,10 +115,10 @@ Below is a detailed breakdown of each internal module within the Workflow Defini
 - **Gin HTTP API (Handler Layer)**
   - Implemented using the shared **`platform-gincommon`** library (`pkg/gincommon`, `pkg/logger`).
   - **Responsibility**: Exposes REST endpoints, validates incoming JSON/XML request schemas, extracts tenant and user context from gateway-injected headers, and formats structured HTTP responses.
-  - **Input**: Raw HTTP request body (JSON/XML) and identity headers (`x-tenant-id`, `x-user-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`).
+  - **Input**: Raw HTTP request body (JSON/XML) and the gateway's identity headers `x-tenant-id`, `x-user-id`, `x-tenant-roles` and `x-plan` (§3.1).
   - **Output**: HTTP status codes (200, 201, 4xx, 5xx) and structured response payloads (JSON).
-  - **Context Access**: After the `ContextMiddleware` runs, all handlers call `gincommon.RequestContext(c)` to obtain a fully-populated `*domain.RequestContext` carrying `TenantID`, `UserID`, `Roles`, and `TraceID`.
-  - **RBAC**: Read-only endpoints (`GET`) require a valid `x-tenant-id`; mutating endpoints additionally require `x-tenant-roles` to contain `tenant_admin` or `tenant_owner` and answer `403 FORBIDDEN` otherwise; a write to the global catalogue also requires `platform_operator`.
+  - **Context Access**: After the identity checks of §3.1, every handler reads the caller's tenant id, user id and roles from the request's verified identity and never parses the identity headers itself (§8.2). The template-limit calls read `x-plan` (§3.1).
+  - **RBAC**: Read-only endpoints (`GET`) require a valid `x-tenant-id` and `x-user-id`; mutating endpoints additionally require `x-tenant-roles` to contain `tenant_admin` or `tenant_owner` and answer `403 FORBIDDEN` otherwise; a write to the global catalogue also requires `platform_operator`.
   - **Internal routes**: `/api/v1/internal` skips the gateway-identity middleware and is guarded by the system caller identity check instead (§3.4); it shares the HTTP server, its metrics and its tracing.
 
 - **BPMN Parser**
@@ -336,14 +336,15 @@ The Definition Service wires `platform-gincommon` in two tiers: observability mi
 Incoming HTTP request
   → r.MaxMultipartMemory = 10 MiB (Gin router setting) — caps multipart form in-memory buffer; pairs with
                                                          LimitRequestBody for large-body protection
-  → PanicRecoveryMiddleware     (gincommon) — catches panics, emits JSON 500 + platform_http_panics_total metric
+  → PanicRecoveryMiddleware     (gincommon) — catches panics, writes the library's problem 500 + platform_http_panics_total metric
   → RequestIDMiddleware         (gincommon) — reads x-request-id or generates UUID; echoes on response
   → TracingMiddleware           (gincommon) — starts OTel HTTP server span; stores trace_id in Gin context
   → CorrelationHeadersMiddleware(gincommon) — writes X-Trace-ID and X-Request-ID onto the response
   → MetricsMiddleware           (gincommon) — records platform_http_requests_total, platform_http_request_duration_seconds
   → LoggingMiddleware           (gincommon) — emits structured http_request log via Zap on completion
   → TimeoutMiddleware(30s)      (gincommon, innermost via Config.RequestTimeout) — sets the per-request deadline;
-                                              returns 503 and counts platform_http_request_timeouts_total{method,route}
+                                              answers 503 REQUEST_TIMEOUT only when the handler wrote nothing,
+                                              and counts platform_http_request_timeouts_total{method,route}
   → [/healthz, /readyz — public; no further middleware; /metrics is served on the separate metrics port]
   → RequireIdentityHeaders       (service)   — returns 401 when x-tenant-id or x-user-id is missing or blank,
                                               the tenant header checked first
@@ -437,7 +438,7 @@ Tracing starts once at startup, before the metrics identity is fixed and before 
 
 Tracing and the log buffer flush last, so spans written while the pools drain are exported. The sequence drains and closes both pools. The drain delay, the grace and two pool drains stay within the pod's termination grace period (5 + 30 + 2 x 10 s against 60 s). A listener that fails to bind or stops with an error marks the service draining and stops it at once, without waiting for `SHUTDOWN_DRAIN_DELAY`, then runs the remaining shutdown steps, and the process exits non-zero; a panic in a long-lived goroutine is recovered and logged, and does not stop the others. The violation exporter and the tenant purger are restarted one second after a panic; a panic in any other long-lived goroutine is logged and the goroutine is not restarted. The startup role check tolerates a schema that is not migrated yet.
 
-**Request deadline** (30 s): a request exceeding it is cancelled and returns 503, and `platform_http_request_timeouts_total` counts it separately from other 5xx errors. The deadline runs innermost in the middleware chain, so the metrics, the access log and the server span record the same 503 the client receives. A deadline that passes, or a caller that disconnects, while the service is parsing BPMN, resolving modules or reading the database answers `503 UPSTREAM_UNAVAILABLE` and never `500`.
+**Request deadline** (30 s): every request runs under it. A deadline that passes, or a caller that disconnects, while the service is parsing BPMN, resolving modules or reading the database answers `503 UPSTREAM_UNAVAILABLE`. The event ingest answers `500` instead, so the consumer retries (§3.3.17). The shared library answers `503` with the code `REQUEST_TIMEOUT` only when the deadline has passed and the handler has written nothing. The event ingest is the one route that can get it, because its success is a `200` without a body (§3.3.17). `platform_http_request_timeouts_total` counts those answers apart from other 5xx errors. The deadline runs innermost in the middleware chain, so the metrics, the access log and the server span record the status the client receives.
 
 #### 1.6.1.1 Logger
 
@@ -464,20 +465,12 @@ Tracing and the log buffer flush last, so spans written while the pools drain ar
 
 Every HTTP response carries:
 
-| Header | Source | Value |
-| --- | --- | --- |
-| `X-Request-ID` | `RequestIDMiddleware` | Echo of `x-request-id` or generated UUID |
-| `X-Trace-ID` | `CorrelationHeadersMiddleware` | OTel trace ID (hex string) |
+| Header | Value |
+| --- | --- |
+| `X-Request-ID` | The request id (§3.1, `x-request-id`) |
+| `X-Trace-ID` | The server span's trace id (§3.1, `traceparent`) |
 
-Handler code retrieves tenant and trace context via:
-
-```go
-reqCtx, ok := gincommon.RequestContext(c)
-if !ok {
-    // This path is unreachable after ContextMiddleware; treat as 500
-}
-// reqCtx.TenantID, reqCtx.UserID, reqCtx.Roles, reqCtx.TraceID available
-```
+Handlers read the tenant, user and roles from the request's verified identity (§8.2).
 
 ---
 
@@ -1068,14 +1061,13 @@ The Workflow Definition Service exposes a set of REST endpoints for design-time 
 
 The Envoy API Gateway performs JWT verification and injects standardized context headers into all upstream REST requests. These headers are inherited by all endpoints:
 
-- `x-tenant-id` (UUID, Required): Enforces tenant isolation inside the database using RLS. Validated by `gincommon.RequireAuth` — must be non-empty, trimmed, ≤ 256 characters, and contain no control characters. Constant: `gincommon.HeaderTenantID`.
-- `x-user-id` (UUID, Required): Denotes the executing administrative user. Subject to the same validation rules as `x-tenant-id`. Constant: `gincommon.HeaderUserID`. Both must parse as UUIDs, in any spelling the parser accepts (upper case, without hyphens, in braces or as `urn:uuid:`), and are carried in lower-case hyphenated form, so two spellings name the same tenant or user; a value that does not parse is `401 UNAUTHORIZED` before any handler or database work. A request whose `x-tenant-id` or `x-user-id` is missing or blank is refused with `401 UNAUTHORIZED` in this service's problem format before the shared authentication step runs, the tenant header checked first; the UUID format is checked afterwards and is also `401`.
-- `x-tenant-roles` (String, Required): Comma-separated roles (e.g. `tenant_admin`, `tenant_owner`). Validated as `[a-zA-Z0-9_-]+` per role token; mutating calls require administrative access. Constant: `gincommon.HeaderTenantRoles`.
-- `x-departments` (String, Optional): Comma-separated `<department-uuid>:<role>` pairs — e.g. `018e1f2a-0000-7000-8000-000000000001:reviewer,018e1f2a-0000-7000-8000-000000000002:approver`. Each pair names one of the user's department memberships and their role level within it. IAM's HLD (`iam_1.41.md` §5.4) now documents this same `<department_id>:<role_level>` format explicitly, confirming `dept_uuid:role` is correct — the earlier cross-team discrepancy is resolved at the HLD level. IAM's own org-membership LLD reportedly still describes a bare-UUID variant; that residual HLD-vs-LLD inconsistency is IAM's own follow-up to reconcile, tracked in `Notes/conf.md`, not this document's concern.
-- `x-plan` (String, set by the authorization layer): the tenant's plan code (`starter`, `pro` or `enterprise`). With the plan catalog as the limit source, workflow creation and clone look up the plan's template limit by it, and a missing or unknown code fails the request with `503 UPSTREAM_UNAVAILABLE`. With Entitlements as the source the header is not used for the limit (§5.6.4).
-- `x-feature-flags` (String, Optional): Encoded feature flags.
-- `x-request-id` (UUID, Optional): Client-supplied correlation ID. If absent or invalid, `gincommon.RequestIDMiddleware` generates a fresh UUID. Echoed back on the response as `X-Request-ID`. Constant: `gincommon.HeaderRequestID`.
-- `traceparent` (W3C, Optional): Upstream OTel trace context. If present, `gincommon.TracingMiddleware` links the server span to the parent; otherwise a new root span is created. Echoed back as `X-Trace-ID`.
+- `x-tenant-id` (UUID, Required): Enforces tenant isolation inside the database using RLS. After trimming it is at most 256 bytes and holds no control character, DEL, U+2028 or U+2029. A value that breaks this rule, or a repeated header, is refused with `401` in the shared library's problem format (§3.1, Standard Error Patterns).
+- `x-user-id` (UUID, Required): Denotes the executing administrative user. Subject to the same validation rules as `x-tenant-id`. Both must parse as UUIDs, in any spelling the parser accepts (upper case, without hyphens, in braces or as `urn:uuid:`), and are carried in lower-case hyphenated form, so two spellings name the same tenant or user; a value that does not parse is `401 UNAUTHORIZED` before any handler or database work. A request whose `x-tenant-id` or `x-user-id` is missing or blank is refused with `401 UNAUTHORIZED` in this service's problem format before the shared authentication step runs, the tenant header checked first; the UUID format is checked afterwards and is also `401`.
+- `x-tenant-roles` (String; required by mutating calls): Comma-separated roles (e.g. `tenant_admin`, `tenant_owner`). A role token that does not match `[a-zA-Z0-9_-]+` is dropped. A header over 4,096 bytes or naming more than 64 distinct roles is refused with `401` in the shared library's problem format. Mutating calls require administrative access (§8.2).
+- `x-departments` and `x-feature-flags`: the gateway sends them to every Workflow service, and this service does not read them. `x-departments` holds comma-separated `<department-uuid>:<role>` pairs (§8.2). Who may change a template is decided by `x-tenant-roles`, and department membership matters only for a template's default assignees, which publish checks with Org & Membership (§5).
+- `x-plan` (String, set by the authorization layer): the tenant's plan code (`starter`, `pro` or `enterprise`). With the plan catalog as the limit source, workflow creation, clone and a promote on a workflow with no active version look up the plan's template limit by it, and a missing or unknown code fails the request with `503 UPSTREAM_UNAVAILABLE`. With Entitlements as the source the header is not used for the limit (§5.6.4).
+- `x-request-id` (String, Optional): Client-supplied correlation id. After trimming, a value of 1 to 128 characters of `[a-zA-Z0-9._-]` is used; any other value is replaced by a new UUID and never refused. Every response carries the id used as `X-Request-ID`.
+- `traceparent` (W3C, Optional): Upstream trace context. A valid value makes the server span its child; otherwise the span starts a new trace. Every response carries the span's trace id as `X-Trace-ID`.
 
 #### Security & Payload Constraints
 
@@ -1117,7 +1109,7 @@ Input validation is enforced at the service layer before any DB write. Violation
 
 #### Standard Error Patterns (RFC-9457)
 
-All error responses adhere to the RFC-9457 (formerly RFC-7807) Problem Details schema and are sent as `application/problem+json`. This standard provides a consistent, machine-readable format for API errors. Every problem also carries `trace_id` and `request_id`, equal to the `X-Trace-ID` and `X-Request-ID` response headers, so a client can quote them when reporting a failure. The responses the shared HTTP library produces before a handler runs (the request timeout, a recovered panic) keep the library's flat envelope (`error`, `status`, `trace_id`, `request_id`) as `application/json`. A missing or blank identity header is answered by the service's own header check with a `401` problem, and so is an identity header that is not a UUID. The health and readiness bodies are not problem documents. A path no route serves is a `404` problem with code `NOT_FOUND` (a path with a trailing slash included, which is never redirected), a path that a route serves only for other methods is a `405` problem with code `METHOD_NOT_ALLOWED` and an `Allow` header, and both come before authentication (§1.6.1). The `detail` of a `404` or `409` problem is one fixed text per code and never carries the internal error chain or an identifier from the request: `resource not found` for `NOT_FOUND`, `a workflow with this key already exists` for `DUPLICATE_TEMPLATE_KEY`, and the code's own sentence for the others. A `422` detail can carry the validation message. The AsyncAPI document endpoint's failure is a `500` problem that does not name its cause. The base structure is defined as:
+All error responses adhere to the RFC-9457 (formerly RFC-7807) Problem Details schema and are sent as `application/problem+json`. This standard provides a consistent, machine-readable format for API errors. Every problem the service writes also carries `trace_id` and `request_id`, equal to the `X-Trace-ID` and `X-Request-ID` response headers, so a client can quote them when reporting a failure. The shared HTTP library writes three responses in its own RFC 9457 format, also `application/problem+json`. That format carries `errorCode`, `traceId`, `tenantId` and `timestamp` in place of `code`, `trace_id` and `request_id`. The three are a recovered panic (`500`, no detail), the library's identity refusals of §3.1 (`401`) and the deadline answer of §1.6.1 (`503 REQUEST_TIMEOUT`). Moving the service's own problems to the library's member names is planned (Appendix E). A missing or blank identity header is answered by the service's own header check with a `401` problem, and so is an identity header that is not a UUID. The health and readiness bodies are not problem documents. A path no route serves is a `404` problem with code `NOT_FOUND` (a path with a trailing slash included, which is never redirected), a path that a route serves only for other methods is a `405` problem with code `METHOD_NOT_ALLOWED` and an `Allow` header, and both come before authentication (§1.6.1). The `detail` of a `404` or `409` problem is one fixed text per code and never carries the internal error chain or an identifier from the request: `resource not found` for `NOT_FOUND`, `a workflow with this key already exists` for `DUPLICATE_TEMPLATE_KEY`, and the code's own sentence for the others. A `422` detail can carry the validation message. The AsyncAPI document endpoint's failure is a `500` problem that does not name its cause. The base structure is defined as:
 
 ```json
 {
@@ -2047,10 +2039,14 @@ Complete JSON schemas, parameter rules, and data structures are maintained in th
 
 - **Responses**:
   - `200 OK` / `204 No Content` — processed. A redelivered `id` is reprocessed and converges on the same state (§2.3.1). The consumer marks the message handled.
-  - `400 Bad Request` — malformed envelope/payload or unknown required field. Non-retryable; the consumer routes the message to its DLQ after one delivery.
+  - `400 Bad Request` — an envelope that cannot be decoded (a typed member of the wrong JSON type, a `time` that is not RFC 3339), or a handled type's payload or ids that are missing or malformed. Non-retryable; the consumer routes the message to its DLQ after one delivery.
+  - `401 Unauthorized` — the system caller identity is missing (§3.4).
+  - `405 Method Not Allowed` — a method other than `POST`, answered before the identity check.
+  - `413 Payload Too Large` — a body over 10 MiB. Non-retryable.
   - `500 Internal Server Error` — any processing failure, an unavailable database included. The consumer retries and eventually DLQs per its `maxReceiveCount`.
   - `502 Bad Gateway` — `EVENT_DECODE_FAILED`: a handled event type whose schema-registry framed payload cannot be decoded. The consumer retries it.
-- **Note**: The type is read first. Unknown `type` values are acknowledged with `200` and ignored (logged) without their payload being decoded, whatever the payload holds, so adding new event types upstream does not break delivery and a payload the service cannot read for a type it does not handle is never retried. A type the service handles that reaches the dispatch with no case answers `500 INTERNAL_ERROR`, counted with the event type `unknown` and the result `error`, so the consumer redelivers it.
+  - `503 Service Unavailable` — `REQUEST_TIMEOUT` from the shared library, when the 30-second deadline passed before the bodiless `200` was sent (§1.6.1). The event may have been applied; the consumer retries it and the redelivery converges on the same state.
+- **Note**: The whole envelope is decoded first, so a typed member (`id`, `type`, `tenant_id`, `time` and the other string members) of the wrong JSON type is `400` whatever the type; `data` is checked only for a handled type. The envelope has no required member; each handled type checks the members it uses. Unknown `type` values are acknowledged with `200` and ignored (logged) without their payload being decoded, whatever the payload holds, so adding new event types upstream does not break delivery and a payload the service cannot read for a type it does not handle is never retried. A type the service handles that reaches the dispatch with no case answers `500 INTERNAL_ERROR`, counted with the event type `unknown` and the result `error`, so the consumer redelivers it.
 
 ---
 
@@ -2752,7 +2748,7 @@ Below is an abstract example of how a parsed process with sequential and paralle
 start
 :StageStartedActivity;
 note right
-Role: engineer
+Role: preparator
 Default Assignee: user-uuid-alice
 Type: prep
 end note
@@ -2762,7 +2758,7 @@ fork
 |Contract Management|
 :StageStartedActivity;
 note right
-Role: legal
+Role: reviewer
 Type: prep
 end note
 
@@ -2771,7 +2767,7 @@ fork again
 |Planning|
 :StageStartedActivity;
 note right
-Role: planner
+Role: preparator
 Type: prep
 end note
 
@@ -2780,7 +2776,7 @@ end fork
 |Procurement|
 :StageStartedActivity;
 note right
-Role: officer
+Role: approver
 Type: review
 Requires Comment: true
 end note
@@ -2798,7 +2794,7 @@ stop
 ```json
 {
   "name": "Project Initiation Workflow",
-  "task_queue": "workflow-engine-queue",
+  "task_queue": "wf-queue-default",
   "departments": [
     {
       "id": "design",
@@ -2807,7 +2803,7 @@ stop
         {
           "type": "prep",
           "activity": "PrepActivity",
-          "role": "engineer",
+          "role": "preparator",
           "default_assignees": ["user-uuid-alice"],
           "boundary_timer": { "duration": "24h", "interrupting": false }
         }
@@ -2820,7 +2816,7 @@ stop
         {
           "type": "prep",
           "activity": "PrepActivity",
-          "role": "legal",
+          "role": "reviewer",
           "default_assignees": ["user-uuid-bob"],
           "boundary_timer": { "duration": "48h", "interrupting": false }
         }
@@ -2833,7 +2829,7 @@ stop
         {
           "type": "prep",
           "activity": "PrepActivity",
-          "role": "planner",
+          "role": "preparator",
           "default_assignees": ["user-uuid-charlie"]
         }
       ]
@@ -2845,7 +2841,7 @@ stop
         {
           "type": "review",
           "activity": "ReviewActivity",
-          "role": "officer",
+          "role": "approver",
           "default_assignees": ["user-uuid-david", "user-uuid-eve"],
           "extras": { "requires_comment": "true" }
         }
@@ -3829,7 +3825,7 @@ The queue topology (`membership-workflow-q`, its `membership-workflow-q-dlq` DLQ
 
 - The consumer POSTs the full `events.Envelope[json.RawMessage]` (carrying `id`, `type`, `tenant_id`, `data`) to `/api/v1/internal/events`.
 - The endpoint is on an **internal route group** (the system caller identity check, mutual TLS and the `events` rule of the authorization policy, §3.4), **not** the gateway-authenticated public API. It is never exposed through the Envoy gateway.
-- **Unknown types are acknowledged with `200` and ignored.** The type is read before the payload, and an unknown type's payload is never decoded, so a payload the service could not read, a registry-framed one included, is acknowledged and not redelivered. A producer adding an event type this service has no handler for never breaks delivery. A type the service handles that reaches the dispatch with no case answers `500 INTERNAL_ERROR` (§3.3.17).
+- **Unknown types are acknowledged with `200` and ignored.** The decode order is that of §3.3.17; an unknown type's payload is never decoded, so a payload the service could not read, a registry-framed one included, is acknowledged and not redelivered. A producer adding an event type this service has no handler for never breaks delivery. A type the service handles that reaches the dispatch with no case answers `500 INTERNAL_ERROR` (§3.3.17).
 - **Schema-registry payloads.** A producer that encodes through a schema registry (IAM's Org & Membership does when a registry is configured) puts a `dataschema` on the envelope and a base64 string of the registry-framed JSON in `data`. The endpoint decodes that frame with the platform library's decode-only Glue codec, which needs no registry access, before it reads the payload of a type it handles. For such a type, a payload that is not a base64 string, an unreadable frame, a compressed frame and a non-JSON frame each answer `502 EVENT_DECODE_FAILED`, counted with the result `decode_failed`. An envelope without `dataschema` is read as plain JSON, as before.
 - **Retry contract**: `2xx` marks the message handled; `400`, `413` and `422` (malformed request) are permanent, and the consumer routes the message to its DLQ after one delivery; every other failure, `5xx`, timeouts and `401`, `403`, `404`, `408` and `429` included, is redelivered with backoff and dead-lettered after the consumer's receive threshold. A `502` is retried and is not a malformed event, as in the Execution Service's ingest.
 - **Consumer behaviour.** The acknowledgement rule (a message is deleted only after every target it was routed to answers `2xx`), the receive threshold, the dead-letter alert and the consumer's receive-health check are specified in the Workflow Events Consumer LLD §4 and §7. A type absent from the consumer's routes is sent to every target (Workflow Events Consumer LLD §3.2), and this endpoint acknowledges and ignores a type it has no handler for, so an event type that no route names yet reaches this service and is dropped without a retry.
@@ -3945,7 +3941,7 @@ The Definition Service consumes two tenant lifecycle events for the purge ledger
 
 #### 7.4.5 Handling `MembershipRevoked` Event
 
-- **Event Type**: `MembershipRevoked` — Org & Membership emits it unconditionally whenever a user is removed from a tenant. Its payload carries `user_id` and no `department_id`: the removal is tenant-wide, not scoped to one department.
+- **Event Type**: `MembershipRevoked` — Org & Membership emits it unconditionally whenever a user is removed from a tenant. Its payload carries `user_id`, `tenant_id` and `actor_id` and no `department_id`: the removal is tenant-wide. Only `user_id` is read; the tenant comes from the envelope.
 - **Effect**: every draft and published version in that tenant where the user is a default assignee is marked `is_valid=false` (an archived version is left unchanged), with no department filter, followed by the same pause-tasks call the department-scoped handler makes, without a department: Execution pauses every instance that holds a task of the user. `HandleDepartmentMembershipRevoked`'s department filter is optional for exactly this reason — the two events share one implementation, differing only in whether a department narrows the invalidation set.
 - **Redelivery**: absorbed by the same handler-idempotency argument as `DepartmentMembershipRevoked` (§2.3.1) — this handler shares that one's implementation.
 - **Why both handlers exist**: `DepartmentMembershipRevoked` is one department losing one member; `MembershipRevoked` is the user leaving the tenant entirely. A removal that emitted only the tenant-level event would otherwise leave every affected template valid and every live task assigned.
@@ -3985,14 +3981,14 @@ This section consolidates all security controls enforced by the Definition Servi
 - **Route-level gateway policy**: a route-level Envoy Gateway `SecurityPolicy` (CORS) merges with the gateway-level policy (`mergeType: StrategicMerge`, Envoy Gateway 1.8 or later), so the gateway's JWT validation and authorisation filter keep running on this service's routes. Without the merge the most specific policy replaces the gateway's, and the identity headers, `x-plan` included, would reach the service unwritten by the filter.
 - **Calls to the identity subsystem**: the service runs in `workflow-app` inside the mesh with mTLS, because Org & Membership and Catalog admit it by its mesh identity (namespace `workflow-app`, ServiceAccount `workflow-definition-service`) and by a NetworkPolicy keyed on that namespace and its pod label. Its own NetworkPolicy allows egress to Org & Membership (namespace `iam`, port 8080) and Catalog (namespace `iam`, port 8081) only. With the Entitlements address set, egress to the Commercial service in namespace `commercial` is allowed as well, and that service admits this one by the same mesh identity.
 - **Internal route authorization**: the mesh authorization policy admits each internal route group for its own callers (§3.4). It needs the sidecar and mutual TLS of the first bullet; a caller without a mesh identity is refused on the internal paths.
-- **Header validation**: The handler middleware validates the presence of Envoy-injected gateway headers (`x-tenant-id`, `x-user-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, and `traceparent` for distributed tracing). Mutating endpoints require `x-tenant-id`, `x-user-id`, and `x-tenant-roles`. _Note: `traceparent` is proxied by Envoy from upstream; if not present, tracecontext is generated at the boundary via OpenTelemetry (OTel) HTTP middleware.
+- **Header validation**: Every public endpoint requires `x-tenant-id` and `x-user-id`; mutating endpoints also require `x-tenant-roles` (§3.1). The headers read and not read are listed in §3.1. _Note: `traceparent` is proxied by Envoy from upstream; if not present, tracecontext is generated at the boundary via OpenTelemetry (OTel) HTTP middleware.
 
 ### 8.2 Authentication & Authorisation
 
-- **Identity**: Authentication is handled entirely upstream by Keycloak + the ext_authz service. The Definition Service does not validate JWTs; it trusts the injected headers. The `gincommon.RequireAuth` middleware (part of `ProtectedMiddlewares`) enforces that `x-user-id` and `x-tenant-id` are both present, non-empty, trimmed, ≤ 256 characters, and free of control characters. Any request failing these checks receives an immediate `401 Unauthorized` before the handler is reached.
-- **Tenant context propagation**: `gincommon.ContextMiddleware` (also part of `ProtectedMiddlewares`) reads the validated headers and constructs a `*domain.RequestContext` stored in the Gin context. All handlers call `gincommon.RequestContext(c)` to access `TenantID`, `UserID`, `Roles`, and `TraceID` — no direct header parsing occurs in handler code.
-- **Role enforcement**: Every mutating endpoint (`POST`, `PUT`, `PATCH`, `DELETE`) checks the `x-tenant-roles` header before doing any work and rejects callers whose roles do not include `tenant_admin` or `tenant_owner` with `403 Forbidden`; writes to the global catalogue also require `platform_operator`. Read endpoints (`GET`) require only a valid `x-tenant-id` (enforced by `RequireAuth`).
-- **Department/role header**: `x-departments` (§3.1) is gateway-injected to this service like every other header, as comma-separated `dept_uuid:role` pairs — this service doesn't currently gate any authorization decision on it (role enforcement above uses `x-tenant-roles` only), but it's documented here for completeness since a future department-scoped endpoint would read it the same way `execution_service.md` §9.2 already does.
+- **Identity**: Authentication is handled entirely upstream by Keycloak + the ext_authz service. The Definition Service does not validate JWTs; it trusts the injected headers. A request whose `x-user-id` or `x-tenant-id` fails the identity checks of §3.1 receives `401 Unauthorized` before the handler is reached.
+- **Tenant context propagation**: the validated headers become the request's verified identity (tenant id, user id and roles). Every handler reads that identity and never parses the identity headers itself; the tenant id sets the row-level security scope of every database call.
+- **Role enforcement**: Every mutating endpoint (`POST`, `PUT`, `PATCH`, `DELETE`) checks the `x-tenant-roles` header before doing any work and rejects callers whose roles do not include `tenant_admin` or `tenant_owner` with `403 Forbidden`; writes to the global catalogue also require `platform_operator`. Read endpoints (`GET`) require a valid `x-tenant-id` and `x-user-id` and no role (§3.1).
+- **Department/role header**: `x-departments` carries the caller's department memberships as comma-separated `<department-uuid>:<role>` pairs. §3.1 lists the headers the service reads and those it does not. The Execution Service reads it for task and instance visibility (`execution_service.md` §9.2).
 - **Audit of credential and alias writes**: a credential write or revoke logs one Info line with the tenant, the user, the connector type, the field name and the trace id, and an alias write, or the delete of an alias that existed, logs the alias and the trace id (deleting an alias that does not exist writes no audit line). No line carries a credential value. A vault that refuses this service's own token is reported as `503`, since the caller's login is not at fault, and the vault's error body is logged only up to 1 KiB.
 - **Tenant boundary**: Every database query sets the `app.tenant_id` GUC via `pgcommon.WithGUCSet` before any DB access. The `tenant_id` is always sourced from the validated `x-tenant-id` gateway header — never from the request body. This prevents callers from self-selecting a different tenant's data. Cross-tenant data access is impossible regardless of application-layer checks because RLS enforces it at the DB layer.
 - **Connection Role Restrictions**:
@@ -5151,6 +5147,7 @@ Developer documentation is the repository's Markdown: `README.md`, `ARCHITECTURE
 | 1.102 | 2026-11-11 | **The Entitlements limit cache** (§3.1; §5.6.4; §6.1.1). Each replica keeps the limit per tenant with a TTL varied by 20% either way. A limit older than its TTL and within the freshness bound is served at once while one background read per tenant renews it. A refresh does not start while one runs or inside a jittered failure backoff. A caller with no limit within the bound waits for the read and a failed read answers `503 UPSTREAM_UNAVAILABLE`. At most 32 reads run at once per replica, a reader panic is a failed read, and the cache holds at most 10,000 entries. The answer must carry the asked tenant's `tenant_id`, and data after the first JSON value is refused. Startup stops for a TTL of zero or less and for a bound below the TTL. |
 | 1.103 | 2026-11-11 | **One authorization rule per internal route group** (§3.3.17; §3.4; §7.4.1; §8.1; §8.2; §11.1). The authorization policy holds a rule for each internal route group: `events`, `compiled-plans`, `connector-alias-read` and `connector-alias-write`, each with its own callers. The chart refuses to render with the policy off for `staging` and `prod` unless it is explicitly allowed. The policy needs a sidecar with mutual TLS, and `PeerAuthentication` is Platform's. |
 | 1.104 | 2026-11-11 | **The Entitlements stale window ends at twice the TTL, and the NetworkPolicy admits the alias writer** (§3.4; §5.6.4; §6.1.1; §11.1). A limit older than its TTL is served while one background read renews it only up to twice its jittered TTL, and never past the freshness bound. An older limit makes the caller wait for the read; when that read fails, the held limit is served only inside the freshness bound and counts as a stale serve. A lowered limit or a revoked grant is visible after at most about twice the TTL while the upstream is healthy. This replaces the rule of rev 1.102 that served the held limit for the whole freshness bound. The NetworkPolicy admits each named caller pod, and an entry with a `namespaceSelector` is admitted from its own namespace, which admits the alias writer. |
+| 1.105 | 2026-11-13 | **Gateway headers, library-written errors and the event ingest specified** (§1.4; §1.6.1; §1.6.3; §3.1; §3.3.17; §4.2 Parser-to-DSL Mapping Example; §7.4.1; §7.4.5; §8.1; §8.2; Appendix E). The earlier text listed headers the service does not read and the flat error envelope of earlier library versions. `x-departments` and `x-feature-flags` are not read, because template rights come from `x-tenant-roles` and department membership matters only for default assignees, which publish checks with Org & Membership. `x-request-id` takes 1 to 128 characters of `[a-zA-Z0-9._-]`; `X-Request-ID` and `X-Trace-ID` are on every response. The identity limits are in bytes, and the roles header is limited to 4,096 bytes and 64 distinct roles. The library writes the panic `500`, its identity `401`s and a deadline `503` in its own problem format; the deadline answer reaches only a handler that wrote nothing, which is the event ingest. The ingest decodes the whole envelope before reading the type, has no required member, and lists its `401`, `405`, `413` and `503`. The example plan uses the default queue and the three role levels, so it passes the validator. New open item: the planned move of the error bodies to the library's member names. |
 ---
 
 ## Appendix E: Open Items
@@ -5167,3 +5164,4 @@ This document had no dedicated Open Items tracker before rev 1.6 — items below
 | ~~Cross-team~~ | ~~**Global-catalog write path for `workflow_module`/`workflow_template` (§10.16) needs its `platform_operator`-gated handler + `BYPASSRLS`-role wiring actually built**~~ **Resolved 2026-08-26**: Module CRUD, Template CRUD, the RLS DDL, and a genuinely new second (`SYSTEM_DATABASE_URL`) pool + `platform_operator` handler-layer gate all shipped — see §10.16's "Implemented" note and Appendix A's implementation note below the module/template RLS block for the two corrections made to the original design along the way. **Not resolved**: the `platform_operator` role/claim source itself is still provisional (see §10.16) — needs sign-off from whoever owns the gateway/IAM claim contract before this path can be trusted in a real environment; tracked as a new row below. | Definition Service team |
 | Cross-team | **`platform_operator` role/claim source is unconfirmed.** `isPlatformOperator`/`requirePlatformOperator` (mirroring `isAdmin`/`requireAdmin`) check the same `rc.Roles` the gateway populates per-tenant via `x-tenant-roles` — but no code anywhere available locally (`platform-gincommon`, this service, or elsewhere) defines a `platform_operator` claim or confirms how a claim that's inherently cross-tenant would ever appear in a per-tenant header. Built as the most reasonable default; the global-write path (§10.16) isn't trustworthy in a real environment until this is confirmed one way or the other. | Gateway/IAM claim-contract owner |
 | ~~Cross-team~~ | ~~§7.4.2's `UserDeleted` transitive-coverage claim is unconfirmed against IAM's own spec: a full tenant-membership removal arrives as `MembershipRevoked`, which carries no `department_id`, and this service subscribed to `DepartmentMembershipRevoked` only.~~ **Closed on this side (§7.4.5).** `MembershipRevoked` is handled directly: a tenant-wide removal invalidates every published version where the user is a default assignee, with no department filter, then calls the same `PauseUserTasks` gRPC the department-scoped handler does. **RESOLVED (rev 1.16 — Org & Membership emits both).** A single-user removal emits `DepartmentMembershipRevoked` per department and `MembershipRevoked` at tenant level (confirmed with IAM's Tender question set, item 20, citing O&M §15.2.2), so the department-scoped handler is redundant belt-and-braces rather than a coverage gap. Full tenant offboarding emits only `TenantMembershipsPurged`, which this service consumes only to record the tenant for the purge (§7.4.4, §7.4.6). | Closed |
+| Planned | **The service's own error bodies move to the shared library's member names.** The Definition and Execution services change together in one release, announced to Commercial and the frontend before it merges. `code` becomes `errorCode` with the same values, `invalid_params` becomes `validationErrors`, `trace_id` becomes `traceId`, `request_id` leaves the body and stays in the `X-Request-ID` header, `tenantId` and `timestamp` are added, and `type` comes from the platform type registry. The format stays RFC 9457 and status codes stay the same. `PLAN_QUOTA_EXCEEDED` keeps `403` and its `plan_code`, `limit` and `current_count` members. The release decides how each validation item's BPMN issue code and the `current_record_version` and `uses` members are carried (§3.1, Standard Error Patterns). | Workflow |

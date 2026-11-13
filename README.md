@@ -290,17 +290,23 @@ Full OpenAPI schema: [`docs/swagger/openapi.yaml`](docs/swagger/openapi.yaml).
 | --- | --- | --- |
 | `x-tenant-id` | Yes | Tenant UUID — enforces RLS isolation |
 | `x-user-id` | Yes | Executing user UUID |
-| `x-tenant-roles` | Yes | Comma-separated roles, e.g. `tenant_admin,member` |
-| `x-departments` | No | User department memberships |
+| `x-tenant-roles` | For writes | Comma-separated roles, e.g. `tenant_admin,member`; at most 4,096 bytes and 64 distinct roles |
 | `x-plan` | For workflow create, clone, and promote of a version on a workflow with no active version | The tenant's plan code (`starter`, `pro`, `enterprise`), set by the authorization layer. The template limit is looked up by it in the plan table read from the catalog; a missing or unknown code answers `503`. When `ENTITLEMENTS_BASE_URL` is set the limit is read per tenant from Entitlements instead and `x-plan` is not used for it |
-| `x-request-id` | No | Client correlation ID — echoed as `X-Request-ID` |
-| `traceparent` | No | W3C trace context — echoed as `X-Trace-ID` |
+| `x-request-id` | No | Client correlation id of 1 to 128 characters of `[a-zA-Z0-9._-]`; any other value is replaced by a new UUID. Every response carries the id used as `X-Request-ID` |
+| `traceparent` | No | W3C trace context. Every response carries the trace id as `X-Trace-ID` |
 
-Validated by `gincommon.RequireAuth`. Handlers access them via:
+The gateway also sends `x-departments` and `x-feature-flags`. This service does not read them: template rights come from `x-tenant-roles`, and department membership is checked only for default assignees, at publish.
+
+The identity headers pass three checks, in this order:
+
+1. The service refuses a missing or blank `x-tenant-id` or `x-user-id` (`RequireIdentityHeaders`).
+2. The shared library refuses a repeated or malformed identity header and an oversized roles header.
+3. The service parses both ids as UUIDs and keeps the roles (`RequireIdentity`).
+
+Handlers read the verified identity, never the headers. `mustCtx` returns the tenant and user ids; `requireAdmin` and `requirePlatformOperator` check the roles:
 
 ```go
-rctx := gincommon.RequestContext(c)
-// rctx.TenantID, rctx.UserID, rctx.Roles, rctx.TraceID
+tenantID, userID, ok := mustCtx(c) // reads the identity RequireIdentity stored
 ```
 
 **Endpoint registry**
@@ -347,7 +353,7 @@ rctx := gincommon.RequestContext(c)
 | `GET` | `/api/v1/internal/connector-aliases` | Internal | List the REST-call connector aliases, read by the connector worker |
 | `POST`, `DELETE` | `/api/v1/internal/connector-aliases/rest`, `/api/v1/internal/connector-aliases/rest/:alias` | Internal | Create, update or delete a REST-call connector alias |
 
-**Admin** = requires `tenant_admin` or `tenant_owner` in `x-tenant-roles`. **Internal** = service-to-service only; not exposed on the public gateway. Admitted only with the system caller identity (`x-tenant-roles: iam-system` and a non-empty `x-user-id`); the handler sets the RLS tenant from the envelope `tenant_id`. Returns 2xx (incl. idempotent no-op), 400 (malformed — non-retryable), or 500 (transient — retried).
+**Admin** = requires `tenant_admin` or `tenant_owner` in `x-tenant-roles`. **Internal** = service-to-service only; not exposed on the public gateway. Admitted only with the system caller identity (`x-tenant-roles: iam-system` and a non-empty `x-user-id`). The RLS tenant comes from the request: the envelope `tenant_id` for the event ingest, the `tenant_id` query parameter for the compiled-plan read; the alias routes are not tenant-scoped. The event ingest answers 200 (applied or ignored), 400 (malformed, not retried), 401 (no system caller identity), 405, 413, 500 (transient, retried), 502 (a registry-framed payload that cannot be decoded, retried) or 503 (the request deadline passed before its bodiless 200, retried).
 
 **Optimistic concurrency on draft update.** `PUT /api/v1/workflows/:id/draft` accepts a `record_version` (the token returned on `GET /draft` and version responses). The token is required, in the `record_version` body field or an `If-Match` header (the header wins); a request with neither is `400 BAD_REQUEST`. A stale value yields `409 DRAFT_CONCURRENCY` carrying `current_record_version`. `record_version` is bumped by the DB on every real change. The `PUT /draft`, `POST /workflows`, and clone responses include a `message` field; create/clone also echo the new identifiers.
 
@@ -358,7 +364,7 @@ rctx := gincommon.RequestContext(c)
   "type": "https://api.workflow.platform/errors/conflict",
   "title": "Draft Already Exists",
   "status": 409,
-  "detail": "An active draft already exists for this workflow.",
+  "detail": "draft already exists",
   "instance": "/api/v1/workflows/abc/draft",
   "code": "DRAFT_ALREADY_EXISTS",
   "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
@@ -366,7 +372,7 @@ rctx := gincommon.RequestContext(c)
 }
 ```
 
-`type` is chosen by the HTTP status (a 409 is always `.../conflict`); `code` is the stable machine-readable value. `trace_id` and `request_id` match the `X-Trace-ID` and `X-Request-ID` response headers. A stale draft save also carries `current_record_version`. Public request bodies are strict: an unknown field is a `400 BAD_REQUEST` that names the field in `invalid_params`, and so is a second JSON value after the first.
+`type` is chosen by the HTTP status (a 409 is always `.../conflict`); `code` is the stable machine-readable value. `trace_id` and `request_id` match the `X-Trace-ID` and `X-Request-ID` response headers. A stale draft save also carries `current_record_version`. The shared HTTP library writes a recovered panic (`500`), its own identity refusals (`401`) and the event ingest's deadline answer (`503 REQUEST_TIMEOUT`) in its RFC 9457 format, which has `errorCode`, `traceId`, `tenantId` and `timestamp` in place of `code`, `trace_id` and `request_id`. A planned release moves this service's own problems to the library's member names, together with the Execution Service, and its callers are told before it merges. Public request bodies are strict: an unknown field is a `400 BAD_REQUEST` that names the field in `invalid_params`, and so is a second JSON value after the first.
 
 Validation errors include an `invalid_params` array:
 
@@ -411,8 +417,8 @@ Validation errors include an `invalid_params` array:
 | `PLAN_QUOTA_EXCEEDED` | 403 | Tenant has reached the maximum number of workflow templates for their plan |
 | `ASSIGNEE_INELIGIBLE` | 422 | A default assignee no longer has the required department/role membership |
 | `BPMN_VALIDATION_FAILED` | 422 | BPMN structural or semantic validation failed; see `invalid_params` |
-| `INVALID_INPUT` | 422 (400 for connector credential and alias input) | A request field exceeds its maximum length, or a connector credential or alias field is invalid |
-| `UPSTREAM_UNAVAILABLE` | 503 | Execution Service or Org & Membership service unreachable |
+| `INVALID_INPUT` | 422 (400 for page and limit ranges and for connector credential and alias input) | A request field exceeds its maximum length, a page or limit is out of range, or a connector credential or alias field is invalid |
+| `UPSTREAM_UNAVAILABLE` | 503 | A dependency is unavailable (the database, Valkey, OpenBao, the Execution Service, Org & Membership, the plan catalog or Entitlements), or a call was cut short by the 30-second request deadline |
 | `EVENT_DECODE_FAILED` | 502 | An internal event could not be decoded (internal event route only) |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
 
