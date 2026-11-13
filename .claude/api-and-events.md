@@ -39,7 +39,7 @@ When `HandleDepartmentMembershipRevoked` finishes marking template versions `is_
 
 - If the call fails the HTTP handler returns 5xx so the shared consumer retries the whole event.
 - `invalidateVersion` silently skips versions that are absent or ARCHIVED — one missing version does not block others.
-- Calls between the two services are internal HTTP, each endpoint specified in the server's `api/internal-openapi.yaml`; the caller keeps a copy in `api/contracts/`. `make contract-breaking` (oasdiff vs `origin/main`, in `make check`) and `make contract-check` (copy vs the neighbour's same-named branch, else `main`) gate both in CI (LLD §3.4).
+- Calls between the two services are internal HTTP, each endpoint specified in the server's `api/internal-openapi.yaml`; the caller keeps a copy in `api/contracts/`. `make contract-breaking` (oasdiff vs `origin/main`, in `make check`) gates CI. `make contract-check` (copy vs the neighbour's same-named branch, else `main`) is not in CI: `.github/workflows/contract-drift.yml` runs it on weekday mornings and keeps one `contract-drift` issue open while a copy is stale (LLD §3.4).
 
 ## HTTP Idempotency Middleware
 

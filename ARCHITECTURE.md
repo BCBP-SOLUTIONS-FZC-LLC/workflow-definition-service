@@ -285,7 +285,7 @@ Incoming request
 
 ## Internal API
 
-`/api/v1/internal` is the service-to-service route group, specified in `api/internal-openapi.yaml`. It runs the observability middleware and `RequireSystemCaller` (`x-tenant-roles` holds `iam-system` and `x-user-id` is set, a problem body on `401`), not `ProtectedMiddlewares`: no gateway identity reaches it, and the gateway never routes it. The headers are not a credential: mutual TLS in the mesh names the caller, and the chart's Istio `AuthorizationPolicy` admits only the named caller service accounts on `/api/v1/internal/*`. The Execution Service's own internal document is copied byte for byte into `api/contracts/`; `make contract-breaking` and `make contract-check` keep both honest in CI (definition LLD §3.4).
+`/api/v1/internal` is the service-to-service route group, specified in `api/internal-openapi.yaml`. It runs the observability middleware and `RequireSystemCaller` (`x-tenant-roles` holds `iam-system` and `x-user-id` is set, a problem body on `401`), not `ProtectedMiddlewares`: no gateway identity reaches it, and the gateway never routes it. The headers are not a credential: mutual TLS in the mesh names the caller, and the chart's Istio `AuthorizationPolicy` admits only the named caller service accounts on `/api/v1/internal/*`. The Execution Service's own internal document is copied byte for byte into `api/contracts/`; `make contract-breaking` refuses a breaking change in CI, and the scheduled `Contract drift` workflow reports a stale copy as a `contract-drift` issue without blocking (definition LLD §3.4).
 
 ---
 
