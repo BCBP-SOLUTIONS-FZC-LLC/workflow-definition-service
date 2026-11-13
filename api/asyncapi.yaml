@@ -14,7 +14,10 @@ info:
 channels:
   iam/membership/events:
     address: iam-membership-events
-    description: Consumed off membership-workflow-q and forwarded over HTTP by the Workflow-Events Consumer.
+    description: >-
+      Consumed off membership-workflow-q and forwarded over HTTP by the Workflow-Events
+      Consumer. The address is the SNS topic name, which IAM documents as
+      iam.membership.events; SNS topic names cannot contain dots, so the topic uses dashes.
     bindings:
       sqs:
         queue:
@@ -95,6 +98,8 @@ components:
           summary: A user left the tenant
           payload:
             user_id: "3fa18cde-7244-47ac-986c-665cd42caaaa"
+            tenant_id: "7ca648b2-b432-4744-884c-35fd556a310c"
+            actor_id: "0198c0a2-5b1e-7c3d-8a11-2f4e6d9b7a11"
 
     TenantMembershipsPurgedInbound:
       name: TenantMembershipsPurged
@@ -145,16 +150,19 @@ components:
         The platform-events envelope as the producer sends it and the consumer
         forwards it unmodified. Only id, type, tenant_id, time, dataschema and
         data are read here, and only for one of the four handled types; `data`
-        carries the payload.
-      required: [id, type, tenant_id, data]
+        carries the payload. No member is required as such. The whole envelope is
+        decoded first, so a member of the wrong JSON type or a time that is not RFC
+        3339 is answered 400 and not retried, whatever the type. An envelope of a
+        type this service does not handle is then acknowledged without its values
+        being checked further, and each member says which handled types check it.
       properties:
         id:
           type: string
           format: uuid
-          description: UUID message identifier; checked as a UUID for the two revocation events only.
+          description: UUID message identifier; checked as a UUID (missing or malformed is 400 and not retried) for the two revocation events only.
         type:
           type: string
-          description: Event type, matched against the four messages above; any other value is acknowledged and ignored.
+          description: Event type, matched against the four messages above; any other value, a missing type included, is acknowledged and ignored.
         tenant_id:
           type: string
           format: uuid
@@ -199,7 +207,13 @@ components:
             payload. Absent or empty for a plain JSON payload.
         data:
           type: [object, string]
-          description: The payload object, or its base64 registry frame when dataschema is set.
+          description: >-
+            The payload object, or its base64 registry frame when dataschema is set.
+            The two revocation events and TenantStateChanged read it, so for them a
+            missing or malformed payload is 400 and not retried; a JSON null reads as
+            an object with no fields. TenantMembershipsPurged does not read it, but
+            with a dataschema it is still decoded, and a frame that cannot be decoded
+            is answered 502 and retried.
 
     DepartmentMembershipRevokedInbound:
       type: object
@@ -232,6 +246,14 @@ components:
           type: string
           format: uuid
           description: The user who left the tenant. A value that is not a UUID is answered 400 and is not retried.
+        tenant_id:
+          type: string
+          format: uuid
+          description: The tenant, as Org & Membership also sends it in the payload. Not read; the envelope's tenant_id is used.
+        actor_id:
+          type: string
+          format: uuid
+          description: The identity that removed the user. Not read.
 
     TenantMembershipsPurgedInbound:
       type: object
@@ -249,14 +271,14 @@ components:
     TenantStateChangedInbound:
       type: object
       additionalProperties: true
-      required: [status]
       properties:
         status:
           type: string
           description: >-
             The tenant's new status; offboarded records the tenant for the purge,
-            any other status marks the purge record returned. A missing status
-            reads as an empty status, so it marks the record returned. A payload
+            any other status marks the purge record returned. A missing status,
+            or a payload that is JSON null, reads as an empty status, so it marks
+            the record returned. A payload
             that is not an object, or a status that is not a string, is answered
             400 and is not retried.
         previous_status:
