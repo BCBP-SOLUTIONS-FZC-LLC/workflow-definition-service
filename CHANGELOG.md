@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-15
+
+First tagged release, published to GHCR as `ghcr.io/bcbp-solutions-fzc-llc/workflow-definition-service:0.2.0`.
+
 ### Added
 
 - Tests only: pin the last rows the tracker listed as untested: open call slots and segment keys of the compiler, the local membership stub's role header and control defaults, the idempotency wrapper on every public write route, a refused or lost lookup when an archive matches no row (500 or 503), the database mapping of starters with empty optional columns, and the application pool being closed when the system pool cannot connect at start-up.
@@ -17,6 +21,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The copy of the Execution internal API spec is refreshed to Execution main (`3f02f7f`). Only the event-ingest text and the connector-task callbacks changed, none of which this service calls.
+- Release: the post-deploy health gate runs only when the repository variable `DEPLOY_GATE_ENABLED` is `true`. No cluster exists yet, so without it a tag publishes the signed image and the GitHub Release; a gate that runs and fails still stops the release.
 - API specs describe the service as built, for the outside audit (no code change). The 401 and 500 responses declare the shared library's problem body beside the service's own (`oneOf`), the never-written JSON 401 body is removed, and the library's deadline 503, which no public route can get, is no longer offered. The probes declare no security and only the library's panic answer. `X-Request-ID`, `X-Trace-ID` and the inbound `x-request-id` are declared on every operation, and the unread `x-departments` and `x-feature-flags` headers are removed. The internal API declares its 405 answer, the `x-user-id` the caller check requires and the library's deadline 503 on the event ingest; its 404 detail is the fixed text. Required text fields carry `minLength: 1`, and `connector_type` lists its values. The event envelope and `TenantStateChanged` no longer mark fields required that the code does not check, and `MembershipRevoked` lists the fields Org & Membership sends. Examples match the code: the connector registry, the draft 404 and the plan roles and departments. A note describes the planned move of the error bodies to the shared library's member names (WF-2). The LLD copy (revision 1.105), README, ARCHITECTURE, the security note, the runbook and the developer notes state the same behaviour. The contract gate counts the new bounds, the removed 401 media type, the corrected probe errors and the added internal security requirement as breaking, although no request the service accepts changes.
 - API spec: the list of BPMN validation issue codes (`BpmnErrorCode`) is declared extensible (`x-extensible-enum`), so a new code, such as `DUPLICATE_SEQUENCE_FLOW`, is not a breaking change for the contract gate, and clients are told to treat an unknown code as a generic issue.
 - Docs only: the in-repo LLD is brought from 1.100 to 1.103, and the AsyncAPI, internal OpenAPI, public OpenAPI and the copy of the Execution internal spec match the design repository. No code changed.
