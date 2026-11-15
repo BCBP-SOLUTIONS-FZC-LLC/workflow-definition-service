@@ -205,19 +205,21 @@ jobs:
           .github/scripts/cosign-sign-verify.sh \
             "^https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/.*$"
 
-  # Post-deploy health gate — always runs; requires KUBECONFIG_B64 secret to be set.
+  # Post-deploy health gate — runs only when the DEPLOY_GATE_ENABLED repository
+  # variable is 'true'; no cluster exists yet, so a tag otherwise publishes the
+  # image and the GitHub Release without a deploy.
   # Deploys the image with Helm, waits for rollout, verifies the deployed digest
   # matches what was pushed, then checks the error rate for 2 minutes.
   # On failure, automatically rolls back and fails the release.
   # Requires: KUBECONFIG_B64 secret, K8S_NAMESPACE var (optional, defaults to
   # "workflow-app" per repos/design/LLD/definition_service.md §11.1), PROMETHEUS_URL
-  # var (optional). If KUBECONFIG_B64 is not configured this job fails immediately —
-  # set it before tagging releases.
+  # var (optional).
   deploy-gate:
     name: Post-deploy health gate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [build, docker]
+    if: vars.DEPLOY_GATE_ENABLED == 'true'
     environment: production
     steps:
       - uses: actions/checkout@v6
@@ -335,10 +337,12 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-    # deploy-gate must succeed — a skipped/failed gate means the release was never
-    # deployed to production and downstream consumers must not pin the tag.
+    # A failed deploy-gate stops the release; a skipped one (DEPLOY_GATE_ENABLED
+    # not 'true') does not.
     needs: [build, docker, deploy-gate]
-    if: needs.build.result == 'success' && needs.docker.result == 'success' && needs.deploy-gate.result == 'success'
+    if: >-
+      !cancelled() && needs.build.result == 'success' && needs.docker.result == 'success' &&
+      (needs.deploy-gate.result == 'success' || needs.deploy-gate.result == 'skipped')
     steps:
       - uses: actions/checkout@v6
         with:

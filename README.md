@@ -532,14 +532,14 @@ One consequence worth knowing: `cmd/server/main.go` loads and validates the full
 
 ### CI/CD deploy gate
 
-`release.yml`'s `deploy-gate` job runs after the image is built, signed, and pushed, and before the GitHub Release is published:
+`release.yml`'s `deploy-gate` job runs after the image is built, signed, and pushed, and before the GitHub Release is published, when the repository variable `DEPLOY_GATE_ENABLED` is `true`. With it unset, a tag publishes the image and the GitHub Release without a deploy, since no cluster exists yet:
 
 1. `helm upgrade workflow-definition-service ./deploy/helm --install --wait --timeout=5m --atomic`, passing `env.ORG_MEMBERSHIP_BASE_URL`, `env.CATALOG_ADMIN_BASE_URL` (or `env.ENTITLEMENTS_BASE_URL`), `env.OPENBAO_ADDR` and `env.VALKEY_ADDR` from the repository variables of the same names — `--atomic` rolls back automatically if the release fails to become healthy within the timeout. The chart refuses to render for a non-dev `APP_ENV` while any of `ORG_MEMBERSHIP_BASE_URL`, `EXECUTION_SERVICE_URL`, `OPENBAO_ADDR` or `VALKEY_ADDR` is empty, or while both `CATALOG_ADMIN_BASE_URL` and `ENTITLEMENTS_BASE_URL` are empty, and CI runs `make helm-check` to prove it.
 2. Verifies the running Deployment's image digest matches the digest that was actually signed and pushed.
 3. Waits for `kubectl rollout status` to confirm the new pods are ready.
 4. Runs a 2-minute Prometheus check on the 5xx ratio; if it exceeds 1%, `helm rollback` runs automatically and the job — and therefore the release — fails.
 
-The GitHub Release step only runs if `deploy-gate` succeeds. **Required repository configuration** (not shipped by this chart): a `KUBECONFIG_B64` secret for the target cluster, and optionally `K8S_NAMESPACE` (defaults to `workflow-app`) and `PROMETHEUS_URL` vars in the `production` GitHub environment.
+When the gate runs, the GitHub Release step only runs if it succeeds. **Required repository configuration** for the gate (not shipped by this chart): a `KUBECONFIG_B64` secret for the target cluster, and optionally `K8S_NAMESPACE` (defaults to `workflow-app`) and `PROMETHEUS_URL` vars in the `production` GitHub environment.
 
 ---
 
