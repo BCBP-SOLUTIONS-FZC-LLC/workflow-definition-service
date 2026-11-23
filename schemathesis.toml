@@ -1,0 +1,36 @@
+# Read by `make fuzz-api`. Each entry names one operation and one check: nothing here turns a check off
+# for a whole API. The README lists them as known artefacts. An expected-statuses list replaces the
+# check's default, so each one repeats the default set (positive_data_acceptance: 2xx, 3xx, 401, 403,
+# 404, 409, 429, 5xx; not_a_server_error: below 500) and adds the statuses that are intended.
+
+# The BPMN document is a string whose validity (well-formed XML, a valid process) no schema keyword
+# can express, so a schema-valid body is refused 400 or 422 by design.
+[[operations]]
+include-name-regex = "^(POST /api/v1/(workflows|modules|starters|workflows/validate)|PUT /api/v1/workflows/\\{id\\}/draft)$"
+checks.positive_data_acceptance.expected-statuses = [
+  "2XX", "3XX", 400, 401, 403, 404, 409, 422, 429, "5XX",
+]
+
+# The credential routes need a secret store; the stack the checks start has none, so 503 is the
+# intended answer.
+[[operations]]
+include-name-regex = "^(POST /api/v1/connectors/credentials|DELETE /api/v1/connectors/credentials/\\{connector_type\\}/\\{field_name\\})$"
+checks.not_a_server_error.expected-statuses = ["2XX", "3XX", "4XX", 503]
+checks.positive_data_acceptance.expected-statuses = [
+  "2XX", "3XX", 401, 403, 404, 409, 429, "5XX",
+]
+
+# An empty query value means the filter is not given: the fuzzer sends status= with no value, which
+# the enum alone would call invalid. A value that is not empty and not a status is refused 400.
+[[operations]]
+include-name = "GET /api/v1/workflows"
+checks.negative_data_rejection.expected-statuses = [
+  200, 400, 401, 403, 404, 405, 406, 409, 415, 422, 428, 429, "5XX",
+]
+
+# GET /workflows/{id} also matches the path /workflows/validate (the id is "validate", answered 400), so
+# a GET there is not a 405 and an OPTIONS request lists GET beside POST in Allow.
+[[operations]]
+include-name = "POST /api/v1/workflows/validate"
+checks.unsupported_method.enabled = false
+checks.allow_header_conformance.enabled = false

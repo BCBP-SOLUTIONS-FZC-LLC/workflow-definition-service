@@ -605,14 +605,21 @@ See [ARCHITECTURE.md § BPMN Compiler](ARCHITECTURE.md#bpmn-compiler) for the fu
 | `test/integration/`, `test/e2e/` | DB integration and service lifecycle tests against a real PostgreSQL container | `make test-integration` |
 | Execution's `test/compat/` | This service's binary against the Execution Service's real API, worker and connector worker, with IAM events delivered through the Workflow-Events Consumer | `make -C <execution checkout> test-compat DEFINITION_SERVICE_DIR=$PWD EVENT_CONSUMER_DIR=<consumer checkout>` |
 
-Two black-box checks run against a local stack (the one `scripts/smoke-test.sh` describes: `make docker-up`, `make migrate`, the three stubs under `cmd/stub/`, then `go run ./cmd/server`). They are not part of CI.
+Two black-box checks run against a real stack. `make blackbox` starts it (`scripts/blackbox-stack.sh up`: Postgres and Valkey from the compose file, the three stubs under `cmd/stub/` and the service), runs both checks and stops it, in about 25 seconds; the last steps of the `test` job of the CI test workflow run it. `make blackbox-up` and `make blackbox-down` start and stop the stack on their own.
 
 | Directory | What | Command |
 | --------- | ---- | ------- |
 | `test/hurl/` | Scenario files in plain text: the workflow, module, starter and internal-event flows, the shared error answers and the identity and role checks | `make hurl` (needs [Hurl](https://hurl.dev): `brew install hurl`) |
-| `docs/swagger/openapi.yaml` | Property-based fuzzing of every public route against the spec, with stateful call chains; reports documented-status and response-shape mismatches and server errors | `make fuzz-api` (needs `uv`; Schemathesis is fetched at the pinned version) |
+| `docs/swagger/openapi.yaml` | Property-based fuzzing of every public route against the spec; reports documented-status and response-shape mismatches and server errors | `make fuzz-api` (needs `uv`; Schemathesis is fetched at the pinned version) |
 
-`make fuzz-api` creates and archives data, so point it at a throwaway database. Its findings are reviewed by hand; a real one becomes a tracker row and a test-first fix.
+`make fuzz-api` creates and archives data, so use a throwaway database (the compose one is). The run is deterministic so CI cannot flake: a fixed seed (`FUZZ_SEED`), one worker, deterministic generation, and the examples, coverage and fuzzing phases only; the stateful phase is left out because the sequences it builds from earlier responses change from run to run. Its settings are in `schemathesis.toml`, each limited to one operation; the known artefacts are behaviour a schema cannot express:
+
+- A BPMN document that is not valid is refused 400 or 422 although the body is schema-valid.
+- The credential routes answer 503 in the stack the checks start, which has no secret store.
+- An empty query value means the filter is not given, so `GET /workflows?status=` answers 200.
+- `/workflows/validate` also matches `GET /workflows/{id}` (answered 400), so the undeclared-method and `Allow` checks are off for that one operation.
+
+A new finding is reviewed by hand; a real one becomes a tracker row and a test-first fix.
 
 Integration tests require Docker. Pre-pull the image once:
 
