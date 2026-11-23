@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+### Tests
+
+- `make blackbox` starts the stack (Postgres, Valkey, the three stubs and the service), runs the Hurl scenarios and the Schemathesis run against it and stops it, in about 25 seconds; the `test` job of the CI test workflow runs it as its last steps. The fuzz run is deterministic (fixed seed, one worker, deterministic generation, no stateful phase). The internal-event Hurl scenario now sends the system caller role it needs.
+
 ### Changed
 
 - Docs only: the copy of the Execution Service's internal API contract (`api/contracts/execution-internal-openapi.yaml`) follows the Execution Service's main branch at commit 67b5293. The Definition Service's calls to it are unchanged and the contract test against the copy passes.

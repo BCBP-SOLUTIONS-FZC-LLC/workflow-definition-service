@@ -60,7 +60,7 @@ COVER_PKG_FLOORS   := cmd/stub/catalog:90 \
                       internal/bpmn_compiler/element:75 \
                       internal/config:90
 
-.PHONY: alerts-test helm-check metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-check-test contract-breaking design-sync-check design-sync-check-test \
+.PHONY: blackbox blackbox-up blackbox-down alerts-test helm-check metrics-lint metrics-inventory all tools tools-integration generate generate-sqlc mock contract-check contract-check-test contract-breaking design-sync-check design-sync-check-test \
         build migrate test test-integration test-ci merge-coverage \
         cover cover-func cover-html cover-gaps cover-check cover-check-pkg \
         arch-lint lint lint-fix vuln \
@@ -180,14 +180,30 @@ merge-coverage:
 	@python3 scripts/merge_coverage.py $(COVERAGE_DIR)/unit.out $(COVERAGE_DIR)/integration.out > $(COVER_PROFILE)
 	@echo "✓ $(COVER_PROFILE) merged from unit + integration suites"
 
-# Local black-box checks against a running stack (the one scripts/smoke-test.sh describes). Not part of CI.
+# Black-box checks against the stack scripts/blackbox-stack.sh starts. `make blackbox` runs both; the CI test job runs it.
 API_BASE        ?= http://localhost:8080
 METRICS_BASE    ?= http://localhost:9091
 SCENARIO_TENANT ?= 11111111-1111-4111-8111-111111111111
 SCENARIO_USER   ?= 018f2d3c-0000-7000-8000-0000000000a1
 SCHEMATHESIS_VERSION := 4.33.2
+FUZZ_SEED ?= 1
 
-## hurl: Run the Hurl scenarios in test/hurl against a running local stack (needs hurl: brew install hurl)
+## blackbox-up: Build and start the stack the black-box checks run against (Postgres, Valkey, the three stubs, the service)
+blackbox-up:
+	@scripts/blackbox-stack.sh up
+
+## blackbox-down: Stop the black-box stack
+blackbox-down:
+	@scripts/blackbox-stack.sh down
+
+## blackbox: Start the stack, run hurl and fuzz-api against it, stop it
+blackbox:
+	@trap '$(MAKE) --no-print-directory blackbox-down' EXIT; \
+	$(MAKE) --no-print-directory blackbox-up && \
+	$(MAKE) --no-print-directory hurl && \
+	$(MAKE) --no-print-directory fuzz-api
+
+## hurl: Run the Hurl scenarios in test/hurl against the running stack (needs hurl: brew install hurl)
 hurl:
 	@command -v hurl >/dev/null || { echo "hurl is not installed: brew install hurl"; exit 1; }
 	hurl --test --jobs 1 --variable host=$(API_BASE) --variable metrics=$(METRICS_BASE) \
@@ -204,7 +220,8 @@ fuzz-api:
 	uvx --from schemathesis==$(SCHEMATHESIS_VERSION) schemathesis run docs/swagger/openapi.yaml --url $(API_BASE) \
 	    -H 'x-tenant-id: $(SCENARIO_TENANT)' -H 'x-user-id: $(SCENARIO_USER)' \
 	    -H 'x-tenant-roles: tenant_admin' -H 'x-plan: enterprise' \
-	    --max-examples 20 --workers 2 --report junit --report-dir $(COVERAGE_DIR)/schemathesis
+	    --max-examples 20 --workers 1 --seed $(FUZZ_SEED) --generation-deterministic \
+	    --phases examples,coverage,fuzzing --report junit --report-dir $(COVERAGE_DIR)/schemathesis
 
 ## test-ci: Run unit + integration suites and merge coverage
 test-ci: test test-integration merge-coverage

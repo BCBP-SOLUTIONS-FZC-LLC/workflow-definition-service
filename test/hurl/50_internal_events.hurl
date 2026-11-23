@@ -15,6 +15,7 @@ HTTP 200
 jsonpath "$.versions[0].is_valid" == true
 
 POST {{host}}/api/v1/internal/events
+x-tenant-roles: iam-system
 {"id":"{{newUuid}}","type":"DepartmentMembershipRevoked","tenant_id":"{{tenant}}","source":"iam-svc","data":{"user_id":"018f2d3c-0000-7000-8000-0000000000a1","department_id":"f14abc9f-befa-54ff-b57f-c15ab3090062"}}
 HTTP 200
 
@@ -24,5 +25,6 @@ HTTP 200
 jsonpath "$.versions[0].is_valid" == false
 
 POST {{host}}/api/v1/internal/events
+x-tenant-roles: iam-system
 {"id":"{{newUuid}}","type":"SomeUnhandledEvent","tenant_id":"{{tenant}}","source":"other","data":{}}
 HTTP 200
