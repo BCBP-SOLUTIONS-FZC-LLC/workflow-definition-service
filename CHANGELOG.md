@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+### Changed
+
+- Docs only: the copy of the Execution Service's internal API contract (`api/contracts/execution-internal-openapi.yaml`) follows the Execution Service's main branch at commit 67b5293. The Definition Service's calls to it are unchanged and the contract test against the copy passes.
+
 ## [0.2.0] — 2026-11-15
 
 First tagged release, published to GHCR as `ghcr.io/bcbp-solutions-fzc-llc/workflow-definition-service:0.2.0`.
