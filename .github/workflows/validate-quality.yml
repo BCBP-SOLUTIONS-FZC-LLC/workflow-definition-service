@@ -11,6 +11,11 @@ name: Validate Quality
 "on":
   workflow_call:
     inputs:
+      skip:
+        description: 'True for a draft, a documentation-only change or a PR with the skip-ci label; every job then reports skipped, so the required checks pass instead of waiting'
+        type: boolean
+        required: false
+        default: false
       ref:
         description: 'Git ref to check out (leave empty to use the caller ref)'
         type: string
@@ -28,6 +33,7 @@ env:
 jobs:
   contracts:
     name: contracts
+    if: ${{ !inputs.skip }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -66,6 +72,7 @@ jobs:
 
   quality:
     name: quality
+    if: ${{ !inputs.skip }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
