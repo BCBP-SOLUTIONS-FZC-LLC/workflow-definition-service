@@ -8,13 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenTelemetry moves from 1.46.0 to 1.47.0, which fixes GO-2026-6975 (memory amplification when parsing W3C baggage) and GO-2026-6974 (attribute length limit bypass in the SDK); the vulnerability check was failing on both.
+
 ### Tests
 
 - `make blackbox` starts the stack (Postgres, Valkey, the three stubs and the service), runs the Hurl scenarios and the Schemathesis run against it and stops it, in about 25 seconds; the `test` job of the CI test workflow runs it as its last steps. The fuzz run is deterministic (fixed seed, one worker, deterministic generation, no stateful phase). The internal-event Hurl scenario now sends the system caller role it needs.
 
 ### Changed
 
-- Docs only: the copy of the Execution Service's internal API contract (`api/contracts/execution-internal-openapi.yaml`) follows the Execution Service's main branch at commit 67b5293. The Definition Service's calls to it are unchanged and the contract test against the copy passes.
+- Docs only: the copy of the Execution Service's internal API contract (`api/contracts/execution-internal-openapi.yaml`) follows the Execution Service's main branch at commit a6db22d (its wording now covers a NUL character in a query or path and unprintable error classes). The Definition Service's calls to it are unchanged and the contract test against the copy passes.
 
 ## [0.2.0] — 2026-11-15
 
