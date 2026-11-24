@@ -10,6 +10,11 @@ name: Validate Test
 "on":
   workflow_call:
     inputs:
+      skip:
+        description: 'True for a draft, a documentation-only change or a PR with the skip-ci label; every job then reports skipped, so the required checks pass instead of waiting'
+        type: boolean
+        required: false
+        default: false
       ref:
         description: 'Git ref to check out (leave empty to use the caller ref)'
         type: string
@@ -37,6 +42,7 @@ env:
 jobs:
   test:
     name: test
+    if: ${{ !inputs.skip }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -144,6 +150,7 @@ jobs:
 
   compat:
     name: compat
+    if: ${{ !inputs.skip }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
