@@ -8,6 +8,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-26
+
 ### Fixed
 
 - CI: marking a draft ready runs CI (`ready_for_review`), and adding or removing the `skip-ci` label re-runs the gate. A draft, a documentation-only change and the `skip-ci` label now set one skip flag: the Validate workflows are always called and report their jobs as skipped, so a required check is never left waiting. A merge to main no longer pushes an image; images are built, pushed and signed on a version tag only (`release.yml`).
